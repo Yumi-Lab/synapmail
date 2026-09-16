@@ -505,6 +505,8 @@
     "search": "Rechercher",
     "refresh": "Actualiser",
     "close": "Fermer",
-    "noResults": "Aucun résultat trouvé"
+    "noResults": "Aucun résultat trouvé",
+    "showPassword": "Afficher le mot de passe",
+    "hidePassword": "Masquer le mot de passe"
   }
 }
