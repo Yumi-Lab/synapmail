@@ -3,6 +3,13 @@ import './globals.css'
 import { Providers } from '@/components/providers'
 import { NextIntlClientProvider } from 'next-intl'
 import { getLocale, getMessages } from 'next-intl/server'
+import { cookies } from 'next/headers'
+import {
+  DARK_CLASS,
+  THEME_COOKIE,
+  themeInitScript,
+  toTheme,
+} from '@/lib/theme'
 
 export const metadata: Metadata = {
   title: 'Synapmail',
@@ -19,12 +26,19 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const locale = await getLocale()
   const messages = await getMessages()
+  const theme = toTheme(cookies().get(THEME_COOKIE)?.value)
+  // `light`/`dark` sont résolus ici même (aucun flash) ; `system` dépend du client,
+  // d'où le script bloquant ci-dessous, qui ne rend rien pour les deux autres cas.
+  const initScript = themeInitScript(theme)
 
   return (
-    <html lang={locale} suppressHydrationWarning>
+    <html lang={locale} className={theme === 'dark' ? DARK_CLASS : undefined} suppressHydrationWarning>
+      <head>
+        {initScript && <script dangerouslySetInnerHTML={{ __html: initScript }} />}
+      </head>
       <body className="font-sans antialiased">
         <NextIntlClientProvider messages={messages}>
-          <Providers>{children}</Providers>
+          <Providers initialTheme={theme}>{children}</Providers>
         </NextIntlClientProvider>
       </body>
     </html>

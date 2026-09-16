@@ -1,11 +1,18 @@
 'use client'
 
 import { SessionProvider } from 'next-auth/react'
-import { ThemeProvider } from 'next-themes'
+import { ThemeProvider } from '@/components/theme/ThemeProvider'
 import { SWRConfig } from 'swr'
 import { Toaster } from '@/components/ui/toast'
+import { DEFAULT_THEME, type Theme } from '@/lib/theme'
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({
+  initialTheme = DEFAULT_THEME,
+  children,
+}: {
+  initialTheme?: Theme
+  children: React.ReactNode
+}) {
   return (
     <SessionProvider>
       {/* Global SWR resilience:
@@ -22,7 +29,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           errorRetryInterval: 5000,
         }}
       >
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+        <ThemeProvider initialTheme={initialTheme}>
           {children}
           <Toaster />
         </ThemeProvider>
