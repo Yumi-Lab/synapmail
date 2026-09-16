@@ -66,7 +66,7 @@ export default function AppearancePage() {
 
       <div className="space-y-6">
         <SettingsSection title={t('theme')} description={t('themeDesc')}>
-          <ThemeToggle className="max-w-md" />
+          <ThemeToggle />
         </SettingsSection>
 
         <SettingsSection title={t('language')} description={t('languageDesc')}>
