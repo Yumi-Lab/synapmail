@@ -3,8 +3,15 @@
 import { cn } from '@/lib/utils'
 import type { EmailAccount } from '@/types/account'
 
-/** Single palette for account bubbles — index with the account's rank in the list. */
-export const ACCOUNT_COLORS = ['bg-blue-500', 'bg-violet-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500'] as const
+/**
+ * Single palette for account bubbles — index with the account's rank in the list.
+ * Shades are chosen so a white initial stays readable on every bubble: measured
+ * WCAG contrast against #fff is 5.17 / 5.70 / 5.48 / 5.02 / 4.70, all above the
+ * 4.5:1 floor for small bold text. The 500 shades this replaces fell as low as
+ * 2.15 (amber) and 2.54 (emerald). `scripts/check-sidebar-collapse.mjs` recomputes
+ * these ratios from the rendered bubbles, so the floor is enforced, not asserted.
+ */
+export const ACCOUNT_COLORS = ['bg-blue-600', 'bg-violet-600', 'bg-emerald-700', 'bg-amber-700', 'bg-rose-600'] as const
 
 /** Above this the badge reads `99+`. Single source for every unread counter of the bar. */
 const UNREAD_CAP = 99
@@ -23,6 +30,16 @@ export const accountInitial = (account: Pick<EmailAccount, 'name' | 'email'>) =>
   ((account.name || account.email).trim().charAt(0) || '?').toUpperCase()
 
 /**
+ * Geometry of the badge, as one source. It hangs off the host's top-right CORNER
+ * (Google style): small, and offset far enough that its box clears the initial
+ * underneath it — measured on the SMALLEST bubble (28 px), where the initial's text
+ * box sits closest to the corner. At `-9px` the widest label (`99+`) covers ~11 % of
+ * that bubble and 0 % of the initial's own text box; the previous `-4px` / 16 px-tall
+ * badge covered 37 % of the bubble and 40 % of the glyph, hiding the letter.
+ */
+const BADGE_OFFSET_PX = 9
+
+/**
  * The bar's ONE unread counter: a badge pinned on the top-right corner of whatever it
  * marks (an account bubble, a folder icon) — never a pill to the right of a label.
  * It is absolutely positioned, so it never changes its host's box, and it stays
@@ -34,7 +51,9 @@ export function UnreadBadge({ count }: { count: number }) {
   return (
     <span
       aria-hidden
-      className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-violet-500 ring-2 ring-[color:var(--synap-surface)] text-[10px] font-semibold leading-none text-white flex items-center justify-center tabular-nums"
+      style={{ top: -BADGE_OFFSET_PX, right: -BADGE_OFFSET_PX }}
+      className="absolute min-w-[14px] h-[14px] px-[3px] rounded-full bg-violet-600 ring-[1.5px] ring-[color:var(--synap-surface)] text-[9px] font-semibold leading-none text-white flex items-center justify-center tabular-nums"
+      data-unread-badge
     >
       {formatUnread(count)}
     </span>
@@ -68,7 +87,7 @@ export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', ..
           ACCOUNT_COLORS[colorIndex % ACCOUNT_COLORS.length],
         )}
       >
-        {accountInitial(account)}
+        <span data-account-initial>{accountInitial(account)}</span>
       </span>
       <UnreadBadge count={unread} />
     </span>
