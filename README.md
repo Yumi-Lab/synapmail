@@ -232,6 +232,8 @@ Shortcuts are inactive when an input field or the editor is focused.
 
 All endpoints require authentication. Responses follow `{ data?, error? }` shape.
 
+> Quick index below — for full request/response schemas, query params, and every session-only route (admin, rules, PGP, AI, settings, etc.), see **[docs/API.md](docs/API.md)**.
+
 ### Authentication
 
 Two ways in:
