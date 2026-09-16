@@ -112,7 +112,11 @@
     "reason_vip": "Key contact",
     "reason_frequent": "Frequent",
     "reason_starred": "Starred",
-    "reason_attachment": "Attachment"
+    "reason_attachment": "Attachment",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar",
+    "folders": "Folders",
+    "switchAccount": "Switch account"
   },
   "compose": {
     "newMessage": "New message",

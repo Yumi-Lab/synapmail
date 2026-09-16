@@ -112,7 +112,11 @@
     "reason_vip": "重要联系人",
     "reason_frequent": "常用联系人",
     "reason_starred": "已加星标",
-    "reason_attachment": "附件"
+    "reason_attachment": "附件",
+    "collapseSidebar": "收起侧边栏",
+    "expandSidebar": "展开侧边栏",
+    "folders": "文件夹",
+    "switchAccount": "切换账户"
   },
   "compose": {
     "newMessage": "新邮件",
