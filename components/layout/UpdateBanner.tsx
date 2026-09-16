@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import useSWR from 'swr'
+import { useState } from 'react'
+import useSWR, { mutate as globalMutate } from 'swr'
 import { useTranslations } from 'next-intl'
 import { X, Sparkles, Terminal, AlertCircle } from 'lucide-react'
 import {
@@ -13,6 +13,11 @@ import {
 import type { GitHubRelease } from '@/app/api/updates/route'
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
+
+/** Clé SWR partagée des préférences utilisateur (une seule source, cf. UI state persistence). */
+const SETTINGS_KEY = '/api/settings'
+/** Version supposée quand l'API n'a pas encore répondu : plus ancienne que toute release. */
+const FALLBACK_VERSION = '0.0.0'
 
 // ── Utilitaire : comparaison semver simple ───────────────────────────────────
 function isNewer(latest: string, current: string): boolean {
@@ -61,7 +66,6 @@ function renderMarkdown(md: string): string {
 // ── Composant principal ──────────────────────────────────────────────────────
 export function UpdateBanner() {
   const t = useTranslations('updates')
-  const [dismissed, setDismissed] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'releases' | 'howto'>('releases')
 
@@ -74,29 +78,47 @@ export function UpdateBanner() {
     dedupingInterval: 3600_000,
   })
 
-  // Restaurer le dismiss depuis sessionStorage (reset à chaque session)
-  useEffect(() => {
-    const key = 'synapmail:update-dismissed'
-    const stored = sessionStorage.getItem(key)
-    if (stored) setDismissed(true)
-  }, [])
-
-  const handleDismiss = () => {
-    setDismissed(true)
-    sessionStorage.setItem('synapmail:update-dismissed', '1')
-  }
+  // Le « dismiss » vit côté serveur (user_settings.update_dismissed_version) : il
+  // survit au rechargement et suit l'utilisateur d'un appareil à l'autre, et une
+  // version plus récente que celle fermée fait réapparaître le bandeau.
+  const { data: settings } = useSWR<{ data?: { update_dismissed_version?: string | null } }>(
+    SETTINGS_KEY,
+    fetcher
+  )
 
   const releases = data?.data?.releases ?? []
-  const current = data?.data?.current ?? '0.0.0'
+  const current = data?.data?.current ?? FALLBACK_VERSION
 
   // Trouver toutes les releases plus récentes que la version courante
   const newReleases = releases.filter(
     (r) => !r.prerelease && isNewer(r.tag_name, current)
   )
 
-  if (!data || newReleases.length === 0 || dismissed) return null
-
   const latest = newReleases[0]
+  const dismissedVersion = settings?.data?.update_dismissed_version ?? null
+  const dismissed = latest !== undefined && dismissedVersion !== null && !isNewer(latest.tag_name, dismissedVersion)
+
+  const handleDismiss = () => {
+    if (!latest) return
+    const version = latest.tag_name
+    globalMutate(
+      SETTINGS_KEY,
+      (curr: { data?: Record<string, unknown> } | undefined) =>
+        curr?.data ? { ...curr, data: { ...curr.data, update_dismissed_version: version } } : curr,
+      false
+    )
+    fetch(SETTINGS_KEY, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ update_dismissed_version: version }),
+    })
+      .catch(() => undefined)
+      .then(() => globalMutate(SETTINGS_KEY))
+  }
+
+  // Tant que la préférence serveur n'est pas chargée on n'affiche rien : sinon le
+  // bandeau apparaîtrait puis disparaîtrait chez qui l'a déjà fermé.
+  if (!data || !settings || !latest || dismissed) return null
 
   return (
     <>
