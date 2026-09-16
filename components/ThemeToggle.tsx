@@ -21,8 +21,11 @@ export function ThemeToggle({ className, compact }: { className?: string; compac
       role="radiogroup"
       aria-label={t('theme')}
       className={cn(
-        'inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5',
-        compact ? 'flex-col' : 'w-full',
+        'rounded-lg border border-border bg-muted/40 p-0.5',
+        // Grille 3 colonnes égales (et non flex) : les colonnes se partagent la
+        // largeur disponible, donc la piste ne déborde jamais de sa colonne, même
+        // à 390 px où elle ne fait qu'une centaine de pixels.
+        compact ? 'inline-flex flex-col items-center gap-0.5' : 'grid w-full grid-cols-3 gap-0.5',
         className
       )}
     >
@@ -40,15 +43,21 @@ export function ThemeToggle({ className, compact }: { className?: string; compac
             title={label}
             onClick={() => setTheme(value)}
             className={cn(
-              'flex items-center justify-center gap-2 rounded-[7px] px-2 py-1.5 text-sm',
-              compact ? 'w-8' : 'flex-1',
+              // `min-w-0` : sans lui la largeur intrinsèque du libellé empêche la
+              // case de rétrécir et la piste déborde horizontalement.
+              'flex min-w-0 items-center justify-center gap-2 rounded-[7px] px-2 py-1.5 text-sm',
+              compact ? 'w-8' : 'w-full',
               active
-                ? 'bg-background text-foreground shadow-sm'
+                // En sombre `bg-background` est la couleur de la page : la pastille
+                // active disparaissait sur la piste. Un voile blanc la détache.
+                ? 'bg-background text-foreground shadow-sm dark:bg-white/15'
                 : 'text-muted-foreground hover:text-foreground'
             )}
           >
             <Icon className="h-4 w-4 shrink-0" />
-            {!compact && <span className="truncate">{label}</span>}
+            {/* Sous `sm` (colonne étroite, mobile 390) : icône seule — le nom reste
+                porté par aria-label/title, jamais tronqué. */}
+            {!compact && <span className="hidden truncate sm:inline">{label}</span>}
           </button>
         )
       })}
