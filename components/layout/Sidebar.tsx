@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import useSWR from 'swr'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { EmailAccount } from '@/types/account'
+import { AccountAvatar, UnreadBadge } from './AccountAvatar'
 
 /**
  * Single source for the bar's geometry. `AppShell` sizes the <aside> from it and
@@ -22,6 +23,9 @@ export const SIDEBAR = {
   expandedWidth: 256,
   collapsedWidth: 56,
   transitionMs: 180,
+  /** Colour the bar and its popover are painted with — published as `--synap-surface`
+   *  so a badge pinned on an avatar can ring itself with the surface behind it. */
+  surface: '#18181b',
 } as const
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -50,8 +54,6 @@ type FolderItem = { name: string; path: string; special: SpecialKey; unreadCount
 
 const dispatchCompose = () => window.dispatchEvent(new CustomEvent('synapmail:compose'))
 
-const ACCOUNT_COLORS = ['bg-blue-500', 'bg-violet-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500']
-
 // One row pattern for every entry of the bar (folder, link, account, action).
 const ROW = 'flex w-full items-center h-9 rounded-lg transition-colors'
 const ROW_IDLE = 'text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06]'
@@ -70,18 +72,22 @@ interface SidebarProps {
 
 /** Icon column + collapsible label — shared by every row so all rows stay aligned. */
 function RowBody({
-  icon: Icon, iconClassName, label, trailing, collapsed,
+  icon: Icon, iconClassName, label, badge = 0, collapsed,
 }: {
   icon: React.ComponentType<{ className?: string }>
   iconClassName?: string
   label: React.ReactNode
-  trailing?: React.ReactNode
+  /** Unread count — rendered ON the icon, never as a pill to the right of the label. */
+  badge?: number
   collapsed: boolean
 }) {
   return (
     <>
       <span className={ICON_COL}>
-        <Icon className={cn('w-4 h-4', iconClassName)} />
+        <span className="relative inline-flex">
+          <Icon className={cn('w-4 h-4', iconClassName)} data-sidebar-icon />
+          <UnreadBadge count={badge} />
+        </span>
       </span>
       <span
         className={cn(ROW_LABEL, collapsed && 'opacity-0')}
@@ -89,7 +95,6 @@ function RowBody({
         aria-hidden={collapsed}
       >
         <span className="flex-1 truncate text-left">{label}</span>
-        {trailing}
       </span>
     </>
   )
@@ -167,7 +172,8 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
   const hasMultipleAccounts = accounts.length > 1
   const activeAccount = accounts.find(a => a.id === activeAccountId) ?? accounts.find(a => a.isDefault) ?? accounts[0]
   const resolvedAccountId = activeAccount?.id ?? null
-  const accountColorIdx = activeAccount ? accounts.indexOf(activeAccount) % ACCOUNT_COLORS.length : 0
+  // Rank in the list — AccountAvatar resolves it against the palette.
+  const accountColorIdx = activeAccount ? accounts.indexOf(activeAccount) : 0
 
   const totalUnread = accounts.reduce((sum, a) => sum + (a.unreadCount ?? 0), 0)
   const otherUnread = totalUnread - (activeAccount?.unreadCount ?? 0)
@@ -248,15 +254,8 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
           icon={icon}
           iconClassName={isActive ? 'text-violet-300' : undefined}
           label={label}
+          badge={unread}
           collapsed={collapsed}
-          trailing={unread > 0 ? (
-            <span className={cn(
-              'shrink-0 text-[11px] font-semibold min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center',
-              isActive ? 'bg-white/20 text-white' : 'bg-violet-500/20 text-violet-300'
-            )}>
-              {unread > 99 ? '99+' : unread}
-            </span>
-          ) : undefined}
         />
       </Link>
     )
@@ -265,7 +264,10 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
   return (
     <div
       className="relative flex flex-col h-full bg-gradient-to-b from-zinc-900 via-zinc-950 to-black"
-      style={{ ['--synap-icon-col' as string]: `${SIDEBAR.collapsedWidth}px` }}
+      style={{
+        ['--synap-icon-col' as string]: `${SIDEBAR.collapsedWidth}px`,
+        ['--synap-surface' as string]: SIDEBAR.surface,
+      }}
       data-sidebar
       data-collapsed={collapsed ? 'true' : 'false'}
     >
@@ -279,7 +281,7 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
           className={cn(ROW, ROW_IDLE)}
         >
           <span className={ICON_COL}>
-            <Menu className="w-4 h-4" />
+            <Menu className="w-4 h-4" data-sidebar-icon />
           </span>
         </button>
       </div>
@@ -290,12 +292,19 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
           <button
             ref={accountButtonRef}
             onClick={openAccountMenu}
-            title={otherUnread > 0 ? t('unreadOtherAccounts', { count: otherUnread }) : activeAccount.email}
+            title={otherUnread > 0 ? t('unreadOtherAccounts', { count: otherUnread }) : t('switchAccount')}
+            aria-haspopup="menu"
+            aria-expanded={accountOpen}
             data-sidebar-row="account"
             className={cn(ROW, ROW_IDLE)}
           >
             <span className={ICON_COL}>
-              <span className={cn('w-7 h-7 rounded-full', ACCOUNT_COLORS[accountColorIdx])} />
+              <AccountAvatar
+                account={activeAccount}
+                colorIndex={accountColorIdx}
+                unread={activeAccount.unreadCount ?? 0}
+                data-sidebar-icon
+              />
             </span>
             <span
               className={cn(ROW_LABEL, collapsed && 'opacity-0')}
@@ -310,11 +319,6 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
                   <span className="block text-[11px] text-zinc-500 truncate leading-tight">{activeAccount.email}</span>
                 )}
               </span>
-              {otherUnread > 0 && (
-                <span className="shrink-0 text-[11px] font-semibold min-w-[20px] h-5 px-1.5 rounded-full bg-violet-500/20 text-violet-300 flex items-center justify-center">
-                  {otherUnread > 99 ? '99+' : otherUnread}
-                </span>
-              )}
               <ChevronDown className={cn('w-3.5 h-3.5 text-zinc-500 transition-transform shrink-0', accountOpen && 'rotate-180')} />
             </span>
           </button>
@@ -350,18 +354,18 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
                         active ? 'bg-violet-500/10 text-white' : 'text-zinc-400 hover:text-zinc-100 hover:bg-violet-500/10'
                       )}
                     >
-                      <span className={cn('w-8 h-8 rounded-full shrink-0', ACCOUNT_COLORS[accounts.indexOf(acc) % ACCOUNT_COLORS.length])} />
+                      <AccountAvatar
+                        account={acc}
+                        colorIndex={accounts.indexOf(acc)}
+                        unread={unread}
+                        size="md"
+                      />
                       <span className="flex-1 min-w-0">
                         <span className="block text-sm font-medium truncate leading-tight">{acc.name || acc.email}</span>
                         {acc.name && (
                           <span className="block text-[11px] text-zinc-500 truncate leading-tight">{acc.email}</span>
                         )}
                       </span>
-                      {unread > 0 && (
-                        <span className="shrink-0 text-[11px] font-semibold min-w-[20px] h-5 px-1.5 rounded-full bg-violet-500/20 text-violet-300 flex items-center justify-center">
-                          {unread > 99 ? '99+' : unread}
-                        </span>
-                      )}
                       {active && <Check className="w-3.5 h-3.5 shrink-0 text-violet-400" />}
                     </button>
                   )

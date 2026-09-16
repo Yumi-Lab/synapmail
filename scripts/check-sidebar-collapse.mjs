@@ -37,7 +37,8 @@ const probe = () => {
     horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     rows: rows.map((row, i) => {
       const r = row.getBoundingClientRect()
-      const iconEl = row.querySelector('svg, [class*="rounded-full"]')
+      // Explicit marker — never selector order, which a badge or a decoration could steal.
+      const iconEl = row.querySelector('[data-sidebar-icon]')
       const ic = iconEl?.getBoundingClientRect()
       return {
         key: row.dataset.sidebarRow,
@@ -88,7 +89,16 @@ try {
   const after = await page.evaluate(probe)
   if (after.collapsed !== 'true') { console.error('HARNESS: could not reach the collapsed state'); process.exit(2) }
 
+  const withIcon = s => s.rows.filter(r => r.iconX != null).length
   console.log(`rows measured: expanded=${before.rows.length} collapsed=${after.rows.length}`)
+  console.log(`rows carrying a measurable icon: expanded=${withIcon(before)} collapsed=${withIcon(after)}`)
+  // A row whose icon is skipped is not measured — a selector matching nothing would
+  // otherwise make this check pass vacuously.
+  for (const s of [before, after]) {
+    if (withIcon(s) !== s.rows.length) {
+      failures.push(`${s.rows.length - withIcon(s)} row(s) have no [data-sidebar-icon] while collapsed=${s.collapsed} — unmeasured`)
+    }
+  }
   if (before.rows.length !== after.rows.length) {
     failures.push(`row count changed: ${before.rows.length} → ${after.rows.length} (icons were unmounted)`)
   }

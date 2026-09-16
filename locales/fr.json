@@ -103,7 +103,8 @@
     "reason_attachment": "Pièce jointe",
     "collapseSidebar": "Réduire la barre latérale",
     "expandSidebar": "Agrandir la barre latérale",
-    "folders": "Dossiers"
+    "folders": "Dossiers",
+    "switchAccount": "Changer de compte"
   },
   "compose": {
     "newMessage": "Nouveau message",

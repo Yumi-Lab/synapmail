@@ -103,7 +103,8 @@
     "reason_attachment": "Attachment",
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
-    "folders": "Folders"
+    "folders": "Folders",
+    "switchAccount": "Switch account"
   },
   "compose": {
     "newMessage": "New message",
