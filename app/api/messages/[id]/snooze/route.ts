@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
+import { getAccessibleAccount } from '@/lib/accountAccess'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,11 +13,7 @@ export const dynamic = 'force-dynamic'
 
 async function ownsAccount(accountId: string, userId?: string) {
   if (!accountId || !userId) return false
-  const rows = await query<{ id: string }>(
-    'SELECT id FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-    [accountId, userId],
-  )
-  return rows.length > 0
+  return !!(await getAccessibleAccount(accountId, userId, ['organize']))
 }
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {

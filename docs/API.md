@@ -468,13 +468,24 @@ Import a contact's public key. **Body** `{ email: string; armoredKey: string; fi
 Manage the Bearer keys documented in [Authentication](#authentication) above. This management surface is itself session-only — you can't mint or revoke keys using a key.
 
 ### `GET /api/api-keys` — session only
-`{ data: ApiKey[] }` (active keys only — revoked ones are excluded), where `ApiKey = { id, name, keyPrefix, lastUsedAt: string | null, createdAt }`. Never includes the raw key or its hash.
+`{ data: ApiKey[] }` (active keys only — revoked ones are excluded), where `ApiKey = { id, name, keyPrefix, lastUsedAt: string | null, createdAt, requestCount24h: number }`. Never includes the raw key or its hash. `requestCount24h` is a live `COUNT` over `api_key_requests` in the last 24h (see the logs endpoint below).
 
 ### `POST /api/api-keys` — session only
 **Body** `{ name: string }`, required. Generates `syn_<48 hex chars>`, stores only its SHA-256 hash + 12-char prefix. **Response** `201 { data: ApiKey & { key: string } }` — `key` is the **only time** the raw value is ever returned; it is not retrievable again.
 
 ### `DELETE /api/api-keys/[id]` — session only
 Soft-revoke (`revoked_at = NOW()`) — the key stops authenticating immediately. `{ success: true }` (idempotent — succeeds even if the id doesn't belong to the caller or doesn't exist, since the `UPDATE` predicate just matches zero rows).
+
+### `GET /api/api-keys/[id]/logs?limit=` — session only
+Per-key request log — every successful Bearer authentication against this key (not session-cookie requests) is logged fire-and-forget by `authenticate()` (`lib/apiAuth.ts`): method, path, IP (`X-Forwarded-For`/`X-Real-IP`), timestamp. **Does not log the response status or body** — only that a request came in and was authenticated. `limit` defaults to 50, capped at 200. `404` if the key id isn't owned by the caller. Rows older than 30 days are purged automatically every 6h (`lib/scheduler.ts` → `processApiKeyLogCleanup`) — this is an audit trail, not permanent storage.
+
+**Response** `{ data: ApiKeyRequestLog[] }`, newest first:
+```ts
+interface ApiKeyRequestLog {
+  id: string; method: string; path: string
+  ipAddress: string | null; createdAt: string
+}
+```
 
 ---
 

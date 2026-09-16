@@ -6,6 +6,7 @@ import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, Mai
 import { cn } from '@/lib/utils'
 import useSWR, { mutate as globalMutate } from 'swr'
 import type { Message, Folder, ReadReceipt } from '@/types/email'
+import type { EmailAccount } from '@/types/account'
 import { MessageContextMenu, type ContextMenuState } from '@/components/ui/MessageContextMenu'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
@@ -96,6 +97,14 @@ const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDat
 
 type DensityMode = 'comfortable' | 'compact'
 
+// Account-sharing permissions (defense-in-depth UX gating — the real
+// enforcement lives server-side, see lib/accountAccess.ts). Owned accounts
+// never carry a `permissions` object, so this fallback is fully permissive.
+type MailPermissions = NonNullable<EmailAccount['permissions']>
+const DEFAULT_PERMISSIONS: MailPermissions = {
+  canSend: true, canDelete: true, canOrganize: true, canManageRules: true, canManageSignatures: true,
+}
+
 interface Props {
   folder: string
   selectedUid: string | null
@@ -103,11 +112,13 @@ interface Props {
   onSelectThread: (messages: Message[], subject: string) => void
   activeAccountId?: string | null
   searchInputRef?: React.RefObject<HTMLInputElement>
+  permissions?: MailPermissions
 }
 
 interface AppSettings { thread_view: boolean; messages_per_page: number; mail_density: DensityMode }
 
-export function MessageList({ folder, onSelect, onSelectThread, activeAccountId, searchInputRef }: Props) {
+export function MessageList({ folder, onSelect, onSelectThread, activeAccountId, searchInputRef, permissions }: Props) {
+  const perms = permissions ?? DEFAULT_PERMISSIONS
   const t = useTranslations('mail')
   const [filter, setFilter] = useState<'all' | 'unread'>('all')
   const [page, setPage] = useState(1)
@@ -568,7 +579,7 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
     return (
       <div
         key={thread.key}
-        draggable
+        draggable={perms.canOrganize}
         onDragStart={e => handleDragStart(e, thread)}
         onDragEnd={handleDragEnd}
         onContextMenu={e => handleContextMenu(e, thread)}
@@ -656,7 +667,7 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
 
         {/* corner actions — always visible, out of the text flow */}
         <div className="absolute top-1.5 right-2 flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
-          {archivePath && (
+          {archivePath && perms.canOrganize && (
             <button
               onClick={() => archiveThread(thread)}
               title={t('archiveAction')}
@@ -665,48 +676,54 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
               <Archive className="w-3.5 h-3.5" />
             </button>
           )}
-          <button
-            onClick={() => markThreadRead(thread, !isRead)}
-            title={isRead ? t('markUnread') : t('markDone')}
-            className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-          >
-            {isRead ? <Mail className="w-3.5 h-3.5" /> : <MailOpen className="w-3.5 h-3.5" />}
-          </button>
-          <button
-            onClick={() => apiDelete(msg.uid, msg.accountId || activeAccountId || '')}
-            title={t('delete')}
-            className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-          <div className="relative" ref={snoozeFor === thread.key ? snoozeRef : undefined}>
+          {perms.canOrganize && (
             <button
-              onClick={() => setSnoozeFor(snoozeFor === thread.key ? null : thread.key)}
-              title={t('snooze')}
-              className={cn(
-                'w-6 h-6 flex items-center justify-center rounded transition-colors',
-                snoozeFor === thread.key ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground hover:bg-accent',
-              )}
+              onClick={() => markThreadRead(thread, !isRead)}
+              title={isRead ? t('markUnread') : t('markDone')}
+              className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             >
-              <Clock className="w-3.5 h-3.5" />
+              {isRead ? <Mail className="w-3.5 h-3.5" /> : <MailOpen className="w-3.5 h-3.5" />}
             </button>
-            {snoozeFor === thread.key && (
-              <div className="absolute right-0 top-7 z-50 w-44 bg-popover border border-border rounded-lg shadow-xl py-1">
-                {snoozePresets().map(p => (
-                  <button
-                    key={p.key}
-                    onClick={() => snoozeThread(thread, p.date)}
-                    className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
-                  >
-                    <span>{t(p.key)}</span>
-                    <span className="text-[10px] text-muted-foreground tabular-nums">
-                      {p.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          )}
+          {perms.canDelete && (
+            <button
+              onClick={() => apiDelete(msg.uid, msg.accountId || activeAccountId || '')}
+              title={t('delete')}
+              className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {perms.canOrganize && (
+            <div className="relative" ref={snoozeFor === thread.key ? snoozeRef : undefined}>
+              <button
+                onClick={() => setSnoozeFor(snoozeFor === thread.key ? null : thread.key)}
+                title={t('snooze')}
+                className={cn(
+                  'w-6 h-6 flex items-center justify-center rounded transition-colors',
+                  snoozeFor === thread.key ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground hover:bg-accent',
+                )}
+              >
+                <Clock className="w-3.5 h-3.5" />
+              </button>
+              {snoozeFor === thread.key && (
+                <div className="absolute right-0 top-7 z-50 w-44 bg-popover border border-border rounded-lg shadow-xl py-1">
+                  {snoozePresets().map(p => (
+                    <button
+                      key={p.key}
+                      onClick={() => snoozeThread(thread, p.date)}
+                      className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
+                    >
+                      <span>{t(p.key)}</span>
+                      <span className="text-[10px] text-muted-foreground tabular-nums">
+                        {p.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     )
@@ -750,31 +767,37 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
             }
           </button>
           <span className="text-xs text-primary font-medium mr-1">{checkedUids.size}</span>
-          <button onClick={() => bulkMarkRead(true)} title={t('markRead')} className="ml-auto w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-            <MailOpen className="w-3.5 h-3.5" />
-          </button>
-          <button onClick={() => bulkMarkRead(false)} title={t('markUnread')} className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-            <Mail className="w-3.5 h-3.5" />
-          </button>
-          <div className="relative" ref={moveMenuRef}>
-            <button onClick={() => setShowMoveMenu(v => !v)} title={t('move')} className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-              <MoveRight className="w-3.5 h-3.5" />
-              <ChevronDown className="w-2.5 h-2.5 -ml-0.5" />
-            </button>
-            {showMoveMenu && (
-              <div className="absolute right-0 top-8 z-50 min-w-[180px] max-h-64 overflow-y-auto bg-popover border border-border rounded-lg shadow-lg py-1">
-                {!foldersResponse && <p className="px-3 py-2 text-xs text-muted-foreground">Chargement…</p>}
-                {folders.map(f => (
-                  <button key={f.path} onClick={() => bulkMove(f.path)} className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors truncate">
-                    {f.name}
-                  </button>
-                ))}
+          {perms.canOrganize && (
+            <>
+              <button onClick={() => bulkMarkRead(true)} title={t('markRead')} className="ml-auto w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+                <MailOpen className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => bulkMarkRead(false)} title={t('markUnread')} className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+                <Mail className="w-3.5 h-3.5" />
+              </button>
+              <div className="relative" ref={moveMenuRef}>
+                <button onClick={() => setShowMoveMenu(v => !v)} title={t('move')} className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+                  <MoveRight className="w-3.5 h-3.5" />
+                  <ChevronDown className="w-2.5 h-2.5 -ml-0.5" />
+                </button>
+                {showMoveMenu && (
+                  <div className="absolute right-0 top-8 z-50 min-w-[180px] max-h-64 overflow-y-auto bg-popover border border-border rounded-lg shadow-lg py-1">
+                    {!foldersResponse && <p className="px-3 py-2 text-xs text-muted-foreground">Chargement…</p>}
+                    {folders.map(f => (
+                      <button key={f.path} onClick={() => bulkMove(f.path)} className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors truncate">
+                        {f.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-          <button onClick={bulkDelete} title={t('delete')} className="w-7 h-7 flex items-center justify-center rounded text-destructive hover:bg-destructive/10 transition-colors">
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+            </>
+          )}
+          {perms.canDelete && (
+            <button onClick={bulkDelete} title={t('delete')} className={cn('w-7 h-7 flex items-center justify-center rounded text-destructive hover:bg-destructive/10 transition-colors', !perms.canOrganize && 'ml-auto')}>
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
           <button onClick={clearSelection} className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors" title="Annuler la sélection">
             <X className="w-3.5 h-3.5" />
           </button>

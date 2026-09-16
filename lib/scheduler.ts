@@ -297,6 +297,41 @@ export async function processInboxSync(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// API key request log cleanup — the log is a lightweight audit trail, not
+// indefinite storage; purge anything older than 30 days so it can't grow
+// unbounded on a busy key.
+// ---------------------------------------------------------------------------
+
+const API_LOG_RETENTION_INTERVAL_MS = 6 * 60 * 60_000  // every 6 hours
+
+export async function processApiKeyLogCleanup(): Promise<void> {
+  const deleted = await query<{ id: string }>(
+    `DELETE FROM api_key_requests WHERE created_at < NOW() - INTERVAL '30 days' RETURNING id`,
+  )
+  if (deleted.length) {
+    console.log(`[scheduler/api-log] purged ${deleted.length} request log row(s)`)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Expired share cleanup — the real access boundary is the live expires_at
+// check in lib/accountAccess.ts; this only flips the status so the owner's
+// share list in Settings stops showing a stale "active" badge.
+// ---------------------------------------------------------------------------
+
+export async function processExpiredShares(): Promise<void> {
+  const expired = await query<{ id: string }>(
+    `UPDATE account_shares SET status = 'expired'
+     WHERE status IN ('pending', 'active')
+       AND expires_at IS NOT NULL AND expires_at <= NOW()
+     RETURNING id`
+  )
+  if (expired.length) {
+    console.log(`[scheduler/shares] expired ${expired.length} share(s)`)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Singleton scheduler — starts once per process lifetime
 // ---------------------------------------------------------------------------
 
@@ -321,6 +356,11 @@ export function startScheduler(): void {
     processRules().catch(err => console.error('[scheduler/rules]', err))
   }, 5 * 60_000)
 
+  // Expired share cleanup — every 5 minutes
+  setInterval(() => {
+    processExpiredShares().catch(err => console.error('[scheduler/shares]', err))
+  }, 5 * 60_000)
+
   // Inbox sync (all accounts) — every 3 minutes, plus one pass shortly after boot
   setInterval(() => {
     processInboxSync().catch(err => console.error('[scheduler/sync]', err))
@@ -328,4 +368,12 @@ export function startScheduler(): void {
   setTimeout(() => {
     processInboxSync().catch(err => console.error('[scheduler/sync]', err))
   }, 15_000)
+
+  // API key request log cleanup — every 6 hours, plus one pass shortly after boot
+  setInterval(() => {
+    processApiKeyLogCleanup().catch(err => console.error('[scheduler/api-log]', err))
+  }, API_LOG_RETENTION_INTERVAL_MS)
+  setTimeout(() => {
+    processApiKeyLogCleanup().catch(err => console.error('[scheduler/api-log]', err))
+  }, 30_000)
 }

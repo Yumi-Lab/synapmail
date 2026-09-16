@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
+import { getAccessibleAccount } from '@/lib/accountAccess'
 import { listFolders } from '@/lib/imap'
 
 export const dynamic = 'force-dynamic'
@@ -44,21 +45,25 @@ export async function GET(req: Request) {
   const accountId = searchParams.get('account')
 
   try {
-    const accounts = await query<{
+    type AccountRow = {
       id: string; imap_host: string; imap_port: number; imap_secure: boolean;
       username: string; password_encrypted: string;
       oauth_provider: string | null; oauth_access_token: string | null;
       oauth_refresh_token: string | null; oauth_expires_at: number | null;
-    }>(
-      accountId
-        ? 'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1'
-        : 'SELECT * FROM email_accounts WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1',
-      accountId ? [accountId, authCtx.id] : [authCtx.id]
-    )
+    }
 
-    if (!accounts.length) return NextResponse.json({ data: [] })
+    let account: AccountRow | null
+    if (accountId) {
+      account = await getAccessibleAccount(accountId, authCtx.id, [])
+    } else {
+      const rows = await query<AccountRow>(
+        'SELECT * FROM email_accounts WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1',
+        [authCtx.id]
+      )
+      account = rows[0] ?? null
+    }
 
-    const account = accounts[0]
+    if (!account) return NextResponse.json({ data: [] })
     const folders = await listFolders({
       id: account.id,
       imapHost: account.imap_host,

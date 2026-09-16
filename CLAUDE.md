@@ -34,6 +34,8 @@ app/
   (auth)/
     login/page.tsx              # Login page
     register/page.tsx           # Registration (admin-only after setup)
+    invite/[token]/page.tsx     # Accept-invite page for an account-sharing invitation (public route)
+    invite/[token]/InviteAcceptClient.tsx  # Preview (GET /api/invites/[token]) + set-password form (POST)
   (app)/
     layout.tsx                  # App layout (requires auth) — three-column shell + `modal` parallel slot
     @modal/
@@ -51,8 +53,9 @@ app/
       page.tsx                  # Settings index (server component)
       accounts/
         page.tsx                # Server component — passes searchParams as props (no useSearchParams)
-        AccountsClient.tsx      # Client component — list / add (wizard) / edit modes
+        AccountsClient.tsx      # Client component — list / add (wizard) / edit modes; list is filtered to owned accounts only
         AccountWizard.tsx       # Multi-step wizard: provider grid → credentials → advanced config
+        AccountSharesPanel.tsx  # Expandable per-account panel (Share2 icon) — invite form + share list + revoke
         ErrorBoundary.tsx       # React class error boundary for diagnostic output
       appearance/page.tsx       # Theme + language settings
       composition/page.tsx      # Undo send delay
@@ -70,13 +73,16 @@ app/
   api/
     auth/[...nextauth]/route.ts
     dashboard/route.ts          # GET aggregated command-center overview (KPIs, unread, activity, focus, receipts, scheduled, rules, follow-ups)
-    accounts/route.ts           # GET list (+ per-account INBOX unreadCount, accepts Bearer) / POST create email account (session-only)
+    accounts/route.ts           # GET list — owned UNION ALL active shares, accepts Bearer / POST create email account (session-only)
     accounts/[id]/route.ts      # PATCH update / DELETE remove
     accounts/test/route.ts      # POST test IMAP+SMTP connection
+    accounts/[id]/shares/route.ts        # GET list shares / POST invite (owner-only, session-only)
+    accounts/[id]/shares/[shareId]/route.ts  # DELETE revoke a share (owner-only, soft — sets revoked_at)
     admin/users/route.ts        # GET list / POST create (admin only)
     admin/users/[id]/route.ts   # PATCH role / DELETE (admin only)
     api-keys/route.ts           # GET list (session-only) / POST create — returns the raw key once
     api-keys/[id]/route.ts      # DELETE revoke (soft — sets revoked_at)
+    api-keys/[id]/logs/route.ts # GET recent Bearer requests logged for this key (method, path, IP, timestamp)
     contacts/route.ts           # GET list+search contacts (GET accepts Bearer via lib/apiAuth.ts)
     contacts/[id]/route.ts      # PATCH name / DELETE
     drafts/route.ts             # GET / PUT (upsert) / DELETE — one compose draft per (user, account)
@@ -91,6 +97,7 @@ app/
     messages/[id]/snooze/route.ts  # POST snooze until date / DELETE un-snooze
     messages/[id]/attachment/[partId]/route.ts  # GET download or inline (?inline=true)
     focus/route.ts              # GET light "à traiter" list (reading-pane empty state; shares lib/focus.ts with dashboard)
+    invites/[token]/route.ts    # GET invite preview / POST accept (set name+password, activates the pending user) — public, no auth
     oauth/microsoft/route.ts    # GET initiate OAuth2 flow
     oauth/microsoft/callback/route.ts           # GET OAuth2 callback + token exchange
     pgp/contacts/route.ts       # GET list (+?emails= filter) / POST import a contact's PGP public key
@@ -152,7 +159,8 @@ hooks/
   useKeyboardShortcuts.ts       # Global keyboard shortcuts (c/r/a/f/Delete/#/u/Escape//)
 
 lib/
-  accounts.ts                   # Account helpers (get by ID, default account)
+  accounts.ts                   # Account helpers (get by ID, default account) — owner-only, unaffected by sharing
+  accountAccess.ts              # getAccessibleAccount(id, userId, required[]) — owner OR active non-expired share, with permissions
   apiAuth.ts                    # authenticate(req) — drop-in for auth() that also accepts Authorization: Bearer <api key>
   auth.ts                       # Auth.js config — credentials provider, multi-user
   contacts.ts                   # Contact extraction from emails + upsert logic
@@ -217,8 +225,11 @@ Env file: `/mnt/stockage/docker/synapmail/.env`
 
 ```sql
 -- Users (multi-user support)
-users (id, email, name, password_hash, role, avatar_url, created_at)
+users (id, email, name, password_hash, role, avatar_url, status, created_at)
   role: 'admin' | 'user'
+  status: 'active' | 'pending'  -- 'pending' = auto-created by an account-share invite, not yet
+    -- accepted; login is blocked (lib/auth.ts authorize()) until POST /api/invites/[token] sets
+    -- a real password_hash and flips this to 'active'
 
 -- Email accounts per user
 email_accounts (id, user_id, name, email, imap_host, imap_port, imap_secure,
@@ -253,6 +264,24 @@ api_keys (id, user_id, name, key_prefix, key_hash, last_used_at, revoked_at, cre
   key_prefix: first 12 chars of the raw key, shown in the UI to identify a key
   key_hash: SHA-256 of the raw key (not bcrypt — needs an indexed WHERE key_hash = $1 lookup)
   -- the raw key itself is shown to the user exactly once, at creation (POST /api/api-keys)
+
+-- Per-key request log for Bearer auth — method + path + IP, not response status/body
+api_key_requests (id, api_key_id, method, path, ip_address, created_at)
+  -- written fire-and-forget by lib/apiAuth.ts authenticate() on every successful Bearer auth
+  -- (session-cookie requests are never logged here). Purged past 30 days by the scheduler
+  -- (lib/scheduler.ts processApiKeyLogCleanup, every 6h). Index on (api_key_id, created_at DESC).
+
+-- Account sharing — an owner grants another user fine-grained per-action access to one
+-- of their email_accounts, by email invitation (auto-creates a pending user if unknown)
+account_shares (id, account_id, invited_by, invitee_user_id, status, invite_token_hash,
+                can_send, can_delete, can_organize, can_manage_rules, can_manage_signatures,
+                expires_at, accepted_at, revoked_at, created_at)
+  status: 'pending' | 'active' | 'revoked' | 'expired'
+  -- no can_read column: an active, non-expired row IS read access — see lib/accountAccess.ts
+  -- invite_token_hash: SHA-256 of a syn_-less random token (api_keys pattern), NULL once accepted
+  -- unique partial index on (account_id, invitee_user_id) WHERE status IN ('pending','active') —
+  -- re-inviting the same person upserts permissions in place; re-inviting after a revoke inserts a new row
+  UNIQUE(account_id, invitee_user_id) WHERE status IN ('pending', 'active')
 
 -- Scheduled emails
 scheduled_emails (id, account_id, user_id, from_address, to_addresses, cc, bcc,
@@ -316,8 +345,20 @@ user_pgp_identity (user_id, fingerprint, armored_public_key, created_at, updated
 - Keys are generated as `syn_` + 32 random hex bytes, shown to the user **once** at creation (`POST /api/api-keys`), never stored or logged in cleartext. The server stores only `key_hash` (SHA-256 — not bcrypt, since a Bearer request needs an indexed `WHERE key_hash = $1` lookup by an *unknown* key; bcrypt's random salt makes that impossible) and `key_prefix` (first 12 chars, shown in the UI to identify a key).
 - `middleware.ts` (Edge runtime) cannot query Postgres, so it only checks that *either* the session cookie *or* an `Authorization: Bearer` header is present before letting `/api/*` requests through — the actual hash lookup happens in the Node.js route handler via `authenticate()`.
 - **First lot (read+write)**: `GET /api/accounts`, `GET /api/folders`, `GET /api/messages`, `GET /api/messages/[id]`, `GET /api/messages/search`, `GET /api/messages/thread`, `POST /api/messages/send`, `PATCH`/`DELETE /api/messages/[id]`, `PATCH`/`DELETE /api/messages/bulk`, `GET /api/contacts`. Everything else (admin, PGP, settings/rules/templates/signatures CRUD, OAuth, SSE, track/unsubscribe) stays session-only.
-- Manage keys in Settings → Clés API (`app/(app)/settings/api-keys/page.tsx`): create (name only, raw key shown once in a copyable box), list (name, prefix, last used), revoke (soft — sets `revoked_at`, key stops working immediately).
+- Manage keys in Settings → Clés API (`app/(app)/settings/api-keys/page.tsx`): create (name only, raw key shown once in a copyable box), list (name, prefix, last used, 24h request count), revoke (soft — sets `revoked_at`, key stops working immediately), and per-key activity (expandable panel → `GET /api/api-keys/[id]/logs`, last 50 requests: method, path, IP, timestamp).
+- **Per-key request logging**: every successful Bearer auth (not session-cookie requests) writes a fire-and-forget row to `api_key_requests` (method, path, `X-Forwarded-For`/`X-Real-IP`, timestamp) from inside `authenticate()` — same fire-and-forget pattern as the existing `last_used_at` update, right next to it. `GET /api/api-keys` joins a 24h `COUNT` per key (`requestCount24h`); `GET /api/api-keys/[id]/logs?limit=` (session-only, ownership-checked) returns the raw rows for one key, newest first, capped at 200. `lib/scheduler.ts` → `processApiKeyLogCleanup()` purges rows older than 30 days every 6h (plus one pass 30s after boot) so the table can't grow unbounded on a busy key. Logs the request line only — not the response status or body.
 - No rate-limiting yet — a follow-up if a single key starts driving heavy traffic across many accounts.
+
+### Account sharing — fine-grained access delegation
+- **Access model**: `lib/accountAccess.ts` → `getAccessibleAccount(accountId, userId, required[])` is the single choke point — owner OR an `account_shares` row with `status='active'` and `(expires_at IS NULL OR expires_at > NOW())`. It replaced the ~16 previously-inline `SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2` call sites across `messages/*`, `folders`, `rules/*` (see each route for its required permission). The owner gets all permissions implicitly; a delegate gets exactly their row's `can_*` columns. Missing a required permission returns `null` — same 404 shape as "account not found", never leaking existence. `PATCH`/`DELETE /api/accounts/[id]` and the shares routes themselves stay strictly owner-only (never via `getAccessibleAccount`) — a delegate can never edit credentials or manage sharing, regardless of granted permissions.
+- **Permissions**: `canSend`, `canDelete`, `canOrganize` (mark read/star/move/snooze), `canManageRules`, `canManageSignatures` — five independent booleans per share, no bundled "read/write" toggle. There is no `canRead`: an active non-expired share IS read access. Contacts and `compose_templates` are **never** shared — neither table has an `account_id` column, both stay scoped to the acting user.
+- **Invitation flow** (`POST /api/accounts/[id]/shares`, owner-only): looks up the invited email in `users`. If found, the share activates immediately (`status='active'`, no token) and a notification email goes out. If not found, a `users` row is created on the spot (`status='pending'`, unguessable bcrypt placeholder password) together with a `pending` share carrying a `syn_`-style random token (`crypto.randomBytes(24)`, only its SHA-256 stored in `invite_token_hash` — same pattern as `api_keys`), and an invite email with an accept link goes out. Both emails are relayed through **the shared account's own SMTP credentials** (`lib/smtp.ts` `sendMail()`, decrypted exactly like `lib/scheduler.ts` does) — there is no system-level SMTP config. `POST` upserts on `(account_id, invitee_user_id)` when a pending/active share already exists (so re-inviting the same person just updates permissions); a revoked/expired prior share doesn't block a fresh invite (partial unique index only covers `pending`/`active`).
+- **Acceptance** (`GET`/`POST /api/invites/[token]`, public — `/invite` and `/api/invites` are in `middleware.ts` `PUBLIC_PATHS`): `GET` previews the invite (account email, owner name) for `app/(auth)/invite/[token]/page.tsx`. `POST` sets the invitee's real name/password (`bcrypt.hash(password, 12)`, same cost as self-registration), flips `users.status` and the share's `status` to `active`, and clears `invite_token_hash` (single-use). `lib/auth.ts` `authorize()` refuses login while `users.status !== 'active'`.
+- **Expiration**: the live `expires_at` check inside `getAccessibleAccount` is the actual enforcement — always correct even if the cleanup job hasn't run yet. `lib/scheduler.ts` → `processExpiredShares()` (every 5 min, alongside `processRules`) just flips stale rows to `status='expired'` so the owner's share list stops showing a dead "active" badge.
+- **Delegate visibility**: `GET /api/accounts` is now a `UNION ALL` of owned accounts and active-share accounts, both branches emitting the same `permissions` object (owned = all `true`) plus `isShared`/`ownerName`/`expiresAt` (`null` for owned rows). A shared account is **never** an implicit default (`isDefault` forced `false`) and never comes back from the plain "no accountId given → pick my default account" queries used across the message/folder routes — a delegate must always pass an explicit `accountId`. Settings → Comptes (`AccountsClient.tsx`) filters shared accounts *out* of its list (credentials aren't theirs to edit); the Sidebar account switcher shows them with a violet "Partagé par {owner}" line instead.
+- **Mail UI gating** (`MessageList.tsx`, `ReadingPane.tsx`, `ComposeModal.tsx`): each accepts an optional `permissions`/`canSend` prop, defaulting fully-permissive so owned-account behavior is unchanged. This is UX-only — hides/disables buttons that would otherwise 403 (send, delete, mark/move/snooze, drag-to-move). The real boundary is always `getAccessibleAccount` server-side.
+- **SSE**: `account_share_accepted` event (`lib/schedulerEvents.ts` + `app/api/stream/route.ts`) fires when an invite is accepted, filtered by owner id — wired end-to-end but no toast consumes it yet (follow-up).
+- **Not yet built**: a delegate has no UI path to reach a shared account's rules/signatures pages (the mutation routes are permission-gated, but `getRulesForUser`/signatures GET are still scoped by owner, and neither settings page has an account switcher for a non-owner) — a delegate can act on rules/signatures only through the API directly, not the Rules/Signatures settings pages yet.
 
 ### IMAP (imapflow)
 - Connection pool per account — reuse where possible

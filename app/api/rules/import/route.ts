@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { createRule } from '@/lib/rules'
 import { query } from '@/lib/db'
+import { getAccessibleAccount } from '@/lib/accountAccess'
 import type { EmailRule } from '@/types/rule'
 
 export const dynamic = 'force-dynamic'
@@ -15,12 +16,8 @@ export async function POST(req: Request) {
     const accountId = searchParams.get('account')
     if (!accountId) return NextResponse.json({ error: 'account param required' }, { status: 400 })
 
-    // Verify account ownership
-    const accounts = await query(
-      'SELECT id FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, session.user!.id]
-    )
-    if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+    const account = await getAccessibleAccount(accountId, session.user!.id!, ['manageRules'])
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
     const body = await req.json() as { rules?: Partial<EmailRule>[] }
     if (!Array.isArray(body.rules) || !body.rules.length) {

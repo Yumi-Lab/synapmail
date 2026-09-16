@@ -15,6 +15,9 @@ export interface DbEmailAccount {
   username: string
   password_encrypted: string
   oauth_provider: string | null
+  oauth_access_token: string | null
+  oauth_refresh_token: string | null
+  oauth_expires_at: number | null
   is_default: boolean
   color: string
   created_at: string

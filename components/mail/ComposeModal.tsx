@@ -57,6 +57,10 @@ interface ComposeModalProps {
   initialBody?: string
   onClose: () => void
   onSent: () => void
+  /** Account-sharing permission (defense-in-depth UX gating — the real
+   *  enforcement is server-side, see lib/accountAccess.ts). Defaults to
+   *  true so existing callers / owned accounts are unaffected. */
+  canSend?: boolean
 }
 
 function ToolbarBtn({
@@ -97,7 +101,7 @@ const FIELD_ROW =
   'border-black/10 bg-black/[0.02] dark:border-white/10 dark:bg-white/[0.03] ' +
   'focus-within:border-violet-500 focus-within:bg-violet-500/[0.06] focus-within:ring-2 focus-within:ring-violet-500/40'
 
-export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBody, onClose, onSent }: ComposeModalProps) {
+export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBody, onClose, onSent, canSend = true }: ComposeModalProps) {
   const [toTokens, setToTokens] = useState<string[]>(() => {
     if ((mode === 'reply' || mode === 'replyAll') && replyTo) return [replyTo.from.address]
     return []
@@ -441,6 +445,7 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
   }
 
   const handleSend = async () => {
+    if (!canSend) return
     if (!toTokens.length || !subject.trim()) {
       setError('Destinataire et sujet requis')
       return
@@ -964,7 +969,8 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
           <Button
             size="sm"
             onClick={handleSend}
-            disabled={sending}
+            disabled={sending || !canSend}
+            title={!canSend ? 'Vous n\'avez pas la permission d\'envoyer depuis ce compte' : undefined}
             className="h-9 gap-2 px-6 rounded-full border-0 bg-gradient-to-br from-violet-400 to-blue-400 text-[13px] font-semibold text-white ring-1 ring-inset ring-white/40 shadow-[0_10px_30px_-6px_rgba(139,92,246,0.65)] transition hover:brightness-105 disabled:opacity-60"
           >
             {scheduledAt ? <Clock className="w-4 h-4" /> : <SendHorizonal className="w-4 h-4" />}

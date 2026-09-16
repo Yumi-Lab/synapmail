@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { getRulesForUser, createRule } from '@/lib/rules'
+import { getAccessibleAccount } from '@/lib/accountAccess'
+import { query } from '@/lib/db'
 import type { EmailRule } from '@/types/rule'
 
 export const dynamic = 'force-dynamic'
@@ -33,13 +35,8 @@ export async function POST(req: Request) {
     if (!body.conditions?.length) return NextResponse.json({ error: 'At least one condition required' }, { status: 400 })
     if (!body.actions?.length) return NextResponse.json({ error: 'At least one action required' }, { status: 400 })
 
-    // Verify account belongs to user
-    const { query } = await import('@/lib/db')
-    const accounts = await query(
-      'SELECT id FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [body.accountId, session.user!.id]
-    )
-    if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+    const account = await getAccessibleAccount(body.accountId, session.user!.id!, ['manageRules'])
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
     // Get max priority for this account
     const maxRows = await query<{ max: number | null }>(

@@ -6,10 +6,11 @@ import useSWR from 'swr'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Plus, Pencil, Trash2, Wifi, Mail } from 'lucide-react'
+import { Plus, Pencil, Trash2, Wifi, Mail, Share2 } from 'lucide-react'
 import type { EmailAccount } from '@/types/account'
 import { AccountWizard } from './AccountWizard'
 import type { AccountFormData } from './AccountWizard'
+import { AccountSharesPanel } from './AccountSharesPanel'
 import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -37,7 +38,9 @@ interface Props {
 export function AccountsClient({ initialError, initialSuccess }: Props) {
   const t = useTranslations('settings.accounts')
   const { data: accountsData, mutate } = useSWR<{ data: EmailAccount[] }>('/api/accounts', fetcher)
-  const accounts = accountsData?.data
+  // Credentials/sharing management is owner-only — accounts shared with this user
+  // are visible in the Sidebar account switcher, not editable from this page.
+  const accounts = accountsData?.data?.filter(a => !a.isShared)
 
   const [mode, setMode] = useState<'list' | 'add' | 'edit'>('list')
   const [editId, setEditId] = useState<string | null>(null)
@@ -47,6 +50,7 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
   const [error, setError] = useState(initialError ? decodeURIComponent(initialError) : '')
   const [success, setSuccess] = useState('')
   const [testResult, setTestResult] = useState<{ imap: { ok: boolean; error: string }; smtp: { ok: boolean; error: string } } | null>(null)
+  const [expandedShareId, setExpandedShareId] = useState<string | null>(null)
 
   useEffect(() => {
     if (initialSuccess === 'microsoft') {
@@ -198,21 +202,32 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
 
         <div className="space-y-2.5">
           {accounts?.map(account => (
-            <div key={account.id} className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 shadow-sm">
-              <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: account.color }} />
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-sm">{account.name}</div>
-                <div className="text-xs text-muted-foreground">{account.email}</div>
+            <div key={account.id}>
+              <div className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 shadow-sm">
+                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: account.color }} />
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm">{account.name}</div>
+                  <div className="text-xs text-muted-foreground">{account.email}</div>
+                </div>
+                {account.isDefault && (
+                  <span className="text-xs bg-violet-500/10 text-violet-600 dark:text-violet-400 px-2 py-0.5 rounded-full font-medium">{t('setDefault')}</span>
+                )}
+                <Button
+                  variant="ghost" size="sm" className="h-8 w-8 p-0"
+                  onClick={() => setExpandedShareId(id => id === account.id ? null : account.id)}
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                </Button>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEdit(account)}>
+                  <Pencil className="w-3.5 h-3.5" />
+                </Button>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={() => handleDelete(account.id)}>
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
               </div>
-              {account.isDefault && (
-                <span className="text-xs bg-violet-500/10 text-violet-600 dark:text-violet-400 px-2 py-0.5 rounded-full font-medium">{t('setDefault')}</span>
+              {expandedShareId === account.id && (
+                <AccountSharesPanel accountId={account.id} accountEmail={account.email} />
               )}
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEdit(account)}>
-                <Pencil className="w-3.5 h-3.5" />
-              </Button>
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={() => handleDelete(account.id)}>
-                <Trash2 className="w-3.5 h-3.5" />
-              </Button>
             </div>
           ))}
         </div>

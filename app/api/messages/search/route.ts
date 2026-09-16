@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
+import { getAccessibleAccount } from '@/lib/accountAccess'
 import { searchMessages } from '@/lib/imap'
 
 export const dynamic = 'force-dynamic'
@@ -26,23 +27,19 @@ export async function GET(req: Request) {
   }
 
   try {
-    let sql: string
-    let values: unknown[]
-
+    let account: AccountRow | null
     if (accountParam) {
-      sql = 'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1'
-      values = [accountParam, authCtx.id]
+      account = await getAccessibleAccount(accountParam, authCtx.id, [])
     } else {
-      sql = `SELECT * FROM email_accounts WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1`
-      values = [authCtx.id]
+      const rows = await query<AccountRow>(
+        `SELECT * FROM email_accounts WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1`,
+        [authCtx.id]
+      )
+      account = rows[0] ?? null
     }
-
-    const accounts = await query<AccountRow>(sql, values)
-    if (!accounts.length) {
+    if (!account) {
       return NextResponse.json({ messages: [], error: 'No account configured' })
     }
-
-    const account = accounts[0]
     const messages = await searchMessages(
       {
         id: account.id,

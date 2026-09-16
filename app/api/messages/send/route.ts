@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
+import { getAccessibleAccount } from '@/lib/accountAccess'
 import { sendMail } from '@/lib/smtp'
 import { appendToSentFolder } from '@/lib/imap'
 import { upsertContactsFromAddresses } from '@/lib/contacts'
@@ -29,21 +30,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'accountId, to, and subject are required' }, { status: 400 })
     }
 
-    const accounts = await query<{
-      id: string; email: string;
-      imap_host: string; imap_port: number; imap_secure: boolean;
-      smtp_host: string; smtp_port: number; smtp_secure: boolean;
-      username: string; password_encrypted: string;
-      oauth_provider: string | null; oauth_access_token: string | null;
-      oauth_refresh_token: string | null; oauth_expires_at: number | null;
-    }>(
-      'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, authCtx.id]
-    )
-
-    if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
-
-    const account = accounts[0]
+    const account = await getAccessibleAccount(accountId, authCtx.id, ['send'])
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
     const toArr = Array.isArray(to) ? to : [to]
     const ccArr = cc ? (Array.isArray(cc) ? cc : [cc]) : []

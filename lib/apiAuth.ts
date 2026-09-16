@@ -33,6 +33,18 @@ export async function authenticate(req: Request): Promise<AuthContext | null> {
   )
   if (!rows.length) return null
 
-  query('UPDATE api_keys SET last_used_at = NOW() WHERE id = $1', [rows[0].id]).catch(() => { /* best-effort */ })
+  const apiKeyId = rows[0].id
+  query('UPDATE api_keys SET last_used_at = NOW() WHERE id = $1', [apiKeyId]).catch(() => { /* best-effort */ })
+
+  const ip =
+    req.headers.get('x-forwarded-for')?.split(',')[0].trim() ??
+    req.headers.get('x-real-ip') ??
+    null
+  const path = new URL(req.url).pathname
+  query(
+    'INSERT INTO api_key_requests (api_key_id, method, path, ip_address) VALUES ($1, $2, $3, $4)',
+    [apiKeyId, req.method, path, ip?.slice(0, 45) ?? null]
+  ).catch(() => { /* best-effort */ })
+
   return { id: rows[0].user_id, role: rows[0].role }
 }

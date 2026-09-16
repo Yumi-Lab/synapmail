@@ -21,9 +21,21 @@
       "hasAccount": "Déjà un compte ?",
       "login": "Se connecter",
       "disabled": "Les inscriptions sont actuellement désactivées"
+    },
+    "invite": {
+      "subtitle": "{owner} vous invite à accéder à {email}",
+      "nameLabel": "Nom complet",
+      "passwordLabel": "Mot de passe",
+      "confirmLabel": "Confirmer le mot de passe",
+      "submit": "Accepter l'invitation",
+      "passwordMismatch": "Les mots de passe ne correspondent pas",
+      "invalidToken": "Cette invitation est invalide ou a expiré",
+      "success": "Compte créé — redirection vers la connexion…",
+      "backToLogin": "Retour à la connexion"
     }
   },
   "mail": {
+    "sharedBy": "Partagé par {name}",
     "inbox": "Boîte de réception",
     "sent": "Envoyés",
     "drafts": "Brouillons",
@@ -200,7 +212,32 @@
       "cancel": "Annuler",
       "color": "Couleur",
       "noAccounts": "Aucun compte email configuré",
-      "noAccountsDesc": "Ajoutez votre premier compte email pour commencer"
+      "noAccountsDesc": "Ajoutez votre premier compte email pour commencer",
+      "shares": {
+        "title": "Partage",
+        "noShares": "Ce compte n'est partagé avec personne",
+        "emailPlaceholder": "Adresse email de l'invité",
+        "expiryLabel": "Expiration (optionnel)",
+        "sendInvite": "Envoyer l'invitation",
+        "inviteFailed": "Échec de l'envoi de l'invitation",
+        "revoke": "Révoquer",
+        "revokeConfirm": "Révoquer l'accès de cet invité ?",
+        "emailSendFailedWarning": "L'invitation a été créée mais l'email n'a pas pu être envoyé.",
+        "expiresOn": "Expire le {date}",
+        "status": {
+          "pending": "En attente",
+          "active": "Actif",
+          "revoked": "Révoqué",
+          "expired": "Expiré"
+        },
+        "permissions": {
+          "canSend": "Envoyer des emails",
+          "canDelete": "Supprimer des emails",
+          "canOrganize": "Organiser (marquer, déplacer, reporter)",
+          "canManageRules": "Gérer les règles",
+          "canManageSignatures": "Gérer les signatures"
+        }
+      }
     },
     "profile": {
       "title": "Profil",

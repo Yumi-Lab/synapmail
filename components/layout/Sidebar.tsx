@@ -421,6 +421,11 @@ export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) 
                         {acc.name && (
                           <span className="block text-[11px] text-zinc-500 truncate leading-tight">{acc.email}</span>
                         )}
+                        {acc.isShared && (
+                          <span className="block text-[11px] text-violet-400 truncate leading-tight">
+                            {t('sharedBy', { name: acc.ownerName ?? acc.email })}
+                          </span>
+                        )}
                       </span>
                       {unread > 0 && (
                         <span className="shrink-0 text-[11px] font-semibold min-w-[20px] h-5 px-1.5 rounded-full bg-violet-500/20 text-violet-300 flex items-center justify-center">

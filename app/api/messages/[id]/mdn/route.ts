@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { query } from '@/lib/db'
+import { getAccessibleAccount } from '@/lib/accountAccess'
 import { getMessage } from '@/lib/imap'
 import { decrypt } from '@/lib/encrypt'
 import nodemailer from 'nodemailer'
@@ -20,20 +20,8 @@ export async function POST(
       return NextResponse.json({ error: 'accountId and folder are required' }, { status: 400 })
     }
 
-    const accounts = await query<{
-      id: string; email: string;
-      imap_host: string; imap_port: number; imap_secure: boolean;
-      smtp_host: string; smtp_port: number; smtp_secure: boolean;
-      username: string; password_encrypted: string;
-      oauth_provider: string | null; oauth_access_token: string | null;
-      oauth_refresh_token: string | null; oauth_expires_at: number | null;
-    }>(
-      'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, session.user?.id]
-    )
-    if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
-
-    const account = accounts[0]
+    const account = await getAccessibleAccount(accountId, session.user?.id ?? '', ['send'])
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
     // Fetch the original message to get headers
     const message = await getMessage(

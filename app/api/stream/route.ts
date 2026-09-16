@@ -1,6 +1,6 @@
 import { auth } from '@/lib/auth'
 import { NextResponse } from 'next/server'
-import { schedulerEvents, type ScheduledSentEvent, type RuleAppliedEvent } from '@/lib/schedulerEvents'
+import { schedulerEvents, type ScheduledSentEvent, type RuleAppliedEvent, type AccountShareAcceptedEvent } from '@/lib/schedulerEvents'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,10 +49,21 @@ export async function GET() {
       }
       schedulerEvents.on('rule_applied', onRuleApplied)
 
+      const onShareAccepted = (evt: AccountShareAcceptedEvent) => {
+        if (evt.ownerId !== userId) return
+        try {
+          send({ type: 'account_share_accepted', accountEmail: evt.accountEmail, inviteeEmail: evt.inviteeEmail })
+        } catch {
+          // Stream already closed
+        }
+      }
+      schedulerEvents.on('account_share_accepted', onShareAccepted)
+
       return () => {
         clearInterval(interval)
         schedulerEvents.off('scheduled_sent', onScheduledSent)
         schedulerEvents.off('rule_applied', onRuleApplied)
+        schedulerEvents.off('account_share_accepted', onShareAccepted)
       }
     },
   })

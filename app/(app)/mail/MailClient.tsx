@@ -13,6 +13,7 @@ import { useEmailNotifications } from '@/hooks/useEmailNotifications'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { toast } from '@/components/ui/toast'
 import type { Message } from '@/types/email'
+import type { EmailAccount } from '@/types/account'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -145,7 +146,7 @@ export function MailClient() {
     }
   }, [settingsData])
 
-  const { data: accountsData } = useSWR<{ data: { id: string; email: string; isDefault?: boolean }[] }>(
+  const { data: accountsData } = useSWR<{ data: EmailAccount[] }>(
     '/api/accounts',
     fetcher
   )
@@ -155,6 +156,11 @@ export function MailClient() {
   const activeAccount = accounts.find(a => a.id === resolvedActiveId) ?? accounts[0]
   const accountEmail = activeAccount?.email ?? ''
   const accountId = selectedAccount ?? resolvedActiveId ?? ''
+  // Defense-in-depth only — the API routes are the real permission boundary.
+  // Owned accounts don't carry `permissions` (POST /api/accounts doesn't return it), hence the permissive fallback.
+  const permissions = activeAccount?.permissions ?? {
+    canSend: true, canDelete: true, canOrganize: true, canManageRules: true, canManageSignatures: true,
+  }
 
   // SSE connection — receives scheduled_sent events from the server
   useEffect(() => {
@@ -325,6 +331,7 @@ export function MailClient() {
           onSelectThread={handleSelectThread}
           activeAccountId={resolvedActiveId}
           searchInputRef={searchInputRef}
+          permissions={permissions}
         />
       </div>
 
@@ -366,6 +373,7 @@ export function MailClient() {
               onForward={handleForward}
               onMessageLoaded={handleMessageLoaded}
               onAiReply={(draft) => setAiReplyDraft(draft)}
+              permissions={permissions}
             />
           )}
         </div>
@@ -380,6 +388,7 @@ export function MailClient() {
           initialBody={aiReplyDraft ?? undefined}
           onClose={() => { setComposeMode(null); setComposeReplyTo(null); setAiReplyDraft(null) }}
           onSent={() => { setComposeMode(null); setComposeReplyTo(null); setAiReplyDraft(null) }}
+          canSend={permissions.canSend}
         />
       )}
 

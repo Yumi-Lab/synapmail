@@ -11,6 +11,7 @@ type ApiKeyRow = {
   key_prefix: string
   last_used_at: string | null
   created_at: string
+  request_count_24h?: string
 }
 
 function toApi(r: ApiKeyRow) {
@@ -20,6 +21,7 @@ function toApi(r: ApiKeyRow) {
     keyPrefix: r.key_prefix,
     lastUsedAt: r.last_used_at,
     createdAt: r.created_at,
+    requestCount24h: r.request_count_24h ? parseInt(r.request_count_24h) : 0,
   }
 }
 
@@ -29,9 +31,13 @@ export async function GET() {
 
   try {
     const rows = await query<ApiKeyRow>(
-      `SELECT id, name, key_prefix, last_used_at, created_at
-       FROM api_keys WHERE user_id = $1 AND revoked_at IS NULL
-       ORDER BY created_at DESC`,
+      `SELECT ak.id, ak.name, ak.key_prefix, ak.last_used_at, ak.created_at,
+              COUNT(r.id) FILTER (WHERE r.created_at >= NOW() - INTERVAL '24 hours')::text AS request_count_24h
+       FROM api_keys ak
+       LEFT JOIN api_key_requests r ON r.api_key_id = ak.id
+       WHERE ak.user_id = $1 AND ak.revoked_at IS NULL
+       GROUP BY ak.id
+       ORDER BY ak.created_at DESC`,
       [session.user.id]
     )
     return NextResponse.json({ data: rows.map(toApi) })

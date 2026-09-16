@@ -2,16 +2,47 @@
 
 import { useState } from 'react'
 import useSWR from 'swr'
-import { Plus, Trash2, Terminal, Copy, Check, TriangleAlert } from 'lucide-react'
+import { Plus, Trash2, Terminal, Copy, Check, TriangleAlert, ChevronDown, Activity } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import type { ApiKey } from '@/types/account'
+import type { ApiKey, ApiKeyRequestLog } from '@/types/account'
 import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
+import { cn } from '@/lib/utils'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function formatDateTime(iso: string) {
+  return new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
+function ActivityPanel({ keyId }: { keyId: string }) {
+  const { data, isLoading } = useSWR<{ data: ApiKeyRequestLog[] }>(`/api/api-keys/${keyId}/logs`, fetcher)
+  const logs = data?.data ?? []
+
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3">
+      {isLoading && <p className="text-xs text-muted-foreground">Chargement…</p>}
+      {!isLoading && logs.length === 0 && (
+        <p className="text-xs text-muted-foreground">Aucune requête enregistrée pour cette clé.</p>
+      )}
+      {logs.length > 0 && (
+        <div className="space-y-1.5 max-h-64 overflow-y-auto">
+          {logs.map(log => (
+            <div key={log.id} className="flex items-center gap-2 text-xs">
+              <span className="shrink-0 w-14 font-mono font-medium text-muted-foreground">{log.method}</span>
+              <span className="flex-1 min-w-0 truncate font-mono">{log.path}</span>
+              <span className="shrink-0 text-muted-foreground">{log.ipAddress ?? '—'}</span>
+              <span className="shrink-0 text-muted-foreground">{formatDateTime(log.createdAt)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function ApiKeysPage() {
@@ -24,6 +55,7 @@ export default function ApiKeysPage() {
   const [error, setError] = useState<string | null>(null)
   const [revealedKey, setRevealedKey] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [expandedKeyId, setExpandedKeyId] = useState<string | null>(null)
 
   const createKey = async () => {
     if (!newName.trim()) { setError('Nom requis'); return }
@@ -127,25 +159,42 @@ export default function ApiKeysPage() {
       )}
 
       <div className="space-y-3">
-        {keys.map(key => (
-          <div key={key.id} className="border border-border rounded-xl bg-card shadow-sm p-4 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="font-medium text-sm">{key.name}</div>
-              <div className="text-xs text-muted-foreground mt-0.5 font-mono">{key.keyPrefix}…</div>
-              <div className="text-xs text-muted-foreground mt-1">
-                Créée le {formatDate(key.createdAt)}
-                {key.lastUsedAt ? ` · Dernière utilisation le ${formatDate(key.lastUsedAt)}` : ' · Jamais utilisée'}
+        {keys.map(key => {
+          const expanded = expandedKeyId === key.id
+          return (
+            <div key={key.id} className="border border-border rounded-xl bg-card shadow-sm p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-medium text-sm">{key.name}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5 font-mono">{key.keyPrefix}…</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Créée le {formatDate(key.createdAt)}
+                    {key.lastUsedAt ? ` · Dernière utilisation le ${formatDate(key.lastUsedAt)}` : ' · Jamais utilisée'}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => setExpandedKeyId(expanded ? null : key.id)}
+                    className="h-8 px-2.5 flex items-center gap-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    title="Voir l'activité récente"
+                  >
+                    <Activity className="w-3.5 h-3.5" />
+                    {key.requestCount24h > 0 ? `${key.requestCount24h} / 24h` : 'Activité'}
+                    <ChevronDown className={cn('w-3 h-3 transition-transform', expanded && 'rotate-180')} />
+                  </button>
+                  <button
+                    onClick={() => revokeKey(key.id)}
+                    className="w-8 h-8 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    title="Révoquer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
+              {expanded && <ActivityPanel keyId={key.id} />}
             </div>
-            <button
-              onClick={() => revokeKey(key.id)}
-              className="w-8 h-8 shrink-0 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-              title="Révoquer"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </SettingsPage>
   )

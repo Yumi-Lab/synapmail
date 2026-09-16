@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
-import { query } from '@/lib/db'
+import { getAccessibleAccount } from '@/lib/accountAccess'
 import { getMessage, deleteMessage, markRead, markStarred } from '@/lib/imap'
 
 export const dynamic = 'force-dynamic'
@@ -41,13 +41,10 @@ export async function GET(
   if (!accountId) return NextResponse.json({ error: 'account param required' }, { status: 400 })
 
   try {
-    const accounts = await query<AccountRow>(
-      'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, authCtx.id]
-    )
-    if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+    const account = await getAccessibleAccount(accountId, authCtx.id, [])
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
-    const message = await getMessage(accountConfig(accounts[0]), folder, params.id)
+    const message = await getMessage(accountConfig(account), folder, params.id)
     if (!message) return NextResponse.json({ error: 'Message not found' }, { status: 404 })
 
     return NextResponse.json({ ...message, accountId })
@@ -73,13 +70,10 @@ export async function PATCH(
     const body = await req.json()
     const { isRead, isStarred } = body as { isRead?: boolean; isStarred?: boolean }
 
-    const accounts = await query<AccountRow>(
-      'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, authCtx.id]
-    )
-    if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+    const account = await getAccessibleAccount(accountId, authCtx.id, ['organize'])
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
-    const config = accountConfig(accounts[0])
+    const config = accountConfig(account)
 
     if (isRead !== undefined) {
       await markRead(config, folder, params.id, isRead)
@@ -108,13 +102,10 @@ export async function DELETE(
   if (!accountId) return NextResponse.json({ error: 'account param required' }, { status: 400 })
 
   try {
-    const accounts = await query<AccountRow>(
-      'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, authCtx.id]
-    )
-    if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+    const account = await getAccessibleAccount(accountId, authCtx.id, ['delete'])
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
-    await deleteMessage(accountConfig(accounts[0]), folder, params.id)
+    await deleteMessage(accountConfig(account), folder, params.id)
     return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

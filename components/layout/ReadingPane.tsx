@@ -12,6 +12,7 @@ import { buildIframeHtml, hardenIframeLinks } from '@/lib/email-iframe'
 import { cn } from '@/lib/utils'
 import { isInlinePgpMessage, extractInlinePgpMessage } from '@/lib/pgp'
 import { PgpDecryptPrompt } from '@/components/mail/PgpDecryptPrompt'
+import type { EmailAccount } from '@/types/account'
 
 const fetcher = async (url: string) => {
   const r = await fetch(url)
@@ -726,6 +727,14 @@ function EmailBody({ message }: { message: Message }) {
   )
 }
 
+// Account-sharing permissions (defense-in-depth UX gating — the real
+// enforcement lives server-side, see lib/accountAccess.ts). Owned accounts
+// never carry a `permissions` object, so this fallback is fully permissive.
+type MailPermissions = NonNullable<EmailAccount['permissions']>
+const DEFAULT_PERMISSIONS: MailPermissions = {
+  canSend: true, canDelete: true, canOrganize: true, canManageRules: true, canManageSignatures: true,
+}
+
 interface Props {
   uid: string | null
   accountId: string | null
@@ -737,6 +746,7 @@ interface Props {
   onForward?: (msg: Message) => void
   onMessageLoaded?: (msg: Message) => void
   onAiReply?: (draft: string) => void
+  permissions?: MailPermissions
 }
 
 type FocusReason = 'invoice' | 'deadline' | 'reply' | 'vip' | 'frequent' | 'starred' | 'attachment'
@@ -772,8 +782,9 @@ const REASON_CLASS: Record<FocusReason, string> = {
   attachment: 'text-muted-foreground border-border bg-muted',
 }
 
-export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete, onReply, onReplyAll, onForward, onMessageLoaded, onAiReply }: Props) {
+export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete, onReply, onReplyAll, onForward, onMessageLoaded, onAiReply, permissions }: Props) {
   const t = useTranslations('mail')
+  const perms = permissions ?? DEFAULT_PERMISSIONS
   const [isStarred, setIsStarred] = useState<boolean | null>(null)
 
   const swrKey = uid && accountId
@@ -799,7 +810,7 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
     if (message) {
       setIsStarred(message.isStarred)
       onMessageLoaded?.(message)
-      if (!message.isRead && accountId) {
+      if (!message.isRead && accountId && perms.canOrganize) {
         fetch(`/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -962,30 +973,40 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
 
       {/* Actions */}
       <div className="flex items-center gap-1.5 px-4 py-2 border-b border-border shrink-0">
-        <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs" onClick={() => onReply?.(message)}>
-          <Reply className="w-3.5 h-3.5" /> {t('reply')}
-        </Button>
-        <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs" onClick={() => onReplyAll?.(message)}>
-          <ReplyAll className="w-3.5 h-3.5" /> {t('replyAll')}
-        </Button>
-        <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs" onClick={() => onForward?.(message)}>
-          <Forward className="w-3.5 h-3.5" /> {t('forward')}
-        </Button>
+        {perms.canSend && (
+          <>
+            <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs" onClick={() => onReply?.(message)}>
+              <Reply className="w-3.5 h-3.5" /> {t('reply')}
+            </Button>
+            <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs" onClick={() => onReplyAll?.(message)}>
+              <ReplyAll className="w-3.5 h-3.5" /> {t('replyAll')}
+            </Button>
+            <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs" onClick={() => onForward?.(message)}>
+              <Forward className="w-3.5 h-3.5" /> {t('forward')}
+            </Button>
+          </>
+        )}
         <div className="flex-1" />
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn('h-8 w-8 p-0', starred && 'text-yellow-500 hover:text-yellow-600')}
-          onClick={handleStar}
-        >
-          <Star className={cn('w-3.5 h-3.5', starred && 'fill-current')} />
-        </Button>
-        <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-          <Archive className="w-3.5 h-3.5" />
-        </Button>
-        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={handleDelete}>
-          <Trash2 className="w-3.5 h-3.5" />
-        </Button>
+        {perms.canOrganize && (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn('h-8 w-8 p-0', starred && 'text-yellow-500 hover:text-yellow-600')}
+              onClick={handleStar}
+            >
+              <Star className={cn('w-3.5 h-3.5', starred && 'fill-current')} />
+            </Button>
+            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+              <Archive className="w-3.5 h-3.5" />
+            </Button>
+          </>
+        )}
+        {perms.canDelete && (
+          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={handleDelete}>
+            <Trash2 className="w-3.5 h-3.5" />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"

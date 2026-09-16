@@ -14,6 +14,13 @@ export type RuleAppliedEvent = {
   folder: string
 }
 
+export type AccountShareAcceptedEvent = {
+  ownerId: string
+  accountId: string
+  accountEmail: string
+  inviteeEmail: string
+}
+
 // Singleton event bus — scheduler emits, SSE streams consume
 export const schedulerEvents = new EventEmitter()
 schedulerEvents.setMaxListeners(200) // one per SSE connection

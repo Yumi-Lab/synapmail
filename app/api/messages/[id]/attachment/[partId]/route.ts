@@ -1,16 +1,9 @@
 import { auth } from '@/lib/auth'
-import { query } from '@/lib/db'
+import { getAccessibleAccount } from '@/lib/accountAccess'
 import { createClient } from '@/lib/imap'
 import { simpleParser } from 'mailparser'
 
 export const dynamic = 'force-dynamic'
-
-type AccountRow = {
-  id: string; imap_host: string; imap_port: number; imap_secure: boolean;
-  username: string; password_encrypted: string;
-  oauth_provider: string | null; oauth_access_token: string | null;
-  oauth_refresh_token: string | null; oauth_expires_at: number | null;
-}
 
 export async function GET(
   req: Request,
@@ -27,13 +20,9 @@ export async function GET(
   if (!accountId) return new Response('account param required', { status: 400 })
 
   try {
-    const accounts = await query<AccountRow>(
-      'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, session.user?.id]
-    )
-    if (!accounts.length) return new Response('Account not found', { status: 404 })
+    const account = await getAccessibleAccount(accountId, session.user?.id ?? '', [])
+    if (!account) return new Response('Account not found', { status: 404 })
 
-    const account = accounts[0]
     const imapClient = await createClient({
       id: account.id,
       imapHost: account.imap_host,

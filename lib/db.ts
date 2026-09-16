@@ -326,6 +326,59 @@ export async function initDb(): Promise<void> {
     )
   `)
   await query(`CREATE INDEX IF NOT EXISTS api_keys_hash_idx ON api_keys(key_hash)`)
+
+  // Journal des requêtes Bearer par clé — un log léger (méthode + chemin + IP), pas les
+  // requêtes de session. Alimenté fire-and-forget par lib/apiAuth.ts à chaque auth réussie ;
+  // purgé par le scheduler au-delà de 30 jours (voir lib/scheduler.ts processApiKeyLogCleanup).
+  await query(`
+    CREATE TABLE IF NOT EXISTS api_key_requests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      api_key_id UUID NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+      method VARCHAR(10) NOT NULL,
+      path TEXT NOT NULL,
+      ip_address VARCHAR(45),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS api_key_requests_key_idx ON api_key_requests(api_key_id, created_at DESC)`)
+
+  // Invité en attente d'acceptation : bloque la connexion tant que le mot de passe placeholder
+  // n'a pas été remplacé via /api/invites/[token] (voir account_shares ci-dessous)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'`)
+
+  // Partage de compte — invitation d'un autre utilisateur avec permissions fines par action.
+  // Pas de colonne can_read : l'existence d'une ligne status='active' EST le droit de lecture ;
+  // il n'y a pas de cas d'usage pour "invité mais lecture coupée" en v1.
+  await query(`
+    CREATE TABLE IF NOT EXISTS account_shares (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      invited_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      invitee_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'active', 'revoked', 'expired')),
+      invite_token_hash VARCHAR(64),
+      can_send BOOLEAN NOT NULL DEFAULT false,
+      can_delete BOOLEAN NOT NULL DEFAULT false,
+      can_organize BOOLEAN NOT NULL DEFAULT false,
+      can_manage_rules BOOLEAN NOT NULL DEFAULT false,
+      can_manage_signatures BOOLEAN NOT NULL DEFAULT false,
+      expires_at TIMESTAMPTZ,
+      accepted_at TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS account_shares_account_idx ON account_shares(account_id)`)
+  await query(`CREATE INDEX IF NOT EXISTS account_shares_invitee_idx ON account_shares(invitee_user_id)`)
+  await query(`CREATE INDEX IF NOT EXISTS account_shares_token_hash_idx ON account_shares(invite_token_hash)`)
+  // Empêche un second partage pending/active vers la même personne pour le même compte ;
+  // une relance après révocation insère simplement une nouvelle ligne (l'ancienne reste en historique)
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS account_shares_active_unique_idx
+    ON account_shares(account_id, invitee_user_id)
+    WHERE status IN ('pending', 'active')
+  `)
 }
 
 export default pool

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
+import { getAccessibleAccount } from '@/lib/accountAccess'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +31,11 @@ export async function POST(req: Request) {
     const { name, contentHtml, isDefault = false, accountId = null } = body
 
     if (!name) return NextResponse.json({ error: 'Name is required' }, { status: 400 })
+
+    if (accountId) {
+      const account = await getAccessibleAccount(accountId, session.user!.id!, ['manageSignatures'])
+      if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+    }
 
     if (isDefault) {
       await query(

@@ -7,7 +7,7 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { getRuleById, testRule } from '@/lib/rules'
 import { listMessages } from '@/lib/imap'
-import { query } from '@/lib/db'
+import { getAccessibleAccount } from '@/lib/accountAccess'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,19 +23,9 @@ export async function POST(req: Request, { params }: Ctx) {
     const rule = await getRuleById(params.id, session.user!.id!)
     if (!rule) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-    // Load account
-    const accounts = await query<{
-      id: string; imap_host: string; imap_port: number; imap_secure: boolean;
-      username: string; password_encrypted: string;
-      oauth_provider: string | null; oauth_access_token: string | null;
-      oauth_refresh_token: string | null; oauth_expires_at: number | null;
-    }>(
-      'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [rule.accountId, session.user!.id]
-    )
-    if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+    const account = await getAccessibleAccount(rule.accountId, session.user!.id!, ['manageRules'])
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
-    const account = accounts[0]
     const accountConfig = {
       id: account.id,
       imapHost: account.imap_host,

@@ -280,9 +280,10 @@ curl -H "Authorization: Bearer syn_..." https://your-instance/api/accounts
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/api-keys` | List your API keys (name, prefix, last used) |
+| `GET` | `/api/api-keys` | List your API keys (name, prefix, last used, 24h request count) |
 | `POST` | `/api/api-keys` | Create an API key — returns the raw key once |
 | `DELETE` | `/api/api-keys/[id]` | Revoke an API key |
+| `GET` | `/api/api-keys/[id]/logs` | Recent requests logged for one key (method, path, IP, time) |
 
 ### Drafts
 

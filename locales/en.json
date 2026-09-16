@@ -21,9 +21,21 @@
       "hasAccount": "Already have an account?",
       "login": "Sign in",
       "disabled": "Registration is currently disabled"
+    },
+    "invite": {
+      "subtitle": "{owner} is inviting you to access {email}",
+      "nameLabel": "Full name",
+      "passwordLabel": "Password",
+      "confirmLabel": "Confirm password",
+      "submit": "Accept invitation",
+      "passwordMismatch": "Passwords do not match",
+      "invalidToken": "This invitation is invalid or has expired",
+      "success": "Account created — redirecting to sign in…",
+      "backToLogin": "Back to sign in"
     }
   },
   "mail": {
+    "sharedBy": "Shared by {name}",
     "inbox": "Inbox",
     "sent": "Sent",
     "drafts": "Drafts",
@@ -200,7 +212,32 @@
       "cancel": "Cancel",
       "color": "Color",
       "noAccounts": "No email accounts configured",
-      "noAccountsDesc": "Add your first email account to get started"
+      "noAccountsDesc": "Add your first email account to get started",
+      "shares": {
+        "title": "Sharing",
+        "noShares": "This account isn't shared with anyone",
+        "emailPlaceholder": "Invitee's email address",
+        "expiryLabel": "Expiration (optional)",
+        "sendInvite": "Send invitation",
+        "inviteFailed": "Failed to send invitation",
+        "revoke": "Revoke",
+        "revokeConfirm": "Revoke this invitee's access?",
+        "emailSendFailedWarning": "The invitation was created but the email could not be sent.",
+        "expiresOn": "Expires on {date}",
+        "status": {
+          "pending": "Pending",
+          "active": "Active",
+          "revoked": "Revoked",
+          "expired": "Expired"
+        },
+        "permissions": {
+          "canSend": "Send emails",
+          "canDelete": "Delete emails",
+          "canOrganize": "Organize (mark, move, snooze)",
+          "canManageRules": "Manage rules",
+          "canManageSignatures": "Manage signatures"
+        }
+      }
     },
     "profile": {
       "title": "Profile",

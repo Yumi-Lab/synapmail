@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
-import { query } from '@/lib/db'
+import { getAccessibleAccount } from '@/lib/accountAccess'
 import { markReadBulk, deleteMessagesBulk, moveMessagesBulk } from '@/lib/imap'
 
 export const dynamic = 'force-dynamic'
@@ -46,13 +46,10 @@ export async function PATCH(req: Request) {
   }
 
   try {
-    const accounts = await query<AccountRow>(
-      'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, authCtx.id]
-    )
-    if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+    const account = await getAccessibleAccount(accountId, authCtx.id, ['organize'])
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
-    const config = accountConfig(accounts[0])
+    const config = accountConfig(account)
 
     if (action === 'read') {
       await markReadBulk(config, folder, uids, true)
@@ -88,13 +85,10 @@ export async function DELETE(req: Request) {
   }
 
   try {
-    const accounts = await query<AccountRow>(
-      'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, authCtx.id]
-    )
-    if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+    const account = await getAccessibleAccount(accountId, authCtx.id, ['delete'])
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
-    await deleteMessagesBulk(accountConfig(accounts[0]), folder, uids)
+    await deleteMessagesBulk(accountConfig(account), folder, uids)
     return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

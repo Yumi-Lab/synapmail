@@ -16,10 +16,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (!credentials?.email || !credentials?.password) return null
         const users = await query<{
           id: string; email: string; name: string;
-          password_hash: string; role: string; avatar_url: string
+          password_hash: string; role: string; avatar_url: string; status: string
         }>('SELECT * FROM users WHERE email = $1 LIMIT 1', [credentials.email as string])
         if (!users.length) return null
         const user = users[0]
+        if (user.status !== 'active') return null
         const valid = await bcrypt.compare(credentials.password as string, user.password_hash)
         if (!valid) return null
         return { id: user.id, email: user.email, name: user.name, role: user.role, image: user.avatar_url }
