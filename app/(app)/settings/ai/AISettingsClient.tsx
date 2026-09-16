@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/ui/PasswordInput'
 import { cn } from '@/lib/utils'
 import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
 
@@ -305,8 +306,7 @@ export function AISettingsClient() {
                   </a>
                 )}
               </div>
-              <Input
-                type="password"
+              <PasswordInput
                 value={apiKey}
                 onChange={e => setApiKey(e.target.value)}
                 placeholder={settings?.hasApiKey && provider === settings.provider ? '••••••••• (clé déjà enregistrée)' : selected.keyPlaceholder}

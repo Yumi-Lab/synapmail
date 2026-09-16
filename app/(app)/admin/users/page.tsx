@@ -5,6 +5,7 @@ import useSWR from 'swr'
 import { UserPlus, Trash2, ShieldCheck, User as UserIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/ui/PasswordInput'
 import { cn } from '@/lib/utils'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -93,7 +94,7 @@ export default function AdminUsersPage() {
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Mot de passe</label>
-              <Input value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" type="password" className="h-8 text-sm" />
+              <PasswordInput value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" className="h-8 text-sm" />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Rôle</label>

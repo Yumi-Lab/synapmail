@@ -542,6 +542,8 @@
     "search": "Search",
     "refresh": "Refresh",
     "close": "Close",
-    "noResults": "No results found"
+    "noResults": "No results found",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password"
   }
 }
