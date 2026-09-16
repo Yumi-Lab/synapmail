@@ -11,6 +11,7 @@ import {
 import { cn } from '@/lib/utils'
 import useSWR from 'swr'
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import type { EmailAccount } from '@/types/account'
 import { ACCENT, AccountAvatar, UnreadBadge } from './AccountAvatar'
 
@@ -462,9 +463,14 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
       </nav>
 
       <div className="border-t border-border py-1">
-        {/* Slot filled by the lane `theme` at integration time — the ThemeToggle
-            drops in here, above Settings, and inherits the ROW motif. */}
-        <div data-sidebar-slot="theme-toggle" />
+        {/* Theme toggle: horizontal in the open bar, vertical (compact) in the
+            56 px rail so it stays clickable when the bar is folded. */}
+        <div
+          data-sidebar-slot="theme-toggle"
+          className={cn('py-1', collapsed ? 'flex justify-center' : 'px-3')}
+        >
+          <ThemeToggle compact={collapsed} />
+        </div>
         <Link
           href="/settings"
           onClick={() => handleFolderClick()}
