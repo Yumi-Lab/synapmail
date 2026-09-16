@@ -21,9 +21,21 @@
       "hasAccount": "已有账户？",
       "login": "登录",
       "disabled": "当前已关闭注册"
+    },
+    "invite": {
+      "subtitle": "{owner} 邀请您访问 {email}",
+      "nameLabel": "姓名",
+      "passwordLabel": "密码",
+      "confirmLabel": "确认密码",
+      "submit": "接受邀请",
+      "passwordMismatch": "两次输入的密码不一致",
+      "invalidToken": "此邀请无效或已过期",
+      "success": "账户已创建，正在跳转到登录页…",
+      "backToLogin": "返回登录"
     }
   },
   "mail": {
+    "sharedBy": "由 {name} 共享",
     "inbox": "收件箱",
     "sent": "已发送",
     "drafts": "草稿",
@@ -200,7 +212,32 @@
       "cancel": "取消",
       "color": "颜色",
       "noAccounts": "尚未配置邮件账户",
-      "noAccountsDesc": "添加第一个邮件账户即可开始使用"
+      "noAccountsDesc": "添加第一个邮件账户即可开始使用",
+      "shares": {
+        "title": "共享",
+        "noShares": "此账户尚未与任何人共享",
+        "emailPlaceholder": "受邀人的邮箱地址",
+        "expiryLabel": "有效期（可选）",
+        "sendInvite": "发送邀请",
+        "inviteFailed": "邀请发送失败",
+        "revoke": "撤销",
+        "revokeConfirm": "撤销该受邀人的访问权限？",
+        "emailSendFailedWarning": "邀请已创建，但邮件未能发送。",
+        "expiresOn": "{date} 到期",
+        "status": {
+          "pending": "待接受",
+          "active": "已生效",
+          "revoked": "已撤销",
+          "expired": "已过期"
+        },
+        "permissions": {
+          "canSend": "发送邮件",
+          "canDelete": "删除邮件",
+          "canOrganize": "整理（标记、移动、稍后处理）",
+          "canManageRules": "管理规则",
+          "canManageSignatures": "管理签名"
+        }
+      }
     },
     "profile": {
       "title": "个人资料",
@@ -505,6 +542,8 @@
     "search": "搜索",
     "refresh": "刷新",
     "close": "关闭",
-    "noResults": "没有找到结果"
+    "noResults": "没有找到结果",
+    "showPassword": "显示密码",
+    "hidePassword": "隐藏密码"
   }
 }
