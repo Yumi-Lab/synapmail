@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { markReadBulk, deleteMessagesBulk, moveMessagesBulk } from '@/lib/imap'
 
@@ -29,8 +29,8 @@ function accountConfig(a: AccountRow) {
 
 // PATCH — mark read/unread or move
 export async function PATCH(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const authCtx = await authenticate(req)
+  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
   const { uids, action, accountId, folder, destination } = body as {
@@ -48,7 +48,7 @@ export async function PATCH(req: Request) {
   try {
     const accounts = await query<AccountRow>(
       'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, session.user?.id]
+      [accountId, authCtx.id]
     )
     if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
@@ -73,8 +73,8 @@ export async function PATCH(req: Request) {
 
 // DELETE — delete multiple messages
 export async function DELETE(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const authCtx = await authenticate(req)
+  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
   const { uids, accountId, folder } = body as {
@@ -90,7 +90,7 @@ export async function DELETE(req: Request) {
   try {
     const accounts = await query<AccountRow>(
       'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, session.user?.id]
+      [accountId, authCtx.id]
     )
     if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 

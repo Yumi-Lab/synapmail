@@ -6,11 +6,11 @@ import { useTranslations } from 'next-intl'
 import {
   Mail, Send, FileText, AlertTriangle, Trash2,
   Settings, PenSquare, Folder, Archive, X, ChevronDown, ChevronLeft, ChevronRight, RefreshCw,
-  LayoutDashboard,
+  LayoutDashboard, Check,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import useSWR from 'swr'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import type { EmailAccount } from '@/types/account'
 
@@ -53,8 +53,10 @@ export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) 
   const pathname = usePathname()
   const [currentFolder, setCurrentFolder] = useState('INBOX')
   const [accountOpen, setAccountOpen] = useState(false)
+  const [accountFilter, setAccountFilter] = useState('')
+  const accountBoxRef = useRef<HTMLDivElement>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
-  // Read from localStorage after mount (see effect below) rather than in the
+  // Populated from /api/settings after mount (see effect below) rather than in the
   // initializer, so the server and first client render match (no hydration mismatch).
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null)
 
@@ -65,8 +67,31 @@ export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) 
     }
   }, [pathname])
 
+  // Close the account dropdown on outside click / Escape
   useEffect(() => {
-    setActiveAccountId(localStorage.getItem('synapmail:activeAccountId'))
+    if (!accountOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (accountBoxRef.current && !accountBoxRef.current.contains(e.target as Node)) setAccountOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setAccountOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [accountOpen])
+
+  useEffect(() => {
+    if (!accountOpen) setAccountFilter('')
+  }, [accountOpen])
+
+  const { data: settingsData } = useSWR<{ data: { active_account_id: string | null } }>('/api/settings', fetcher)
+  useEffect(() => {
+    if (settingsData?.data?.active_account_id) setActiveAccountId(settingsData.data.active_account_id)
+  }, [settingsData])
+
+  useEffect(() => {
     const handler = (e: Event) => {
       setActiveAccountId((e as CustomEvent<string>).detail)
     }
@@ -74,10 +99,12 @@ export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) 
     return () => window.removeEventListener('synapmail:account-change', handler)
   }, [])
 
+  // refreshInterval keeps the per-account unread counts fresh even while the
+  // switcher is closed (counts come from messages_cache — see GET /api/accounts).
   const { data: accountsData } = useSWR<{ data: EmailAccount[] }>(
     '/api/accounts',
     fetcher,
-    { revalidateOnFocus: false }
+    { revalidateOnFocus: true, refreshInterval: 60000 }
   )
 
   const accounts = accountsData?.data ?? []
@@ -85,6 +112,13 @@ export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) 
   const activeAccount = accounts.find(a => a.id === activeAccountId) ?? accounts.find(a => a.isDefault) ?? accounts[0]
   const resolvedAccountId = activeAccount?.id ?? null
   const accountColorIdx = activeAccount ? accounts.indexOf(activeAccount) % ACCOUNT_COLORS.length : 0
+
+  const totalUnread = accounts.reduce((sum, a) => sum + (a.unreadCount ?? 0), 0)
+  const otherUnread = totalUnread - (activeAccount?.unreadCount ?? 0)
+  const filteredAccounts = accounts.filter(acc => {
+    const q = accountFilter.trim().toLowerCase()
+    return !q || acc.email.toLowerCase().includes(q) || (acc.name ?? '').toLowerCase().includes(q)
+  })
 
   const { data: foldersData, error: foldersError, mutate: mutateFolders } = useSWR<{ data: FolderItem[] }>(
     resolvedAccountId ? `/api/folders?account=${resolvedAccountId}` : '/api/folders',
@@ -99,9 +133,13 @@ export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) 
 
   const switchAccount = (id: string) => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('synapmail:activeAccountId', id)
       window.dispatchEvent(new CustomEvent('synapmail:account-change', { detail: id }))
     }
+    fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active_account_id: id }),
+    })
     setActiveAccountId(id)
     setAccountOpen(false)
   }
@@ -149,11 +187,18 @@ export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) 
 
         {/* Account dot */}
         {activeAccount && hasMultipleAccounts && (
-          <button
-            onClick={onToggleCollapse}
-            title={activeAccount.email}
-            className={cn('w-7 h-7 rounded-full mb-1 transition-all hover:ring-2 hover:ring-white/30 shrink-0', ACCOUNT_COLORS[accountColorIdx])}
-          />
+          <div className="relative mb-1 shrink-0">
+            <button
+              onClick={onToggleCollapse}
+              title={otherUnread > 0 ? t('unreadOtherAccounts', { count: otherUnread }) : activeAccount.email}
+              className={cn('block w-7 h-7 rounded-full transition-all hover:ring-2 hover:ring-white/30', ACCOUNT_COLORS[accountColorIdx])}
+            />
+            {otherUnread > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-violet-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-zinc-950">
+                {otherUnread > 9 ? '9+' : otherUnread}
+              </span>
+            )}
+          </div>
         )}
 
         {/* Compose icon */}
@@ -317,32 +362,76 @@ export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) 
 
       {/* Account switcher */}
       {hasMultipleAccounts && activeAccount && (
-        <div className="px-3 mb-2">
+        <div ref={accountBoxRef} className="relative px-3 mb-2">
           <button
             onClick={() => setAccountOpen(o => !o)}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-white/[0.06] transition-colors text-sm"
+            title={otherUnread > 0 ? t('unreadOtherAccounts', { count: otherUnread }) : undefined}
+            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-white/[0.06] transition-colors"
           >
-            <div className={cn('w-5 h-5 rounded-full shrink-0', ACCOUNT_COLORS[accountColorIdx])} />
-            <span className="text-zinc-200 truncate flex-1 text-left">{activeAccount.email}</span>
+            <div className={cn('w-8 h-8 rounded-full shrink-0', ACCOUNT_COLORS[accountColorIdx])} />
+            <span className="flex-1 min-w-0 text-left">
+              <span className="block text-sm font-medium text-zinc-100 truncate leading-tight">
+                {activeAccount.name || activeAccount.email}
+              </span>
+              {activeAccount.name && (
+                <span className="block text-[11px] text-zinc-500 truncate leading-tight">{activeAccount.email}</span>
+              )}
+            </span>
+            {otherUnread > 0 && (
+              <span className="shrink-0 text-[11px] font-semibold min-w-[20px] h-5 px-1.5 rounded-full bg-violet-500/20 text-violet-300 flex items-center justify-center">
+                {otherUnread > 99 ? '99+' : otherUnread}
+              </span>
+            )}
             <ChevronDown className={cn('w-3.5 h-3.5 text-zinc-500 transition-transform shrink-0', accountOpen && 'rotate-180')} />
           </button>
           {accountOpen && (
-            <div className="mt-1 rounded-lg overflow-hidden border border-white/10 bg-zinc-900">
-              {accounts.map((acc, idx) => (
-                <button
-                  key={acc.id}
-                  onClick={() => switchAccount(acc.id)}
-                  className={cn(
-                    'w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors text-left',
-                    acc.id === activeAccount?.id
-                      ? 'bg-violet-500/15 text-white'
-                      : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06]'
-                  )}
-                >
-                  <div className={cn('w-4 h-4 rounded-full shrink-0', ACCOUNT_COLORS[idx % ACCOUNT_COLORS.length])} />
-                  <span className="truncate">{acc.email}</span>
-                </button>
-              ))}
+            <div className="absolute left-3 right-3 z-50 mt-1 flex flex-col rounded-xl border border-white/10 bg-zinc-900 shadow-xl shadow-black/60 overflow-hidden">
+              {accounts.length > 8 && (
+                <div className="p-1.5 border-b border-white/10">
+                  <input
+                    autoFocus
+                    value={accountFilter}
+                    onChange={e => setAccountFilter(e.target.value)}
+                    placeholder={t('searchAccounts')}
+                    className="w-full px-2.5 py-1.5 rounded-md bg-white/[0.06] text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:ring-1 focus:ring-violet-500/50"
+                  />
+                </div>
+              )}
+              <div className="max-h-[min(60vh,22rem)] overflow-y-auto overscroll-contain py-1">
+                {filteredAccounts.length === 0 && (
+                  <p className="px-3 py-4 text-xs text-zinc-500 text-center">{t('noAccountMatch')}</p>
+                )}
+                {filteredAccounts.map(acc => {
+                  const active = acc.id === activeAccount?.id
+                  const unread = acc.unreadCount ?? 0
+                  return (
+                    <button
+                      key={acc.id}
+                      onClick={() => switchAccount(acc.id)}
+                      className={cn(
+                        'w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors',
+                        active
+                          ? 'bg-violet-500/10 text-white'
+                          : 'text-zinc-400 hover:text-zinc-100 hover:bg-violet-500/10'
+                      )}
+                    >
+                      <div className={cn('w-8 h-8 rounded-full shrink-0', ACCOUNT_COLORS[accounts.indexOf(acc) % ACCOUNT_COLORS.length])} />
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-sm font-medium truncate leading-tight">{acc.name || acc.email}</span>
+                        {acc.name && (
+                          <span className="block text-[11px] text-zinc-500 truncate leading-tight">{acc.email}</span>
+                        )}
+                      </span>
+                      {unread > 0 && (
+                        <span className="shrink-0 text-[11px] font-semibold min-w-[20px] h-5 px-1.5 rounded-full bg-violet-500/20 text-violet-300 flex items-center justify-center">
+                          {unread > 99 ? '99+' : unread}
+                        </span>
+                      )}
+                      {active && <Check className="w-3.5 h-3.5 shrink-0 text-violet-400" />}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           )}
         </div>

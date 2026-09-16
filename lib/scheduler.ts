@@ -256,6 +256,47 @@ export async function processSnoozes(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Inbox sync — refreshes messages_cache for EVERY account's INBOX on a timer,
+// independently of what the user opens in the UI. Without this, an account the
+// user never navigates to keeps stale/zero unread counts (the cache is only
+// written when /api/messages is hit). listMessages() upserts the fetched page
+// and, on page 1, reconciles (prunes rows whose UID is no longer live).
+// ---------------------------------------------------------------------------
+
+const SYNC_FOLDERS = ['INBOX']       // extend if other folders need background counts
+const SYNC_PAGE_SIZE = 50            // newest N per folder — matches the app's other cache windows
+const SYNC_INTERVAL_MS = 3 * 60_000  // every 3 minutes
+
+export async function processInboxSync(): Promise<void> {
+  const accounts = await query<AccountForRules>(`SELECT * FROM email_accounts`)
+
+  for (const acc of accounts) {
+    const accountConfig = {
+      id: acc.id,
+      imapHost: acc.imap_host,
+      imapPort: acc.imap_port,
+      imapSecure: acc.imap_secure,
+      username: acc.username,
+      passwordEncrypted: acc.password_encrypted,
+      oauthProvider: acc.oauth_provider,
+      oauthAccessToken: acc.oauth_access_token,
+      oauthRefreshToken: acc.oauth_refresh_token,
+      oauthExpiresAt: acc.oauth_expires_at,
+    }
+
+    for (const folder of SYNC_FOLDERS) {
+      try {
+        // 'all' (not 'unread') so recently-read messages also get their
+        // is_read flipped in the cache — keeps the count accurate, not just growing.
+        await listMessages(accountConfig, folder, 1, SYNC_PAGE_SIZE, 'all', acc.user_id)
+      } catch (err) {
+        console.error(`[scheduler/sync] account ${acc.id} / ${folder}:`, err)
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Singleton scheduler — starts once per process lifetime
 // ---------------------------------------------------------------------------
 
@@ -279,4 +320,12 @@ export function startScheduler(): void {
   setInterval(() => {
     processRules().catch(err => console.error('[scheduler/rules]', err))
   }, 5 * 60_000)
+
+  // Inbox sync (all accounts) — every 3 minutes, plus one pass shortly after boot
+  setInterval(() => {
+    processInboxSync().catch(err => console.error('[scheduler/sync]', err))
+  }, SYNC_INTERVAL_MS)
+  setTimeout(() => {
+    processInboxSync().catch(err => console.error('[scheduler/sync]', err))
+  }, 15_000)
 }

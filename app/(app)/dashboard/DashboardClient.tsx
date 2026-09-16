@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import useSWR from 'swr'
+import useSWR, { mutate as globalMutate } from 'swr'
 import { useTranslations, useLocale } from 'next-intl'
 import {
   Mail, Send, Eye, Clock, Sparkles, BarChart3, Users, Filter,
@@ -240,22 +240,18 @@ export function DashboardClient() {
   const locale = useLocale()
   const router = useRouter()
 
-  // Account scope — null = all accounts combined. Persisted per browser.
-  const [filterAccount, setFilterAccount] = useState<string | null>(null)
-  const [filterReady, setFilterReady] = useState(false)
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('synapmail:dashboardAccount')
-      if (stored) setFilterAccount(stored)
-    } catch { /* ignore */ }
-    setFilterReady(true)
-  }, [])
+  // Account scope — null = all accounts combined. Persisted server-side per user.
+  const { data: settingsRes, isLoading: settingsLoading } = useSWR<{ data: { dashboard_account_id: string | null } }>('/api/settings', fetcher)
+  const filterAccount = settingsRes?.data?.dashboard_account_id ?? null
+  const filterReady = !settingsLoading
   const changeFilter = (id: string | null) => {
-    setFilterAccount(id)
-    try {
-      if (id) localStorage.setItem('synapmail:dashboardAccount', id)
-      else localStorage.removeItem('synapmail:dashboardAccount')
-    } catch { /* ignore */ }
+    globalMutate('/api/settings', (curr: { data: Record<string, unknown> } | undefined) =>
+      curr ? { data: { ...curr.data, dashboard_account_id: id } } : curr, false)
+    fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dashboard_account_id: id }),
+    }).then(() => globalMutate('/api/settings'))
   }
 
   const swrKey = filterReady

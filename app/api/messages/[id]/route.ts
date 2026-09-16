@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getMessage, deleteMessage, markRead, markStarred } from '@/lib/imap'
 
@@ -31,8 +31,8 @@ export async function GET(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const authCtx = await authenticate(req)
+  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -43,7 +43,7 @@ export async function GET(
   try {
     const accounts = await query<AccountRow>(
       'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, session.user?.id]
+      [accountId, authCtx.id]
     )
     if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
@@ -60,8 +60,8 @@ export async function PATCH(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const authCtx = await authenticate(req)
+  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -75,7 +75,7 @@ export async function PATCH(
 
     const accounts = await query<AccountRow>(
       'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, session.user?.id]
+      [accountId, authCtx.id]
     )
     if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
@@ -98,8 +98,8 @@ export async function DELETE(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const authCtx = await authenticate(req)
+  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -110,7 +110,7 @@ export async function DELETE(
   try {
     const accounts = await query<AccountRow>(
       'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, session.user?.id]
+      [accountId, authCtx.id]
     )
     if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 

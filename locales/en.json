@@ -72,6 +72,9 @@
     "unsubscribeError": "Unsubscribe failed",
     "dashboard": "Dashboard",
     "search": "Search",
+    "searchAccounts": "Search accounts…",
+    "noAccountMatch": "No matching account",
+    "unreadOtherAccounts": "{count} unread in other accounts",
     "grpToday": "Today",
     "grpYesterday": "Yesterday",
     "grpThisWeek": "Past 7 days",
@@ -165,6 +168,8 @@
       "contacts": "Contacts",
       "rules": "Rules",
       "ai": "AI Copilot",
+      "pgp": "PGP Encryption",
+      "apiKeys": "API Keys",
       "admin": "Administration"
     },
     "common": {
@@ -424,6 +429,68 @@
     "newToday": "+{count} today",
     "upToDate": "up to date",
     "allAccounts": "All accounts"
+  },
+  "pgp": {
+    "title": "PGP Encryption",
+    "description": "Generate a PGP keypair and encrypt your emails end-to-end. Your private key always stays on this device.",
+    "myKey": {
+      "title": "My key",
+      "noKeyText": "No PGP key on this browser.",
+      "name": "Name",
+      "email": "Email address",
+      "passphrase": "Passphrase",
+      "confirmPassphrase": "Confirm passphrase",
+      "generate": "Generate my keypair",
+      "generating": "Generating…",
+      "fingerprint": "Fingerprint",
+      "downloadPublic": "Download my public key (.asc)",
+      "downloadPrivateBackup": "Download my private key backup (.asc)",
+      "importBackupTitle": "Import a private key backup",
+      "importBackupFile": "Choose a .asc file",
+      "importBackupPassphrase": "Backup passphrase",
+      "importBackupButton": "Import",
+      "regenerate": "Regenerate a new key",
+      "regenerateConfirm": "Regenerating a key removes access to existing encrypted messages on this browser, unless you backed up your old private key. Continue?",
+      "passphraseMismatch": "Passphrases do not match",
+      "passphraseTooShort": "Passphrase must be at least 8 characters",
+      "wrongPassphrase": "Incorrect passphrase",
+      "backupInvalid": "Invalid backup file or incorrect passphrase",
+      "keySaved": "Key generated and saved on this device"
+    },
+    "contactKeys": {
+      "title": "Contact keys",
+      "description": "Import a contact's PGP public key to send them encrypted messages.",
+      "import": "Import a key",
+      "email": "Email address",
+      "name": "Name (optional)",
+      "pasteLabel": "Paste the public key block",
+      "pastePlaceholder": "-----BEGIN PGP PUBLIC KEY BLOCK-----…",
+      "uploadFile": "Or choose a .asc file",
+      "invalidKey": "Invalid PGP public key block",
+      "empty": "No contact keys imported",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this contact key?",
+      "add": "Add"
+    },
+    "compose": {
+      "encryptToggleOn": "Encrypted message — click to disable",
+      "encryptToggleAvailable": "Encrypt this message (PGP)",
+      "readReceiptDisabled": "Read receipts aren't available for an encrypted message",
+      "attachmentsBlocked": "Attachments aren't supported for encrypted messages in this version",
+      "missingOwnKey": "Generate your PGP key in Settings to encrypt your messages"
+    },
+    "decrypt": {
+      "title": "This message is encrypted",
+      "unlockedButton": "Decrypt",
+      "passphrasePrompt": "Enter your passphrase to decrypt this message",
+      "button": "Unlock & decrypt",
+      "decrypting": "Decrypting…",
+      "wrongPassphrase": "Incorrect passphrase",
+      "noKey": "No PGP private key found on this browser",
+      "noKeyHint": "Import your private key backup in Settings → PGP Encryption",
+      "lockNow": "Lock my key now",
+      "locked": "PGP key locked for this session"
+    }
   },
   "common": {
     "save": "Save",

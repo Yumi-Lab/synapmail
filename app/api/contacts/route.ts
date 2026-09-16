@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
+import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
@@ -40,8 +41,8 @@ function toApi(r: ContactRow) {
 // - all: if true, bypass frequency >= 2 filter (for Settings page)
 // - account: if set, only return contacts seen on this account (via messages_cache)
 export async function GET(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const authCtx = await authenticate(req)
+  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
   const q = searchParams.get('q') ?? ''
@@ -71,7 +72,7 @@ export async function GET(req: Request) {
   const frequencyFilter = all ? '' : 'AND (frequency >= 2 OR is_manual = true)'
 
   // Filter by account: only contacts seen in messages_cache for this account
-  const params: unknown[] = [session.user?.id, pattern, limit]
+  const params: unknown[] = [authCtx.id, pattern, limit]
   let accountFilter = ''
   if (accountId) {
     params.push(accountId)

@@ -12,7 +12,7 @@ import {
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
   List, ListOrdered, Link as LinkIcon, Undo, Redo,
   Minus, Paperclip, Clock, PenSquare, ChevronDown, Check, SendHorizonal, Eye,
-  LayoutTemplate, BookmarkPlus,
+  LayoutTemplate, BookmarkPlus, Lock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,6 +21,8 @@ import useSWR from 'swr'
 import type { Signature, EmailAccount } from '@/types/account'
 import type { Attachment } from '@/types/email'
 import type { ComposeTemplate } from '@/types/template'
+import type { PgpContactKey, PgpIdentity } from '@/types/pgp'
+import { encryptText } from '@/lib/pgp'
 import { EmailTokenInput } from './EmailTokenInput'
 import { AICompose } from '@/components/ai/AICompose'
 
@@ -143,7 +145,10 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
   const [savingTpl, setSavingTpl] = useState(false)
   const tplDropdownRef = useRef<HTMLDivElement>(null)
 
-  const DRAFT_KEY = mode === 'compose' ? `synapmail:draft:${accountId}` : null
+  const draftAccountId = mode === 'compose' ? accountId : null
+  const clearDraft = () => {
+    if (draftAccountId) fetch(`/api/drafts?accountId=${draftAccountId}`, { method: 'DELETE' }).catch(() => { /* ignore */ })
+  }
 
   const [forwardedAtts, setForwardedAtts] = useState<ForwardedAtt[]>(() => {
     if (mode === 'forward' && replyTo?.attachments?.length) {
@@ -158,6 +163,23 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
   const { data: acctData } = useSWR<{ data: EmailAccount[] }>('/api/accounts', fetcher)
   const accounts = acctData?.data ?? []
 
+  // PGP — Encrypt toggle is only offered once every current recipient has a known public key
+  const [encrypted, setEncrypted] = useState(false)
+  const allRecipientEmails = [...toTokens, ...ccTokens, ...bccTokens]
+  const pgpRecipientsKey = allRecipientEmails.length
+    ? `/api/pgp/contacts?emails=${encodeURIComponent(allRecipientEmails.join(','))}`
+    : null
+  const { data: pgpKeyData } = useSWR<{ data: PgpContactKey[] }>(pgpRecipientsKey, fetcher)
+  const { data: pgpMeData } = useSWR<{ data: PgpIdentity | null }>('/api/pgp/me', fetcher)
+  const availableRecipientKeys = pgpKeyData?.data ?? []
+  const allRecipientsHaveKeys = allRecipientEmails.length > 0 && allRecipientEmails.every(
+    email => availableRecipientKeys.some(k => k.email.toLowerCase() === email.toLowerCase())
+  )
+
+  useEffect(() => {
+    if (!allRecipientsHaveKeys && encrypted) setEncrypted(false)
+  }, [allRecipientsHaveKeys, encrypted])
+
   // Compte d'envoi — modifiable par message quand l'utilisateur a plusieurs comptes
   const [fromAccountId, setFromAccountId] = useState(accountId)
   const fromAccount = accounts.find(a => a.id === fromAccountId)
@@ -165,30 +187,27 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
   const undoSendDelay = settingsData?.data?.undo_send_delay ?? 0
 
   useEffect(() => {
-    if (!DRAFT_KEY) return
-    const saved = localStorage.getItem(DRAFT_KEY)
-    if (!saved) return
-    try {
-      const draft = JSON.parse(saved) as {
-        to: string | string[]; cc: string | string[]
-        bcc: string | string[]; subject: string; content: string
-      }
-      const parseField = (v: string | string[]): string[] =>
-        Array.isArray(v) ? v : (v ? v.split(',').map(s => s.trim()).filter(Boolean) : [])
-      const toArr = parseField(draft.to)
-      const ccArr = parseField(draft.cc)
-      const bccArr = parseField(draft.bcc)
-      if (toArr.length || draft.subject || draft.content) {
-        setToTokens(toArr)
-        setCcTokens(ccArr)
-        setBccTokens(bccArr)
-        setSubject(draft.subject ?? '')
-        if (ccArr.length) setShowCc(true)
-        if (bccArr.length) setShowBcc(true)
-        setPendingDraftContent(draft.content)
-        setDraftRestored(true)
-      }
-    } catch { /* ignore */ }
+    if (!draftAccountId) return
+    fetch(`/api/drafts?accountId=${draftAccountId}`)
+      .then(r => r.json())
+      .then((res: { data: { to_addresses: string[]; cc_addresses: string[]; bcc_addresses: string[]; subject: string; body_html: string } | null }) => {
+        const draft = res?.data
+        if (!draft) return
+        const toArr = draft.to_addresses ?? []
+        const ccArr = draft.cc_addresses ?? []
+        const bccArr = draft.bcc_addresses ?? []
+        if (toArr.length || draft.subject || draft.body_html) {
+          setToTokens(toArr)
+          setCcTokens(ccArr)
+          setBccTokens(bccArr)
+          setSubject(draft.subject ?? '')
+          if (ccArr.length) setShowCc(true)
+          if (bccArr.length) setShowBcc(true)
+          setPendingDraftContent(draft.body_html)
+          setDraftRestored(true)
+        }
+      })
+      .catch(() => { /* ignore */ })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const quotedHtml = useCallback(() => {
@@ -202,6 +221,19 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
       <p style="color:#94a3b8;font-size:12px;margin:0 0 8px">Le ${date}, ${from} a écrit :</p>
       ${body}
     </blockquote>`
+  }, [replyTo, mode])
+
+  // Plain-text quote for encrypted sends — inline PGP has no HTML formatting story,
+  // so the quoted chain is flattened to text instead of using quotedHtml().
+  const quotedPlainText = useCallback(() => {
+    if (!replyTo || mode === 'compose') return ''
+    const from = replyTo.from.name
+      ? `${replyTo.from.name} <${replyTo.from.address}>`
+      : replyTo.from.address
+    const date = new Date(replyTo.date).toLocaleString('fr-FR')
+    const plain = replyTo.bodyPlain || (replyTo.bodyHtml ? replyTo.bodyHtml.replace(/<[^>]+>/g, '') : '')
+    const quoted = plain.split('\n').map(l => `> ${l}`).join('\n')
+    return `\n\nLe ${date}, ${from} a écrit :\n${quoted}`
   }, [replyTo, mode])
 
   const signatures = sigData?.data ?? []
@@ -243,12 +275,16 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
   }, [editor, pendingDraftContent, sigApplied, signatures.length])
 
   useEffect(() => {
-    if (!DRAFT_KEY || !editor) return
+    if (!draftAccountId || !editor) return
     const timer = setTimeout(() => {
       const content = editor.getHTML()
       const isEmpty = !toTokens.length && !subject && (content === '<p></p>' || content === '')
       if (isEmpty) return
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ to: toTokens, cc: ccTokens, bcc: bccTokens, subject, content }))
+      fetch('/api/drafts', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId: draftAccountId, to: toTokens, cc: ccTokens, bcc: bccTokens, subject, content }),
+      }).catch(() => { /* ignore */ })
     }, 3000)
     return () => clearTimeout(timer)
   }, [toTokens, ccTokens, bccTokens, subject, editor]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -385,7 +421,7 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
           throw new Error(data.error ?? "Erreur lors de l'envoi")
         }
       }
-      if (DRAFT_KEY) localStorage.removeItem(DRAFT_KEY)
+      clearDraft()
       onSent()
       onClose()
     } catch (err) {
@@ -409,29 +445,54 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
       setError('Destinataire et sujet requis')
       return
     }
+    if (encrypted && mode === 'forward' && forwardedAtts.length) {
+      setError('Les pièces jointes ne sont pas prises en charge pour les messages chiffrés dans cette version')
+      return
+    }
     setError(null)
 
-    const bodyHtml = (editor?.getHTML() ?? '') + quotedHtml()
-    const payload: Record<string, unknown> = {
-      accountId: fromAccountId,
-      to: toTokens,
-      cc: ccTokens.length ? ccTokens : undefined,
-      bcc: bccTokens.length ? bccTokens : undefined,
-      subject,
-      html: bodyHtml,
-      inReplyTo: (mode === 'reply' || mode === 'replyAll') && replyTo ? replyTo.uid : undefined,
-      requestReadReceipt,
-    }
+    let payload: Record<string, unknown>
 
-    if (mode === 'forward' && forwardedAtts.length) {
-      payload.forwardedAttachments = forwardedAtts.map(a => ({
-        uid: a.uid,
-        accountId: a.accountId,
-        folder: a.folder,
-        partIdx: parseInt(a.id),
-        filename: a.filename,
-        contentType: a.contentType,
-      }))
+    if (encrypted) {
+      const plainBody = (editor?.getText() ?? '') + quotedPlainText()
+      const recipientArmoredKeys = availableRecipientKeys.map(k => k.armoredKey)
+      const ownArmoredKey = pgpMeData?.data?.armoredPublicKey
+      if (ownArmoredKey) recipientArmoredKeys.push(ownArmoredKey)
+      const armored = await encryptText(plainBody, recipientArmoredKeys)
+
+      payload = {
+        accountId: fromAccountId,
+        to: toTokens,
+        cc: ccTokens.length ? ccTokens : undefined,
+        bcc: bccTokens.length ? bccTokens : undefined,
+        subject,
+        text: armored,
+        inReplyTo: (mode === 'reply' || mode === 'replyAll') && replyTo ? replyTo.uid : undefined,
+        requestReadReceipt: false,
+      }
+    } else {
+      const bodyHtml = (editor?.getHTML() ?? '') + quotedHtml()
+      payload = {
+        accountId: fromAccountId,
+        to: toTokens,
+        cc: ccTokens.length ? ccTokens : undefined,
+        bcc: bccTokens.length ? bccTokens : undefined,
+        subject,
+        html: bodyHtml,
+        inReplyTo: (mode === 'reply' || mode === 'replyAll') && replyTo ? replyTo.uid : undefined,
+        requestReadReceipt,
+      }
+
+      if (mode === 'forward' && forwardedAtts.length) {
+        payload.forwardedAttachments = forwardedAtts.map(a => ({
+          uid: a.uid,
+          accountId: a.accountId,
+          folder: a.folder,
+          partIdx: parseInt(a.id),
+          filename: a.filename,
+          contentType: a.contentType,
+        }))
+      }
     }
 
     if (scheduledAt) {
@@ -530,7 +591,7 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
     /* ── Backdrop ────────────────────────────────────────────────────── */
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-lg motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200"
-      onClick={e => { if (e.target === e.currentTarget) { if (DRAFT_KEY) localStorage.removeItem(DRAFT_KEY); onClose() } }}
+      onClick={e => { if (e.target === e.currentTarget) { clearDraft(); onClose() } }}
     >
       {/* ── Aurora — soft colour glow in the margin around the panel ── */}
       <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -571,14 +632,14 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
             <span className="text-[10px] font-medium text-violet-700 dark:text-violet-300 bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
               Brouillon restauré
               <button
-                onClick={() => { setDraftRestored(false); if (DRAFT_KEY) localStorage.removeItem(DRAFT_KEY) }}
+                onClick={() => { setDraftRestored(false); clearDraft() }}
                 className="hover:text-foreground ml-0.5"
               >×</button>
             </span>
           )}
 
           <button
-            onClick={() => { if (DRAFT_KEY) localStorage.removeItem(DRAFT_KEY); onClose() }}
+            onClick={() => { clearDraft(); onClose() }}
             aria-label="Fermer"
             className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
@@ -912,7 +973,7 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
               : (scheduledAt ? 'Programmer' : 'Envoyer')}
           </Button>
 
-          <Button size="sm" variant="ghost" onClick={() => { if (DRAFT_KEY) localStorage.removeItem(DRAFT_KEY); onClose() }} className="h-9 hover:bg-muted">
+          <Button size="sm" variant="ghost" onClick={() => { clearDraft(); onClose() }} className="h-9 hover:bg-muted">
             Annuler
           </Button>
 
@@ -934,10 +995,16 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
 
           <button
             type="button"
-            title={requestReadReceipt ? 'Accusé de lecture activé — cliquer pour désactiver' : 'Demander un accusé de lecture'}
+            title={
+              encrypted
+                ? 'Accusé de lecture indisponible pour un message chiffré'
+                : requestReadReceipt ? 'Accusé de lecture activé — cliquer pour désactiver' : 'Demander un accusé de lecture'
+            }
             onClick={() => setRequestReadReceipt(v => !v)}
+            disabled={encrypted}
             className={cn(
               'flex items-center gap-1.5 h-7 px-2 rounded-md transition-colors text-xs shrink-0',
+              encrypted && 'opacity-40 cursor-not-allowed',
               requestReadReceipt
                 ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 hover:bg-emerald-500/25'
                 : 'text-muted-foreground hover:text-foreground hover:bg-muted'
@@ -946,6 +1013,27 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
             <Eye className="w-3.5 h-3.5 shrink-0" />
             {requestReadReceipt && <span className="font-medium">Accusé</span>}
           </button>
+
+          {allRecipientsHaveKeys && (
+            <button
+              type="button"
+              title={encrypted ? 'Message chiffré (PGP) — cliquer pour désactiver' : 'Chiffrer ce message (PGP)'}
+              onClick={() => setEncrypted(v => {
+                const next = !v
+                if (next) setRequestReadReceipt(false)
+                return next
+              })}
+              className={cn(
+                'flex items-center gap-1.5 h-7 px-2 rounded-md transition-colors text-xs shrink-0',
+                encrypted
+                  ? 'text-violet-700 dark:text-violet-200 bg-violet-500/20 hover:bg-violet-500/30'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+              )}
+            >
+              <Lock className="w-3.5 h-3.5 shrink-0" />
+              {encrypted && <span className="font-medium">Chiffré</span>}
+            </button>
+          )}
 
           {/* Template buttons */}
           <div className="relative" ref={tplDropdownRef}>

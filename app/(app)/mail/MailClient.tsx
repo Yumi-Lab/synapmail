@@ -52,23 +52,18 @@ export function MailClient() {
   const router = useRouter()
   const folder = searchParams.get('folder') ?? 'INBOX'
 
+  const { data: settingsData } = useSWR<{ data: { active_account_id: string | null; list_width: number; reading_pane: boolean; notifications: boolean } }>('/api/settings', fetcher)
+  const didInitFromSettings = useRef(false)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('synapmail:activeAccountId')
-      if (stored) setActiveAccountId(stored)
+    if (!settingsData?.data || didInitFromSettings.current) return
+    didInitFromSettings.current = true
+    if (settingsData.data.active_account_id) setActiveAccountId(settingsData.data.active_account_id)
+    const w = settingsData.data.list_width
+    if (w >= 240 && w <= 600) {
+      setListWidth(w)
+      listWidthRef.current = w
     }
-  }, [])
-
-  useEffect(() => {
-    const stored = localStorage.getItem('synapmail:listWidth')
-    if (stored) {
-      const w = parseInt(stored)
-      if (w >= 240 && w <= 600) {
-        setListWidth(w)
-        listWidthRef.current = w
-      }
-    }
-  }, [])
+  }, [settingsData])
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -83,7 +78,11 @@ export function MailClient() {
       isResizingRef.current = false
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
-      localStorage.setItem('synapmail:listWidth', String(listWidthRef.current))
+      fetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ list_width: listWidthRef.current }),
+      })
     }
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
@@ -137,11 +136,6 @@ export function MailClient() {
     window.addEventListener('synapmail:open-message', handler)
     return () => window.removeEventListener('synapmail:open-message', handler)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const { data: settingsData } = useSWR<{ data: { reading_pane: boolean; notifications: boolean } }>(
-    '/api/settings',
-    fetcher
-  )
 
   // Initialize showReadingPane from DB setting (once, before any user interaction)
   useEffect(() => {

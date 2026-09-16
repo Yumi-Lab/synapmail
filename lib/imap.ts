@@ -202,6 +202,7 @@ export async function listMessages(
     // expunge) can be pruned. Without this, `messages_cache` accumulates stale
     // `is_read = false` rows that pollute the focus list and unread counts.
     let liveUids: string[] | null = null
+    let unseenCount: number | null = null
     if (page === 1 && account.id) {
       try {
         const all = await client.search({ all: true }, { uid: true })
@@ -214,6 +215,18 @@ export async function listMessages(
       } catch {
         liveUids = null
       }
+      // Authoritative unread count for this folder — server-side SEARCH UNSEEN,
+      // not bounded by `perPage` like counting messages_cache rows would be.
+      try {
+        if (total === 0) {
+          unseenCount = 0
+        } else {
+          const unseen = await client.search({ seen: false }, { uid: true })
+          if (Array.isArray(unseen)) unseenCount = unseen.length
+        }
+      } catch {
+        unseenCount = null
+      }
     }
 
     // Upsert messages_cache — fire-and-forget, non-bloquant
@@ -221,6 +234,7 @@ export async function listMessages(
     if (account.id) {
       const accountId = account.id
       const seenUids = liveUids
+      const unseen = unseenCount
       void (async () => {
         try {
           for (const m of messages) {
@@ -238,7 +252,7 @@ export async function listMessages(
                RETURNING xmax::text`,
               [
                 accountId, folder, m.uid, m.messageId,
-                m.from.address, m.from.name, m.subject, m.date,
+                m.from.address, m.from.name, m.subject, m.date || null,
                 m.isRead, m.isStarred, m.isFlagged, m.hasAttachments,
                 m.preview, m.threadId ?? null,
               ]
@@ -265,6 +279,17 @@ export async function listMessages(
                 [accountId, folder]
               )
             }
+          }
+
+          // Persist the authoritative unread count (SEARCH UNSEEN above).
+          if (unseen !== null) {
+            await query(
+              `INSERT INTO mailbox_stats (account_id, folder, unread_count, synced_at)
+               VALUES ($1, $2, $3, NOW())
+               ON CONFLICT (account_id, folder) DO UPDATE SET
+                 unread_count = EXCLUDED.unread_count, synced_at = NOW()`,
+              [accountId, folder, unseen]
+            )
           }
         } catch { /* non-bloquant */ }
       })()

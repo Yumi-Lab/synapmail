@@ -17,9 +17,12 @@ function getSessionCookie(req: NextRequest): string | undefined {
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
-  // API routes: only block if no session and not public
+  // API routes: only block if no session, no bearer token, and not public.
+  // The bearer token itself is validated in the route handler via lib/apiAuth.ts —
+  // this Edge middleware can't query Postgres, it only checks the header is present.
   if (pathname.startsWith('/api/')) {
-    if (!isPublic(pathname) && !getSessionCookie(req)) {
+    const hasBearer = req.headers.get('authorization')?.startsWith('Bearer ') ?? false
+    if (!isPublic(pathname) && !getSessionCookie(req) && !hasBearer) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     return NextResponse.next()

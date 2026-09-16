@@ -1,23 +1,36 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
+import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { encrypt } from '@/lib/encrypt'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+export async function GET(req: Request) {
+  const authCtx = await authenticate(req)
+  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
     const accounts = await query(
-      `SELECT id, name, email,
-              imap_host AS "imapHost", imap_port AS "imapPort", imap_secure AS "imapSecure",
-              smtp_host AS "smtpHost", smtp_port AS "smtpPort", smtp_secure AS "smtpSecure",
-              username, is_default AS "isDefault", color,
-              oauth_provider AS "oauthProvider", created_at AS "createdAt"
-       FROM email_accounts WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC`,
-      [session.user?.id]
+      `SELECT a.id, a.name, a.email,
+              a.imap_host AS "imapHost", a.imap_port AS "imapPort", a.imap_secure AS "imapSecure",
+              a.smtp_host AS "smtpHost", a.smtp_port AS "smtpPort", a.smtp_secure AS "smtpSecure",
+              a.username, a.is_default AS "isDefault", a.color,
+              a.oauth_provider AS "oauthProvider", a.created_at AS "createdAt",
+              -- authoritative SEARCH UNSEEN count (mailbox_stats), falling back to
+              -- the cached-row count until the first background sync populates it
+              COALESCE(s.unread_count, u.cnt, 0)::int AS "unreadCount"
+       FROM email_accounts a
+       LEFT JOIN mailbox_stats s ON s.account_id = a.id AND s.folder = 'INBOX'
+       LEFT JOIN (
+         SELECT account_id, COUNT(*)::int AS cnt
+         FROM messages_cache
+         WHERE is_read = false AND folder ILIKE 'INBOX'
+         GROUP BY account_id
+       ) u ON u.account_id = a.id
+       WHERE a.user_id = $1
+       ORDER BY a.is_default DESC, a.created_at ASC`,
+      [authCtx.id]
     )
     return NextResponse.json({ data: accounts })
   } catch (err) {

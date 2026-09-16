@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { listFolders } from '@/lib/imap'
 
@@ -37,8 +37,8 @@ function detectSpecial(path: string, name: string, specialUse?: string): Special
 }
 
 export async function GET(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const authCtx = await authenticate(req)
+  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -53,7 +53,7 @@ export async function GET(req: Request) {
       accountId
         ? 'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1'
         : 'SELECT * FROM email_accounts WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1',
-      accountId ? [accountId, session.user?.id] : [session.user?.id]
+      accountId ? [accountId, authCtx.id] : [authCtx.id]
     )
 
     if (!accounts.length) return NextResponse.json({ data: [] })
@@ -108,7 +108,15 @@ export async function GET(req: Request) {
       return a.name.localeCompare(b.name)
     })
 
-    // Unread counts from cache
+    // Unread counts — prefer the authoritative SEARCH UNSEEN value in
+    // mailbox_stats (not capped by page size), fall back to counting cached rows
+    // for folders that have not been synced through listMessages yet.
+    const statsRows = await query<{ folder: string; unread_count: number }>(
+      `SELECT folder, unread_count FROM mailbox_stats WHERE account_id = $1`,
+      [account.id]
+    )
+    const statsMap = Object.fromEntries(statsRows.map(r => [r.folder, r.unread_count]))
+
     const unreadRows = await query<{ folder: string; unread_count: string }>(
       `SELECT folder, COUNT(*) as unread_count FROM messages_cache WHERE account_id = $1 AND is_read = false GROUP BY folder`,
       [account.id]
@@ -117,7 +125,7 @@ export async function GET(req: Request) {
 
     const withCounts = normalized.map(f => ({
       ...f,
-      unreadCount: unreadMap[f.path] ?? 0,
+      unreadCount: statsMap[f.path] ?? unreadMap[f.path] ?? 0,
     }))
 
     return NextResponse.json({ data: withCounts })

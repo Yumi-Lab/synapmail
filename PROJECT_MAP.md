@@ -21,7 +21,7 @@ Quick navigation reference for every file and feature.
 | Change compose (reply/replyAll/forward/BCC) | `components/mail/ComposeModal.tsx` |
 | Change compose modal look ("Aurora" glass) | `components/mail/ComposeModal.tsx` + `app/globals.css` (`@keyframes synap-aurora-drift`) — no `backdrop-blur` on the panel |
 | Change compose "De" account picker | `components/mail/ComposeModal.tsx` → `showFromDropdown` / `fromDropdownRef` (custom dropdown, not `<select>`) |
-| Change draft auto-save | `components/mail/ComposeModal.tsx` → `DRAFT_KEY` / localStorage |
+| Change draft auto-save | `components/mail/ComposeModal.tsx` → `draftAccountId` / `clearDraft()` + `app/api/drafts/route.ts` (server-side, table `drafts`) |
 | Change scheduled send / undo send | `components/mail/ComposeModal.tsx` |
 | Change compose templates dropdown | `components/mail/ComposeModal.tsx` → LayoutTemplate section |
 | Change signature logic | `components/mail/ComposeModal.tsx` → `handleSigChange` |
@@ -54,6 +54,15 @@ Quick navigation reference for every file and feature.
 | Change SSE events for scheduler | `lib/schedulerEvents.ts` |
 | Change rules engine | `lib/rules.ts` |
 | Change contacts extraction | `lib/contacts.ts` |
+| Change PGP encryption (keygen, encrypt, decrypt) | `lib/pgp/crypto.ts` + `lib/pgp/keystore.ts` |
+| Change PGP settings page (my key + contact keys) | `app/(app)/settings/pgp/page.tsx` |
+| Change PGP unlock session (in-memory passphrase) | `components/pgp/PgpSessionProvider.tsx` |
+| Change PGP decrypt prompt in reading pane | `components/mail/PgpDecryptPrompt.tsx` |
+| Change API key auth (Bearer, for scripts/agents) | `lib/apiAuth.ts` → `authenticate(req)` + `app/api/api-keys/` |
+| Change API keys settings page | `app/(app)/settings/api-keys/page.tsx` |
+| Change UI preference persistence (density, sidebar, list width, active account, dashboard filter) | `app/api/settings/route.ts` (columns on `user_settings`) — no `localStorage` anywhere in the app anymore |
+| Change the font | `tailwind.config.ts` → `fontFamily.sans` (system stack, no `next/font/google`) |
+| Change PGP encrypt toggle in compose | `components/mail/ComposeModal.tsx` → `encrypted` state |
 | Change profile (name/password) | `app/(app)/settings/profile/page.tsx` + `app/api/profile/route.ts` |
 | Change appearance settings | `app/(app)/settings/appearance/page.tsx` + `app/api/settings/route.ts` |
 | Change composition settings (undo send delay) | `app/(app)/settings/composition/page.tsx` |
@@ -160,34 +169,45 @@ Quick navigation reference for every file and feature.
 │   │   │   ├── reading/page.tsx      ← Reading pane default
 │   │   │   ├── rules/page.tsx        ← Email rules (uses RulesClient)
 │   │   │   ├── signatures/page.tsx   ← Email signatures
-│   │   │   └── templates/page.tsx    ← Compose templates (Tiptap editor)
+│   │   │   ├── templates/page.tsx    ← Compose templates (Tiptap editor)
+│   │   │   ├── pgp/page.tsx          ← PGP E2E encryption: generate/backup/import key, import contact keys
+│   │   │   └── api-keys/page.tsx     ← Bearer API keys for machine/agent access — create (shown once) / revoke
 │   │   └── admin/users/page.tsx      ← Admin: user management
 │   └── api/
 │       ├── auth/[...nextauth]/route.ts
 │       ├── accounts/
-│       │   ├── route.ts              ← GET list / POST create
+│       │   ├── route.ts              ← GET list (accepts Bearer) / POST create (session-only)
 │       │   ├── [id]/route.ts         ← PATCH update / DELETE remove
 │       │   └── test/route.ts         ← POST test IMAP+SMTP
 │       ├── admin/users/
 │       │   ├── route.ts              ← GET list / POST create user (admin)
 │       │   └── [id]/route.ts         ← PATCH role / DELETE user (admin)
+│       ├── api-keys/
+│       │   ├── route.ts              ← GET list (session-only) / POST create — returns the raw key once
+│       │   └── [id]/route.ts         ← DELETE revoke (soft — sets revoked_at)
 │       ├── contacts/
-│       │   ├── route.ts              ← GET list+search / (auto-populated)
+│       │   ├── route.ts              ← GET list+search (accepts Bearer) / (auto-populated)
 │       │   └── [id]/route.ts         ← PATCH name / DELETE
-│       ├── folders/route.ts          ← GET IMAP folder list
+│       ├── drafts/route.ts           ← GET / PUT (upsert) / DELETE — one compose draft per (user, account)
+│       ├── folders/route.ts          ← GET IMAP folder list (accepts Bearer)
 │       ├── messages/
-│       │   ├── route.ts              ← GET list (paginated, filtered, cached)
-│       │   ├── send/route.ts         ← POST SMTP send (+ scheduled + forwarded attachments)
-│       │   ├── search/route.ts       ← GET full-text IMAP search
-│       │   ├── thread/route.ts       ← GET thread messages by subject
-│       │   ├── bulk/route.ts         ← PATCH mark read/move + DELETE bulk
+│       │   ├── route.ts              ← GET list (paginated, filtered, cached; accepts Bearer)
+│       │   ├── send/route.ts         ← POST SMTP send (+ scheduled + forwarded attachments; accepts Bearer)
+│       │   ├── search/route.ts       ← GET full-text IMAP search (accepts Bearer)
+│       │   ├── thread/route.ts       ← GET thread messages by subject (accepts Bearer)
+│       │   ├── bulk/route.ts         ← PATCH mark read/move + DELETE bulk (accepts Bearer)
 │       │   └── [id]/
-│       │       ├── route.ts          ← GET full message / PATCH (read, star) / DELETE
+│       │       ├── route.ts          ← GET full message / PATCH (read, star) / DELETE (accepts Bearer)
 │       │       ├── mdn/route.ts      ← POST register received MDN read receipt
 │       │       └── attachment/[partId]/route.ts ← GET download or inline preview
 │       ├── oauth/microsoft/
 │       │   ├── route.ts              ← GET initiate OAuth2 flow
 │       │   └── callback/route.ts     ← GET OAuth2 callback + token exchange
+│       ├── pgp/
+│       │   ├── contacts/
+│       │   │   ├── route.ts          ← GET list (+?emails= filter) / POST import a contact's public key
+│       │   │   └── [id]/route.ts     ← DELETE remove a contact key
+│       │   └── me/route.ts           ← GET / PUT the user's own public key (server copy, never the private key)
 │       ├── profile/route.ts          ← GET current user / PATCH name + password
 │       ├── register/route.ts         ← POST create user (when REGISTRATION_ENABLED)
 │       ├── rules/
@@ -228,7 +248,10 @@ Quick navigation reference for every file and feature.
 │   │   ├── EmailTokenInput.tsx      ← To/Cc/Bcc token input with contact autocomplete
 │   │   ├── MdnToast.tsx             ← 30-second toast for received read receipts (MDN)
 │   │   ├── ScheduledPopover.tsx     ← Popover listing pending scheduled emails with cancel
-│   │   └── SnoozePopover.tsx        ← Toolbar popover listing snoozed messages + "move back to inbox"
+│   │   ├── SnoozePopover.tsx        ← Toolbar popover listing snoozed messages + "move back to inbox"
+│   │   └── PgpDecryptPrompt.tsx     ← Reading-pane "this message is encrypted" passphrase prompt
+│   ├── pgp/
+│   │   └── PgpSessionProvider.tsx   ← In-memory unlocked-private-key session (useRef, never persisted) — wraps AppShell in app/(app)/layout.tsx
 │   ├── settings/
 │   │   ├── RulesClient.tsx          ← Rules page client component (form, drag-drop priority, stats)
 │   │   └── SettingsSidebar.tsx      ← Settings navigation sidebar
@@ -245,6 +268,7 @@ Quick navigation reference for every file and feature.
 │
 ├── lib/
 │   ├── accounts.ts                  ← Account helpers (get by ID, default account)
+│   ├── apiAuth.ts                   ← authenticate(req) — drop-in for auth() that also accepts Authorization: Bearer <api key>
 │   ├── auth.ts                      ← Auth.js config (credentials + XOAUTH2)
 │   ├── contacts.ts                  ← Contact extraction + upsert logic
 │   ├── db.ts                        ← PostgreSQL pool — query<T>(sql, values?)
@@ -255,6 +279,10 @@ Quick navigation reference for every file and feature.
 │   ├── html.ts                      ← htmlToText() + wrapHtmlDocument() — partagé SMTP/IA
 │   ├── imap.ts                      ← imapflow wrapper (list, get, delete, move, flags, bulk, attachments)
 │   ├── msOAuth.ts                   ← Microsoft OAuth2 token refresh
+│   ├── pgp/
+│   │   ├── crypto.ts                ← openpgp.js wrapper — dynamic import, keygen/encrypt/decrypt/detect (no server-side import anywhere)
+│   │   ├── keystore.ts              ← Browser IndexedDB — the private key never leaves this store
+│   │   └── index.ts                 ← Barrel export
 │   ├── routing.ts                   ← next-intl routing config
 │   ├── rules.ts                     ← Rules engine: evaluate conditions, run actions, execute all
 │   ├── scheduler.ts                 ← Scheduled email worker + snooze wake sweep (60 s intervals)
@@ -266,10 +294,11 @@ Quick navigation reference for every file and feature.
 ├── types/
 │   ├── contact.ts                   ← Contact interface
 │   ├── email.ts                     ← Message, Folder, Attachment, EmailAddress, Thread
-│   ├── account.ts                   ← EmailAccount, Signature, User
+│   ├── account.ts                   ← EmailAccount, Signature, User, ApiKey (never carries the raw key or its hash)
 │   ├── api.ts                       ← API response types
 │   ├── rule.ts                      ← Rule, RuleCondition, RuleAction interfaces
-│   └── template.ts                  ← ComposeTemplate interface
+│   ├── template.ts                  ← ComposeTemplate interface
+│   └── pgp.ts                       ← PgpContactKey, PgpIdentity interfaces
 │
 ├── locales/
 │   ├── en.json
@@ -357,6 +386,15 @@ Quick navigation reference for every file and feature.
 | PATCH | `/api/templates/[id]` | Update template |
 | DELETE | `/api/templates/[id]` | Delete template |
 
+### PGP (end-to-end encryption)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/pgp/contacts?emails=` | List the user's imported contact public keys (optional comma-separated email filter) |
+| POST | `/api/pgp/contacts` | Import a contact's PGP public key (client parses it with openpgp.js first) |
+| DELETE | `/api/pgp/contacts/[id]` | Remove a contact key |
+| GET | `/api/pgp/me` | Get the user's own public key + fingerprint (server copy — private key never leaves the browser) |
+| PUT | `/api/pgp/me` | Publish/replace the user's own public key |
+
 ### Settings & Profile
 | Method | Path | Description |
 |--------|------|-------------|
@@ -364,6 +402,12 @@ Quick navigation reference for every file and feature.
 | PATCH | `/api/settings` | Update settings (UPSERT) |
 | GET | `/api/profile` | Get current user |
 | PATCH | `/api/profile` | Update name or password |
+| GET | `/api/api-keys` | List the user's API keys (name, prefix, last used — session-only) |
+| POST | `/api/api-keys` | Create an API key — returns the raw key once |
+| DELETE | `/api/api-keys/[id]` | Revoke an API key (soft — sets `revoked_at`) |
+| GET | `/api/drafts?accountId=` | Get the current compose draft for an account |
+| PUT | `/api/drafts` | Upsert the compose draft for an account |
+| DELETE | `/api/drafts?accountId=` | Delete the compose draft for an account |
 
 ### Tracking
 | Method | Path | Description |
@@ -382,7 +426,7 @@ Quick navigation reference for every file and feature.
 | `email_accounts` | IMAP/SMTP accounts per user |
 | `signatures` | Rich-text signatures per account |
 | `messages_cache` | Cached message metadata (fast list + unread badges) |
-| `user_settings` | Per-user preferences (theme, language, notifications, undo_send_delay, start_view…) |
+| `user_settings` | Per-user preferences (theme, language, notifications, undo_send_delay, start_view, active_account_id, sidebar_collapsed, mail_density, list_width, dashboard_account_id…) — every former `localStorage` UI preference now lives here |
 | `scheduled_emails` | Emails queued for future delivery (status: pending/sent/failed) |
 | `sent_tracking` | Read receipt tracking tokens + open timestamps |
 | `email_rules` | User-defined filter rules with conditions + actions |
@@ -390,6 +434,8 @@ Quick navigation reference for every file and feature.
 | `compose_templates` | Saved email templates with `{{variable}}` support |
 | `contacts` | Auto-extracted contacts per account (name, email, frequency) |
 | `snoozed_messages` | Snoozed message refs (`account_id`+`folder`+`uid`, `snooze_until`); hidden from list until wake, swept by the scheduler |
+| `drafts` | Compose drafts, one per (user, account) — replaces the old `localStorage` draft |
+| `api_keys` | Bearer API keys for machine/agent access — stores only `key_hash` (SHA-256) + `key_prefix`, never the raw key |
 
 ---
 

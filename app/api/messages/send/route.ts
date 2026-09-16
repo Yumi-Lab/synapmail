@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { sendMail } from '@/lib/smtp'
 import { appendToSentFolder } from '@/lib/imap'
@@ -18,8 +18,8 @@ function injectTrackingPixel(html: string, pixelUrl: string): string {
 }
 
 export async function POST(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const authCtx = await authenticate(req)
+  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
     const body = await req.json()
@@ -38,7 +38,7 @@ export async function POST(req: Request) {
       oauth_refresh_token: string | null; oauth_expires_at: number | null;
     }>(
       'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1',
-      [accountId, session.user?.id]
+      [accountId, authCtx.id]
     )
 
     if (!accounts.length) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
@@ -102,7 +102,7 @@ export async function POST(req: Request) {
     ).catch(() => {})
 
     // Store tracking record — fire-and-forget
-    const userId = session.user?.id
+    const userId = authCtx.id
     if (requestReadReceipt && token) {
       query(
         `INSERT INTO sent_tracking (token, message_id, account_id, user_id, sent_to, subject)

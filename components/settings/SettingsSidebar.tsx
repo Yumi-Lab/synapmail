@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import {
   User, Palette, BookOpen, Bell, PenSquare,
-  Mail, FileSignature, ArrowLeft, ShieldCheck, Users, Filter, LayoutTemplate, Bot,
+  Mail, FileSignature, ArrowLeft, ShieldCheck, Users, Filter, LayoutTemplate, Bot, KeyRound, Terminal,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -21,6 +21,8 @@ const NAV_ITEMS = [
   { href: '/settings/contacts',      key: 'contacts',      icon: Users },
   { href: '/settings/rules',         key: 'rules',         icon: Filter },
   { href: '/settings/ai',            key: 'ai',            icon: Bot },
+  { href: '/settings/pgp',           key: 'pgp',           icon: KeyRound },
+  { href: '/settings/api-keys',      key: 'apiKeys',       icon: Terminal },
 ] as const
 
 export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {

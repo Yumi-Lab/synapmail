@@ -13,6 +13,11 @@ interface UserSettings {
   notifications: boolean
   undo_send_delay: number
   start_view: string
+  active_account_id: string | null
+  sidebar_collapsed: boolean
+  mail_density: string
+  list_width: number
+  dashboard_account_id: string | null
 }
 
 const DEFAULTS: UserSettings = {
@@ -24,7 +29,14 @@ const DEFAULTS: UserSettings = {
   notifications: true,
   undo_send_delay: 10,
   start_view: 'inbox',
+  active_account_id: null,
+  sidebar_collapsed: false,
+  mail_density: 'comfortable',
+  list_width: 320,
+  dashboard_account_id: null,
 }
+
+const SETTINGS_COLUMNS = `theme, language, messages_per_page, thread_view, reading_pane, notifications, undo_send_delay, start_view, active_account_id, sidebar_collapsed, mail_density, list_width, dashboard_account_id`
 
 export async function GET() {
   const session = await auth()
@@ -32,8 +44,7 @@ export async function GET() {
 
   try {
     const rows = await query<UserSettings>(
-      `SELECT theme, language, messages_per_page, thread_view, reading_pane, notifications, undo_send_delay, start_view
-       FROM user_settings WHERE user_id = $1`,
+      `SELECT ${SETTINGS_COLUMNS} FROM user_settings WHERE user_id = $1`,
       [session.user.id]
     )
     return NextResponse.json({ data: rows[0] ?? DEFAULTS })
@@ -52,6 +63,7 @@ export async function PATCH(req: Request) {
     const allowed: (keyof UserSettings)[] = [
       'theme', 'language', 'messages_per_page',
       'thread_view', 'reading_pane', 'notifications', 'undo_send_delay', 'start_view',
+      'active_account_id', 'sidebar_collapsed', 'mail_density', 'list_width', 'dashboard_account_id',
     ]
 
     const updates: Partial<UserSettings> = {}
@@ -75,8 +87,7 @@ export async function PATCH(req: Request) {
     )
 
     const rows = await query<UserSettings>(
-      `SELECT theme, language, messages_per_page, thread_view, reading_pane, notifications, undo_send_delay, start_view
-       FROM user_settings WHERE user_id = $1`,
+      `SELECT ${SETTINGS_COLUMNS} FROM user_settings WHERE user_id = $1`,
       [session.user.id]
     )
     return NextResponse.json({ data: rows[0] ?? DEFAULTS })

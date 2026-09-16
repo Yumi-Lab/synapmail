@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useTranslations } from 'next-intl'
 import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, MailOpen, MoveRight, ChevronDown, Eye, EyeOff, Archive, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import useSWR from 'swr'
+import useSWR, { mutate as globalMutate } from 'swr'
 import type { Message, Folder, ReadReceipt } from '@/types/email'
 import { MessageContextMenu, type ContextMenuState } from '@/components/ui/MessageContextMenu'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
@@ -105,7 +105,7 @@ interface Props {
   searchInputRef?: React.RefObject<HTMLInputElement>
 }
 
-interface AppSettings { thread_view: boolean; messages_per_page: number }
+interface AppSettings { thread_view: boolean; messages_per_page: number; mail_density: DensityMode }
 
 export function MessageList({ folder, onSelect, onSelectThread, activeAccountId, searchInputRef }: Props) {
   const t = useTranslations('mail')
@@ -118,17 +118,20 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
 
-  // Direction B — comfortable / compact density (per browser)
-  const [density, setDensity] = useState<DensityMode>('comfortable')
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('synapmail:mailDensity')
-      if (stored === 'compact' || stored === 'comfortable') setDensity(stored)
-    } catch { /* ignore */ }
-  }, [])
+  const { data: settingsData } = useSWR<{ data: AppSettings }>('/api/settings', fetcher)
+  const threadView = settingsData?.data?.thread_view ?? true
+  const perPage = settingsData?.data?.messages_per_page ?? 30
+
+  // Direction B — comfortable / compact density
+  const density = settingsData?.data?.mail_density ?? 'comfortable'
   const changeDensity = (mode: DensityMode) => {
-    setDensity(mode)
-    try { localStorage.setItem('synapmail:mailDensity', mode) } catch { /* ignore */ }
+    globalMutate('/api/settings', (curr: { data: Record<string, unknown> } | undefined) =>
+      curr ? { data: { ...curr.data, mail_density: mode } } : curr, false)
+    fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mail_density: mode }),
+    }).then(() => globalMutate('/api/settings'))
   }
   const compact = density === 'compact'
 
@@ -203,10 +206,6 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
       document.removeEventListener('keydown', onKey)
     }
   }, [snoozeFor])
-
-  const { data: settingsData } = useSWR<{ data: AppSettings }>('/api/settings', fetcher)
-  const threadView = settingsData?.data?.thread_view ?? true
-  const perPage = settingsData?.data?.messages_per_page ?? 30
 
   const accountParam = activeAccountId ? `&account=${activeAccountId}` : ''
 

@@ -1,25 +1,28 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Menu } from 'lucide-react'
+import useSWR, { mutate } from 'swr'
 import { Sidebar } from './Sidebar'
 import { UpdateBanner } from './UpdateBanner'
 
+const fetcher = (url: string) => fetch(url).then(r => r.json())
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  // Start from the SSR-safe default and read the stored preference after mount,
-  // so the server and first client render match (no hydration mismatch).
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  useEffect(() => {
-    setSidebarCollapsed(localStorage.getItem('synapmail:sidebarCollapsed') === 'true')
-  }, [])
+  // SSR-safe default (false) until the settings SWR resolves after mount — no hydration mismatch.
+  const { data: settingsData } = useSWR<{ data: { sidebar_collapsed: boolean } }>('/api/settings', fetcher)
+  const sidebarCollapsed = settingsData?.data?.sidebar_collapsed ?? false
 
   const toggleCollapse = () => {
-    setSidebarCollapsed(v => {
-      const next = !v
-      localStorage.setItem('synapmail:sidebarCollapsed', String(next))
-      return next
-    })
+    const next = !sidebarCollapsed
+    mutate('/api/settings', (curr: { data: Record<string, unknown> } | undefined) =>
+      curr ? { data: { ...curr.data, sidebar_collapsed: next } } : curr, false)
+    fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sidebar_collapsed: next }),
+    }).then(() => mutate('/api/settings'))
   }
 
   return (

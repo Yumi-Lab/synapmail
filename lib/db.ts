@@ -83,6 +83,24 @@ export async function initDb(): Promise<void> {
     )
   `)
 
+  // Partial index for the per-account / per-folder unread aggregates
+  // (GET /api/accounts unread badges + GET /api/folders unreadCount, polled every 60s)
+  await query(`CREATE INDEX IF NOT EXISTS messages_cache_unread_idx ON messages_cache(account_id, folder) WHERE is_read = false`)
+
+  // Authoritative per-folder counts from a server-side IMAP SEARCH UNSEEN
+  // (written by lib/imap.ts listMessages on page 1). Unlike counting
+  // messages_cache rows, this is NOT capped by the fetched page size — a folder
+  // with 300 unread reports 300, not 50. Read by GET /api/accounts + /api/folders.
+  await query(`
+    CREATE TABLE IF NOT EXISTS mailbox_stats (
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      folder VARCHAR(255) NOT NULL,
+      unread_count INTEGER NOT NULL DEFAULT 0,
+      synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (account_id, folder)
+    )
+  `)
+
   await query(`
     CREATE TABLE IF NOT EXISTS user_settings (
       user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -99,6 +117,12 @@ export async function initDb(): Promise<void> {
   // Migrations — colonnes ajoutées après la création initiale
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS undo_send_delay INTEGER NOT NULL DEFAULT 10`)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS start_view VARCHAR(20) NOT NULL DEFAULT 'inbox'`)
+  // Préférences UI auparavant en localStorage — persistées ici pour survivre au reload / multi-device
+  await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS active_account_id UUID REFERENCES email_accounts(id) ON DELETE SET NULL`)
+  await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sidebar_collapsed BOOLEAN NOT NULL DEFAULT false`)
+  await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS mail_density VARCHAR(20) NOT NULL DEFAULT 'comfortable'`)
+  await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS list_width INTEGER NOT NULL DEFAULT 320`)
+  await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS dashboard_account_id UUID REFERENCES email_accounts(id) ON DELETE SET NULL`)
 
   await query(`
     CREATE TABLE IF NOT EXISTS contacts (
@@ -245,6 +269,63 @@ export async function initDb(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)
+
+  // PGP end-to-end encryption — server stores public keys only.
+  // Private keys are generated and kept exclusively in browser IndexedDB (lib/pgp/keystore.ts).
+  await query(`
+    CREATE TABLE IF NOT EXISTS pgp_public_keys (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      email VARCHAR(255) NOT NULL,
+      name VARCHAR(255),
+      fingerprint VARCHAR(64) NOT NULL,
+      armored_key TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(user_id, email)
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS pgp_public_keys_user_idx ON pgp_public_keys(user_id, email)`)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_pgp_identity (
+      user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      fingerprint VARCHAR(64) NOT NULL,
+      armored_public_key TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+
+  // Brouillons de composition — un par (utilisateur, compte), remplace le localStorage `synapmail:draft:${accountId}`
+  await query(`
+    CREATE TABLE IF NOT EXISTS drafts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      to_addresses TEXT[] NOT NULL DEFAULT '{}',
+      cc_addresses TEXT[] NOT NULL DEFAULT '{}',
+      bcc_addresses TEXT[] NOT NULL DEFAULT '{}',
+      subject TEXT NOT NULL DEFAULT '',
+      body_html TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(user_id, account_id)
+    )
+  `)
+
+  // Clés API — accès Bearer lecture+écriture pour usage machine/agent, en plus du cookie de session
+  await query(`
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name VARCHAR(255) NOT NULL,
+      key_prefix VARCHAR(12) NOT NULL,
+      key_hash VARCHAR(64) NOT NULL,
+      last_used_at TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS api_keys_hash_idx ON api_keys(key_hash)`)
 }
 
 export default pool

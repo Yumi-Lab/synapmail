@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button'
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { buildIframeHtml, hardenIframeLinks } from '@/lib/email-iframe'
 import { cn } from '@/lib/utils'
+import { isInlinePgpMessage, extractInlinePgpMessage } from '@/lib/pgp'
+import { PgpDecryptPrompt } from '@/components/mail/PgpDecryptPrompt'
 
 const fetcher = async (url: string) => {
   const r = await fetch(url)
@@ -666,6 +668,11 @@ function SecurityBanner({ message }: { message: Message }) {
 
 function EmailBody({ message }: { message: Message }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const [decrypted, setDecrypted] = useState<string | null>(null)
+
+  useEffect(() => {
+    setDecrypted(null)
+  }, [message.uid, message.folder])
 
   useEffect(() => {
     if (!message.bodyHtml || !iframeRef.current) return
@@ -685,6 +692,21 @@ function EmailBody({ message }: { message: Message }) {
     iframe.onload = () => { resize(); hardenIframeLinks(iframe) }
     setTimeout(resize, 100)
   }, [message.bodyHtml])
+
+  const pgpCandidate = message.bodyPlain || (message.bodyHtml ? message.bodyHtml.replace(/<[^>]+>/g, '') : '')
+
+  if (decrypted !== null) {
+    return (
+      <pre className="whitespace-pre-wrap font-sans text-sm text-foreground leading-relaxed p-6">
+        {decrypted}
+      </pre>
+    )
+  }
+
+  if (isInlinePgpMessage(pgpCandidate)) {
+    const armoredMessage = extractInlinePgpMessage(pgpCandidate) ?? pgpCandidate
+    return <PgpDecryptPrompt armoredMessage={armoredMessage} onDecrypted={setDecrypted} />
+  }
 
   if (message.bodyHtml) {
     return (

@@ -59,6 +59,7 @@
 - **Read receipts** — Optional per-email tracking combining a 1×1 pixel tracker and the MDN standard header (`Disposition-Notification-To`); eye icon + timestamp shown in Sent list when opened
 
 ### Security & privacy
+- **End-to-end PGP encryption** — Generate an OpenPGP keypair entirely client-side (openpgp.js); the private key lives only in browser IndexedDB, protected by your passphrase, and never touches the server. Import contacts' public keys to send inline-PGP-encrypted mail (an "Encrypt" toggle appears once every recipient has a known key); a received PGP message prompts for your passphrase and decrypts locally. Settings → PGP Encryption for key generation, backup/restore and contact key management.
 - **Phishing detection** — Parses `Authentication-Results` header (SPF / DKIM / DMARC); detects display-name spoofing for 30+ brands; shows a color-coded security banner (green / orange / red) and highlights the sender address in red when suspicious
 - **Lookalike domain detection** — Levenshtein distance against known brand domains (amaz0n.com, arnazon.com…); flags visually similar domains
 - **Deceptive link detection** — Parses email HTML before rendering; warns when visible text says one domain but the href points to another
@@ -77,15 +78,17 @@
 - **MDN toast** — 30-second toast when a read-receipt response (MDN email) is received for a tracked sent message
 
 ### Settings & admin
-- **Full settings UI** — Sidebar-nav settings with 8 pages: Profile, Appearance, Reading, Notifications, Composition, Email Accounts, Signatures, Rules, Templates, Contacts
+- **Full settings UI** — Sidebar-nav settings: Profile, Appearance, Reading, Notifications, Composition, Email Accounts, Signatures, Rules, Templates, Contacts, PGP Encryption, API Keys
 - **Appearance** — Dark / Light / System theme, language (EN/FR), persisted server-side and applied on load
 - **Reading** — Reading pane on/off default
 - **Notifications** — Enable/disable desktop notifications
 - **Composition** — Undo send delay configuration
 - **User profile** — Name and password change
+- **API Keys** — Bearer tokens for scripts/agents, scoped to a read+write subset of the REST API, revocable at any time
 - **Full i18n** — English and French built-in, easy to extend
 - **Admin panel** — User management (create, role toggle, delete)
 - **Microsoft OAuth2** — Connect Outlook/Live/Hotmail via XOAUTH2 (no password stored)
+- **No third-party fonts or trackers** — system font stack only, no external font/CDN dependency; all preferences and drafts persisted server-side (no `localStorage` for app state)
 
 ---
 
@@ -229,37 +232,63 @@ Shortcuts are inactive when an input field or the editor is focused.
 
 All endpoints require authentication. Responses follow `{ data?, error? }` shape.
 
+### Authentication
+
+Two ways in:
+- **Session cookie** — the normal browser login, used by the app itself.
+- **API key (Bearer token)** — for scripts and external agents. Create one in Settings → API Keys (the raw key is shown once, at creation) and send it as `Authorization: Bearer syn_...`. Keys are scoped to the endpoints marked **Bearer ✓** below (accounts, folders, messages, contacts) — everything else stays session-only for now.
+
+```bash
+curl -H "Authorization: Bearer syn_..." https://your-instance/api/accounts
+```
+
 ### Accounts
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/accounts` | List email accounts |
-| `POST` | `/api/accounts` | Add email account |
-| `PATCH` | `/api/accounts/[id]` | Update account |
-| `DELETE` | `/api/accounts/[id]` | Remove account |
-| `POST` | `/api/accounts/test` | Test IMAP + SMTP connection |
+| Method | Path | Bearer | Description |
+|--------|------|:------:|-------------|
+| `GET` | `/api/accounts` | ✓ | List email accounts |
+| `POST` | `/api/accounts` | | Add email account |
+| `PATCH` | `/api/accounts/[id]` | | Update account |
+| `DELETE` | `/api/accounts/[id]` | | Remove account |
+| `POST` | `/api/accounts/test` | | Test IMAP + SMTP connection |
 
 ### Messages
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/messages?account=&folder=&page=&filter=` | List messages |
-| `GET` | `/api/messages/[id]?account=&folder=` | Get full message |
-| `PATCH` | `/api/messages/[id]` | Mark read/unread or star |
-| `DELETE` | `/api/messages/[id]` | Delete message |
-| `PATCH` | `/api/messages/bulk` | Bulk mark read/unread or move |
-| `DELETE` | `/api/messages/bulk` | Bulk delete |
-| `GET` | `/api/messages/[id]/attachment/[partId]?inline=` | Download or inline-preview attachment |
-| `POST` | `/api/messages/[id]/mdn` | Register received MDN (read receipt response) |
-| `GET` | `/api/messages/search?q=&account=` | Full-text IMAP search |
-| `GET` | `/api/messages/thread?subject=&account=` | Fetch thread messages |
+| Method | Path | Bearer | Description |
+|--------|------|:------:|-------------|
+| `GET` | `/api/messages?account=&folder=&page=&filter=` | ✓ | List messages |
+| `GET` | `/api/messages/[id]?account=&folder=` | ✓ | Get full message |
+| `PATCH` | `/api/messages/[id]` | ✓ | Mark read/unread or star |
+| `DELETE` | `/api/messages/[id]` | ✓ | Delete message |
+| `PATCH` | `/api/messages/bulk` | ✓ | Bulk mark read/unread or move |
+| `DELETE` | `/api/messages/bulk` | ✓ | Bulk delete |
+| `GET` | `/api/messages/[id]/attachment/[partId]?inline=` | | Download or inline-preview attachment |
+| `POST` | `/api/messages/[id]/mdn` | | Register received MDN (read receipt response) |
+| `GET` | `/api/messages/search?q=&account=` | ✓ | Full-text IMAP search |
+| `GET` | `/api/messages/thread?subject=&account=` | ✓ | Fetch thread messages |
 
 ### Folders & Send
 
+| Method | Path | Bearer | Description |
+|--------|------|:------:|-------------|
+| `GET` | `/api/folders?account=` | ✓ | List IMAP folders |
+| `POST` | `/api/messages/send` | ✓ | Send email (supports scheduled + forwarded attachments) |
+
+### API Keys
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/folders?account=` | List IMAP folders |
-| `POST` | `/api/messages/send` | Send email (supports scheduled + forwarded attachments) |
+| `GET` | `/api/api-keys` | List your API keys (name, prefix, last used) |
+| `POST` | `/api/api-keys` | Create an API key — returns the raw key once |
+| `DELETE` | `/api/api-keys/[id]` | Revoke an API key |
+
+### Drafts
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/drafts?accountId=` | Get the current compose draft for an account |
+| `PUT` | `/api/drafts` | Save (upsert) the compose draft for an account |
+| `DELETE` | `/api/drafts?accountId=` | Delete the compose draft for an account |
 
 ### Scheduled emails
 
@@ -270,11 +299,11 @@ All endpoints require authentication. Responses follow `{ data?, error? }` shape
 
 ### Contacts
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/contacts?account=&q=` | List / search contacts |
-| `PATCH` | `/api/contacts/[id]` | Update contact |
-| `DELETE` | `/api/contacts/[id]` | Delete contact |
+| Method | Path | Bearer | Description |
+|--------|------|:------:|-------------|
+| `GET` | `/api/contacts?account=&q=` | ✓ | List / search contacts |
+| `PATCH` | `/api/contacts/[id]` | | Update contact |
+| `DELETE` | `/api/contacts/[id]` | | Delete contact |
 
 ### Rules
 

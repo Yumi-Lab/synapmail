@@ -1,6 +1,7 @@
 import { auth } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 import { AppShell } from '@/components/layout/AppShell'
+import { PgpSessionProvider } from '@/components/pgp/PgpSessionProvider'
 
 export default async function AppLayout({
   children,
@@ -12,9 +13,11 @@ export default async function AppLayout({
   const session = await auth()
   if (!session) redirect('/login')
   return (
-    <AppShell>
-      {children}
-      {modal}
-    </AppShell>
+    <PgpSessionProvider>
+      <AppShell>
+        {children}
+        {modal}
+      </AppShell>
+    </PgpSessionProvider>
   )
 }

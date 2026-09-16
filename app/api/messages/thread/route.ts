@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { searchMessages } from '@/lib/imap'
 
@@ -20,8 +20,8 @@ function normalizeSubject(subject: string): string {
 }
 
 export async function GET(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const authCtx = await authenticate(req)
+  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
   const rawSubject = searchParams.get('subject')
@@ -44,10 +44,10 @@ export async function GET(req: Request) {
 
     if (accountParam) {
       sql = 'SELECT * FROM email_accounts WHERE id = $1 AND user_id = $2 LIMIT 1'
-      values = [accountParam, session.user?.id]
+      values = [accountParam, authCtx.id]
     } else {
       sql = `SELECT * FROM email_accounts WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1`
-      values = [session.user?.id]
+      values = [authCtx.id]
     }
 
     const accounts = await query<AccountRow>(sql, values)

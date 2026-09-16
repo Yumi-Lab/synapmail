@@ -63,31 +63,39 @@ app/
       rules/page.tsx            # Email rules (uses RulesClient)
       signatures/page.tsx       # Email signatures
       templates/page.tsx        # Compose templates (Tiptap editor + {{variables}})
+      pgp/page.tsx              # PGP end-to-end encryption — generate/backup/import key, import contact keys
+      api-keys/page.tsx         # Bearer API keys for machine/agent access — create (shown once) / revoke
     admin/
       users/page.tsx            # Admin: user management
   api/
     auth/[...nextauth]/route.ts
     dashboard/route.ts          # GET aggregated command-center overview (KPIs, unread, activity, focus, receipts, scheduled, rules, follow-ups)
-    accounts/route.ts           # GET list / POST create email account
+    accounts/route.ts           # GET list (+ per-account INBOX unreadCount, accepts Bearer) / POST create email account (session-only)
     accounts/[id]/route.ts      # PATCH update / DELETE remove
     accounts/test/route.ts      # POST test IMAP+SMTP connection
     admin/users/route.ts        # GET list / POST create (admin only)
     admin/users/[id]/route.ts   # PATCH role / DELETE (admin only)
-    contacts/route.ts           # GET list+search contacts
+    api-keys/route.ts           # GET list (session-only) / POST create — returns the raw key once
+    api-keys/[id]/route.ts      # DELETE revoke (soft — sets revoked_at)
+    contacts/route.ts           # GET list+search contacts (GET accepts Bearer via lib/apiAuth.ts)
     contacts/[id]/route.ts      # PATCH name / DELETE
-    folders/route.ts            # GET IMAP folder list
-    messages/route.ts           # GET list messages (paginated, cached)
-    messages/send/route.ts      # POST send (immediate or scheduled + forwarded attachments)
-    messages/search/route.ts    # GET full-text IMAP search
-    messages/thread/route.ts    # GET thread by normalized subject
-    messages/bulk/route.ts      # PATCH mark read/move + DELETE bulk
-    messages/[id]/route.ts      # GET full / PATCH (read, star) / DELETE
+    drafts/route.ts             # GET / PUT (upsert) / DELETE — one compose draft per (user, account)
+    folders/route.ts            # GET IMAP folder list (accepts Bearer via lib/apiAuth.ts)
+    messages/route.ts           # GET list messages (paginated, cached; accepts Bearer)
+    messages/send/route.ts      # POST send (immediate or scheduled + forwarded attachments; accepts Bearer)
+    messages/search/route.ts    # GET full-text IMAP search (accepts Bearer)
+    messages/thread/route.ts    # GET thread by normalized subject (accepts Bearer)
+    messages/bulk/route.ts      # PATCH mark read/move + DELETE bulk (accepts Bearer)
+    messages/[id]/route.ts      # GET full / PATCH (read, star) / DELETE (accepts Bearer)
     messages/[id]/mdn/route.ts  # POST register received MDN read receipt
     messages/[id]/snooze/route.ts  # POST snooze until date / DELETE un-snooze
     messages/[id]/attachment/[partId]/route.ts  # GET download or inline (?inline=true)
     focus/route.ts              # GET light "à traiter" list (reading-pane empty state; shares lib/focus.ts with dashboard)
     oauth/microsoft/route.ts    # GET initiate OAuth2 flow
     oauth/microsoft/callback/route.ts           # GET OAuth2 callback + token exchange
+    pgp/contacts/route.ts       # GET list (+?emails= filter) / POST import a contact's PGP public key
+    pgp/contacts/[id]/route.ts  # DELETE remove a contact key
+    pgp/me/route.ts             # GET / PUT the user's own PGP public key (server copy — never the private key)
     profile/route.ts            # GET current user / PATCH name + password
     register/route.ts           # POST create user (when REGISTRATION_ENABLED)
     rules/route.ts              # GET list / POST create
@@ -124,6 +132,9 @@ components/
     MdnToast.tsx                # 30-second toast for received MDN read receipts
     ScheduledPopover.tsx        # Popover listing pending scheduled emails with cancel
     SnoozePopover.tsx           # Toolbar popover listing snoozed messages + "move back to inbox"
+    PgpDecryptPrompt.tsx        # Reading-pane "this message is encrypted" passphrase prompt
+  pgp/
+    PgpSessionProvider.tsx      # In-memory unlocked-private-key session (useRef, never persisted); wraps AppShell
   settings/
     primitives.tsx              # Settings design system — SettingsPage/Header/Section/Row, Toggle, ChoiceCards, Chips, SaveBar (dashboard visual language, violet accent)
     SettingsModal.tsx           # base-ui Dialog shell for the intercepted /settings route (nav rail + panel + close→router.back)
@@ -142,6 +153,7 @@ hooks/
 
 lib/
   accounts.ts                   # Account helpers (get by ID, default account)
+  apiAuth.ts                    # authenticate(req) — drop-in for auth() that also accepts Authorization: Bearer <api key>
   auth.ts                       # Auth.js config — credentials provider, multi-user
   contacts.ts                   # Contact extraction from emails + upsert logic
   db.ts                         # PostgreSQL pool — query<T>(sql, values?)
@@ -150,6 +162,10 @@ lib/
   i18n.ts                       # next-intl server config
   imap.ts                       # imapflow wrapper — connect, list, fetch, bulk ops, attachments
   msOAuth.ts                    # Microsoft OAuth2 token refresh
+  pgp/
+    crypto.ts                   # openpgp.js wrapper — dynamic `import('openpgp')` inside each fn (no top-level import, no server-side import)
+    keystore.ts                 # Browser IndexedDB — the private key is generated here and never leaves it
+    index.ts                    # Barrel export
   routing.ts                    # next-intl routing config
   rules.ts                      # Rules engine: evaluate conditions + apply actions
   scheduler.ts                  # Scheduled email worker + snooze wake sweep (60s intervals)
@@ -168,10 +184,11 @@ types/
   dashboard.ts                  # DashboardData + widget shapes for /api/dashboard
   contact.ts                    # Contact interface
   email.ts                      # Message, Folder, Attachment, EmailAddress, Thread
-  account.ts                    # EmailAccount, Signature, User
+  account.ts                    # EmailAccount, Signature, User, ApiKey (never carries the raw key or its hash)
   api.ts                        # API response types
   rule.ts                       # Rule, RuleCondition, RuleAction interfaces
   template.ts                   # ComposeTemplate interface
+  pgp.ts                        # PgpContactKey, PgpIdentity interfaces
 
 middleware.ts                   # Auth protection + i18n routing
 next.config.mjs                 # Next.js config (withNextIntl)
@@ -219,8 +236,23 @@ messages_cache (id, account_id, folder, uid, message_id, from_address, from_name
 
 -- App settings per user
 user_settings (user_id, theme, language, messages_per_page, thread_view,
-               reading_pane, notifications, undo_send_delay, start_view, updated_at)
+               reading_pane, notifications, undo_send_delay, start_view,
+               active_account_id, sidebar_collapsed, mail_density, list_width,
+               dashboard_account_id, updated_at)
   start_view: 'inbox' | 'dashboard'   -- landing view; '/' redirects accordingly
+  -- active_account_id / sidebar_collapsed / mail_density / list_width / dashboard_account_id
+  -- replace what used to live in localStorage — see "UI state persistence" below
+
+-- Compose drafts — one per (user, account), replaces the old localStorage draft
+drafts (id, user_id, account_id, to_addresses, cc_addresses, bcc_addresses,
+        subject, body_html, updated_at)
+  UNIQUE(user_id, account_id) — compose mode only (reply/forward never persist a draft)
+
+-- API keys for machine/agent access (Bearer auth) — server stores only the SHA-256 hash
+api_keys (id, user_id, name, key_prefix, key_hash, last_used_at, revoked_at, created_at)
+  key_prefix: first 12 chars of the raw key, shown in the UI to identify a key
+  key_hash: SHA-256 of the raw key (not bcrypt — needs an indexed WHERE key_hash = $1 lookup)
+  -- the raw key itself is shown to the user exactly once, at creation (POST /api/api-keys)
 
 -- Scheduled emails
 scheduled_emails (id, account_id, user_id, from_address, to_addresses, cc, bcc,
@@ -252,6 +284,21 @@ contacts (id, account_id, user_id, email, name, frequency, last_seen, created_at
 snoozed_messages (id, user_id, account_id, folder, uid, subject, from_address, from_name,
                   snooze_until, created_at)
   UNIQUE(account_id, folder, uid) — scheduler DELETEs expired rows every 60s
+
+-- Authoritative per-folder unread counts (server-side IMAP SEARCH UNSEEN)
+mailbox_stats (account_id, folder, unread_count, synced_at)
+  PRIMARY KEY(account_id, folder)
+  -- written by lib/imap.ts listMessages on page 1; NOT capped by page size
+  -- (unlike counting messages_cache rows). Read by GET /api/accounts + /api/folders.
+
+-- PGP end-to-end encryption — server stores PUBLIC keys only, never private keys
+pgp_public_keys (id, user_id, email, name, fingerprint, armored_key, created_at)
+  UNIQUE(user_id, email) — a contact's manually-imported public key
+
+user_pgp_identity (user_id, fingerprint, armored_public_key, created_at, updated_at)
+  PRIMARY KEY(user_id) — server copy of the user's OWN public key (upserted, like user_settings)
+  -- the private key is generated client-side and lives ONLY in browser IndexedDB (lib/pgp/keystore.ts);
+  -- it is never sent to or stored on the server, under any column, in any table.
 ```
 
 ---
@@ -264,12 +311,21 @@ snoozed_messages (id, user_id, account_id, folder, uid, subject, from_address, f
 - Role stored in JWT token (`token.role`)
 - Admin role required for `/admin/*` routes and user creation
 
+### API key auth (Bearer) — machine/agent access
+- `lib/apiAuth.ts` → `authenticate(req)` is a drop-in replacement for `auth()` in API routes: tries the NextAuth session cookie first, then falls back to `Authorization: Bearer <key>` looked up against `api_keys`. Returns the same `{ id, role }` shape either way, so route bodies (`WHERE ... AND user_id = $N`) don't change — that SQL predicate is what actually enforces per-account isolation, for both auth methods.
+- Keys are generated as `syn_` + 32 random hex bytes, shown to the user **once** at creation (`POST /api/api-keys`), never stored or logged in cleartext. The server stores only `key_hash` (SHA-256 — not bcrypt, since a Bearer request needs an indexed `WHERE key_hash = $1` lookup by an *unknown* key; bcrypt's random salt makes that impossible) and `key_prefix` (first 12 chars, shown in the UI to identify a key).
+- `middleware.ts` (Edge runtime) cannot query Postgres, so it only checks that *either* the session cookie *or* an `Authorization: Bearer` header is present before letting `/api/*` requests through — the actual hash lookup happens in the Node.js route handler via `authenticate()`.
+- **First lot (read+write)**: `GET /api/accounts`, `GET /api/folders`, `GET /api/messages`, `GET /api/messages/[id]`, `GET /api/messages/search`, `GET /api/messages/thread`, `POST /api/messages/send`, `PATCH`/`DELETE /api/messages/[id]`, `PATCH`/`DELETE /api/messages/bulk`, `GET /api/contacts`. Everything else (admin, PGP, settings/rules/templates/signatures CRUD, OAuth, SSE, track/unsubscribe) stays session-only.
+- Manage keys in Settings → Clés API (`app/(app)/settings/api-keys/page.tsx`): create (name only, raw key shown once in a copyable box), list (name, prefix, last used), revoke (soft — sets `revoked_at`, key stops working immediately).
+- No rate-limiting yet — a follow-up if a single key starts driving heavy traffic across many accounts.
+
 ### IMAP (imapflow)
 - Connection pool per account — reuse where possible
 - Always `client.logout()` after each operation
 - UID-based operations (not sequence numbers) for reliability
 - Folder names with spaces need quoting: `"[Gmail]/All Mail"`
 - **Cache reconcile**: `listMessages` only INSERT/UPDATEs `messages_cache`; on page 1 it also runs `SEARCH ALL` (uid) and DELETEs cache rows whose UID is no longer live (fire-and-forget). Without this, messages moved/deleted elsewhere leave ghost `is_read=false` rows that pollute the focus list and unread counts.
+- **Authoritative unread count**: on page 1 `listMessages` also runs `SEARCH UNSEEN` and UPSERTs the count into `mailbox_stats(account_id, folder)`. This is the number the sidebar account badges / folder list use (via `GET /api/accounts` + `/api/folders`, `COALESCE(mailbox_stats, cached-row count, 0)`) — it is **not** capped by `perPage` the way counting `messages_cache` rows is, so a folder with 300 unread reports 300. Both searches are cheap (UID lists, no body fetch) and run on the already-open mailbox.
 
 ### SMTP (nodemailer)
 - Create transporter from account settings
@@ -287,10 +343,13 @@ snoozed_messages (id, user_id, account_id, folder, uid, subject, from_address, f
 - Always use identical fetcher signatures for the same key — if Sidebar returns `{ data: [...] }`, AccountsClient must too (then extract `.data` locally)
 
 ### Sidebar — account-scoped SWR keys
-- `activeAccountId` is a React state (initialized from `localStorage`, updated via the `synapmail:account-change` custom event)
+- `activeAccountId` is a React state (initialized from `user_settings.active_account_id` via `/api/settings`, updated via the `synapmail:account-change` custom event)
 - Folder list SWR key: `/api/folders?account=<id>` — changing accounts triggers an automatic re-fetch with the correct account's folders
 - Never use a static `/api/folders` key in the Sidebar: it would return the default account's folders regardless of which account is active
 - Pattern: `useEffect` listens to `synapmail:account-change` → updates `activeAccountId` state → SWR key changes → re-fetch
+- **Account dropdown (expanded mode)**: rendered as an `absolute z-50` overlay inside the `relative` account-switcher wrapper — never in the flex flow (an in-flow list of N accounts would crush the `flex-1` folder nav and get clipped by the shell's `overflow-hidden`). Height capped `max-h-[min(60vh,22rem)]` + `overflow-y-auto overscroll-contain`; a filter `<input>` (`mail.searchAccounts`) appears when `accounts.length > 8`; closes on outside `mousedown` / `Escape` (effect gated on `accountOpen`). Colour index must stay `accounts.indexOf(acc)` (not the filtered map index) so a filtered row keeps its real colour. Style mirrors the ComposeModal signature picker: `rounded-xl` + `shadow-xl` + violet `Check` on the active row + `hover:bg-violet-500/10` (kept on the dark `zinc-900` surface — the sidebar is always dark, so it does **not** use the light-theme `bg-popover` tokens).
+- **Account rows show name + email + unread**: line 1 = `acc.name` (falls back to `acc.email` when blank), line 2 = `acc.email` in `text-[11px] text-zinc-500`, plus a violet unread pill from `acc.unreadCount`. `unreadCount` = top-level `INBOX` unread, served by `GET /api/accounts` as `COALESCE(mailbox_stats.unread_count, cached-row count, 0)` (authoritative `SEARCH UNSEEN`, see IMAP section; partial index `messages_cache_unread_idx` backs the fallback). Same shape on the trigger button; the trigger's pill shows `otherUnread` (= total − active account) so it doesn't duplicate the active account's INBOX folder badge. Collapsed mode: the account dot gets a small `otherUnread` badge.
+- **Freshness**: the `/api/accounts` SWR uses `refreshInterval: 60000` + `revalidateOnFocus: true` so the per-account unread badges update while the switcher is closed. `mailbox_stats` for every account's INBOX is refreshed by the scheduler's `processInboxSync()` (every 3 min, see Scheduled send section) — not just the account currently open. The count is exact regardless of mailbox size (`SEARCH UNSEEN`), unlike the dashboard/focus counts which still read `messages_cache` rows.
 
 ### i18n (next-intl)
 - Locale detection from browser header
@@ -301,11 +360,10 @@ snoozed_messages (id, user_id, account_id, folder, uid, subject, from_address, f
 - Client components use `useTranslations()` from `next-intl`
 - Language change: write locale cookie → page reload → next-intl middleware picks it up
 
-### Server-Sent Events (new mail + scheduler)
-- `GET /api/stream` — keeps connection open
-- Polls IMAP every 30s per connected account
-- Sends `data: { type: 'new_mail', account, count }` events
-- Sends `data: { type: 'scheduled_sent', id }` when scheduler delivers a message
+### Server-Sent Events (scheduler push)
+- `GET /api/stream` — keeps the connection open, 25s `ping` keep-alive
+- Forwards `lib/schedulerEvents` emitter events to the client, filtered by `userId`: `scheduled_sent` (a scheduled mail went out) and `rule_applied` (a background rule matched)
+- Does **not** poll IMAP itself. New-mail freshness comes from (a) the client's own 60s SWR `refreshInterval` on `/api/messages` and `/api/accounts`, and (b) the scheduler's background inbox sync (see below)
 
 ### Encryption
 - Email passwords stored encrypted (AES-256-GCM) using `ENCRYPTION_KEY` env var
@@ -351,10 +409,10 @@ snoozed_messages (id, user_id, account_id, folder, uid, subject, from_address, f
 
 ### Draft auto-save
 - Only active in `compose` mode (not reply/replyAll/forward)
-- Key: `synapmail:draft:${accountId}` in `localStorage`
-- Auto-saves To/Cc/Bcc/Subject/body 3 seconds after last change (debounced `setTimeout`)
-- On next open: draft restored → "Brouillon restauré ×" badge in title bar
-- Draft cleared on: Send, Cancel button, close (×), or manual badge dismiss
+- Persisted server-side in the `drafts` table, one row per (user, account) — `GET/PUT/DELETE /api/drafts?accountId=`
+- Auto-saves To/Cc/Bcc/Subject/body 3 seconds after last change (debounced `setTimeout` → `PUT`)
+- On next open (any device/browser): draft restored → "Brouillon restauré ×" badge in title bar
+- Draft cleared on: Send, Cancel button, close (×), or manual badge dismiss — all via `clearDraft()` (`DELETE /api/drafts?accountId=`)
 - Signature logic: draft content applied to editor after signature is inserted (via `pendingDraftContent` state)
 
 ### Desktop notifications — click to open
@@ -373,12 +431,13 @@ snoozed_messages (id, user_id, account_id, folder, uid, subject, from_address, f
 - ComposeModal passes `scheduledAt: ISO string` to `POST /api/messages/send`
 - Route saves to `scheduled_emails` (status: 'pending') instead of calling SMTP immediately
 - `lib/scheduler.ts` runs every 60s: `SELECT ... FOR UPDATE SKIP LOCKED` fetches due rows, sends via SMTP, marks sent, emits `scheduled_sent` SSE event
-- Same file also runs `processSnoozes()` every 60s (DELETE expired `snoozed_messages`)
+- Same file also runs `processSnoozes()` every 60s (DELETE expired `snoozed_messages`) and `processRules()` every 5 min (all accounts with enabled rules)
+- **`processInboxSync()` every 3 min** (`SYNC_FOLDERS` / `SYNC_PAGE_SIZE` / `SYNC_INTERVAL_MS` consts) — loops **every** `email_accounts` row and calls `listMessages(cfg, 'INBOX', 1, 50, 'all', userId)`, which upserts + reconciles `messages_cache` **and** UPSERTs the authoritative `SEARCH UNSEEN` count into `mailbox_stats` (page 1). This keeps the per-account unread badges fresh for accounts the user never opens. `filter: 'all'` (not `'unread'`) so recently-read messages also get flipped in cache. Errors are caught per account. One extra pass fires 15s after boot. The 50-message window only bounds `messages_cache` (list/focus content) — the unread *count* in `mailbox_stats` is exact.
 - `instrumentation.ts` starts the scheduler at process boot (Next.js 14 `experimentalInstrumentationHook`) — independent of any user session
 
 ### Mail list — Direction B (date groups, density, corner actions, snooze)
 - **Date groups**: `MessageList` buckets threads by the last message's date (`grpToday`/`grpYesterday`/`grpThisWeek` <7d/`grpThisMonth` <30d/`MMMM yyyy`). Sticky headers (`sticky top-0` inside the scroll container). Disabled in search mode.
-- **Density**: `localStorage['synapmail:mailDensity']` = `'comfortable' | 'compact'`. Compact = tighter rows, `w-7` avatars, preview line hidden. Segmented toggle in the toolbar.
+- **Density**: `user_settings.mail_density` = `'comfortable' | 'compact'`, read/written via the shared `/api/settings` SWR key (see "UI state persistence"). Compact = tighter rows, `w-7` avatars, preview line hidden. Segmented toggle in the toolbar.
 - **Row layout**: grid `[avatar] [content]`, `position: relative`. Corner action strip is `absolute top-1.5 right-2` (out of the subject flow — objet/aperçu keep full width); line 1 gets `pr-[104px]`/`pr-[80px]` to clear it. Actions: Archiver (only if an archive folder is name-matched via `/archives?/i`), Marquer traité / non lu, Supprimer, Reporter. Always visible (no hover-only).
 - **Avatars**: hashed color for unread, neutral `bg-muted` for read.
 - **Snooze**: per-row preset menu (`lib/snooze-presets.ts`). `POST /api/messages/[id]/snooze` UPSERTs `snoozed_messages`; the row is optimistically removed. `GET /api/messages` filters out non-expired snoozed UIDs (and adjusts `total`). `lib/scheduler.ts` → `processSnoozes()` DELETEs expired rows every 60s; the message reappears on the next list poll (60s `refreshInterval`). Toolbar `SnoozePopover` lists pending snoozes + "move back to inbox" (`DELETE …/snooze`). Custom event `synapmail:snooze-changed` refreshes the popover.
@@ -432,11 +491,27 @@ snoozed_messages (id, user_id, account_id, folder, uid, subject, from_address, f
 - `EmailTokenInput` component: token chips with ×, typeahead from `/api/contacts?q=`, keyboard navigation (↑↓ Enter Backspace)
 - Used in ComposeModal for To/Cc/Bcc fields
 
+### PGP end-to-end encryption
+- **Trust model**: 100% client-side. The private key is generated in the browser (`lib/pgp/crypto.ts` → `generateKeypair()`, openpgp.js) and stored only in browser IndexedDB (`lib/pgp/keystore.ts`), passphrase-protected by openpgp.js itself at generation time. It is never sent to or stored on the server, and never appears in any Postgres table. The server stores only PUBLIC keys (`pgp_public_keys` for contacts, `user_pgp_identity` for the user's own key) — public keys are not secret.
+- **Bundle size**: `openpgp` (~1MB min) is never imported at the top level of any file — `lib/pgp/crypto.ts` does `await import('openpgp')` inside each function body, so it code-splits into its own chunk and only loads when a PGP action actually runs (verified: it does not appear in the `/mail` or `/settings/pgp` page bundles' static size, only as a separate lazy chunk). `isInlinePgpMessage()`/`extractInlinePgpMessage()` are plain regexes with no openpgp import, so ReadingPane can call them on every render for free.
+- **Scope (MVP)**: manual key exchange only — no WKD/keyserver auto-discovery, no PGP/MIME (inline ASCII-armored block only), no attachment encryption, no multi-device private-key sync (export/import the encrypted private-key backup `.asc` file manually via Settings → PGP Encryption).
+- **Settings page** (`app/(app)/settings/pgp/page.tsx`): "My key" card generates a keypair (name/email prefilled from `/api/profile`, passphrase + confirm), publishes the public half to `PUT /api/pgp/me`, and offers download of the public key / the still-passphrase-protected private key backup, plus import of a backup on a new browser. "Contact keys" card imports a contact's public key (paste or `.asc` upload, parsed client-side via `readPublicKeyInfo()` before `POST /api/pgp/contacts`).
+- **Compose** (`ComposeModal.tsx`): an "Encrypt" toggle (`encrypted` state, `Lock` icon next to the read-receipt toggle) appears only when every current To/Cc/Bcc recipient has a known key (`GET /api/pgp/contacts?emails=`, SWR). Turning it on forces `requestReadReceipt=false` (disabled while encrypted — the tracking-pixel injection in `/api/messages/send` only ever touches the `html` field, which stays empty for an encrypted send). `handleSend`'s encrypted branch uses `editor.getText()` (plain text only — no rich formatting survives inline PGP) + a flattened plain-text quote, encrypts to all recipients **plus the sender's own public key** (`GET /api/pgp/me` — "encrypt to self", so the Sent-folder copy stays readable), and puts the armored block in `payload.text` (never `payload.html`) via `encryptText()`. Forwarding with attachments is blocked client-side while encrypted (no attachment encryption in this MVP).
+- **Reading** (`ReadingPane.tsx` → `EmailBody`): before the existing iframe/`<pre>` branching, checks `isInlinePgpMessage()` against `message.bodyPlain` (falling back to tag-stripped `bodyHtml`). A match renders `PgpDecryptPrompt` instead — passphrase entry unlocks the local private key via `PgpSessionProvider` (`unlockPrivateKey()`, session-scoped `useRef`, never persisted, cleared on tab close/reload) and decrypts with `decryptText()`; a second encrypted message in the same tab reuses the already-unlocked session key without re-prompting. Decrypted plaintext renders in a `<pre>`, never fed back into the HTML iframe or sent to the server.
+- **`PgpSessionProvider`** wraps `<AppShell>` in `app/(app)/layout.tsx`, so both `/mail` and `/settings/pgp` (full page and intercepted modal) share one unlock session per tab.
+
 ### Settings persistence
 - `user_settings` table UPSERT via `PATCH /api/settings`
 - `initDb()` in `instrumentation.ts` ensures all tables exist at boot (idempotent)
 - Theme: next-themes cookie; Language: locale cookie → picked up by next-intl middleware on next request
 - `MailClient` reads settings via SWR `/api/settings`; `settingsPaneInitialized` ref prevents overwriting user's in-session toggle
+
+### UI state persistence — no localStorage
+- Every piece of app UI state that used to live in `localStorage` (sidebar collapsed, mail density, list column width, active account, dashboard account filter) is now a column on `user_settings`, read/written through the same shared `/api/settings` SWR key.
+- Pattern for a write: `mutate('/api/settings', curr => ({ data: { ...curr.data, <field>: <value> } }), false)` (optimistic, no revalidation) immediately followed by `fetch('/api/settings', { method: 'PATCH', body: JSON.stringify({ <field>: <value> }) }).then(() => mutate('/api/settings'))` (revalidate once the write lands) — `mutate` imported as `import { mutate as globalMutate } from 'swr'` wherever a component already has its own local `mutate` from a different `useSWR()` call, to avoid shadowing.
+- Because every consumer shares the same `/api/settings` SWR cache, a change in one component (e.g. Sidebar switching accounts) is reflected instantly in every other subscriber in the same tab — no custom event needed for that. `synapmail:account-change` is kept anyway for `MailClient`'s side effects (resetting selection state), not for propagating the value itself.
+- This also fixes a pre-existing multi-tab desync bug: with `localStorage`, two tabs never saw each other's changes (`CustomEvent` doesn't cross tabs); with SWR + `revalidateOnFocus`, focusing a stale tab now picks up the latest value.
+- Compose drafts are data, not a preference, so they live in their own `drafts` table instead — see "Draft auto-save" below.
 
 ### Settings — modal (intercepting route) + full-page fallback
 - Soft-navigation to `/settings` or `/settings/<sub>` from inside the app opens the settings area as a **modal over the current page** (Gmail/Linear style). Hard load / direct visit / refresh renders the normal full page.
@@ -449,13 +524,13 @@ snoozed_messages (id, user_id, account_id, folder, uid, subject, from_address, f
 - Primitives are **i18n-free** — pages pass translated label props. Keys live under `settings.nav`, `settings.common`, `settings.{page}` in both locales.
 - `SaveBar` is the standard footer (sticky, dirty/saving/saved states). Pages compute `dirty` by diffing local state vs the SWR-loaded settings; `submit` variant drives a `<form>` (profile).
 - **Phase 1** (config pages on primitives + i18n): profile, appearance, reading, notifications, composition + SettingsSidebar. The `notifications` and `reading_pane` toggles were previously "Bientôt disponible" placeholders but were already wired (`useEmailNotifications`, `MailClient`) — now live.
-- **Phase 2** (CRUD pages on the shared frame): accounts, signatures, templates, contacts, rules (`RulesClient`), ai (`AISettingsClient`) now use `SettingsPage` + `SettingsHeader` (icon tile, violet accent) and the `rounded-2xl bg-card/80 shadow-sm` card / `bg-card shadow-sm` list-row style. Internal logic (Tiptap editors, drag-drop, wizard, rule editor) untouched. i18n of the CRUD page bodies is still partial (strings hardcoded FR pre-refonte) — separate follow-up.
+- **Phase 2** (CRUD pages on the shared frame): accounts, signatures, templates, contacts, rules (`RulesClient`), ai (`AISettingsClient`), api-keys now use `SettingsPage` + `SettingsHeader` (icon tile, violet accent) and the `rounded-2xl bg-card/80 shadow-sm` card / `bg-card shadow-sm` list-row style. Internal logic (Tiptap editors, drag-drop, wizard, rule editor) untouched. i18n of the CRUD page bodies is still partial (strings hardcoded FR pre-refonte) — separate follow-up, `api-keys` included (its nav label is translated, its body is not, matching the rest of Phase 2).
 - Reference mockup: `claude.ai/code/artifact/b87828af-6602-445e-a0a2-40e786da638c`
 
 ### Dashboard / command center (`/dashboard`)
 - Renders inside `AppShell` (Sidebar + full-width content) — NOT the 3-column mail shell
 - `GET /api/dashboard` = one aggregation route: `Promise.all` of ~15 SQL queries, returns `{ data: DashboardData }` (see `types/dashboard.ts`). No new tables — reads `messages_cache`, `sent_tracking`, `scheduled_emails`, `email_rules` + `rule_execution_log`, `contacts`, `email_accounts`
-- **Account scope**: `?account=<id>` (validated against `user_id`) narrows every widget except the account list and the two contact widgets (`contacts` has no `account_id` in this schema). Response always echoes `accountFilter` (the id it actually applied, or `null`) so the client can drop a stale filter. Client persists the choice in `localStorage['synapmail:dashboardAccount']`, uses SWR `keepPreviousData` + an `isValidating` dim. Selector in the header + click-to-filter on the "Comptes" widget rows
+- **Account scope**: `?account=<id>` (validated against `user_id`) narrows every widget except the account list and the two contact widgets (`contacts` has no `account_id` in this schema). Response always echoes `accountFilter` (the id it actually applied, or `null`) so the client can drop a stale filter. Client persists the choice server-side in `user_settings.dashboard_account_id` (via `/api/settings`, `null` = all accounts), uses SWR `keepPreviousData` + an `isValidating` dim. Selector in the header + click-to-filter on the "Comptes" widget rows
 - Focus / receipts / scheduled items carry `accountName` + `accountColor`; the client shows a per-account chip on each unless already scoped to one account
 - **Focus list** is heuristic-only (no LLM / `ai_settings`): scores unread inbox messages by starred, VIP/frequent contact (`contacts`), and subject regex (invoice / deadline / reply / attachment). Top 5 by score
 - **Unread / activity** counts exclude folders matching `trash|sent|junk|spam|draft|archive` (ILIKE). Accuracy is bounded by what `messages_cache` holds — folders never opened in-app may be under-counted
@@ -465,7 +540,7 @@ snoozed_messages (id, user_id, account_id, folder, uid, subject, from_address, f
 - Quick-compose / "Write" buttons `router.push('/mail')` then dispatch `synapmail:compose` after 350ms (ComposeModal only mounts on `/mail`)
 
 ### Custom events (cross-component communication)
-- `synapmail:account-change` — emitted by account switcher; Sidebar and MailClient listen to update active account
+- `synapmail:account-change` — emitted by account switcher; Sidebar and MailClient listen to reset selection/reading-pane state. The `activeAccountId` *value* itself now propagates via the shared `/api/settings` SWR cache (see "UI state persistence"), not via this event — the event is same-tab-only and was the source of the old multi-tab desync
 - `synapmail:compose` — triggers ComposeModal open
 - `synapmail:open-message` — emitted by notification click AND by the reading-pane "à traiter" list; MailClient opens the message in ReadingPane
 - `synapmail:scheduled-sent` — emitted on `scheduled_sent` SSE; refreshes `ScheduledPopover`
@@ -477,6 +552,9 @@ snoozed_messages (id, user_id, account_id, folder, uid, subject, from_address, f
 - Desktop: three columns full; sidebar collapsible (icon-only ↔ full); columns resizable via drag handle
 - Mail list column width: `w-full` below `lg`, fixed `listWidth` (resizable, 240–600px) only at `lg+` — matches the `hidden lg:block` resize handle. Never apply the pixel width at all breakpoints: a narrow viewport can't shrink a `shrink-0` fixed-width column, so its right edge (corner action strip) gets clipped by `<main>`'s `overflow-hidden`. `listWidth` is passed as the `--synap-list-w` CSS var and consumed via `lg:w-[var(--synap-list-w)]`.
 - `MessageList` toolbars (filter/density row + bulk-selection row) are `flex flex-wrap`; the right-hand icon group uses `ml-auto` (not a `flex-1` spacer) so it wraps to a second line on a narrow column instead of the segmented controls being clipped.
+
+### Typography
+- System font stack only (`tailwind.config.ts` → `fontFamily.sans`) — `ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif`. No `next/font/google`, no bundled font files: zero external font dependency, even at build time.
 
 ---
 

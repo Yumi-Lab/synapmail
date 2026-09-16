@@ -72,6 +72,9 @@
     "unsubscribeError": "Erreur lors du désabonnement",
     "dashboard": "Tableau de bord",
     "search": "Rechercher",
+    "searchAccounts": "Rechercher un compte…",
+    "noAccountMatch": "Aucun compte correspondant",
+    "unreadOtherAccounts": "{count} non lus sur les autres comptes",
     "grpToday": "Aujourd'hui",
     "grpYesterday": "Hier",
     "grpThisWeek": "7 derniers jours",
@@ -165,6 +168,8 @@
       "contacts": "Contacts",
       "rules": "Règles",
       "ai": "IA Copilot",
+      "pgp": "Chiffrement PGP",
+      "apiKeys": "Clés API",
       "admin": "Administration"
     },
     "common": {
@@ -424,6 +429,68 @@
     "newToday": "+{count} aujourd’hui",
     "upToDate": "à jour",
     "allAccounts": "Tous les comptes"
+  },
+  "pgp": {
+    "title": "Chiffrement PGP",
+    "description": "Générez une paire de clés PGP et chiffrez vos emails de bout en bout. Votre clé privée reste toujours sur cet appareil.",
+    "myKey": {
+      "title": "Ma clé",
+      "noKeyText": "Aucune clé PGP sur ce navigateur.",
+      "name": "Nom",
+      "email": "Adresse email",
+      "passphrase": "Passphrase",
+      "confirmPassphrase": "Confirmer la passphrase",
+      "generate": "Générer ma paire de clés",
+      "generating": "Génération…",
+      "fingerprint": "Empreinte",
+      "downloadPublic": "Télécharger ma clé publique (.asc)",
+      "downloadPrivateBackup": "Télécharger la sauvegarde de ma clé privée (.asc)",
+      "importBackupTitle": "Importer une sauvegarde de clé privée",
+      "importBackupFile": "Choisir un fichier .asc",
+      "importBackupPassphrase": "Passphrase de la sauvegarde",
+      "importBackupButton": "Importer",
+      "regenerate": "Régénérer une nouvelle clé",
+      "regenerateConfirm": "Régénérer une clé supprime l'accès aux messages chiffrés existants sur ce navigateur, sauf si vous avez sauvegardé votre ancienne clé privée. Continuer ?",
+      "passphraseMismatch": "Les passphrases ne correspondent pas",
+      "passphraseTooShort": "La passphrase doit contenir au moins 8 caractères",
+      "wrongPassphrase": "Passphrase incorrecte",
+      "backupInvalid": "Fichier de sauvegarde invalide ou passphrase incorrecte",
+      "keySaved": "Clé générée et enregistrée sur cet appareil"
+    },
+    "contactKeys": {
+      "title": "Clés de contacts",
+      "description": "Importez la clé publique PGP d'un contact pour lui envoyer des messages chiffrés.",
+      "import": "Importer une clé",
+      "email": "Adresse email",
+      "name": "Nom (optionnel)",
+      "pasteLabel": "Coller le bloc de clé publique",
+      "pastePlaceholder": "-----BEGIN PGP PUBLIC KEY BLOCK-----…",
+      "uploadFile": "Ou choisir un fichier .asc",
+      "invalidKey": "Bloc de clé publique PGP invalide",
+      "empty": "Aucune clé de contact importée",
+      "delete": "Supprimer",
+      "deleteConfirm": "Supprimer cette clé de contact ?",
+      "add": "Ajouter"
+    },
+    "compose": {
+      "encryptToggleOn": "Message chiffré — cliquer pour désactiver",
+      "encryptToggleAvailable": "Chiffrer ce message (PGP)",
+      "readReceiptDisabled": "Accusé de lecture indisponible pour un message chiffré",
+      "attachmentsBlocked": "Les pièces jointes ne sont pas prises en charge pour les messages chiffrés dans cette version",
+      "missingOwnKey": "Générez votre clé PGP dans Réglages pour pouvoir chiffrer vos messages"
+    },
+    "decrypt": {
+      "title": "Ce message est chiffré",
+      "unlockedButton": "Déchiffrer",
+      "passphrasePrompt": "Entrez votre passphrase pour déchiffrer ce message",
+      "button": "Déverrouiller et déchiffrer",
+      "decrypting": "Déchiffrement…",
+      "wrongPassphrase": "Passphrase incorrecte",
+      "noKey": "Aucune clé privée PGP trouvée sur ce navigateur",
+      "noKeyHint": "Importez votre sauvegarde de clé privée dans Réglages → Chiffrement PGP",
+      "lockNow": "Verrouiller ma clé maintenant",
+      "locked": "Clé PGP verrouillée pour cette session"
+    }
   },
   "common": {
     "save": "Enregistrer",
