@@ -29,7 +29,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen overflow-hidden bg-muted/30">
       {/* Desktop sidebar — width animated from the single geometry source */}
       <aside
-        className="hidden lg:flex shrink-0 flex-col overflow-hidden bg-zinc-950 text-zinc-100 border-r border-white/[0.06] transition-[width]"
+        className="hidden lg:flex shrink-0 flex-col overflow-hidden border-r border-border transition-[width]"
         style={{
           width: sidebarCollapsed ? SIDEBAR.collapsedWidth : SIDEBAR.expandedWidth,
           transitionDuration: `${SIDEBAR.transitionMs}ms`,
@@ -46,7 +46,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             onClick={() => setSidebarOpen(false)}
           />
           <aside
-            className="relative z-10 h-full flex flex-col overflow-hidden bg-zinc-950 text-zinc-100 border-r border-white/[0.06] shadow-2xl"
+            className="relative z-10 h-full flex flex-col overflow-hidden border-r border-border shadow-2xl"
             style={{ width: SIDEBAR.expandedWidth }}
           >
             <Sidebar onClose={() => setSidebarOpen(false)} />
