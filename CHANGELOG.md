@@ -5,7 +5,38 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [Unreleased] — fork Yumi-Lab (branche `yumi`) — 2026-09-17
+
+### Changed
+- **Barre latérale recodée** (`components/layout/Sidebar.tsx`, `components/layout/AppShell.tsx`) : le logo et le nom
+  laissent la place à un bouton hamburger qui replie/déplie la barre ; le texte se rabat, les icônes restent exactement
+  en place (`scripts/check-sidebar-collapse.mjs` mesure chaque icône dans les deux états et échoue au moindre pixel).
+- **Sélecteur de comptes en tête** avec `components/layout/AccountAvatar.tsx` : bulle ronde à initiale, couleur du
+  compte, compteur de non-lus en badge posé sur le coin de la bulle (plus de pastille à droite des libellés, dossiers
+  compris). Palette `-600`/`-700` pour un contraste ≥ 4.5:1 de l'initiale.
+- **La barre suit le thème** (claire en clair, sombre en sombre), un seul accent violet plat, un seul motif de ligne
+  (36 px), aucune animation décorative ; défilement discret `scroll-thin` (`app/globals.css`) à la place de la barre native.
+- **Sélecteur de thème** (`components/ThemeToggle.tsx`) : icônes seules (soleil / lune / moniteur, nom en infobulle),
+  un curseur unique qui glisse en 180 ms (`prefers-reduced-motion` respecté), vertical dans la barre repliée pour rester
+  cliquable ; le même composant sert dans Réglages → Apparence et dans le pied de la barre.
+- **Thème sans stockage navigateur** : `components/theme/ThemeProvider.tsx` + `lib/theme.ts` remplacent `next-themes` ;
+  le choix vient de `user_settings.theme` et du cookie `synapmail-theme` lu au rendu serveur (aucun flash), le mode
+  système suit `prefers-color-scheme` en direct.
+- **Champs mot de passe** : composant unique `components/ui/PasswordInput.tsx` avec œil afficher/masquer, utilisé sur
+  tous les formulaires (connexion, inscription, comptes, profil, PGP, clé IA, admin).
+- **Bannière de mise à jour** : le « dismiss » est persisté côté serveur (`user_settings.update_dismissed_version`),
+  plus de `sessionStorage`.
+
+### Added
+- **Chinois simplifié** (`locales/zh.json`) : troisième langue complète, détection `zh*`, choix « 中文 » dans Apparence.
+- `scripts/check-locales.mjs` (`npm run check:locales`) : parité stricte des clés entre `en`, `fr` et `zh`.
+- Clés `mail.collapseSidebar`, `mail.expandSidebar`, `mail.folders`, `mail.switchAccount`, `common.showPassword`,
+  `common.hidePassword` (en/fr/zh).
+
+### Removed
+- Dépendance `next-themes` ; police `next/font/google` (pile système, aucune ressource Google chargée).
+- `components/ui/ThemeToggle.tsx` (point d'import de compatibilité devenu inutile).
+
 
 ## [1.7.0] — 2026-09-16 — Partage de compte + activité des clés API
 
