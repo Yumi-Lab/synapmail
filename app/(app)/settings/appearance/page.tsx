@@ -8,6 +8,7 @@ import { Sun, Moon, Monitor, Palette } from 'lucide-react'
 import {
   SettingsPage, SettingsHeader, SettingsSection, ChoiceCards, Chips, SaveBar,
 } from '@/components/settings/primitives'
+import { DEFAULT_LOCALE, LOCALES, LOCALE_COOKIE } from '@/lib/locales'
 
 interface UserSettings {
   theme: string
@@ -15,6 +16,9 @@ interface UserSettings {
 }
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
+
+/** One year, in seconds — the locale choice should outlive the session. */
+const COOKIE_MAX_AGE = 365 * 24 * 60 * 60
 
 export default function AppearancePage() {
   const t = useTranslations('settings.appearance')
@@ -24,7 +28,7 @@ export default function AppearancePage() {
   const settings = data?.data
 
   const [selectedTheme, setSelectedTheme] = useState('system')
-  const [selectedLang, setSelectedLang] = useState('fr')
+  const [selectedLang, setSelectedLang] = useState<string>(DEFAULT_LOCALE)
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState(false)
 
@@ -42,7 +46,7 @@ export default function AppearancePage() {
     setSaving(true)
     try {
       setTheme(selectedTheme)
-      document.cookie = `synapmail-locale=${selectedLang}; path=/; max-age=31536000; SameSite=Lax`
+      document.cookie = `${LOCALE_COOKIE}=${selectedLang}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`
 
       await fetch('/api/settings', {
         method: 'PATCH',
@@ -51,7 +55,7 @@ export default function AppearancePage() {
       })
       await mutate()
 
-      if (selectedLang !== (settings?.language ?? 'fr')) {
+      if (selectedLang !== (settings?.language ?? DEFAULT_LOCALE)) {
         window.location.reload()
       } else {
         setSuccess(true)
@@ -85,10 +89,7 @@ export default function AppearancePage() {
           <Chips
             value={selectedLang}
             onChange={setSelectedLang}
-            options={[
-              { value: 'fr', label: 'Français' },
-              { value: 'en', label: 'English' },
-            ]}
+            options={LOCALES.map(({ code, label }) => ({ value: code, label }))}
           />
         </SettingsSection>
 
