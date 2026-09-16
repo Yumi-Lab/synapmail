@@ -41,12 +41,13 @@ export function themeCookieValue(theme: Theme): string {
 }
 
 /**
- * Script inline BLOQUANT injecté dans `<head>` : il n'est utile que pour `system`,
- * où la réponse dépend du client et ne peut pas tenir dans le cookie. Pour `light`
- * et `dark`, la classe est déjà posée par le SSR et la chaîne rendue est vide.
+ * Script inline BLOQUANT, rendu en PREMIER ENFANT DE `<body>` : il n'est utile que
+ * pour `system`, où la réponse dépend du client et ne peut pas tenir dans le cookie.
+ * Pour `light` et `dark` la classe est déjà posée au SSR — on renvoie alors `null`
+ * (et non `''`) pour que l'appelant ne rende AUCUN nœud plutôt qu'un nœud texte vide.
  * Aucune donnée utilisateur n'y entre : `theme` est une des constantes de THEMES.
  */
-export function themeInitScript(theme: Theme): string {
-  if (theme !== 'system') return ''
+export function themeInitScript(theme: Theme): string | null {
+  if (theme !== 'system') return null
   return `if(matchMedia(${JSON.stringify(DARK_MEDIA_QUERY)}).matches)document.documentElement.classList.add(${JSON.stringify(DARK_CLASS)})`
 }

@@ -28,15 +28,17 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const messages = await getMessages()
   const theme = toTheme(cookies().get(THEME_COOKIE)?.value)
   // `light`/`dark` sont résolus ici même (aucun flash) ; `system` dépend du client,
-  // d'où le script bloquant ci-dessous, qui ne rend rien pour les deux autres cas.
+  // d'où le script bloquant ci-dessous, qui vaut `null` pour les deux autres cas.
   const initScript = themeInitScript(theme)
 
   return (
     <html lang={locale} className={theme === 'dark' ? DARK_CLASS : undefined} suppressHydrationWarning>
-      <head>
-        {initScript && <script dangerouslySetInnerHTML={{ __html: initScript }} />}
-      </head>
+      {/* Pas de `<head>` écrit à la main : l'App Router le compose lui-même (metadata,
+          feuilles de style) et un `<head>` manuel casse l'hydratation. Le script
+          d'initialisation est donc le PREMIER enfant de `<body>` — il s'exécute avant
+          le rendu du contenu, donc toujours sans flash. */}
       <body className="font-sans antialiased">
+        {initScript !== null && <script dangerouslySetInnerHTML={{ __html: initScript }} />}
         <NextIntlClientProvider messages={messages}>
           <Providers initialTheme={theme}>{children}</Providers>
         </NextIntlClientProvider>
