@@ -7,7 +7,7 @@ import { useTranslations } from 'next-intl'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import {
   User, Palette, BookOpen, Bell, PenSquare, Mail, FileSignature,
-  LayoutTemplate, Users, Filter, Bot, ShieldCheck, KeyRound, X,
+  LayoutTemplate, Users, Filter, Bot, ShieldCheck, KeyRound, Terminal, X,
 } from 'lucide-react'
 import { Dialog, DialogPortal, DialogOverlay } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
@@ -26,6 +26,7 @@ const NAV_ITEMS = [
   { seg: 'rules',         key: 'rules',         icon: Filter },
   { seg: 'ai',            key: 'ai',            icon: Bot },
   { seg: 'pgp',           key: 'pgp',           icon: KeyRound },
+  { seg: 'api-keys',      key: 'apiKeys',       icon: Terminal },
 ] as const
 
 export function SettingsModal() {
