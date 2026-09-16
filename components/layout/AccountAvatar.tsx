@@ -11,12 +11,27 @@ import type { EmailAccount } from '@/types/account'
  * 2.15 (amber) and 2.54 (emerald). `scripts/check-sidebar-collapse.mjs` recomputes
  * these ratios from the rendered bubbles, so the floor is enforced, not asserted.
  */
-export const ACCOUNT_COLORS = ['bg-blue-600', 'bg-violet-600', 'bg-emerald-700', 'bg-amber-700', 'bg-rose-600'] as const
+const ACCOUNT_COLORS = ['bg-blue-600', 'bg-violet-600', 'bg-emerald-700', 'bg-amber-700', 'bg-rose-600'] as const
+
+/**
+ * The bar's ONE accent, as one source. Every primary/active/selected state of the
+ * sidebar is painted from here — `solid` for a filled control, `tint` for the
+ * background of an active row, `ink` for the glyph that marks it. Nothing else in
+ * the bar may introduce a second accent, a gradient or a decorative ring.
+ */
+export const ACCENT = {
+  solid: 'bg-violet-600 text-white',
+  solidHover: 'hover:bg-violet-700',
+  tint: 'bg-violet-600/10',
+  tintStrong: 'bg-violet-600/20',
+  ink: 'text-violet-600 dark:text-violet-400',
+  ring: 'ring-violet-600/40',
+} as const
 
 /** Above this the badge reads `99+`. Single source for every unread counter of the bar. */
 const UNREAD_CAP = 99
 
-export const formatUnread = (count: number) => (count > UNREAD_CAP ? `${UNREAD_CAP}+` : String(count))
+const formatUnread = (count: number) => (count > UNREAD_CAP ? `${UNREAD_CAP}+` : String(count))
 
 type AvatarSize = 'sm' | 'md'
 
@@ -26,7 +41,7 @@ const SIZES: Record<AvatarSize, string> = {
   md: 'w-8 h-8 text-xs',
 }
 
-export const accountInitial = (account: Pick<EmailAccount, 'name' | 'email'>) =>
+const accountInitial = (account: Pick<EmailAccount, 'name' | 'email'>) =>
   ((account.name || account.email).trim().charAt(0) || '?').toUpperCase()
 
 /**
@@ -44,7 +59,8 @@ const BADGE_OFFSET_PX = 9
  * marks (an account bubble, a folder icon) — never a pill to the right of a label.
  * It is absolutely positioned, so it never changes its host's box, and it stays
  * visible when the bar is collapsed and the labels have folded away.
- * Ringed with `--synap-surface` so it reads on any bubble colour.
+ * Ringed with `--synap-surface` — the colour of whatever surface it is pinned on,
+ * published by that surface itself, so the ring follows the theme with no second palette.
  */
 export function UnreadBadge({ count }: { count: number }) {
   if (count <= 0) return null
@@ -52,7 +68,11 @@ export function UnreadBadge({ count }: { count: number }) {
     <span
       aria-hidden
       style={{ top: -BADGE_OFFSET_PX, right: -BADGE_OFFSET_PX }}
-      className="absolute min-w-[14px] h-[14px] px-[3px] rounded-full bg-violet-600 ring-[1.5px] ring-[color:var(--synap-surface)] text-[9px] font-semibold leading-none text-white flex items-center justify-center tabular-nums"
+      className={cn(
+        'absolute min-w-[14px] h-[14px] px-[3px] rounded-full ring-[1.5px] ring-[color:var(--synap-surface)]',
+        'text-[9px] font-semibold leading-none flex items-center justify-center tabular-nums',
+        ACCENT.solid,
+      )}
       data-unread-badge
     >
       {formatUnread(count)}

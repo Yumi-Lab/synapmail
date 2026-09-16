@@ -30,6 +30,25 @@ const MIN_CONTRAST = 4.5
 // cannot discriminate on this bench — measured, see the Journal. What IS discriminating
 // here is the computed property pair, measured on a same-run UNSTYLED reference.
 const SCROLL_THIN_PX = 6
+// Mobile width GOAL.md fixes for the drawer check: no horizontal overflow at 390.
+const MOBILE_VIEWPORT = { width: 390, height: 844 }
+// The bar must follow the theme. Discriminating criterion, measured on the SAME run
+// in both themes: the bar's own background must differ between light and dark. A bar
+// painted with a fixed dark value (the `bg-zinc-950`/gradient this lot removed) reports
+// the identical colour in both and fails here.
+const THEMES = ['light', 'dark']
+// Accent budget: every accent-bearing surface of the bar must belong to ONE hue family.
+// Tints of one accent share its hue by construction, so the discriminating measure is the
+// SPREAD of hue angles, not the count of colours. Origin: the bar's accent is violet-600
+// (hue ~272 deg); the states this lot removed — the violet->blue Compose gradient and its
+// blue ring — put a second family ~60 deg away, far outside this band. 15 deg leaves room
+// for the rounding of an alpha-composited tint and nothing else. Verified failable: see
+// the negative control in the Journal.
+const MAX_ACCENT_HUE_SPREAD_DEG = 15
+// Below this saturation a painted surface is a neutral (the bar's own greys), not an accent.
+const ACCENT_MIN_SATURATION = 0.12
+// Colour tokens inside a composite computed value (background-image gradient, box-shadow).
+const COLOUR_TOKEN_SOURCE = '(?:rgba?|hsla?|oklch|oklab|lab|lch|color)\\([^)]*\\)'
 // Transition is 180 ms (SIDEBAR.transitionMs); wait well past it before measuring.
 const SETTLE_MS = 600
 
@@ -161,6 +180,106 @@ const probeScrollbars = () => {
   return result
 }
 
+/**
+ * Cleanliness probe for the bar itself: the surface it is painted with, the ink and
+ * height of every row (one motif => one height), the accent colours actually used,
+ * and whether ANY element inside the bar is running an animation. Contrast is
+ * recomputed from rendered colours, so "readable in both themes" is measured.
+ */
+const probeCleanliness = (minSaturation, colourTokenSource) => {
+  // Matches the colour function forms a computed style can hold (rgb/rgba/hsl/oklch/color/lab…).
+  const COLOUR_TOKEN = new RegExp(colourTokenSource, 'g')
+  // Colours are resolved through a canvas rather than parsed: the app's tokens are
+  // `oklch()`, which a hand-rolled rgb() regex silently reads as 0,0,0 (measured: every
+  // contrast came out 1.00:1). Painting the colour — over its backdrop when it carries
+  // alpha — and reading the pixel back makes the BROWSER do the conversion and the
+  // alpha compositing, in the same run, for any colour syntax it supports.
+  const cv = document.createElement('canvas')
+  cv.width = cv.height = 1
+  const ctx = cv.getContext('2d', { willReadFrequently: true })
+  const paint = (colour, backdrop) => {
+    ctx.clearRect(0, 0, 1, 1)
+    if (backdrop) { ctx.fillStyle = backdrop; ctx.fillRect(0, 0, 1, 1) }
+    ctx.fillStyle = colour
+    ctx.fillRect(0, 0, 1, 1)
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data
+    return { r, g, b, a }
+  }
+  const lum = ({ r, g, b }) => {
+    const [x, y, z] = [r, g, b].map(v => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) })
+    return 0.2126 * x + 0.7152 * y + 0.0722 * z
+  }
+  const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)]; return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05) }
+  const show = ({ r, g, b }) => `rgb(${r}, ${g}, ${b})`
+  // Hue angle on the colour wheel — what "one accent colour" is actually about. A tint
+  // of the same accent keeps its hue; a second accent family (a gradient's other end, a
+  // blue ring on a violet bar) lands somewhere else entirely.
+  const hue = ({ r, g, b }) => {
+    const [R, G, B] = [r / 255, g / 255, b / 255]
+    const max = Math.max(R, G, B), min = Math.min(R, G, B), d = max - min
+    if (!d) return null // neutral: no hue to place
+    const h = max === R ? ((G - B) / d) % 6 : max === G ? (B - R) / d + 2 : (R - G) / d + 4
+    return (h * 60 + 360) % 360
+  }
+  const saturation = ({ r, g, b }) => {
+    const max = Math.max(r, g, b), min = Math.min(r, g, b)
+    return max ? (max - min) / max : 0
+  }
+
+  const bar = document.querySelector('[data-sidebar]')
+  const barBg = paint(getComputedStyle(bar).backgroundColor)
+  const rows = [...bar.querySelectorAll('[data-sidebar-row]')]
+  const accents = new Map()
+  const animated = []
+  for (const el of bar.querySelectorAll('*')) {
+    const st = getComputedStyle(el)
+    // Decorative motion only: a transition is not an animation, and a 0s animation is not running.
+    if (st.animationName !== 'none' && parseFloat(st.animationDuration) > 0) {
+      animated.push(`${el.tagName.toLowerCase()}:${st.animationName}`)
+    }
+    // Account bubbles are excluded: their palette is deliberately multi-colour and is
+    // contrast-gated above. Everything else the bar paints must share one accent hue.
+    if (el.hasAttribute('data-account-initial') || el.querySelector('[data-account-initial]')) continue
+    // A gradient lives in background-IMAGE and a ring/glow in box-SHADOW: both compute
+    // background-color to transparent, so reading that property alone is blind to exactly
+    // the two decorations this lot removes. Every colour token of all three is measured.
+    const tokens = [st.backgroundColor, ...`${st.backgroundImage} ${st.boxShadow}`.match(COLOUR_TOKEN) ?? []]
+    for (const token of tokens) {
+      const painted = paint(token, show(barBg))
+      if (saturation(painted) < minSaturation) continue // neutral surface, not an accent
+      const h = hue(painted)
+      if (h != null) accents.set(show(painted), h)
+    }
+  }
+  return {
+    theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
+    barBg: show(barBg),
+    slot: !!bar.querySelector('[data-sidebar-slot="theme-toggle"]'),
+    animated,
+    accents: [...accents].map(([colour, h]) => ({ colour, hue: h })),
+    rows: rows.map(r => {
+      const st = getComputedStyle(r)
+      // A row that paints its own background (the Compose control) is read against THAT,
+      // not against the bar: measuring its white ink on the bar behind it would report a
+      // contrast the user never sees. Rows with no fill of their own fall back to the bar.
+      const backdrop = paint(st.backgroundColor, show(barBg))
+      const ink = paint(st.color, show(backdrop))
+      return {
+        key: r.dataset.sidebarRow,
+        height: r.getBoundingClientRect().height,
+        ink: show(ink),
+        on: show(backdrop),
+        contrast: contrast(ink, backdrop),
+      }
+    }),
+  }
+}
+
+const setTheme = theme => {
+  document.documentElement.classList.toggle('dark', theme === 'dark')
+  document.documentElement.style.colorScheme = theme
+}
+
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] })
 let failures = []
 try {
@@ -275,6 +394,62 @@ try {
   if (!sb.containers.some(c => c.overflowing > 0)) {
     failures.push('no marked scroll container actually overflows — the thin scrollbar was never exercised')
   }
+
+  // --- Cleanliness: one accent, one row motif, static, follows the theme ---
+  await page.keyboard.press('Escape') // close the popover so only the bar's own rows are measured
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const clean = {}
+  for (const theme of THEMES) {
+    await page.evaluate(setTheme, theme)
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    clean[theme] = await page.evaluate(probeCleanliness, ACCENT_MIN_SATURATION, COLOUR_TOKEN_SOURCE)
+    const c = clean[theme]
+    const hues = c.accents.map(a => a.hue)
+    const spread = hues.length ? Math.max(...hues) - Math.min(...hues) : 0
+    console.log(`${theme}: bar background ${c.barBg}, accent surfaces ${c.accents.length} spanning ${spread.toFixed(1)} deg of hue (${c.accents.map(a => `${a.colour} @${a.hue.toFixed(0)}deg`).join(', ') || 'none'}), animated elements ${c.animated.length}`)
+    if (!c.accents.length) { console.error('HARNESS: no accent surface found in the bar — nothing to measure'); process.exit(2) }
+    if (spread > MAX_ACCENT_HUE_SPREAD_DEG) {
+      failures.push(`${theme}: bar paints accents spanning ${spread.toFixed(1)} deg of hue (max ${MAX_ACCENT_HUE_SPREAD_DEG}): ${c.accents.map(a => `${a.colour} @${a.hue.toFixed(0)}deg`).join(', ')}`)
+    }
+    if (c.animated.length) failures.push(`${theme}: ${c.animated.length} animated element(s) in the bar: ${c.animated.join(', ')}`)
+    if (!c.slot) failures.push(`${theme}: the footer theme-toggle slot is missing`)
+    const heights = [...new Set(c.rows.map(r => r.height.toFixed(2)))]
+    console.log(`  row heights: ${heights.join(', ')} (rows: ${c.rows.length})`)
+    if (heights.length > 1) failures.push(`${theme}: rows use ${heights.length} different heights (${heights.join(', ')}) — one motif expected`)
+    for (const r of c.rows) {
+      if (r.contrast < MIN_CONTRAST) {
+        failures.push(`${theme}: row "${r.key}" ink ${r.ink} on ${r.on} = ${r.contrast.toFixed(2)}:1 (min ${MIN_CONTRAST}:1)`)
+      }
+    }
+    const worst = c.rows.reduce((a, b) => (a.contrast < b.contrast ? a : b))
+    console.log(`  worst row contrast: ${worst.contrast.toFixed(2)}:1 ("${worst.key}", ${worst.ink} on ${worst.on})`)
+  }
+  // Same-run A/B: a bar that ignores the theme reports the same background in both.
+  if (clean.light.barBg === clean.dark.barBg) {
+    failures.push(`the bar paints the same background in light and dark (${clean.light.barBg}) — it does not follow the theme`)
+  }
+  await page.evaluate(setTheme, 'dark')
+
+  // --- Mobile 390: the drawer opens, nothing overflows horizontally ---
+  await page.setViewport(MOBILE_VIEWPORT)
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const mobile = await page.evaluate(() => {
+    const burger = document.querySelector('main button')
+    burger?.click()
+    return new Promise(resolve => setTimeout(() => {
+      const bar = document.querySelector('[data-sidebar]')
+      resolve({
+        drawerOpen: !!bar,
+        rows: bar ? bar.querySelectorAll('[data-sidebar-row]').length : 0,
+        overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        widest: Math.max(0, ...[...document.querySelectorAll('[data-sidebar] *')].map(e => e.getBoundingClientRect().right)),
+      })
+    }, 400))
+  })
+  console.log(`mobile ${MOBILE_VIEWPORT.width}px: drawer open=${mobile.drawerOpen} rows=${mobile.rows} horizontal overflow=${mobile.overflow}px widest bar edge=${mobile.widest.toFixed(1)}px`)
+  if (!mobile.drawerOpen) { console.error('HARNESS: the mobile drawer did not open — nothing measured'); process.exit(2) }
+  if (mobile.overflow > 0) failures.push(`mobile ${MOBILE_VIEWPORT.width}px: ${mobile.overflow}px of horizontal overflow`)
+  if (mobile.widest > MOBILE_VIEWPORT.width) failures.push(`mobile ${MOBILE_VIEWPORT.width}px: an element of the bar reaches ${mobile.widest.toFixed(1)}px, past the viewport`)
 } finally {
   // Close the tab before the browser: an open tab keeps its /api/stream SSE
   // connection alive on the dev server, and orphaned tabs pile those up.

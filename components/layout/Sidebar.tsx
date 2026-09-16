@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils'
 import useSWR from 'swr'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { EmailAccount } from '@/types/account'
-import { AccountAvatar, UnreadBadge } from './AccountAvatar'
+import { ACCENT, AccountAvatar, UnreadBadge } from './AccountAvatar'
 
 /**
  * Single source for the bar's geometry. `AppShell` sizes the <aside> from it and
@@ -23,10 +23,13 @@ export const SIDEBAR = {
   expandedWidth: 256,
   collapsedWidth: 56,
   transitionMs: 180,
-  /** Colour the bar and its popover are painted with — published as `--synap-surface`
-   *  so a badge pinned on an avatar can ring itself with the surface behind it. */
-  surface: '#18181b',
 } as const
+
+/** The bar's surface, as a CSS value: the theme's own sidebar token, so the bar
+ *  follows light/dark instead of forcing a dark background. Published on the root
+ *  as `--synap-surface` so a badge pinned on an avatar rings itself with the
+ *  surface actually behind it, in either theme. */
+const SURFACE = 'var(--sidebar)'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -54,11 +57,19 @@ type FolderItem = { name: string; path: string; special: SpecialKey; unreadCount
 
 const dispatchCompose = () => window.dispatchEvent(new CustomEvent('synapmail:compose'))
 
+/** Rows drawn while the folder list loads — static placeholders, never a pulse. */
+const FOLDER_PLACEHOLDERS = [0, 1, 2, 3, 4]
+
 // One row pattern for every entry of the bar (folder, link, account, action).
 const ROW = 'flex w-full items-center h-9 rounded-lg transition-colors'
-const ROW_IDLE = 'text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06]'
-const ROW_ACTIVE = 'bg-violet-500/15 text-white ring-1 ring-inset ring-violet-500/20'
-const ROW_DRAG = 'bg-violet-500/25 ring-1 ring-inset ring-violet-400/50 text-white'
+// Idle ink is derived from the theme's own foreground rather than the muted token:
+// muted-foreground on the light sidebar measures ~3.2:1, under the 4.5:1 floor for
+// body text. At 70% opacity the same ink measures 5.8:1 light / 7.0:1 dark — the
+// gate recomputes both from the rendered rows, so the floor is enforced, not asserted.
+const ROW_IDLE = 'text-foreground/70 hover:text-foreground hover:bg-foreground/[0.06]'
+const ROW_ACTIVE = cn(ACCENT.tint, 'text-foreground font-medium')
+// Drop target: the same accent, one step stronger — not a second colour.
+const ROW_DRAG = cn(ACCENT.tintStrong, 'text-foreground')
 // Fixed-width column: never shrinks, so collapsing the bar cannot move an icon.
 const ICON_COL = 'shrink-0 flex items-center justify-center w-[var(--synap-icon-col)]'
 // Collapsible half of a row: folds to zero width, clipped by its own overflow.
@@ -252,7 +263,7 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
       >
         <RowBody
           icon={icon}
-          iconClassName={isActive ? 'text-violet-300' : undefined}
+          iconClassName={isActive ? ACCENT.ink : undefined}
           label={label}
           badge={unread}
           collapsed={collapsed}
@@ -263,10 +274,10 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
 
   return (
     <div
-      className="relative flex flex-col h-full bg-gradient-to-b from-zinc-900 via-zinc-950 to-black"
+      className="relative flex flex-col h-full bg-sidebar text-sidebar-foreground"
       style={{
         ['--synap-icon-col' as string]: `${SIDEBAR.collapsedWidth}px`,
-        ['--synap-surface' as string]: SIDEBAR.surface,
+        ['--synap-surface' as string]: SURFACE,
       }}
       data-sidebar
       data-collapsed={collapsed ? 'true' : 'false'}
@@ -312,35 +323,38 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
               aria-hidden={collapsed}
             >
               <span className="flex-1 min-w-0 text-left">
-                <span className="block text-sm font-medium text-zinc-100 truncate leading-tight">
+                <span className="block text-sm font-medium text-foreground truncate leading-tight">
                   {activeAccount.name || activeAccount.email}
                 </span>
                 {activeAccount.name && (
-                  <span className="block text-[11px] text-zinc-500 truncate leading-tight">{activeAccount.email}</span>
+                  <span className="block text-[11px] text-muted-foreground truncate leading-tight">{activeAccount.email}</span>
                 )}
               </span>
-              <ChevronDown className={cn('w-3.5 h-3.5 text-zinc-500 transition-transform shrink-0', accountOpen && 'rotate-180')} />
+              <ChevronDown className={cn('w-3.5 h-3.5 text-muted-foreground transition-transform shrink-0', accountOpen && 'rotate-180')} />
             </span>
           </button>
           {accountOpen && popoverPos && (
             <div
-              className="fixed z-50 flex flex-col rounded-xl border border-white/10 bg-zinc-900 shadow-xl shadow-black/60 overflow-hidden"
+              className="fixed z-50 flex flex-col rounded-xl border border-border bg-popover text-popover-foreground shadow-xl overflow-hidden"
               style={{ top: popoverPos.top, left: popoverPos.left, width: SIDEBAR.expandedWidth }}
             >
               {accounts.length > 8 && (
-                <div className="p-1.5 border-b border-white/10">
+                <div className="p-1.5 border-b border-border">
                   <input
                     autoFocus
                     value={accountFilter}
                     onChange={e => setAccountFilter(e.target.value)}
                     placeholder={t('searchAccounts')}
-                    className="w-full px-2.5 py-1.5 rounded-md bg-white/[0.06] text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:ring-1 focus:ring-violet-500/50"
+                    className={cn(
+                      'w-full px-2.5 py-1.5 rounded-md bg-foreground/[0.06] text-sm text-foreground',
+                      'placeholder:text-muted-foreground outline-none focus:ring-1', ACCENT.ring,
+                    )}
                   />
                 </div>
               )}
               <div className="max-h-[min(60vh,22rem)] overflow-y-auto overscroll-contain scroll-thin py-1" data-scroll-thin>
                 {filteredAccounts.length === 0 && (
-                  <p className="px-3 py-4 text-xs text-zinc-500 text-center">{t('noAccountMatch')}</p>
+                  <p className="px-3 py-4 text-xs text-muted-foreground text-center">{t('noAccountMatch')}</p>
                 )}
                 {filteredAccounts.map(acc => {
                   const active = acc.id === activeAccount?.id
@@ -349,10 +363,7 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
                     <button
                       key={acc.id}
                       onClick={() => switchAccount(acc.id)}
-                      className={cn(
-                        'w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors',
-                        active ? 'bg-violet-500/10 text-white' : 'text-zinc-400 hover:text-zinc-100 hover:bg-violet-500/10'
-                      )}
+                      className={cn(ROW, 'gap-2.5 px-3 rounded-none', active ? ROW_ACTIVE : ROW_IDLE)}
                     >
                       <AccountAvatar
                         account={acc}
@@ -363,7 +374,7 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
                       <span className="flex-1 min-w-0">
                         <span className="block text-sm font-medium truncate leading-tight">{acc.name || acc.email}</span>
                         {acc.name && (
-                          <span className="block text-[11px] text-zinc-500 truncate leading-tight">{acc.email}</span>
+                          <span className="block text-[11px] text-muted-foreground truncate leading-tight">{acc.email}</span>
                         )}
                         {acc.isShared && (
                           <span className="block text-[11px] text-violet-400 truncate leading-tight">
@@ -371,7 +382,7 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
                           </span>
                         )}
                       </span>
-                      {active && <Check className="w-3.5 h-3.5 shrink-0 text-violet-400" />}
+                      {active && <Check className={cn('w-3.5 h-3.5 shrink-0', ACCENT.ink)} />}
                     </button>
                   )
                 })}
@@ -387,7 +398,7 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
           onClick={dispatchCompose}
           title={t('compose')}
           data-sidebar-row="compose"
-          className={cn(ROW, 'bg-violet-500 text-white font-semibold hover:bg-violet-400')}
+          className={cn(ROW, 'font-medium', ACCENT.solid, ACCENT.solidHover)}
         >
           <RowBody icon={PenSquare} label={t('compose')} collapsed={collapsed} />
         </button>
@@ -403,7 +414,7 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
       >
         <RowBody
           icon={LayoutDashboard}
-          iconClassName={pathname.startsWith('/dashboard') ? 'text-violet-300' : undefined}
+          iconClassName={pathname.startsWith('/dashboard') ? ACCENT.ink : undefined}
           label={t('dashboard')}
           collapsed={collapsed}
         />
@@ -411,11 +422,11 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
 
       {/* Folders */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden scroll-thin mt-1" data-scroll-thin>
-        {foldersLoading && [1, 2, 3, 4, 5].map(i => (
-          <div key={i} className={ROW}>
-            <span className={ICON_COL}><span className="w-4 h-4 rounded bg-muted/40 animate-pulse" /></span>
+        {foldersLoading && FOLDER_PLACEHOLDERS.map(i => (
+          <div key={i} className={ROW} aria-hidden>
+            <span className={ICON_COL}><span className="w-4 h-4 rounded bg-foreground/[0.08]" /></span>
             <span className={cn(ROW_LABEL, collapsed && 'opacity-0')}>
-              <span className="h-3 flex-1 rounded bg-muted/40 animate-pulse" />
+              <span className="h-3 flex-1 rounded bg-foreground/[0.08]" />
             </span>
           </div>
         ))}
@@ -436,9 +447,9 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
         {customFolders.length > 0 && (
           <>
             <div className="flex items-center h-7">
-              <span className={ICON_COL}><span className="w-4 border-t border-white/10" /></span>
+              <span className={ICON_COL}><span className="w-4 border-t border-border" /></span>
               <span
-                className={cn(ROW_LABEL, 'text-xs font-semibold text-zinc-500 uppercase tracking-widest', collapsed && 'opacity-0')}
+                className={cn(ROW_LABEL, 'text-xs font-semibold text-muted-foreground uppercase tracking-widest', collapsed && 'opacity-0')}
                 style={{ transitionDuration: `${SIDEBAR.transitionMs}ms` }}
                 aria-hidden={collapsed}
               >
@@ -450,8 +461,10 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
         )}
       </nav>
 
-      {/* Footer — the theme toggle slot goes here at integration time */}
-      <div className="border-t border-white/10 py-1">
+      <div className="border-t border-border py-1">
+        {/* Slot filled by the lane `theme` at integration time — the ThemeToggle
+            drops in here, above Settings, and inherits the ROW motif. */}
+        <div data-sidebar-slot="theme-toggle" />
         <Link
           href="/settings"
           onClick={() => handleFolderClick()}
