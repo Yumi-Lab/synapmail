@@ -7,6 +7,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.6.1] — 2026-09-16 — Correctif navigation Paramètres
+
+### Fixed
+- **« Clés API » absent de la modale Paramètres tant qu'on n'actualisait pas** (`components/settings/SettingsModal.tsx`) : `SettingsModal.tsx` maintient sa propre liste de navigation (`NAV_ITEMS`), indépendante de `SettingsSidebar.tsx` utilisée par la route pleine page. L'entrée `api-keys` n'avait été ajoutée qu'à cette dernière — la modale (ouverte en navigation douce depuis l'app) n'affichait donc jamais le lien « Clés API », visible seulement après un rechargement complet qui bascule sur la page pleine. Les deux listes sont maintenant synchronisées.
+
 ## [1.6.0] — 2026-09-16 — Chiffrement PGP + accès API + fin du localStorage
 
 ### Fixed
