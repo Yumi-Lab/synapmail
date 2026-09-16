@@ -338,7 +338,7 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
                   />
                 </div>
               )}
-              <div className="max-h-[min(60vh,22rem)] overflow-y-auto overscroll-contain py-1">
+              <div className="max-h-[min(60vh,22rem)] overflow-y-auto overscroll-contain scroll-thin py-1" data-scroll-thin>
                 {filteredAccounts.length === 0 && (
                   <p className="px-3 py-4 text-xs text-zinc-500 text-center">{t('noAccountMatch')}</p>
                 )}
@@ -405,7 +405,7 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
       </Link>
 
       {/* Folders */}
-      <nav className="flex-1 overflow-y-auto overflow-x-hidden mt-1">
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden scroll-thin mt-1" data-scroll-thin>
         {foldersLoading && [1, 2, 3, 4, 5].map(i => (
           <div key={i} className={ROW}>
             <span className={ICON_COL}><span className="w-4 h-4 rounded bg-muted/40 animate-pulse" /></span>

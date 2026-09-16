@@ -24,6 +24,12 @@ const MAX_BADGE_OVER_BUBBLE = 0.25
 const MAX_BADGE_OVER_GLYPH = 0
 // WCAG AA floor for small bold text — the initial is 9-12px, so 4.5:1 is the minimum.
 const MIN_CONTRAST = 4.5
+// Scrollbar width declared by the `.scroll-thin` utility in app/globals.css, asserted
+// against the compiled stylesheet rather than against a layout gutter: on macOS Chrome
+// both a styled and a native container reserve 0px (overlay scrollbars), so the gutter
+// cannot discriminate on this bench — measured, see the Journal. What IS discriminating
+// here is the computed property pair, measured on a same-run UNSTYLED reference.
+const SCROLL_THIN_PX = 6
 // Transition is 180 ms (SIDEBAR.transitionMs); wait well past it before measuring.
 const SETTLE_MS = 600
 
@@ -97,6 +103,62 @@ const probeBubbles = () => {
       contrast: contrast(style.backgroundColor, getComputedStyle(glyph).color),
     }
   })
+}
+
+/**
+ * A/B of the scrollbar: injects two identical overflowing containers — one with
+ * `.scroll-thin`, one bare — and reads what each one resolves to. The bare container
+ * is the SAME-RUN reference: whatever this browser does natively is measured here
+ * rather than assumed from another machine. Also reports the layout gutter each
+ * reserves, and reads the shipped `::-webkit-scrollbar` width out of the compiled
+ * stylesheet so a utility dropped at build time cannot pass unnoticed.
+ */
+const probeScrollbars = () => {
+  const gutter = el => el.offsetWidth - el.clientWidth
+  const read = el => {
+    const st = getComputedStyle(el)
+    return { widthProp: st.scrollbarWidth, colorProp: st.scrollbarColor, gutter: gutter(el) }
+  }
+  const host = document.createElement('div')
+  host.style.cssText = 'position:fixed;left:-9999px;top:0;'
+  const make = cls => {
+    const box = document.createElement('div')
+    box.className = cls
+    box.style.cssText = 'width:200px;height:60px;overflow-y:auto;'
+    box.innerHTML = '<div style="height:600px"></div>'
+    host.appendChild(box)
+    return box
+  }
+  const styled = make('scroll-thin')
+  const bare = make('')
+  document.body.appendChild(host)
+
+  // The shipped rule, straight out of the cascade: proves the utility survived the
+  // build. Walks nested groups (@layer/@media/@supports) — Tailwind may wrap it.
+  let webkitWidth = null
+  const walk = rules => {
+    for (const r of rules ?? []) {
+      if (r.selectorText === '.scroll-thin::-webkit-scrollbar') webkitWidth = r.style.width
+      if (r.cssRules) walk(r.cssRules)
+    }
+  }
+  for (const sheet of document.styleSheets) {
+    try { walk(sheet.cssRules) } catch { /* cross-origin sheet: not ours */ }
+  }
+
+  const result = {
+    styled: read(styled),
+    bare: read(bare),
+    webkitWidth,
+    containers: [...document.querySelectorAll('[data-scroll-thin]')].map(el => ({
+      tag: el.tagName.toLowerCase(),
+      hasClass: el.classList.contains('scroll-thin'),
+      ...read(el),
+      overflowing: el.scrollHeight - el.clientHeight,
+    })),
+  }
+  host.remove()
+  return result
 }
 
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] })
@@ -182,7 +244,41 @@ try {
   }
   const palette = [...new Set(bubbles.map(b => b.bg))]
   console.log(`distinct bubble colours exercised: ${palette.length} (${palette.join(', ')})`)
+
+  // --- Scrollbars: the bar's scroll containers never show the native bar ---
+  const sb = await page.evaluate(probeScrollbars)
+  console.log(`scroll-thin vs native reference (same run): scrollbar-width ${sb.styled.widthProp} vs ${sb.bare.widthProp}, scrollbar-color "${sb.styled.colorProp}" vs "${sb.bare.colorProp}", gutter ${sb.styled.gutter}px vs ${sb.bare.gutter}px`)
+  console.log(`shipped ::-webkit-scrollbar width in the compiled stylesheet: ${sb.webkitWidth ?? 'MISSING'}`)
+  if (sb.webkitWidth !== `${SCROLL_THIN_PX}px`) {
+    failures.push(`compiled stylesheet ships .scroll-thin::-webkit-scrollbar width=${sb.webkitWidth ?? 'nothing'}, expected ${SCROLL_THIN_PX}px`)
+  }
+  // Discriminating on this bench: the reference resolves to `auto`, the styled one to `thin`.
+  if (sb.styled.widthProp !== 'thin') failures.push(`.scroll-thin resolves scrollbar-width=${sb.styled.widthProp}, expected thin`)
+  if (sb.styled.widthProp === sb.bare.widthProp) {
+    failures.push(`.scroll-thin resolves the same scrollbar-width as the unstyled reference (${sb.bare.widthProp}) — the utility is not applying`)
+  }
+  if (sb.styled.colorProp === sb.bare.colorProp) {
+    failures.push(`.scroll-thin resolves the same scrollbar-color as the unstyled reference ("${sb.bare.colorProp}") — the utility is not applying`)
+  }
+  // Never worse than native, whatever this platform reserves.
+  if (sb.styled.gutter > sb.bare.gutter) failures.push(`.scroll-thin reserves ${sb.styled.gutter}px, more than the native reference (${sb.bare.gutter}px)`)
+  if (sb.bare.gutter === 0) console.log('  note: this browser uses overlay scrollbars (reference gutter 0px) — the gutter comparison is not discriminating here, the computed-property A/B above is')
+
+  console.log(`scroll containers marked in the bar: ${sb.containers.length}`)
+  if (!sb.containers.length) { console.error('HARNESS: no [data-scroll-thin] container found — nothing to measure'); process.exit(2) }
+  for (const c of sb.containers) {
+    console.log(`  <${c.tag}>: class=${c.hasClass} scrollbar-width=${c.widthProp} gutter=${c.gutter}px overflowing=${c.overflowing}px`)
+    if (!c.hasClass) failures.push(`<${c.tag}> scroll container is missing the scroll-thin class`)
+    if (c.widthProp !== 'thin') failures.push(`<${c.tag}> resolves scrollbar-width=${c.widthProp}, expected thin`)
+    if (c.gutter > sb.bare.gutter) failures.push(`<${c.tag}> reserves ${c.gutter}px, more than the native reference (${sb.bare.gutter}px) — native bar showing`)
+  }
+  if (!sb.containers.some(c => c.overflowing > 0)) {
+    failures.push('no marked scroll container actually overflows — the thin scrollbar was never exercised')
+  }
 } finally {
+  // Close the tab before the browser: an open tab keeps its /api/stream SSE
+  // connection alive on the dev server, and orphaned tabs pile those up.
+  for (const p of await browser.pages()) { await p.close().catch(() => {}) }
   await browser.close()
 }
 
