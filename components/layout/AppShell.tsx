@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Menu } from 'lucide-react'
 import useSWR, { mutate } from 'swr'
-import { Sidebar } from './Sidebar'
+import { Sidebar, SIDEBAR } from './Sidebar'
 import { UpdateBanner } from './UpdateBanner'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -27,8 +27,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-muted/30">
-      {/* Desktop sidebar */}
-      <aside className={`hidden lg:flex shrink-0 flex-col bg-zinc-950 text-zinc-100 border-r border-white/[0.06] transition-all duration-200 ${sidebarCollapsed ? 'w-14' : 'w-64'}`}>
+      {/* Desktop sidebar — width animated from the single geometry source */}
+      <aside
+        className="hidden lg:flex shrink-0 flex-col overflow-hidden bg-zinc-950 text-zinc-100 border-r border-white/[0.06] transition-[width]"
+        style={{
+          width: sidebarCollapsed ? SIDEBAR.collapsedWidth : SIDEBAR.expandedWidth,
+          transitionDuration: `${SIDEBAR.transitionMs}ms`,
+        }}
+      >
         <Sidebar collapsed={sidebarCollapsed} onToggleCollapse={toggleCollapse} />
       </aside>
 
@@ -39,7 +45,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             className="fixed inset-0 bg-black/50"
             onClick={() => setSidebarOpen(false)}
           />
-          <aside className="relative z-10 w-64 h-full flex flex-col bg-zinc-950 text-zinc-100 border-r border-white/[0.06] shadow-2xl">
+          <aside
+            className="relative z-10 h-full flex flex-col overflow-hidden bg-zinc-950 text-zinc-100 border-r border-white/[0.06] shadow-2xl"
+            style={{ width: SIDEBAR.expandedWidth }}
+          >
             <Sidebar onClose={() => setSidebarOpen(false)} />
           </aside>
         </div>
@@ -50,21 +59,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <UpdateBanner />
 
         {/* Mobile top bar */}
-        <div className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-background shrink-0">
+        <div className="lg:hidden flex items-center px-4 py-3 border-b border-border bg-background shrink-0">
           <button
             onClick={() => setSidebarOpen(true)}
             className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
           >
             <Menu className="w-5 h-5" />
           </button>
-          <div className="flex items-center gap-2">
-            <img
-              src="/brand/svg/synapmail-icone.svg"
-              alt="Synapmail"
-              className="w-6 h-6"
-            />
-            <span className="font-bold text-sm tracking-tight">Synapmail</span>
-          </div>
         </div>
 
         {children}

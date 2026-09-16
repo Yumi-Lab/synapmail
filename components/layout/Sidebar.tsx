@@ -5,14 +5,24 @@ import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import {
   Mail, Send, FileText, AlertTriangle, Trash2,
-  Settings, PenSquare, Folder, Archive, X, ChevronDown, ChevronLeft, ChevronRight, RefreshCw,
+  Settings, PenSquare, Folder, Archive, Menu, ChevronDown, RefreshCw,
   LayoutDashboard, Check,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import useSWR from 'swr'
-import { useState, useEffect, useRef } from 'react'
-import { ThemeToggle } from '@/components/ui/ThemeToggle'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import type { EmailAccount } from '@/types/account'
+
+/**
+ * Single source for the bar's geometry. `AppShell` sizes the <aside> from it and
+ * the bar exposes `collapsedWidth` as the CSS var consumed by every icon column,
+ * so an icon sits at the exact same x in both states.
+ */
+export const SIDEBAR = {
+  expandedWidth: 256,
+  collapsedWidth: 56,
+  transitionMs: 180,
+} as const
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -42,19 +52,59 @@ const dispatchCompose = () => window.dispatchEvent(new CustomEvent('synapmail:co
 
 const ACCOUNT_COLORS = ['bg-blue-500', 'bg-violet-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500']
 
+// One row pattern for every entry of the bar (folder, link, account, action).
+const ROW = 'flex w-full items-center h-9 rounded-lg transition-colors'
+const ROW_IDLE = 'text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06]'
+const ROW_ACTIVE = 'bg-violet-500/15 text-white ring-1 ring-inset ring-violet-500/20'
+const ROW_DRAG = 'bg-violet-500/25 ring-1 ring-inset ring-violet-400/50 text-white'
+// Fixed-width column: never shrinks, so collapsing the bar cannot move an icon.
+const ICON_COL = 'shrink-0 flex items-center justify-center w-[var(--synap-icon-col)]'
+// Collapsible half of a row: folds to zero width, clipped by its own overflow.
+const ROW_LABEL = 'flex-1 min-w-0 flex items-center gap-2 pr-3 text-sm whitespace-nowrap overflow-hidden transition-opacity'
+
 interface SidebarProps {
   onClose?: () => void
   collapsed?: boolean
   onToggleCollapse?: () => void
 }
 
-export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) {
+/** Icon column + collapsible label — shared by every row so all rows stay aligned. */
+function RowBody({
+  icon: Icon, iconClassName, label, trailing, collapsed,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  iconClassName?: string
+  label: React.ReactNode
+  trailing?: React.ReactNode
+  collapsed: boolean
+}) {
+  return (
+    <>
+      <span className={ICON_COL}>
+        <Icon className={cn('w-4 h-4', iconClassName)} />
+      </span>
+      <span
+        className={cn(ROW_LABEL, collapsed && 'opacity-0')}
+        style={{ transitionDuration: `${SIDEBAR.transitionMs}ms` }}
+        aria-hidden={collapsed}
+      >
+        <span className="flex-1 truncate text-left">{label}</span>
+        {trailing}
+      </span>
+    </>
+  )
+}
+
+export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: SidebarProps) {
   const t = useTranslations('mail')
   const pathname = usePathname()
   const [currentFolder, setCurrentFolder] = useState('INBOX')
   const [accountOpen, setAccountOpen] = useState(false)
   const [accountFilter, setAccountFilter] = useState('')
   const accountBoxRef = useRef<HTMLDivElement>(null)
+  const accountButtonRef = useRef<HTMLButtonElement>(null)
+  // The popover is fixed-positioned so it escapes the bar when collapsed (56 px).
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
   // Populated from /api/settings after mount (see effect below) rather than in the
   // initializer, so the server and first client render match (no hydration mismatch).
@@ -85,6 +135,12 @@ export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) 
   useEffect(() => {
     if (!accountOpen) setAccountFilter('')
   }, [accountOpen])
+
+  const openAccountMenu = useCallback(() => {
+    const rect = accountButtonRef.current?.getBoundingClientRect()
+    if (rect) setPopoverPos({ top: rect.bottom + 4, left: rect.left })
+    setAccountOpen(o => !o)
+  }, [])
 
   const { data: settingsData } = useSWR<{ data: { active_account_id: string | null } }>('/api/settings', fetcher)
   useEffect(() => {
@@ -172,220 +228,101 @@ export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) 
     })
   }
 
-  // ─── COLLAPSED MODE ──────────────────────────────────────────────────────────
-  if (collapsed) {
+  const folderRow = (folder: FolderItem, icon: React.ComponentType<{ className?: string }>, label: string) => {
+    const isActive = pathname.startsWith('/mail') && currentFolder === folder.path
+    const isDragOver = dragOverPath === folder.path
+    const unread = folder.unreadCount ?? 0
     return (
-      <div className="relative flex flex-col h-full items-center py-3 gap-1 overflow-hidden bg-gradient-to-b from-zinc-900 via-zinc-950 to-black">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 -top-8 h-48 bg-[radial-gradient(70%_100%_at_50%_0%,rgba(124,108,246,0.16),transparent_75%)]"
+      <Link
+        key={folder.path}
+        href={`/mail?folder=${encodeURIComponent(folder.path)}`}
+        onClick={() => handleFolderClick(folder.path)}
+        onDragOver={e => handleDragOver(e, folder.path)}
+        onDragLeave={handleDragLeave}
+        onDrop={e => handleDrop(e, folder.path)}
+        title={label}
+        data-sidebar-row={`folder:${folder.path}`}
+        className={cn(ROW, isDragOver ? ROW_DRAG : isActive ? ROW_ACTIVE : ROW_IDLE)}
+      >
+        <RowBody
+          icon={icon}
+          iconClassName={isActive ? 'text-violet-300' : undefined}
+          label={label}
+          collapsed={collapsed}
+          trailing={unread > 0 ? (
+            <span className={cn(
+              'shrink-0 text-[11px] font-semibold min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center',
+              isActive ? 'bg-white/20 text-white' : 'bg-violet-500/20 text-violet-300'
+            )}>
+              {unread > 99 ? '99+' : unread}
+            </span>
+          ) : undefined}
         />
-        {/* Logo */}
-        <div className="mb-2">
-          <img src="/brand/svg/synapmail-icone-negatif.svg" alt="Synapmail" className="w-7 h-7" />
-        </div>
-
-        {/* Account dot */}
-        {activeAccount && hasMultipleAccounts && (
-          <div className="relative mb-1 shrink-0">
-            <button
-              onClick={onToggleCollapse}
-              title={otherUnread > 0 ? t('unreadOtherAccounts', { count: otherUnread }) : activeAccount.email}
-              className={cn('block w-7 h-7 rounded-full transition-all hover:ring-2 hover:ring-white/30', ACCOUNT_COLORS[accountColorIdx])}
-            />
-            {otherUnread > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-violet-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-zinc-950">
-                {otherUnread > 9 ? '9+' : otherUnread}
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Compose icon */}
-        <button
-          onClick={dispatchCompose}
-          title={t('compose')}
-          className="w-10 h-10 flex items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-blue-500 hover:brightness-110 text-white transition-all shadow-lg shadow-violet-500/30 mb-2 shrink-0"
-        >
-          <PenSquare className="w-4 h-4" />
-        </button>
-
-        {/* Dashboard */}
-        <Link
-          href="/dashboard"
-          title={t('dashboard')}
-          className={cn(
-            'flex items-center justify-center w-full h-9 rounded-lg transition-all mb-1',
-            pathname.startsWith('/dashboard')
-              ? 'bg-violet-500/15 text-white ring-1 ring-inset ring-violet-500/20'
-              : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06]'
-          )}
-        >
-          <LayoutDashboard className={cn('w-4 h-4', pathname.startsWith('/dashboard') && 'text-violet-300')} />
-        </Link>
-
-        {/* Nav icons */}
-        <nav className="flex-1 w-full px-1.5 space-y-0.5 overflow-y-auto">
-          {foldersLoading && [1, 2, 3, 4, 5].map(i => (
-            <div key={i} className="w-9 h-9 rounded-lg bg-muted/40 animate-pulse mx-auto" />
-          ))}
-          {foldersError && (
-            <button
-              onClick={() => mutateFolders()}
-              title="Réessayer"
-              className="flex items-center justify-center w-full h-9 rounded-lg text-destructive/70 hover:text-destructive hover:bg-destructive/10 transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-          )}
-          {!foldersLoading && !foldersError && specialFolders.map(folder => {
-            const Icon = SPECIAL_ICONS[folder.special!] ?? Folder
-            const label = SPECIAL_LABELS[folder.special!]
-            const isActive = pathname.startsWith('/mail') && currentFolder === folder.path
-            const isDragOver = dragOverPath === folder.path
-            const unread = folder.unreadCount ?? 0
-            return (
-              <Link
-                key={folder.path}
-                href={`/mail?folder=${encodeURIComponent(folder.path)}`}
-                onClick={() => handleFolderClick(folder.path)}
-                onDragOver={e => handleDragOver(e, folder.path)}
-                onDragLeave={handleDragLeave}
-                onDrop={e => handleDrop(e, folder.path)}
-                title={label ? t(label) : folder.name}
-                className={cn(
-                  'flex items-center justify-center w-full h-9 rounded-lg transition-all relative',
-                  isDragOver
-                    ? 'bg-violet-500/25 ring-1 ring-inset ring-violet-400/50 text-white'
-                    : isActive
-                      ? 'bg-violet-500/15 text-white ring-1 ring-inset ring-violet-500/20'
-                      : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06]'
-                )}
-              >
-                <Icon className={cn('w-4 h-4', isActive && 'text-violet-300')} />
-                {unread > 0 && (
-                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-violet-400" />
-                )}
-              </Link>
-            )
-          })}
-
-          {customFolders.length > 0 && (
-            <>
-              <div className="py-2 flex justify-center">
-                <div className="w-4 border-t border-white/10" />
-              </div>
-              {customFolders.map(folder => {
-                const isActive = pathname.startsWith('/mail') && currentFolder === folder.path
-                const isDragOver = dragOverPath === folder.path
-                return (
-                  <Link
-                    key={folder.path}
-                    href={`/mail?folder=${encodeURIComponent(folder.path)}`}
-                    onClick={() => handleFolderClick(folder.path)}
-                    onDragOver={e => handleDragOver(e, folder.path)}
-                    onDragLeave={handleDragLeave}
-                    onDrop={e => handleDrop(e, folder.path)}
-                    title={folder.name}
-                    className={cn(
-                      'flex items-center justify-center w-full h-9 rounded-lg transition-all',
-                      isDragOver
-                        ? 'bg-violet-500/25 ring-1 ring-inset ring-violet-400/50 text-white'
-                        : isActive
-                          ? 'bg-violet-500/15 text-white ring-1 ring-inset ring-violet-500/20'
-                          : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.06]'
-                    )}
-                  >
-                    <Folder className="w-3.5 h-3.5" />
-                  </Link>
-                )
-              })}
-            </>
-          )}
-        </nav>
-
-        {/* Footer */}
-        <div className="w-full px-1.5 border-t border-white/10 pt-2 space-y-0.5">
-          <ThemeToggle collapsed />
-          <Link
-            href="/settings"
-            onClick={() => handleFolderClick()}
-            title={t('settings')}
-            className="flex items-center justify-center w-full h-9 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.06] transition-all"
-          >
-            <Settings className="w-4 h-4" />
-          </Link>
-          <button
-            onClick={onToggleCollapse}
-            title="Agrandir la barre latérale"
-            className="flex items-center justify-center w-full h-9 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.06] transition-all"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
+      </Link>
     )
   }
 
-  // ─── EXPANDED MODE ───────────────────────────────────────────────────────────
   return (
-    <div className="relative flex flex-col h-full overflow-hidden bg-gradient-to-b from-zinc-900 via-zinc-950 to-black">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 -top-10 h-56 bg-[radial-gradient(65%_100%_at_50%_0%,rgba(124,108,246,0.15),transparent_75%)]"
-      />
-      {/* Header */}
-      <div className="flex items-center gap-2.5 px-5 py-5">
-        <img
-          src="/brand/svg/synapmail-icone-negatif.svg"
-          alt="Synapmail"
-          className="w-8 h-8 shrink-0"
-        />
-        <span className="font-bold text-base tracking-tight text-white">Synapmail</span>
-        {onClose ? (
-          <button
-            onClick={onClose}
-            className="ml-auto w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-white/10 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        ) : onToggleCollapse ? (
-          <button
-            onClick={onToggleCollapse}
-            title="Réduire la barre latérale"
-            className="ml-auto w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-white/10 transition-colors"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-        ) : null}
+    <div
+      className="relative flex flex-col h-full bg-gradient-to-b from-zinc-900 via-zinc-950 to-black"
+      style={{ ['--synap-icon-col' as string]: `${SIDEBAR.collapsedWidth}px` }}
+      data-sidebar
+      data-collapsed={collapsed ? 'true' : 'false'}
+    >
+      {/* Hamburger — collapses the bar on desktop, closes the drawer on mobile */}
+      <div className="py-2">
+        <button
+          onClick={onClose ?? onToggleCollapse}
+          title={collapsed ? t('expandSidebar') : t('collapseSidebar')}
+          aria-label={collapsed ? t('expandSidebar') : t('collapseSidebar')}
+          data-sidebar-row="toggle"
+          className={cn(ROW, ROW_IDLE)}
+        >
+          <span className={ICON_COL}>
+            <Menu className="w-4 h-4" />
+          </span>
+        </button>
       </div>
 
       {/* Account switcher */}
       {hasMultipleAccounts && activeAccount && (
-        <div ref={accountBoxRef} className="relative px-3 mb-2">
+        <div ref={accountBoxRef} className="relative">
           <button
-            onClick={() => setAccountOpen(o => !o)}
-            title={otherUnread > 0 ? t('unreadOtherAccounts', { count: otherUnread }) : undefined}
-            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-white/[0.06] transition-colors"
+            ref={accountButtonRef}
+            onClick={openAccountMenu}
+            title={otherUnread > 0 ? t('unreadOtherAccounts', { count: otherUnread }) : activeAccount.email}
+            data-sidebar-row="account"
+            className={cn(ROW, ROW_IDLE)}
           >
-            <div className={cn('w-8 h-8 rounded-full shrink-0', ACCOUNT_COLORS[accountColorIdx])} />
-            <span className="flex-1 min-w-0 text-left">
-              <span className="block text-sm font-medium text-zinc-100 truncate leading-tight">
-                {activeAccount.name || activeAccount.email}
-              </span>
-              {activeAccount.name && (
-                <span className="block text-[11px] text-zinc-500 truncate leading-tight">{activeAccount.email}</span>
-              )}
+            <span className={ICON_COL}>
+              <span className={cn('w-7 h-7 rounded-full', ACCOUNT_COLORS[accountColorIdx])} />
             </span>
-            {otherUnread > 0 && (
-              <span className="shrink-0 text-[11px] font-semibold min-w-[20px] h-5 px-1.5 rounded-full bg-violet-500/20 text-violet-300 flex items-center justify-center">
-                {otherUnread > 99 ? '99+' : otherUnread}
+            <span
+              className={cn(ROW_LABEL, collapsed && 'opacity-0')}
+              style={{ transitionDuration: `${SIDEBAR.transitionMs}ms` }}
+              aria-hidden={collapsed}
+            >
+              <span className="flex-1 min-w-0 text-left">
+                <span className="block text-sm font-medium text-zinc-100 truncate leading-tight">
+                  {activeAccount.name || activeAccount.email}
+                </span>
+                {activeAccount.name && (
+                  <span className="block text-[11px] text-zinc-500 truncate leading-tight">{activeAccount.email}</span>
+                )}
               </span>
-            )}
-            <ChevronDown className={cn('w-3.5 h-3.5 text-zinc-500 transition-transform shrink-0', accountOpen && 'rotate-180')} />
+              {otherUnread > 0 && (
+                <span className="shrink-0 text-[11px] font-semibold min-w-[20px] h-5 px-1.5 rounded-full bg-violet-500/20 text-violet-300 flex items-center justify-center">
+                  {otherUnread > 99 ? '99+' : otherUnread}
+                </span>
+              )}
+              <ChevronDown className={cn('w-3.5 h-3.5 text-zinc-500 transition-transform shrink-0', accountOpen && 'rotate-180')} />
+            </span>
           </button>
-          {accountOpen && (
-            <div className="absolute left-3 right-3 z-50 mt-1 flex flex-col rounded-xl border border-white/10 bg-zinc-900 shadow-xl shadow-black/60 overflow-hidden">
+          {accountOpen && popoverPos && (
+            <div
+              className="fixed z-50 flex flex-col rounded-xl border border-white/10 bg-zinc-900 shadow-xl shadow-black/60 overflow-hidden"
+              style={{ top: popoverPos.top, left: popoverPos.left, width: SIDEBAR.expandedWidth }}
+            >
               {accounts.length > 8 && (
                 <div className="p-1.5 border-b border-white/10">
                   <input
@@ -410,12 +347,10 @@ export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) 
                       onClick={() => switchAccount(acc.id)}
                       className={cn(
                         'w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors',
-                        active
-                          ? 'bg-violet-500/10 text-white'
-                          : 'text-zinc-400 hover:text-zinc-100 hover:bg-violet-500/10'
+                        active ? 'bg-violet-500/10 text-white' : 'text-zinc-400 hover:text-zinc-100 hover:bg-violet-500/10'
                       )}
                     >
-                      <div className={cn('w-8 h-8 rounded-full shrink-0', ACCOUNT_COLORS[accounts.indexOf(acc) % ACCOUNT_COLORS.length])} />
+                      <span className={cn('w-8 h-8 rounded-full shrink-0', ACCOUNT_COLORS[accounts.indexOf(acc) % ACCOUNT_COLORS.length])} />
                       <span className="flex-1 min-w-0">
                         <span className="block text-sm font-medium truncate leading-tight">{acc.name || acc.email}</span>
                         {acc.name && (
@@ -437,141 +372,85 @@ export function Sidebar({ onClose, collapsed, onToggleCollapse }: SidebarProps) 
         </div>
       )}
 
-      {/* Compose button */}
-      <div className="px-3 mb-4">
+      {/* Compose */}
+      <div className="py-2">
         <button
           onClick={dispatchCompose}
-          className="w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-gradient-to-br from-violet-500 to-blue-500 hover:brightness-110 text-white text-sm font-semibold transition-all shadow-lg shadow-violet-500/30 hover:shadow-violet-500/45 active:scale-[0.98]"
+          title={t('compose')}
+          data-sidebar-row="compose"
+          className={cn(ROW, 'bg-violet-500 text-white font-semibold hover:bg-violet-400')}
         >
-          <PenSquare className="w-4 h-4" />
-          {t('compose')}
+          <RowBody icon={PenSquare} label={t('compose')} collapsed={collapsed} />
         </button>
       </div>
 
       {/* Dashboard */}
-      <div className="px-2 mb-1">
-        <Link
-          href="/dashboard"
-          onClick={() => handleFolderClick()}
-          className={cn(
-            'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all',
-            pathname.startsWith('/dashboard')
-              ? 'bg-violet-500/15 text-white font-medium ring-1 ring-inset ring-violet-500/20'
-              : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06]'
-          )}
-        >
-          <LayoutDashboard className={cn('w-4 h-4 shrink-0', pathname.startsWith('/dashboard') && 'text-violet-300')} />
-          <span className="flex-1">{t('dashboard')}</span>
-        </Link>
-      </div>
+      <Link
+        href="/dashboard"
+        onClick={() => handleFolderClick()}
+        title={t('dashboard')}
+        data-sidebar-row="dashboard"
+        className={cn(ROW, pathname.startsWith('/dashboard') ? ROW_ACTIVE : ROW_IDLE)}
+      >
+        <RowBody
+          icon={LayoutDashboard}
+          iconClassName={pathname.startsWith('/dashboard') ? 'text-violet-300' : undefined}
+          label={t('dashboard')}
+          collapsed={collapsed}
+        />
+      </Link>
 
-      {/* Main folders */}
-      <nav className="flex-1 overflow-y-auto px-2 space-y-0.5">
+      {/* Folders */}
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden mt-1">
         {foldersLoading && [1, 2, 3, 4, 5].map(i => (
-          <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-lg">
-            <div className="w-4 h-4 rounded bg-muted/40 animate-pulse shrink-0" />
-            <div className="h-3 rounded bg-muted/40 animate-pulse flex-1" />
+          <div key={i} className={ROW}>
+            <span className={ICON_COL}><span className="w-4 h-4 rounded bg-muted/40 animate-pulse" /></span>
+            <span className={cn(ROW_LABEL, collapsed && 'opacity-0')}>
+              <span className="h-3 flex-1 rounded bg-muted/40 animate-pulse" />
+            </span>
           </div>
         ))}
         {foldersError && (
-          <div className="flex flex-col items-center gap-2 py-6 text-center">
-            <AlertTriangle className="w-5 h-5 text-destructive/60" />
-            <p className="text-xs text-muted-foreground">{t('foldersError')}</p>
-            <button
-              onClick={() => mutateFolders()}
-              className="flex items-center gap-1.5 text-xs text-primary hover:underline"
-            >
-              <RefreshCw className="w-3 h-3" />
-              {t('retry')}
-            </button>
-          </div>
+          <button
+            onClick={() => mutateFolders()}
+            title={t('retry')}
+            data-sidebar-row="folders-error"
+            className={cn(ROW, 'text-destructive/70 hover:text-destructive hover:bg-destructive/10')}
+          >
+            <RowBody icon={RefreshCw} label={t('foldersError')} collapsed={collapsed} />
+          </button>
         )}
-        {!foldersLoading && !foldersError && specialFolders.map(folder => {
-          const Icon = SPECIAL_ICONS[folder.special!] ?? Folder
-          const label = SPECIAL_LABELS[folder.special!]
-          const isActive = pathname.startsWith('/mail') && currentFolder === folder.path
-          const isDragOver = dragOverPath === folder.path
-          const unread = folder.unreadCount ?? 0
-          return (
-            <Link
-              key={folder.path}
-              href={`/mail?folder=${encodeURIComponent(folder.path)}`}
-              onClick={() => handleFolderClick(folder.path)}
-              onDragOver={e => handleDragOver(e, folder.path)}
-              onDragLeave={handleDragLeave}
-              onDrop={e => handleDrop(e, folder.path)}
-              className={cn(
-                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all',
-                isDragOver
-                  ? 'bg-violet-500/25 ring-1 ring-inset ring-violet-400/50 text-white'
-                  : isActive
-                    ? 'bg-violet-500/15 text-white font-medium ring-1 ring-inset ring-violet-500/20'
-                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06]'
-              )}
-            >
-              <Icon className={cn('w-4 h-4 shrink-0', isActive ? 'text-violet-300' : '')} />
-              <span className="flex-1">{label ? t(label) : folder.name}</span>
-              {unread > 0 && (
-                <span className={cn(
-                  'text-[11px] font-semibold min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center',
-                  isActive ? 'bg-white/20 text-white' : 'bg-violet-500/20 text-violet-300'
-                )}>
-                  {unread > 99 ? '99+' : unread}
-                </span>
-              )}
-            </Link>
-          )
-        })}
+        {!foldersLoading && !foldersError && specialFolders.map(folder =>
+          folderRow(folder, SPECIAL_ICONS[folder.special!] ?? Folder, t(SPECIAL_LABELS[folder.special!]))
+        )}
 
-        {/* Custom folders */}
         {customFolders.length > 0 && (
           <>
-            <div className="pt-4 pb-1 px-3">
-              <span className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">Dossiers</span>
+            <div className="flex items-center h-7">
+              <span className={ICON_COL}><span className="w-4 border-t border-white/10" /></span>
+              <span
+                className={cn(ROW_LABEL, 'text-xs font-semibold text-zinc-500 uppercase tracking-widest', collapsed && 'opacity-0')}
+                style={{ transitionDuration: `${SIDEBAR.transitionMs}ms` }}
+                aria-hidden={collapsed}
+              >
+                <span className="flex-1 truncate">{t('folders')}</span>
+              </span>
             </div>
-            {customFolders.map(folder => {
-              const isActive = pathname.startsWith('/mail') && currentFolder === folder.path
-              const isDragOver = dragOverPath === folder.path
-              const unread = folder.unreadCount ?? 0
-              return (
-                <Link
-                  key={folder.path}
-                  href={`/mail?folder=${encodeURIComponent(folder.path)}`}
-                  onClick={() => handleFolderClick(folder.path)}
-                  onDragOver={e => handleDragOver(e, folder.path)}
-                  onDragLeave={handleDragLeave}
-                  onDrop={e => handleDrop(e, folder.path)}
-                  className={cn(
-                    'flex items-center gap-3 px-3 py-1.5 rounded-lg text-sm transition-all',
-                    isDragOver
-                      ? 'bg-violet-500/25 ring-1 ring-inset ring-violet-400/50 text-white'
-                      : isActive
-                        ? 'bg-violet-500/15 text-white font-medium ring-1 ring-inset ring-violet-500/20'
-                        : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.06]'
-                  )}
-                >
-                  <Folder className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate flex-1">{folder.name}</span>
-                  {unread > 0 && (
-                    <span className="text-[11px] font-semibold text-zinc-500">{unread}</span>
-                  )}
-                </Link>
-              )
-            })}
+            {customFolders.map(folder => folderRow(folder, Folder, folder.name))}
           </>
         )}
       </nav>
 
-      {/* Footer */}
-      <div className="p-2 border-t border-white/10 space-y-0.5">
-        <ThemeToggle />
+      {/* Footer — the theme toggle slot goes here at integration time */}
+      <div className="border-t border-white/10 py-1">
         <Link
           href="/settings"
           onClick={() => handleFolderClick()}
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.06] transition-all"
+          title={t('settings')}
+          data-sidebar-row="settings"
+          className={cn(ROW, ROW_IDLE)}
         >
-          <Settings className="w-4 h-4" />
-          {t('settings')}
+          <RowBody icon={Settings} label={t('settings')} collapsed={collapsed} />
         </Link>
       </div>
     </div>

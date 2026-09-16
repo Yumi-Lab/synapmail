@@ -100,7 +100,10 @@
     "reason_vip": "Contact clé",
     "reason_frequent": "Fréquent",
     "reason_starred": "Suivi",
-    "reason_attachment": "Pièce jointe"
+    "reason_attachment": "Pièce jointe",
+    "collapseSidebar": "Réduire la barre latérale",
+    "expandSidebar": "Agrandir la barre latérale",
+    "folders": "Dossiers"
   },
   "compose": {
     "newMessage": "Nouveau message",
