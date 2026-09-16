@@ -7,6 +7,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-09-16 — Chiffrement PGP + accès API + fin du localStorage
+
 ### Fixed
 - **`messages_cache` — erreur Postgres sur les messages sans date** (`lib/imap.ts`) : quand un message IMAP n'a pas d'en-tête `Date` exploitable, `msg.envelope?.date?.toISOString() ?? ''` produisait `''`, envoyé tel quel au paramètre `$8` (colonne `date timestamptz`) de l'`INSERT INTO messages_cache` → `invalid input syntax for type timestamp with time zone: ""`, l'upsert de ce message échouait (log d'erreur Postgres récurrent, message absent du cache). Le paramètre passe désormais `m.date || null`.
 - **Sidebar — sélecteur de compte inutilisable avec beaucoup de comptes** (`components/layout/Sidebar.tsx`) : le menu déroulant des comptes se dépliait dans le flux, sans hauteur max ni scroll → avec ~20 comptes il écrasait le `flex-1` de la liste des dossiers (parent `overflow-hidden`), masquant dossiers + pied de page et rendant les derniers comptes inatteignables. Le menu passe en **overlay `absolute` `z-50`** à hauteur plafonnée (`max-h-[min(60vh,22rem)]` + `overflow-y-auto`), avec **champ de filtre** (au-delà de 8 comptes), fermeture au clic extérieur / `Échap`.
