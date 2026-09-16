@@ -35,14 +35,20 @@ export function ThemeToggle({ className, compact }: { className?: string; compac
       role="radiogroup"
       aria-label={t('theme')}
       className={cn(
-        // `w-fit` : les cases restent CARRÉES (icônes seules), la piste ne s'étire
-        // jamais — c'est ce qui rend le calcul du curseur exact et la piste
-        // verticale assez étroite pour une barre repliée. `mx-auto` centre la
-        // piste verticale dans le rail replié.
-        'relative isolate grid w-fit rounded-lg border border-border bg-muted/40 p-0.5',
-        compact ? 'mx-auto grid-cols-1' : 'grid-cols-3',
+        // `w-max` (et JAMAIS `w-fit`/`w-full`) : la piste garde sa largeur
+        // INTRINSÈQUE — 3 cases carrées + rembourrage — même dans une colonne
+        // étroite. Avec `fit-content`, des pistes en `1fr` (min-content = 0) se
+        // comprimaient sous 3 cases et les icônes se chevauchaient à 390 px.
+        // `mx-auto` centre la piste verticale dans le rail replié.
+        'relative isolate grid w-max rounded-lg border border-border bg-muted/40 p-0.5',
+        compact && 'mx-auto',
         className
       )}
+      // Pistes en `auto` : chaque colonne (ou rangée) prend la taille de sa case
+      // et ne se comprime pas. Le nombre vient de THEMES — aucune valeur en dur.
+      style={{
+        [compact ? 'gridTemplateRows' : 'gridTemplateColumns']: `repeat(${THEMES.length}, auto)`,
+      }}
     >
       {/* Curseur : SEUL élément qui bouge. Sa taille vaut exactement une case, donc
           `translate(index * 100%)` l'amène pile sur la case active, sans valeur
