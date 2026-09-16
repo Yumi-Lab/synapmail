@@ -11,17 +11,20 @@ import { cn } from '@/lib/utils'
  * Champ mot de passe unique de l'app : input + bouton œil pour afficher/masquer.
  * `type` est imposé par le composant — ne pas le passer en prop.
  */
-type PasswordInputProps = Omit<React.ComponentProps<'input'>, 'type'>
+type PasswordInputProps = Omit<React.ComponentProps<'input'>, 'type'> & {
+  /** Classes de mise en page posées sur le conteneur (largeur, marges) plutôt que sur l'input. */
+  containerClassName?: string
+}
 
 const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
-  function PasswordInput({ className, disabled, ...props }, ref) {
+  function PasswordInput({ className, containerClassName, disabled, ...props }, ref) {
     const t = useTranslations('common')
     const [visible, setVisible] = React.useState(false)
     const label = visible ? t('hidePassword') : t('showPassword')
     const Icon = visible ? EyeOff : Eye
 
     return (
-      <div className="relative">
+      <div className={cn('relative', containerClassName)}>
         <Input
           ref={ref}
           type={visible ? 'text' : 'password'}

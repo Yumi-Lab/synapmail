@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl'
 import useSWR from 'swr'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/ui/PasswordInput'
 import { Label } from '@/components/ui/label'
 import { Plus, Pencil, Trash2, Wifi, Mail } from 'lucide-react'
 import type { EmailAccount } from '@/types/account'
@@ -272,7 +273,7 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
               <Input value={ef.username} onChange={set('username')} required />
             </div>
             <div className="space-y-1.5"><Label>{t('password')}</Label>
-              <Input type="password" value={ef.password} onChange={set('password')} placeholder="(inchangé)" />
+              <PasswordInput value={ef.password} onChange={set('password')} placeholder="(inchangé)" />
             </div>
           </div>
 

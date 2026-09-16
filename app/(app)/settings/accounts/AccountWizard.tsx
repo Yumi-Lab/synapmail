@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/ui/PasswordInput'
 import { Label } from '@/components/ui/label'
 import { ArrowLeft, Wifi, Info, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -414,7 +415,7 @@ export function AccountWizard({ onSave, onCancel, saving }: Props) {
           </div>
           <div className="col-span-2 space-y-2">
             <Label>{selectedProvider.requiresAppPassword ? 'Mot de passe d\'application' : 'Mot de passe'}</Label>
-            <Input type="password" value={password} onChange={e => setPassword(e.target.value)} className="h-11" />
+            <PasswordInput value={password} onChange={e => setPassword(e.target.value)} className="h-11" />
           </div>
           <div className="col-span-2 space-y-2">
             <Label>Couleur du compte</Label>
@@ -489,7 +490,7 @@ export function AccountWizard({ onSave, onCancel, saving }: Props) {
 
           <div className="space-y-2">
             <Label>Mot de passe</Label>
-            <Input type="password" value={password} onChange={e => setPassword(e.target.value)} className="h-11" />
+            <PasswordInput value={password} onChange={e => setPassword(e.target.value)} className="h-11" />
           </div>
           <div className="space-y-2">
             <Label>Couleur du compte</Label>

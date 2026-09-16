@@ -6,6 +6,7 @@ import useSWR from 'swr'
 import { KeyRound, Download, Trash2, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/ui/PasswordInput'
 import { Label } from '@/components/ui/label'
 import { SettingsPage, SettingsHeader, SettingsSection } from '@/components/settings/primitives'
 import {
@@ -239,11 +240,11 @@ export default function PgpPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t('myKey.passphrase')}</Label>
-                  <Input type="password" value={genPassphrase} onChange={e => setGenPassphrase(e.target.value)} />
+                  <PasswordInput value={genPassphrase} onChange={e => setGenPassphrase(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t('myKey.confirmPassphrase')}</Label>
-                  <Input type="password" value={genConfirm} onChange={e => setGenConfirm(e.target.value)} />
+                  <PasswordInput value={genConfirm} onChange={e => setGenConfirm(e.target.value)} />
                 </div>
               </div>
               {genError && <p className="text-sm text-destructive">{genError}</p>}
@@ -259,12 +260,11 @@ export default function PgpPage() {
                   onChange={e => setImportFile(e.target.files?.[0] ?? null)}
                   className="text-xs text-muted-foreground"
                 />
-                <Input
-                  type="password"
+                <PasswordInput
                   placeholder={t('myKey.importBackupPassphrase')}
                   value={importPassphrase}
                   onChange={e => setImportPassphrase(e.target.value)}
-                  className="h-8 text-sm max-w-xs"
+                  className="h-8 text-sm" containerClassName="max-w-xs"
                 />
                 {importError && <p className="text-sm text-destructive">{importError}</p>}
                 <div>
