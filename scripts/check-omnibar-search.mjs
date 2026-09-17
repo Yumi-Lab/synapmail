@@ -62,6 +62,15 @@ try {
   const page = await browser.newPage()
   await page.setViewport(VIEWPORT)
 
+  // The app holds a Server-Sent Events stream open for as long as a page lives, so
+  // `networkidle2` can NEVER settle on it: waiting for it makes the harness die on a
+  // transport timeout that says nothing about the product. Navigation is therefore
+  // considered done when the DOM is ready and the element the step needs is present.
+  const visit = async (path, selector = SEARCH) => {
+    await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' })
+    if (selector) await page.waitForSelector(selector, { timeout: 20000 })
+  }
+
   // Every /api/messages/search request the app issues, in order — this is the
   // evidence that the FIELD drives the QUERY, not just that the URL changed.
   const searchCalls = []
@@ -72,7 +81,7 @@ try {
     }
   })
 
-  await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2' })
+  await visit('/login', null)
   const loggedIn = await page.evaluate(async ({ base, email, password }) => {
     const { csrfToken } = await (await fetch(`${base}/api/auth/csrf`)).json()
     const res = await fetch(`${base}/api/auth/callback/credentials`, {
@@ -86,8 +95,7 @@ try {
 
   // --- Exactly one search field in the whole app, and it is the header's ---
   for (const path of ['/mail', '/dashboard']) {
-    await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle2' })
-    await page.waitForSelector(SEARCH, { timeout: 20000 })
+    await visit(path)
     await new Promise(r => setTimeout(r, SETTLE_MS))
     const fields = await page.evaluate(sel => {
       const visible = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
@@ -104,8 +112,7 @@ try {
   }
 
   // --- Typing in the header drives the list, through the URL ---
-  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
-  await page.waitForSelector(SEARCH, { timeout: 20000 })
+  await visit('/mail')
   await new Promise(r => setTimeout(r, SETTLE_MS))
   const before = { url: page.url(), calls: searchCalls.length, summary: await page.$(SUMMARY) }
   if (before.calls !== 0) { console.error('HARNESS: a search request fired before anything was typed'); process.exit(2) }
@@ -162,8 +169,7 @@ try {
   if (stillSearching) failures.push('clearing the field left the list in search mode')
 
   // --- From another page, submitting navigates to the mailbox ---
-  await page.goto(`${BASE}/dashboard`, { waitUntil: 'networkidle2' })
-  await page.waitForSelector(SEARCH, { timeout: 20000 })
+  await visit('/dashboard')
   await new Promise(r => setTimeout(r, SETTLE_MS))
   await page.click(SEARCH)
   await page.type(SEARCH, QUERY, { delay: 30 })
@@ -175,8 +181,7 @@ try {
   if (fromDash.searchParams.get(SEARCH_PARAM) !== QUERY) failures.push(`searching from the dashboard carried ${SEARCH_PARAM}="${fromDash.searchParams.get(SEARCH_PARAM)}"`)
 
   // --- A deep link restores the search (the URL is the state) ---
-  await page.goto(`${BASE}/mail?${SEARCH_PARAM}=${QUERY}&${SCOPE_PARAM}=${SCOPE_ALL}`, { waitUntil: 'networkidle2' })
-  await page.waitForSelector(SEARCH, { timeout: 20000 })
+  await visit(`/mail?${SEARCH_PARAM}=${QUERY}&${SCOPE_PARAM}=${SCOPE_ALL}`)
   await new Promise(r => setTimeout(r, SEARCH_SETTLE_MS))
   const restored = await page.$eval(SEARCH, el => el.value)
   const restoredScope = await page.$eval(scopeBtn(SCOPE_ALL), el => el.getAttribute('aria-pressed'))
@@ -188,7 +193,7 @@ try {
 
   const consoleErrors = []
   page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()) })
-  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await visit('/mail')
   await new Promise(r => setTimeout(r, SETTLE_MS * 2))
   console.log(`console errors on a fresh /mail load: ${consoleErrors.length}`)
   if (consoleErrors.length) failures.push(`console errors: ${consoleErrors.slice(0, 3).join(' | ')}`)
