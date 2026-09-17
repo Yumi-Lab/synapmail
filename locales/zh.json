@@ -85,6 +85,8 @@
     "dashboard": "仪表盘",
     "search": "搜索",
     "searchAccounts": "搜索账户…",
+    "searchMail": "搜索邮件",
+    "openMenu": "打开菜单",
     "noAccountMatch": "没有匹配的账户",
     "unreadOtherAccounts": "其他账户有 {count} 封未读",
     "grpToday": "今天",

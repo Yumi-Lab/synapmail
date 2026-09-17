@@ -6,8 +6,7 @@ import { openCompose } from '@/lib/compose'
 import { useTranslations } from 'next-intl'
 import {
   Mail, Send, FileText, AlertTriangle, Trash2,
-  Settings, PenSquare, Folder, Archive, ChevronDown, RefreshCw,
-  LayoutDashboard, Check,
+  Settings, PenSquare, Folder, Archive, ChevronDown, RefreshCw, Check,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import useSWR from 'swr'
@@ -415,22 +414,6 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
           <RowBody icon={PenSquare} label={t('compose')} collapsed={collapsed} />
         </button>
       </div>
-
-      {/* Dashboard */}
-      <Link
-        href="/dashboard"
-        onClick={() => handleFolderClick()}
-        title={t('dashboard')}
-        data-sidebar-row="dashboard"
-        className={cn(ROW, pathname.startsWith('/dashboard') ? ROW_ACTIVE : ROW_IDLE)}
-      >
-        <RowBody
-          icon={LayoutDashboard}
-          iconClassName={pathname.startsWith('/dashboard') ? ACCENT.ink : undefined}
-          label={t('dashboard')}
-          collapsed={collapsed}
-        />
-      </Link>
 
       {/* Folders */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden scroll-thin mt-1" data-scroll-thin>

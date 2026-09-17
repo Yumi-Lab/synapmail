@@ -85,6 +85,8 @@
     "dashboard": "Dashboard",
     "search": "Search",
     "searchAccounts": "Search accounts…",
+    "searchMail": "Search mail",
+    "openMenu": "Open menu",
     "noAccountMatch": "No matching account",
     "unreadOtherAccounts": "{count} unread in other accounts",
     "grpToday": "Today",

@@ -5,6 +5,7 @@ import { Menu } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import useSWR, { mutate } from 'swr'
 import { cn } from '@/lib/utils'
+import { Omnibar } from './Omnibar'
 import { Sidebar, SIDEBAR, HEADER_ROW_CENTER } from './Sidebar'
 import { UpdateBanner } from './UpdateBanner'
 
@@ -71,7 +72,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="relative flex h-screen overflow-hidden bg-muted/30">
+    <div className="flex h-screen flex-col overflow-hidden bg-muted/30">
+      {/* Application header, full width, above the bar and the content */}
+      <Omnibar onOpenDrawer={() => setSidebarOpen(true)} />
+
+      <div className="relative flex flex-1 min-h-0">
       {/* Desktop sidebar — width animated from the single geometry source */}
       <aside
         className="hidden lg:flex shrink-0 flex-col overflow-hidden border-r border-border transition-[width]"
@@ -116,18 +121,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Update banner */}
         <UpdateBanner />
 
-        {/* Mobile top bar */}
-        <div className="lg:hidden flex items-center px-4 py-3 border-b border-border bg-background shrink-0">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-        </div>
-
         {children}
       </main>
+      </div>
     </div>
   )
 }
