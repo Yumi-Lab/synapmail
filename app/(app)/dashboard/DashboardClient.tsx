@@ -377,22 +377,6 @@ export function DashboardClient() {
             )}
           </div>
 
-          <form
-            onSubmit={e => {
-              e.preventDefault()
-              const q = new FormData(e.currentTarget).get('q')?.toString().trim()
-              router.push(q ? `/mail?q=${encodeURIComponent(q)}` : '/mail')
-            }}
-            className="relative hidden max-w-[320px] flex-1 sm:block"
-          >
-            <input
-              name="q"
-              type="search"
-              placeholder={t('searchPlaceholder')}
-              className="h-9 w-full rounded-lg border border-border bg-card/70 pl-3 pr-3 text-sm outline-none backdrop-blur-sm focus-visible:ring-2 focus-visible:ring-violet-500"
-            />
-          </form>
-
           <button
             onClick={openCompose}
             className="inline-flex h-9 items-center gap-2 rounded-lg bg-gradient-to-br from-violet-500 to-blue-500 px-4 text-sm font-medium text-white shadow-sm transition hover:brightness-105"
