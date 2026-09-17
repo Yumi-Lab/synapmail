@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useTranslations } from 'next-intl'
 import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, MailOpen, MoveRight, ChevronDown, Eye, EyeOff, Archive, Clock, PenSquare } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { parseDate } from '@/lib/dates'
 import { dispatchCompose } from '@/lib/compose'
 import useSWR, { mutate as globalMutate } from 'swr'
 import type { Message, Folder, ReadReceipt } from '@/types/email'
@@ -20,7 +21,8 @@ const fetcher = async (url: string) => {
 }
 
 const formatDate = (iso: string) => {
-  const d = new Date(iso)
+  const d = parseDate(iso)
+  if (!d) return ''
   const now = new Date()
   const isToday = d.toDateString() === now.toDateString()
   if (isToday) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })

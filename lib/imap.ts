@@ -6,6 +6,21 @@ import { query } from './db'
 import { upsertContact } from './contacts'
 import type { Message, Folder, AuthResults } from '@/types/email'
 
+/**
+ * Date d'un message pour l'app : l'en-tête Date (enveloppe) quand il est
+ * présent et valide, sinon la date interne IMAP (réception/dépôt sur le serveur),
+ * qui existe toujours. Certains mails générés par des scripts n'ont pas d'en-tête
+ * Date exploitable : sans repli, l'API renvoyait '' et l'interface « Invalid Date ».
+ */
+export function messageDate(...candidates: Array<Date | string | null | undefined>): string {
+  for (const c of candidates) {
+    if (!c) continue
+    const d = c instanceof Date ? c : new Date(c)
+    if (!Number.isNaN(d.getTime())) return d.toISOString()
+  }
+  return ''
+}
+
 function normalizeSubjectForThread(subject: string): string {
   let prev = ''
   let s = (subject ?? '').trim()
@@ -148,7 +163,7 @@ export async function listMessages(
     const messages: Message[] = []
     if (pageUids.length > 0) {
       for await (const msg of client.fetch(pageUids as unknown as string, {
-        uid: true, flags: true, envelope: true, bodyStructure: true,
+        uid: true, flags: true, envelope: true, bodyStructure: true, internalDate: true,
         size: true,
         headers: ['list-unsubscribe', 'x-priority'],
       } as Parameters<typeof client.fetch>[1])) {
@@ -181,7 +196,7 @@ export async function listMessages(
           },
           to: (msg.envelope?.to ?? []).map(a => ({ name: a.name ?? '', address: a.address ?? '' })),
           subject,
-          date: msg.envelope?.date?.toISOString() ?? '',
+          date: messageDate(msg.envelope?.date, msg.internalDate),
           preview: '',
           isRead: msg.flags?.has('\\Seen') ?? false,
           isStarred: msg.flags?.has('\\Flagged') ?? false,
@@ -310,7 +325,7 @@ export async function getMessage(
   try {
     await client.mailboxOpen(folder)
     const msg = await client.fetchOne(uid, {
-      uid: true, flags: true, envelope: true, source: true,
+      uid: true, flags: true, envelope: true, source: true, internalDate: true,
     }, { uid: true })
     if (!msg) return null
 
@@ -341,7 +356,7 @@ export async function getMessage(
         return { name: rt.name ?? '', address: rt.address }
       })(),
       subject: parsed.subject ?? msg.envelope?.subject ?? '(no subject)',
-      date: (parsed.date ?? msg.envelope?.date)?.toISOString() ?? '',
+      date: messageDate(parsed.date, msg.envelope?.date, msg.internalDate),
       preview: parsed.text?.slice(0, 200) ?? '',
       isRead: msg.flags?.has('\\Seen') ?? false,
       isStarred: msg.flags?.has('\\Flagged') ?? false,
@@ -569,7 +584,7 @@ export async function searchMessages(
     const messages: Message[] = []
     if (recentUids.length > 0) {
       for await (const msg of client.fetch(recentUids as unknown as string, {
-        uid: true, flags: true, envelope: true, bodyStructure: true,
+        uid: true, flags: true, envelope: true, bodyStructure: true, internalDate: true,
       })) {
         messages.push({
           uid: String(msg.uid),
@@ -580,7 +595,7 @@ export async function searchMessages(
           },
           to: (msg.envelope?.to ?? []).map(a => ({ name: a.name ?? '', address: a.address ?? '' })),
           subject: msg.envelope?.subject ?? '(no subject)',
-          date: msg.envelope?.date?.toISOString() ?? '',
+          date: messageDate(msg.envelope?.date, msg.internalDate),
           preview: '',
           isRead: msg.flags?.has('\\Seen') ?? false,
           isStarred: msg.flags?.has('\\Flagged') ?? false,
