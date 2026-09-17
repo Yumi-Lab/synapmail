@@ -31,6 +31,11 @@ const EDGE_TOGGLE = { bar: '[data-sidebar-edge-toggle="bar"]', drawer: '[data-si
 // through it is vacuous (observed: "256px off the edge", and a drawer reported still open
 // after it had closed). The drawer is addressed through its own marker.
 const DRAWER = '[data-sidebar-drawer]'
+// The drawer's hamburger lives in the application header, not in <main>: selecting
+// "the first button of main" clicked whatever the page happened to render first and
+// reported a drawer that never opened (a harness failure, not a product one). It is
+// addressed through its own marker.
+const DRAWER_TRIGGER = '[data-omnibar-menu]'
 // Badge geometry thresholds, from the human gate of 2026-09-17 that rejected a badge
 // covering 37% of the bubble and 40% of the initial's text box: the badge may clip the
 // bubble's corner, but the letter underneath must stay whole.
@@ -493,8 +498,8 @@ try {
   // --- Mobile 390: the drawer opens, nothing overflows horizontally ---
   await page.setViewport(MOBILE_VIEWPORT)
   await new Promise(r => setTimeout(r, SETTLE_MS))
-  const mobile = await page.evaluate(() => {
-    const burger = document.querySelector('main button')
+  const mobile = await page.evaluate(trigger => {
+    const burger = document.querySelector(trigger)
     burger?.click()
     return new Promise(resolve => setTimeout(() => {
       const bar = document.querySelector('[data-sidebar-drawer] [data-sidebar]')
@@ -505,7 +510,7 @@ try {
         widest: Math.max(0, ...[...document.querySelectorAll('[data-sidebar-drawer] [data-sidebar] *')].map(e => e.getBoundingClientRect().right)),
       })
     }, 400))
-  })
+  }, DRAWER_TRIGGER)
   console.log(`mobile ${MOBILE_VIEWPORT.width}px: drawer open=${mobile.drawerOpen} rows=${mobile.rows} horizontal overflow=${mobile.overflow}px widest bar edge=${mobile.widest.toFixed(1)}px`)
   if (!mobile.drawerOpen) { console.error('HARNESS: the mobile drawer did not open — nothing measured'); process.exit(2) }
   if (mobile.overflow > 0) failures.push(`mobile ${MOBILE_VIEWPORT.width}px: ${mobile.overflow}px of horizontal overflow`)
