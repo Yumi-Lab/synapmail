@@ -35,19 +35,54 @@ const formatUnread = (count: number) => (count > UNREAD_CAP ? `${UNREAD_CAP}+` :
 
 type AvatarSize = 'sm' | 'md'
 
-/** Bubble sizes: `sm` in the bar's rows (fits the fixed icon column), `md` in the popover list. */
+/**
+ * Bubble sizes: `sm` in the bar's rows (fits the fixed icon column), `md` in the popover
+ * list. The type scale is set so TWO letters fit inside the circle without touching its
+ * edge: at 10 px in the 28 px bubble and 11 px in the 32 px one, the widest pair this
+ * palette can produce stays clear of the rim. `scripts/check-sidebar-collapse.mjs`
+ * measures the rendered glyph box against the bubble, so the fit is enforced, not assumed.
+ */
 const SIZES: Record<AvatarSize, string> = {
-  sm: 'w-7 h-7 text-[11px]',
-  md: 'w-8 h-8 text-xs',
+  sm: 'w-7 h-7 text-[10px]',
+  md: 'w-8 h-8 text-[11px]',
 }
 
-const accountInitial = (account: Pick<EmailAccount, 'name' | 'email'>) =>
-  ((account.name || account.email).trim().charAt(0) || '?').toUpperCase()
+/** Letters kept in a bubble. Two, always — one letter reads as an accident, not an identity. */
+const INITIAL_LEN = 2
+
+/**
+ * What separates two words in a display name or an email local part: whitespace and
+ * ASCII punctuation. Written as the separators rather than as "everything that is not
+ * a letter" — a Unicode property escape needs the `u` flag, unavailable at this
+ * project's compile target, while an ASCII letter class would cut "Élodie" or "王小明"
+ * in the wrong place. Punctuation must be in here: without it `Nicolas (Yumi)` renders
+ * as `N(` instead of `NY`.
+ */
+const WORD_SPLIT = /[\s!-\/:-@[-`{-~]+/
+
+/**
+ * The bubble's letters, as ONE source for the whole bar. Always exactly two:
+ * the initials of the first two words of the name when there are two ("Nicolas
+ * Michaut" → "NM"), otherwise the first two letters of the single word — name
+ * first, then the local part of the email ("mathilde" → "MA", "bruno" → "BR").
+ * A source too short to yield two characters falls back to the other field
+ * rather than rendering a lone letter.
+ */
+export const accountInitials = (account: Pick<EmailAccount, 'name' | 'email'>) => {
+  const sources = [account.name ?? '', (account.email ?? '').split('@')[0] ?? '']
+  for (const source of sources) {
+    const words = source.trim().split(WORD_SPLIT).filter(Boolean)
+    if (words.length >= INITIAL_LEN) return words.slice(0, INITIAL_LEN).map(w => w[0]).join('').toUpperCase()
+    const single = words[0] ?? ''
+    if (single.length >= INITIAL_LEN) return single.slice(0, INITIAL_LEN).toUpperCase()
+  }
+  return '??'
+}
 
 /**
  * Geometry of the badge, as one source. It hangs off the host's top-right CORNER
  * (Google style): small, and offset far enough that its box clears the initial
- * underneath it — measured on the SMALLEST bubble (28 px), where the initial's text
+ * underneath it — measured on the SMALLEST bubble (28 px), where the letters' text
  * box sits closest to the corner. At `-9px` the widest label (`99+`) covers ~11 % of
  * that bubble and 0 % of the initial's own text box; the previous `-4px` / 16 px-tall
  * badge covered 37 % of the bubble and 40 % of the glyph, hiding the letter.
@@ -89,7 +124,7 @@ interface AccountAvatarProps extends React.HTMLAttributes<HTMLSpanElement> {
 }
 
 /**
- * Round bubble carrying the account's initial, with the unread counter pinned on its
+ * Round bubble carrying the account's two letters, with the unread counter pinned on its
  * top-right corner — never a pill sitting to the right of the name. The badge is
  * absolutely positioned, so it can never change the bubble's box: an icon column
  * built on it keeps the exact same geometry collapsed or expanded.
@@ -102,12 +137,12 @@ export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', ..
       <span
         {...rest}
         className={cn(
-          'rounded-full flex items-center justify-center font-semibold text-white select-none',
+          'rounded-full flex items-center justify-center font-semibold text-white select-none tracking-[0.02em]',
           SIZES[size],
           ACCOUNT_COLORS[colorIndex % ACCOUNT_COLORS.length],
         )}
       >
-        <span data-account-initial>{accountInitial(account)}</span>
+        <span data-account-initial>{accountInitials(account)}</span>
       </span>
       <UnreadBadge count={unread} />
     </span>
