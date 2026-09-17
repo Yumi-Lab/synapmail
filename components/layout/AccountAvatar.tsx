@@ -26,8 +26,6 @@ export const ACCENT = {
   tintStrong: 'bg-violet-600/20',
   ink: 'text-violet-600 dark:text-violet-400',
   ring: 'ring-violet-600/40',
-  /** Full-strength ring: marks the SELECTED item (an account bubble), never a focus hint. */
-  ringSolid: 'ring-violet-600',
 } as const
 
 /** Above this the badge reads `99+`. Single source for every unread counter of the bar. */
@@ -123,13 +121,6 @@ interface AccountAvatarProps extends React.HTMLAttributes<HTMLSpanElement> {
   colorIndex: number
   unread?: number
   size?: AvatarSize
-  /**
-   * Marks the bubble as the selected one with a ring around it. A ring is a box-shadow:
-   * it changes nothing in the layout, so a selected row and an idle row keep the exact
-   * same geometry — the reason the popover marks its active account this way instead of
-   * adding a check glyph that only the active row carries.
-   */
-  selected?: boolean
 }
 
 /**
@@ -140,7 +131,7 @@ interface AccountAvatarProps extends React.HTMLAttributes<HTMLSpanElement> {
  * `--synap-surface` is the colour the badge is ringed with, so it stays readable
  * even on a bubble that shares the accent colour.
  */
-export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', selected = false, ...rest }: AccountAvatarProps) {
+export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', ...rest }: AccountAvatarProps) {
   return (
     <span className="relative inline-flex shrink-0">
       <span
@@ -149,9 +140,7 @@ export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', se
           'rounded-full flex items-center justify-center font-semibold text-white select-none tracking-[0.02em]',
           SIZES[size],
           ACCOUNT_COLORS[colorIndex % ACCOUNT_COLORS.length],
-          selected && cn('ring-2 ring-offset-2 ring-offset-[color:var(--synap-surface)]', ACCENT.ringSolid),
         )}
-        data-account-selected={selected ? 'true' : undefined}
       >
         <span data-account-initial>{accountInitials(account)}</span>
       </span>

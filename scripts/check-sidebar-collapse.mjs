@@ -47,10 +47,10 @@ const MIN_CONTRAST = 4.5
 const BUBBLE_LETTERS = 2
 // Lot A11: every name and email of the account list starts at the same x. Same tolerance
 // as the collapse contract (MAX_DRIFT_PX) — one pixel is where sub-pixel text layout lands,
-// anything above it is a real indent difference between a selected row and an idle one.
+// anything above it is a real indent difference between two rows.
 const MAX_TEXT_X_SPREAD_PX = MAX_DRIFT_PX
-// ...and exactly one bubble of the list wears the selection ring — the active account.
-const EXPECTED_SELECTED_BUBBLES = 1
+// ...and the ACTIVE account is not in it: it already heads the bar, so the list only
+// offers the accounts one can switch TO, none of them marked.
 // ...and those letters must stay INSIDE the circle. The inked box is measured with a
 // Range over the text node (the span is a flex child stretched to the line box, so its
 // own rect says nothing about where the ink is), and compared against the bubble's box
@@ -198,6 +198,10 @@ const probeAccountList = () => {
     const r = range.getBoundingClientRect()
     return r.width ? r.left : null
   }
+  const header = document.querySelector('[data-sidebar-row="account"]')
+  const headerLines = header
+    ? [...header.querySelectorAll('span.block')].map(l => (l.textContent ?? '').trim()).filter(Boolean)
+    : []
   const rows = [...popover.querySelectorAll('button')].map(row => {
     const lines = [...row.querySelectorAll('span.block')]
       .map(line => ({ text: (line.textContent ?? '').trim(), x: inkLeft(line) }))
@@ -206,7 +210,6 @@ const probeAccountList = () => {
     return {
       label: lines[0]?.text ?? '(no text)',
       lines,
-      selected: bubble?.dataset.accountSelected === 'true',
       ring: bubble ? getComputedStyle(bubble).boxShadow : '',
       textAlign: getComputedStyle(row).textAlign,
       bubbleX: bubble ? bubble.getBoundingClientRect().left : null,
@@ -214,6 +217,7 @@ const probeAccountList = () => {
   })
   return {
     rows,
+    headerLines,
     // Any lucide check, however it is classed, plus the raw glyph as a second net.
     checkGlyphs: popover.querySelectorAll('svg.lucide-check, [class*="lucide-check"]').length,
     checkChars: ((popover.textContent ?? '').match(/[✓✔]/g) ?? []).length,
@@ -497,31 +501,32 @@ try {
   const palette = [...new Set(bubbles.map(b => b.bg))]
   console.log(`distinct bubble colours exercised: ${palette.length} (${palette.join(', ')})`)
 
-  // --- Account list: strict left alignment, ring instead of a check glyph ---
+  // --- Account list: the other accounts only, strictly left-aligned, nothing marked ---
   const list = await page.evaluate(probeAccountList)
   if (!list) { console.error('HARNESS: account popover not found — the list checks measured nothing'); process.exit(2) }
-  if (list.rows.length < 2) { console.error(`HARNESS: ${list.rows.length} account row(s) — too few to compare alignment`); process.exit(2) }
+  if (!list.rows.length) { console.error('HARNESS: the account list is empty — nothing to measure'); process.exit(2) }
+  if (!list.headerLines.length) { console.error('HARNESS: the active account of the bar has no readable name/email'); process.exit(2) }
   const textXs = list.rows.flatMap(r => r.lines.map(l => l.x))
   if (!textXs.length) { console.error('HARNESS: no inked text line measured in the account list'); process.exit(2) }
   const spread = Math.max(...textXs) - Math.min(...textXs)
-  const selected = list.rows.filter(r => r.selected)
-  console.log(`account list: ${list.rows.length} rows, ${textXs.length} text lines, x spread ${spread.toFixed(2)}px, selected bubbles ${selected.length}, check glyphs ${list.checkGlyphs} (chars ${list.checkChars})`)
+  const activeListed = list.rows.filter(r => r.lines.some(l => list.headerLines.includes(l.text)))
+  const ringed = list.rows.filter(r => r.ring && r.ring !== 'none')
+  console.log(`account list: ${list.rows.length} rows (active account "${list.headerLines[0]}" listed ${activeListed.length}×), ${textXs.length} text lines, x spread ${spread.toFixed(2)}px, ringed bubbles ${ringed.length}, check glyphs ${list.checkGlyphs} (chars ${list.checkChars})`)
   for (const r of list.rows) {
-    console.log(`  ${r.selected ? 'SELECTED' : '        '} "${r.label}": bubble x=${r.bubbleX?.toFixed(2)} text x=${r.lines.map(l => l.x.toFixed(2)).join('/')} align=${r.textAlign}${r.selected ? ` ring="${r.ring}"` : ''}`)
+    console.log(`  "${r.label}": bubble x=${r.bubbleX?.toFixed(2)} text x=${r.lines.map(l => l.x.toFixed(2)).join('/')} align=${r.textAlign}`)
     if (r.textAlign !== 'left') failures.push(`account row "${r.label}": text-align ${r.textAlign}, expected left`)
   }
   if (spread > MAX_TEXT_X_SPREAD_PX) {
     failures.push(`account list: names/emails start at ${spread.toFixed(2)}px apart (max ${MAX_TEXT_X_SPREAD_PX}px) — x values ${[...new Set(textXs.map(x => x.toFixed(2)))].join(', ')}`)
   }
-  if (selected.length !== EXPECTED_SELECTED_BUBBLES) {
-    failures.push(`account list: ${selected.length} bubble(s) carry the selection ring (expected ${EXPECTED_SELECTED_BUBBLES})`)
+  if (activeListed.length) {
+    failures.push(`account list: the active account "${list.headerLines[0]}" is still listed (${activeListed.length} row(s)) — it already heads the bar`)
   }
-  // A ring is a box-shadow: an empty one means the class did not compile into the bundle.
-  for (const r of selected) {
-    if (!r.ring || r.ring === 'none') failures.push(`account list: the selected row "${r.label}" has no ring (box-shadow "${r.ring || 'none'}")`)
+  if (ringed.length) {
+    failures.push(`account list: ${ringed.length} bubble(s) carry a ring (box-shadow) — nothing in the list is selected, nothing may be marked`)
   }
   if (list.checkGlyphs || list.checkChars) {
-    failures.push(`account list: ${list.checkGlyphs} check icon(s) and ${list.checkChars} check character(s) left in the popover (expected none — the ring marks the active account)`)
+    failures.push(`account list: ${list.checkGlyphs} check icon(s) and ${list.checkChars} check character(s) left in the popover (expected none)`)
   }
 
   // --- Scrollbars: the bar's scroll containers never show the native bar ---

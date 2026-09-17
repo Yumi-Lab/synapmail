@@ -14,6 +14,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Sélecteur de comptes en tête** avec `components/layout/AccountAvatar.tsx` : bulle ronde à initiale, couleur du
   compte, compteur de non-lus en badge posé sur le coin de la bulle (plus de pastille à droite des libellés, dossiers
   compris). Palette `-600`/`-700` pour un contraste ≥ 4.5:1 de l'initiale.
+- **La liste des comptes n'offre que les AUTRES comptes** : le compte actif est déjà en tête de la barre, le répéter
+  en première ligne de la liste ne servait à rien — plus de ligne « sélectionnée », donc plus d'anneau ni de coche ;
+  `scripts/check-sidebar-collapse.mjs` échoue si le compte actif réapparaît dans la liste ou si une bulle y est marquée.
 - **La barre suit le thème** (claire en clair, sombre en sombre), un seul accent violet plat, un seul motif de ligne
   (36 px), aucune animation décorative ; défilement discret `scroll-thin` (`app/globals.css`) à la place de la barre native.
 - **Sélecteur de thème** (`components/ThemeToggle.tsx`) : icônes seules (soleil / lune / moniteur, nom en infobulle),
