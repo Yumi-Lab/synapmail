@@ -118,7 +118,13 @@
     "collapseSidebar": "Réduire la barre latérale",
     "expandSidebar": "Agrandir la barre latérale",
     "folders": "Dossiers",
-    "switchAccount": "Changer de compte"
+    "switchAccount": "Changer de compte",
+    "searchAllFolders": "Tous les dossiers",
+    "searchThisFolder": "Ce dossier",
+    "clearSearch": "Effacer la recherche",
+    "searchResults": "{count} résultats pour « {query} »",
+    "searching": "Recherche…",
+    "noSearchResults": "Aucun résultat"
   },
   "compose": {
     "newMessage": "Nouveau message",

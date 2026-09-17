@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { COMPOSE_EVENT, COMPOSE_QUERY, MAIL_PATH } from '@/lib/compose'
+import { SCOPE_PARAM, SEARCH_PARAM, focusSearch, readScope } from '@/lib/search'
 import { ArrowLeft } from 'lucide-react'
 import useSWR from 'swr'
 import { MessageList } from '@/components/layout/MessageList'
@@ -47,12 +48,12 @@ export function MailClient() {
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
 
-  // Ref for focusing search input via keyboard shortcut
-  const searchInputRef = useRef<HTMLInputElement>(null)
-
   const searchParams = useSearchParams()
   const router = useRouter()
   const folder = searchParams.get('folder') ?? 'INBOX'
+  // La recherche vit dans l'URL : la barre d'application l'écrit, la liste la lit.
+  const search = searchParams.get(SEARCH_PARAM) ?? ''
+  const searchScope = readScope(searchParams.get(SCOPE_PARAM))
 
   const { data: settingsData } = useSWR<{ data: { active_account_id: string | null; list_width: number; reading_pane: boolean; notifications: boolean } }>('/api/settings', fetcher)
   const didInitFromSettings = useRef(false)
@@ -302,7 +303,7 @@ export function MailClient() {
     onForward: handleForward,
     onDelete: handleKbDelete,
     onMarkUnread: handleKbMarkUnread,
-    onFocusSearch: () => searchInputRef.current?.focus(),
+    onFocusSearch: focusSearch,
     currentMessage,
     composeOpen: composeMode !== null,
     onCloseCompose: () => { setComposeMode(null); setComposeReplyTo(null) },
@@ -342,7 +343,8 @@ export function MailClient() {
           onSelect={handleSelect}
           onSelectThread={handleSelectThread}
           activeAccountId={resolvedActiveId}
-          searchInputRef={searchInputRef}
+          search={search}
+          searchScope={searchScope}
           permissions={permissions}
         />
       </div>
