@@ -282,6 +282,7 @@
       "light": "浅色",
       "dark": "深色",
       "system": "跟随系统",
+      "cycleTheme": "主题：{current}。点击切换为 {next}",
       "language": "语言",
       "languageDesc": "界面语言（需要重新加载）"
     },

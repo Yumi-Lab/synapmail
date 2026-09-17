@@ -282,6 +282,7 @@
       "light": "Clair",
       "dark": "Sombre",
       "system": "Système",
+      "cycleTheme": "Thème : {current}. Cliquer pour passer à {next}",
       "language": "Langue",
       "languageDesc": "Langue de l'interface (nécessite un rechargement)"
     },

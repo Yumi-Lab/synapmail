@@ -282,6 +282,7 @@
       "light": "Light",
       "dark": "Dark",
       "system": "System",
+      "cycleTheme": "Theme: {current}. Click to switch to {next}",
       "language": "Language",
       "languageDesc": "Interface language (requires a reload)"
     },

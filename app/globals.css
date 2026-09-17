@@ -164,3 +164,9 @@
     @apply font-sans;
   }
 }
+/* Flip de l'icône du toggle de thème replié (durée posée en inline depuis THEME_TOGGLE_TRANSITION_MS). */
+@keyframes theme-flip {
+  from { transform: rotateY(90deg); opacity: 0; }
+  to { transform: rotateY(0deg); opacity: 1; }
+}
+.theme-flip { animation-name: theme-flip; animation-timing-function: ease-out; animation-fill-mode: both; }
