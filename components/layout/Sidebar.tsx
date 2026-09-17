@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
+import { openCompose } from '@/lib/compose'
 import { useTranslations } from 'next-intl'
 import {
   Mail, Send, FileText, AlertTriangle, Trash2,
@@ -56,7 +57,6 @@ const SPECIAL_LABELS: Record<NonNullable<SpecialKey>, string> = {
 
 type FolderItem = { name: string; path: string; special: SpecialKey; unreadCount?: number }
 
-const dispatchCompose = () => window.dispatchEvent(new CustomEvent('synapmail:compose'))
 
 /** Rows drawn while the folder list loads — static placeholders, never a pulse. */
 const FOLDER_PLACEHOLDERS = [0, 1, 2, 3, 4]
@@ -115,6 +115,7 @@ function RowBody({
 export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: SidebarProps) {
   const t = useTranslations('mail')
   const pathname = usePathname()
+  const router = useRouter()
   const [currentFolder, setCurrentFolder] = useState('INBOX')
   const [accountOpen, setAccountOpen] = useState(false)
   const [accountFilter, setAccountFilter] = useState('')
@@ -396,7 +397,7 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
       {/* Compose */}
       <div className="py-2">
         <button
-          onClick={dispatchCompose}
+          onClick={() => openCompose(pathname, router.push)}
           title={t('compose')}
           data-sidebar-row="compose"
           className={cn(ROW, 'font-medium', ACCENT.solid, ACCENT.solidHover)}

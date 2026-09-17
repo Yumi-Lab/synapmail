@@ -2,8 +2,9 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useTranslations } from 'next-intl'
-import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, MailOpen, MoveRight, ChevronDown, Eye, EyeOff, Archive, Clock } from 'lucide-react'
+import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, MailOpen, MoveRight, ChevronDown, Eye, EyeOff, Archive, Clock, PenSquare } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { dispatchCompose } from '@/lib/compose'
 import useSWR, { mutate as globalMutate } from 'swr'
 import type { Message, Folder, ReadReceipt } from '@/types/email'
 import type { EmailAccount } from '@/types/account'
@@ -732,15 +733,15 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
   return (
     <div className="flex flex-col h-full bg-background border-r border-border">
       {/* Search bar */}
-      <div className="px-3 pt-3 pb-2 shrink-0">
-        <div className="relative flex items-center">
+      <div className="px-3 pt-3 pb-2 shrink-0 flex items-center gap-2">
+        <div className="relative flex flex-1 items-center">
           <Search className="absolute left-2.5 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
           <input
             ref={effectiveSearchRef}
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Rechercher…"
+            placeholder={t('search')}
             className="w-full h-8 pl-8 pr-8 text-xs rounded-lg border border-border bg-muted/50 placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           />
           {searchQuery && (
@@ -749,6 +750,17 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
             </button>
           )}
         </div>
+        {/* Nouveau message, toujours à portée depuis la liste (la barre peut être repliée) */}
+        <button
+          type="button"
+          onClick={dispatchCompose}
+          title={t('compose')}
+          aria-label={t('compose')}
+          data-compose-button
+          className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-border bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        >
+          <PenSquare className="w-4 h-4" />
+        </button>
       </div>
 
       {/* Toolbar */}

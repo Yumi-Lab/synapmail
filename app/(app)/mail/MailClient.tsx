@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import { COMPOSE_EVENT, COMPOSE_QUERY, MAIL_PATH } from '@/lib/compose'
 import { ArrowLeft } from 'lucide-react'
 import useSWR from 'swr'
 import { MessageList } from '@/components/layout/MessageList'
@@ -104,9 +105,20 @@ export function MailClient() {
 
   useEffect(() => {
     const handler = () => setComposeMode('compose')
-    window.addEventListener('synapmail:compose', handler)
-    return () => window.removeEventListener('synapmail:compose', handler)
+    window.addEventListener(COMPOSE_EVENT, handler)
+    return () => window.removeEventListener(COMPOSE_EVENT, handler)
   }, [])
+
+  // Arrivée depuis une autre page avec `?compose=1` (barre latérale, tableau de
+  // bord) : ouvrir la composition puis retirer le paramètre pour qu'un
+  // rechargement ne la rouvre pas.
+  useEffect(() => {
+    if (!searchParams.get(COMPOSE_QUERY)) return
+    setComposeMode('compose')
+    const rest = new URLSearchParams(searchParams.toString())
+    rest.delete(COMPOSE_QUERY)
+    router.replace(rest.size ? `${MAIL_PATH}?${rest}` : MAIL_PATH)
+  }, [searchParams, router])
 
   useEffect(() => {
     const handler = (e: Event) => {
