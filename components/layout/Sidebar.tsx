@@ -6,7 +6,7 @@ import { openCompose } from '@/lib/compose'
 import { useTranslations } from 'next-intl'
 import {
   Mail, Send, FileText, AlertTriangle, Trash2,
-  Settings, PenSquare, Folder, Archive, ChevronDown, RefreshCw, Check,
+  Settings, PenSquare, Folder, Archive, ChevronDown, RefreshCw,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import useSWR from 'swr'
@@ -347,7 +347,16 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
           {accountOpen && popoverPos && (
             <div
               className="fixed z-50 flex flex-col rounded-xl border border-border bg-popover text-popover-foreground shadow-xl overflow-hidden"
-              style={{ top: popoverPos.top, left: popoverPos.left, width: SIDEBAR.expandedWidth }}
+              style={{
+                top: popoverPos.top,
+                left: popoverPos.left,
+                width: SIDEBAR.expandedWidth,
+                // The popover is its own surface: republishing the variable here makes the
+                // badge's ring and the selected bubble's ring-offset take the colour of what
+                // is ACTUALLY behind them, instead of the bar's, with no second palette.
+                ['--synap-surface' as string]: 'var(--popover)',
+              }}
+              data-account-popover
             >
               {accounts.length > 8 && (
                 <div className="p-1.5 border-b border-border">
@@ -374,15 +383,20 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                     <button
                       key={acc.id}
                       onClick={() => switchAccount(acc.id)}
-                      className={cn(ROW, 'gap-2.5 px-3 rounded-none', active ? ROW_ACTIVE : ROW_IDLE)}
+                      // Every row has the same box: a fixed bubble, one gap, then the text.
+                      // The active account is marked by the RING around its bubble, which is
+                      // a box-shadow and moves nothing — so all names and emails of the list
+                      // start at the exact same x, selected or not.
+                      className={cn(ROW, 'gap-2.5 px-3 rounded-none text-left', active ? ROW_ACTIVE : ROW_IDLE)}
                     >
                       <AccountAvatar
                         account={acc}
                         colorIndex={accounts.indexOf(acc)}
                         unread={unread}
                         size="md"
+                        selected={active}
                       />
-                      <span className="flex-1 min-w-0">
+                      <span className="flex-1 min-w-0 text-left">
                         <span className="block text-sm font-medium truncate leading-tight">{acc.name || acc.email}</span>
                         {acc.name && (
                           <span className="block text-[11px] text-muted-foreground truncate leading-tight">{acc.email}</span>
@@ -393,7 +407,6 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                           </span>
                         )}
                       </span>
-                      {active && <Check className={cn('w-3.5 h-3.5 shrink-0', ACCENT.ink)} />}
                     </button>
                   )
                 })}
