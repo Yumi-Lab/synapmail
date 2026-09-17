@@ -74,6 +74,16 @@ const THEMES = ['light', 'dark']
 const MAX_ACCENT_HUE_SPREAD_DEG = 15
 // Below this saturation a painted surface is a neutral (the bar's own greys), not an accent.
 const ACCENT_MIN_SATURATION = 0.12
+
+// Lot A7: a custom folder is told apart when the bar is folded by the letters on its tile.
+// One letter is enough unless a sibling of the SAME list starts with it, in which case both
+// grow to two — so the ceiling is two, the floor one, and no two tiles of one list may match.
+const FOLDER_GLYPH_MIN_LETTERS = 1
+const FOLDER_GLYPH_MAX_LETTERS = 2
+// The tile must stay monochrome: it carries no accent, so its ink and its background must
+// be grey — measured as HSV saturation, the same metric the cleanliness pass already uses.
+const FOLDER_GLYPH_MAX_SATURATION = ACCENT_MIN_SATURATION
+
 // Colour tokens inside a composite computed value (background-image gradient, box-shadow).
 const COLOUR_TOKEN_SOURCE = '(?:rgba?|hsla?|oklch|oklab|lab|lch|color)\\([^)]*\\)'
 // Transition is 180 ms (SIDEBAR.transitionMs); wait well past it before measuring.
@@ -223,6 +233,41 @@ const probeAccountList = () => {
  * reserves, and reads the shipped `::-webkit-scrollbar` width out of the compiled
  * stylesheet so a utility dropped at build time cannot pass unnoticed.
  */
+/**
+ * Reads every custom-folder tile: its letters, its full-path tooltip, and the
+ * saturation of its ink and background. Runs in BOTH states — the tile IS the row's
+ * icon, so the collapse contract already measures its box; what this adds is that the
+ * letters survive the fold and stay readable, which is the whole point of the tile.
+ */
+const probeFolderGlyphs = () => {
+  const sat = c => {
+    const m = (c || '').match(/[\d.]+/g)
+    if (!m || m.length < 3) return 0
+    const [r, g, b] = m.slice(0, 3).map(Number)
+    // A fully transparent colour paints nothing — report it as grey, not as a hue.
+    if (m.length >= 4 && Number(m[3]) === 0) return 0
+    const max = Math.max(r, g, b)
+    return max === 0 ? 0 : (max - Math.min(r, g, b)) / max
+  }
+  const bar = document.querySelector('[data-sidebar]')
+  if (!bar) return null
+  return [...bar.querySelectorAll('[data-folder-glyph]')].map(el => {
+    const row = el.closest('[data-sidebar-row]')
+    const cs = getComputedStyle(el)
+    const r = el.getBoundingClientRect()
+    return {
+      key: row?.dataset.sidebarRow ?? null,
+      title: row?.getAttribute('title') ?? null,
+      text: (el.textContent || '').trim(),
+      visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && Number(cs.opacity) > 0,
+      inkSat: sat(cs.color),
+      bgSat: sat(cs.backgroundColor),
+      color: cs.color,
+      background: cs.backgroundColor,
+    }
+  })
+}
+
 const probeScrollbars = () => {
   const gutter = el => el.offsetWidth - el.clientWidth
   const read = el => {
@@ -405,10 +450,12 @@ try {
   let before = await page.evaluate(probe, EDGE_TOGGLE.bar)
   if (before.collapsed === 'true') { await toggle(); before = await page.evaluate(probe, EDGE_TOGGLE.bar) }
   if (before.collapsed !== 'false') { console.error('HARNESS: could not reach the expanded state'); process.exit(2) }
+  const glyphsExpanded = await page.evaluate(probeFolderGlyphs)
 
   await toggle()
   const after = await page.evaluate(probe, EDGE_TOGGLE.bar)
   if (after.collapsed !== 'true') { console.error('HARNESS: could not reach the collapsed state'); process.exit(2) }
+  const glyphsCollapsed = await page.evaluate(probeFolderGlyphs)
 
   const withIcon = s => s.rows.filter(r => r.iconX != null).length
   console.log(`rows measured: expanded=${before.rows.length} collapsed=${after.rows.length}`)
@@ -464,6 +511,38 @@ try {
   if (Math.abs(before.asideRight - after.asideRight) < 1) {
     console.error('HARNESS: the bar\'s right edge did not move between the two states — the fold did nothing')
     process.exit(2)
+  }
+
+  // --- Custom folders: a tile of letters, readable folded, monochrome, full path on hover ---
+  if (!glyphsExpanded || !glyphsCollapsed) { console.error('HARNESS: the sidebar root was not found when reading folder tiles'); process.exit(2) }
+  if (!glyphsCollapsed.length) { console.error('HARNESS: no [data-folder-glyph] tile rendered — this account has no custom folder, nothing measured'); process.exit(2) }
+  console.log(`custom folder tiles: expanded=${glyphsExpanded.length} collapsed=${glyphsCollapsed.length}`)
+  if (glyphsExpanded.length !== glyphsCollapsed.length) {
+    failures.push(`folder tiles: ${glyphsExpanded.length} expanded vs ${glyphsCollapsed.length} collapsed — tiles were unmounted by the fold`)
+  }
+  // Read on the COLLAPSED state: that is the state the tile exists for.
+  const glyphLetters = new Map()
+  for (const g of glyphsCollapsed) {
+    console.log(`  ${g.key}: "${g.text}" visible=${g.visible} title="${g.title}" ink=${g.color} (sat ${g.inkSat.toFixed(3)}) bg=${g.background} (sat ${g.bgSat.toFixed(3)})`)
+    if (!g.visible) failures.push(`folder tile ${g.key}: not visible while the bar is collapsed — the folder cannot be told apart`)
+    if (g.text.length < FOLDER_GLYPH_MIN_LETTERS || g.text.length > FOLDER_GLYPH_MAX_LETTERS) {
+      failures.push(`folder tile ${g.key}: "${g.text}" is ${g.text.length} letter(s) (expected ${FOLDER_GLYPH_MIN_LETTERS}-${FOLDER_GLYPH_MAX_LETTERS})`)
+    }
+    if (g.text !== g.text.toUpperCase()) failures.push(`folder tile ${g.key}: "${g.text}" is not upper-cased`)
+    if (g.inkSat > FOLDER_GLYPH_MAX_SATURATION || g.bgSat > FOLDER_GLYPH_MAX_SATURATION) {
+      failures.push(`folder tile ${g.key}: not monochrome — ink saturation ${g.inkSat.toFixed(3)}, background ${g.bgSat.toFixed(3)} (max ${FOLDER_GLYPH_MAX_SATURATION})`)
+    }
+    // The letters replace the name, so the full IMAP path must remain reachable on hover.
+    const path = (g.key || '').replace(/^folder:/, '')
+    if (!g.title || g.title !== path) failures.push(`folder tile ${g.key}: title "${g.title}" is not the folder's full path "${path}"`)
+    const clash = glyphLetters.get(g.text)
+    if (clash) failures.push(`folder tiles: "${g.text}" is carried by both ${clash} and ${g.key} — the two folders are indistinguishable folded`)
+    glyphLetters.set(g.text, g.key)
+  }
+  // Same letters in both states: the tile is the row's identity, not a collapsed-only decoration.
+  for (const e of glyphsExpanded) {
+    const c = glyphsCollapsed.find(x => x.key === e.key)
+    if (c && c.text !== e.text) failures.push(`folder tile ${e.key}: letters changed with the fold ("${e.text}" → "${c.text}")`)
   }
 
   // --- Account bubbles: badge on the corner, initial readable on every colour ---
