@@ -78,8 +78,27 @@ const ACCENT_MIN_SATURATION = 0.12
 // Lot A7: a custom folder is told apart when the bar is folded by the letters on its tile.
 // One letter is enough unless a sibling of the SAME list starts with it, in which case both
 // grow to two — so the ceiling is two, the floor one, and no two tiles of one list may match.
-const FOLDER_GLYPH_MIN_LETTERS = 1
-const FOLDER_GLYPH_MAX_LETTERS = 2
+// Two letters ALWAYS — the same floor the account bubbles hold to (a lone letter reads
+// as an accident, not an identity); a third only when two folders of one list would
+// otherwise spell the same pair. Human gate of 19/09/2026 rejected the one-letter tiles.
+const FOLDER_GLYPH_MIN_LETTERS = 2
+const FOLDER_GLYPH_MAX_LETTERS = 3
+// The tile must READ as a tile, not as letters floating on the bar. Origin: the human
+// gate measured the shipped `bg-secondary` fill at 1.03:1 (light) and 1.30:1 (dark)
+// against the bar and could not see a plate at all; the ceiling it asked for is 1.5:1.
+// Calibration bench: this script, headless Chrome, the bar's own light/dark `--sidebar`
+// — the shipped 24 % mix measures ~1.9:1 in both themes, so the floor is not grazed.
+// Same-run reference: the BAR's own background is read in the same pass, in the same
+// theme, from the same rendered page — the ratio is a measured A/B, not a bare constant.
+const FOLDER_GLYPH_MIN_TILE_CONTRAST = 1.5
+// Two letters at a readable weight do not fit a 16 px plate: measured on this bench, in
+// this browser, with the app's own system stack, the widest pair the rule can produce
+// (`WM`) inks 17.88 px at the 10 px semibold / 0.3 px tracking the human gate asked for,
+// and still 16.69 px at 9 px with no tracking. The plate size is fixed by the collapse
+// contract (it IS a row icon), so a small symmetric bleed is inherent, not a defect —
+// what would be a defect is a letter CLIPPED or pushed out of the icon column, both
+// checked separately. 1.2 px per side leaves room for the widest pair and nothing more.
+const FOLDER_GLYPH_MAX_PLATE_BLEED_PX = 1.2
 // The tile must stay monochrome: it carries no accent, so its ink and its background must
 // be grey — measured as HSV saturation, the same metric the cleanliness pass already uses.
 const FOLDER_GLYPH_MAX_SATURATION = ACCENT_MIN_SATURATION
@@ -263,13 +282,61 @@ const probeFolderGlyphs = () => {
     ctx.fillRect(0, 0, 1, 1)
     return ctx.getImageData(0, 0, 1, 1).data[3]
   }
+  // Luminance contrast, read through the same canvas: the tokens are oklch, so the
+  // three numbers of a computed value are NOT r,g,b and must not be parsed by hand.
+  const rgb = colour => {
+    ctx.clearRect(0, 0, 1, 1)
+    ctx.fillStyle = colour
+    ctx.fillRect(0, 0, 1, 1)
+    return [...ctx.getImageData(0, 0, 1, 1).data]
+  }
+  const lum = colour => {
+    const [r, g, b] = rgb(colour).slice(0, 3).map(v => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) })
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+  }
+  const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)]; return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05) }
+  // The inked box of the letters, not the span's box: a centred flex child is as wide
+  // as its slot, so its rect would report a fit even if the glyphs overflowed it.
+  const inkBox = node => {
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    return range.getBoundingClientRect()
+  }
   const bar = document.querySelector('[data-sidebar]')
   if (!bar) return null
+  // SAME-RUN reference for the tile's contrast: whatever the bar actually paints behind
+  // the tile, in the theme this pass is in — never a value carried over from a bench.
+  const barBg = getComputedStyle(bar).backgroundColor
+  // Published by the bar as the ONE width every icon column uses, collapsed or not.
+  const iconColW = parseFloat(getComputedStyle(bar).getPropertyValue('--synap-icon-col'))
   return [...bar.querySelectorAll('[data-folder-glyph]')].map(el => {
     const row = el.closest('[data-sidebar-row]')
     const cs = getComputedStyle(el)
     const r = el.getBoundingClientRect()
+    const ink = inkBox(el)
+    // The slot the tile is centred in — the bar's fixed icon column, read from the width
+    // the bar itself publishes (`--synap-icon-col`) and anchored on the row's own left
+    // edge, since that column is the row's first child in every state. This, NOT the
+    // 16 px plate, is what the letters must fit inside: a plate that size cannot hold
+    // two letters at a readable weight (measured on this bench: the widest pair the rule
+    // can produce inks 17.88 px at the 10 px semibold the human gate asked for), so the
+    // meaningful question is whether the glyphs stay in their column and unclipped.
+    const rowRect = (row ?? el).getBoundingClientRect()
+    const slot = { left: rowRect.left, right: rowRect.left + iconColW, top: rowRect.top, bottom: rowRect.bottom, width: iconColW }
     return {
+      // Signed slack against the icon column on each side; negative = out of its slot.
+      slotSlack: { left: ink.left - slot.left, right: slot.right - ink.right, top: ink.top - slot.top, bottom: slot.bottom - ink.bottom },
+      slotW: slot.width,
+      // How far the ink spills past the plate's own edge — reported so the drift is
+      // visible in the log, and capped below rather than forbidden outright.
+      plateBleed: Math.max(0, r.left - ink.left, ink.right - r.right, r.top - ink.top, ink.bottom - r.bottom),
+      // A plate that clips would cut a letter; the tile must never do that.
+      overflow: cs.overflow,
+      fontSize: cs.fontSize,
+      barBg,
+      // The plate against the bar behind it, and the letters against the plate.
+      tileContrast: contrast(cs.backgroundColor, barBg),
+      inkContrast: contrast(cs.color, cs.backgroundColor),
       key: row?.dataset.sidebarRow ?? null,
       title: row?.getAttribute('title') ?? null,
       text: (el.textContent || '').trim(),
@@ -540,7 +607,16 @@ try {
   // Read on the COLLAPSED state: that is the state the tile exists for.
   const glyphLetters = new Map()
   for (const g of glyphsCollapsed) {
-    console.log(`  ${g.key}: "${g.text}" visible=${g.visible} title="${g.title}" ink=${g.color} (sat ${g.inkSat.toFixed(3)}) bg=${g.background} (sat ${g.bgSat.toFixed(3)}, alpha ${g.bgAlpha})`)
+    console.log(`  ${g.key}: "${g.text}" (${g.text.length} letters, ${g.fontSize}) visible=${g.visible} title="${g.title}" ink=${g.color} (sat ${g.inkSat.toFixed(3)}) bg=${g.background} (sat ${g.bgSat.toFixed(3)}, alpha ${g.bgAlpha}) tile/bar=${g.tileContrast.toFixed(3)}:1 on ${g.barBg} ink/tile=${g.inkContrast.toFixed(2)}:1`)
+    if (g.tileContrast < FOLDER_GLYPH_MIN_TILE_CONTRAST) {
+      failures.push(`folder tile ${g.key}: plate ${g.background} on bar ${g.barBg} = ${g.tileContrast.toFixed(3)}:1 (min ${FOLDER_GLYPH_MIN_TILE_CONTRAST}:1) — the tile does not read as a tile`)
+    }
+    const tight = Math.min(g.slotSlack.left, g.slotSlack.right, g.slotSlack.top, g.slotSlack.bottom)
+    if (tight < 0) failures.push(`folder tile ${g.key}: letters "${g.text}" leave the ${g.slotW.toFixed(0)}px icon column (slack ${tight.toFixed(2)}px)`)
+    if (g.overflow !== 'visible') failures.push(`folder tile ${g.key}: overflow=${g.overflow} — a wide pair would be clipped mid-letter`)
+    if (g.plateBleed > FOLDER_GLYPH_MAX_PLATE_BLEED_PX) {
+      failures.push(`folder tile ${g.key}: letters "${g.text}" spill ${g.plateBleed.toFixed(2)}px past the plate (max ${FOLDER_GLYPH_MAX_PLATE_BLEED_PX}px)`)
+    }
     if (!g.visible) failures.push(`folder tile ${g.key}: not visible while the bar is collapsed — the folder cannot be told apart`)
     if (g.text.length < FOLDER_GLYPH_MIN_LETTERS || g.text.length > FOLDER_GLYPH_MAX_LETTERS) {
       failures.push(`folder tile ${g.key}: "${g.text}" is ${g.text.length} letter(s) (expected ${FOLDER_GLYPH_MIN_LETTERS}-${FOLDER_GLYPH_MAX_LETTERS})`)
@@ -675,6 +751,24 @@ try {
     }
     const worst = c.rows.reduce((a, b) => (a.contrast < b.contrast ? a : b))
     console.log(`  worst row contrast: ${worst.contrast.toFixed(2)}:1 ("${worst.key}", ${worst.ink} on ${worst.on})`)
+    // The folder tiles, re-measured in THIS theme: the plate is painted from the theme's
+    // own tokens, so a fill that reads in dark can vanish in light (the defect the human
+    // gate of 19/09/2026 found). Both themes are measured in the SAME run, each against
+    // the bar background of that same theme — the reference travels with the measurement.
+    const tiles = await page.evaluate(probeFolderGlyphs)
+    const worstTile = tiles.reduce((a, b) => (a.tileContrast < b.tileContrast ? a : b))
+    console.log(`  worst folder tile: ${worstTile.tileContrast.toFixed(3)}:1 ("${worstTile.text}", plate ${worstTile.background} on bar ${worstTile.barBg}), letters ${worstTile.inkContrast.toFixed(2)}:1 at ${worstTile.fontSize}`)
+    for (const t of tiles) {
+      if (t.tileContrast < FOLDER_GLYPH_MIN_TILE_CONTRAST) {
+        failures.push(`${theme}: folder tile ${t.key} plate ${t.background} on bar ${t.barBg} = ${t.tileContrast.toFixed(3)}:1 (min ${FOLDER_GLYPH_MIN_TILE_CONTRAST}:1)`)
+      }
+      if (t.text.length < FOLDER_GLYPH_MIN_LETTERS) {
+        failures.push(`${theme}: folder tile ${t.key} carries ${t.text.length} letter ("${t.text}") — ${FOLDER_GLYPH_MIN_LETTERS} minimum`)
+      }
+      if (t.inkSat > FOLDER_GLYPH_MAX_SATURATION || t.bgSat > FOLDER_GLYPH_MAX_SATURATION) {
+        failures.push(`${theme}: folder tile ${t.key} is not monochrome — ink ${t.inkSat.toFixed(3)}, plate ${t.bgSat.toFixed(3)} (max ${FOLDER_GLYPH_MAX_SATURATION})`)
+      }
+    }
   }
   // Same-run A/B: a bar that ignores the theme reports the same background in both.
   if (clean.light.barBg === clean.dark.barBg) {
