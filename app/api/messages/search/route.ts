@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
-import { listFolders, searchMessages } from '@/lib/imap'
+import { listFolders, searchMessagesIn } from '@/lib/imap'
 import { MIN_QUERY_LENGTH, SCOPE_ALL, SCOPE_PARAM, SEARCH_PARAM, SEARCH_RESULT_LIMIT, readScope } from '@/lib/search'
 
 export const dynamic = 'force-dynamic'
@@ -55,20 +55,13 @@ export async function GET(req: Request) {
       oauthExpiresAt: account.oauth_expires_at,
     }
 
-    // `scope=all` élargit au compte entier : chaque dossier est interrogé, les
-    // résultats sont fusionnés par date décroissante. Un dossier illisible
-    // (permissions, dossier système) ne fait pas échouer la recherche entière.
+    // `scope=all` élargit au compte entier : tous les dossiers sont interrogés sur
+    // UNE connexion (cf. searchMessagesIn), les résultats fusionnés par date
+    // décroissante. Un dossier illisible ne fait pas échouer la recherche entière.
     const folders = scope === SCOPE_ALL
       ? (await listFolders(config)).map(f => f.path)
       : [folder]
-    const messages = []
-    for (const path of folders) {
-      try {
-        messages.push(...await searchMessages(config, path, q))
-      } catch (err) {
-        if (folders.length === 1) throw err
-      }
-    }
+    const messages = await searchMessagesIn(config, folders, q)
     messages.sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
 
     return NextResponse.json({
