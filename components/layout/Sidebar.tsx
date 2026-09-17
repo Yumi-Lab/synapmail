@@ -6,7 +6,7 @@ import { openCompose } from '@/lib/compose'
 import { useTranslations } from 'next-intl'
 import {
   Mail, Send, FileText, AlertTriangle, Trash2,
-  Settings, PenSquare, Folder, Archive, Menu, ChevronDown, RefreshCw,
+  Settings, PenSquare, Folder, Archive, ChevronDown, RefreshCw,
   LayoutDashboard, Check,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -25,7 +25,20 @@ export const SIDEBAR = {
   expandedWidth: 256,
   collapsedWidth: 56,
   transitionMs: 180,
+  /** Height of one row, published as `--synap-row-h` and consumed by the `ROW` class. */
+  rowHeight: 36,
+  /** Vertical padding above the header row — the edge toggle centres on that row. */
+  headerPadY: 8,
+  /** Round toggle straddling the bar's right edge: half outside, half inside. */
+  edgeButtonSize: 28,
 } as const
+
+/**
+ * Distance from the top of the bar to the centre of its header row. `AppShell`
+ * places the straddling toggle from it, so the button and the row it belongs to
+ * are positioned from the same numbers.
+ */
+export const HEADER_ROW_CENTER = SIDEBAR.headerPadY + SIDEBAR.rowHeight / 2
 
 /** The bar's surface, as a CSS value: the theme's own sidebar token, so the bar
  *  follows light/dark instead of forcing a dark background. Published on the root
@@ -62,7 +75,7 @@ type FolderItem = { name: string; path: string; special: SpecialKey; unreadCount
 const FOLDER_PLACEHOLDERS = [0, 1, 2, 3, 4]
 
 // One row pattern for every entry of the bar (folder, link, account, action).
-const ROW = 'flex w-full items-center h-9 rounded-lg transition-colors'
+const ROW = 'flex w-full items-center h-[var(--synap-row-h)] rounded-lg transition-colors'
 // Idle ink is derived from the theme's own foreground rather than the muted token:
 // muted-foreground on the light sidebar measures ~3.2:1, under the 4.5:1 floor for
 // body text. At 70% opacity the same ink measures 5.8:1 light / 7.0:1 dark — the
@@ -75,11 +88,14 @@ const ROW_DRAG = cn(ACCENT.tintStrong, 'text-foreground')
 const ICON_COL = 'shrink-0 flex items-center justify-center w-[var(--synap-icon-col)]'
 // Collapsible half of a row: folds to zero width, clipped by its own overflow.
 const ROW_LABEL = 'flex-1 min-w-0 flex items-center gap-2 pr-3 text-sm whitespace-nowrap overflow-hidden transition-opacity'
+// Header row only: the straddling toggle reaches half its width inside the bar,
+// so the account name/email needs more right padding than an ordinary row.
+const HEADER_LABEL_PAD = 'pr-8'
 
 interface SidebarProps {
+  /** Mobile drawer only: closes the drawer after a navigation. */
   onClose?: () => void
   collapsed?: boolean
-  onToggleCollapse?: () => void
 }
 
 /** Icon column + collapsible label — shared by every row so all rows stay aligned. */
@@ -112,7 +128,7 @@ function RowBody({
   )
 }
 
-export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: SidebarProps) {
+export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const t = useTranslations('mail')
   const pathname = usePathname()
   const router = useRouter()
@@ -279,37 +295,29 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
       className="relative flex flex-col h-full bg-sidebar text-sidebar-foreground"
       style={{
         ['--synap-icon-col' as string]: `${SIDEBAR.collapsedWidth}px`,
+        ['--synap-row-h' as string]: `${SIDEBAR.rowHeight}px`,
         ['--synap-surface' as string]: SURFACE,
       }}
       data-sidebar
       data-collapsed={collapsed ? 'true' : 'false'}
     >
-      {/* Hamburger — collapses the bar on desktop, closes the drawer on mobile */}
-      <div className="py-2">
-        <button
-          onClick={onClose ?? onToggleCollapse}
-          title={collapsed ? t('expandSidebar') : t('collapseSidebar')}
-          aria-label={collapsed ? t('expandSidebar') : t('collapseSidebar')}
-          data-sidebar-row="toggle"
-          className={cn(ROW, ROW_IDLE)}
+      {/* Header — line 1 of the bar: the account. The bar's own toggle is the round
+          button AppShell straddles on the right edge, at HEADER_ROW_CENTER. */}
+      {activeAccount && (
+        <div
+          ref={accountBoxRef}
+          className="relative shrink-0"
+          style={{ paddingTop: SIDEBAR.headerPadY, paddingBottom: SIDEBAR.headerPadY }}
         >
-          <span className={ICON_COL}>
-            <Menu className="w-4 h-4" data-sidebar-icon />
-          </span>
-        </button>
-      </div>
-
-      {/* Account switcher */}
-      {hasMultipleAccounts && activeAccount && (
-        <div ref={accountBoxRef} className="relative">
           <button
             ref={accountButtonRef}
-            onClick={openAccountMenu}
+            onClick={hasMultipleAccounts ? openAccountMenu : undefined}
+            disabled={!hasMultipleAccounts}
             title={otherUnread > 0 ? t('unreadOtherAccounts', { count: otherUnread }) : t('switchAccount')}
-            aria-haspopup="menu"
-            aria-expanded={accountOpen}
+            aria-haspopup={hasMultipleAccounts ? 'menu' : undefined}
+            aria-expanded={hasMultipleAccounts ? accountOpen : undefined}
             data-sidebar-row="account"
-            className={cn(ROW, ROW_IDLE)}
+            className={cn(ROW, ROW_IDLE, !hasMultipleAccounts && 'cursor-default hover:bg-transparent')}
           >
             <span className={ICON_COL}>
               <AccountAvatar
@@ -320,7 +328,7 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
               />
             </span>
             <span
-              className={cn(ROW_LABEL, collapsed && 'opacity-0')}
+              className={cn(ROW_LABEL, HEADER_LABEL_PAD, collapsed && 'opacity-0')}
               style={{ transitionDuration: `${SIDEBAR.transitionMs}ms` }}
               aria-hidden={collapsed}
             >
@@ -332,7 +340,9 @@ export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Sideba
                   <span className="block text-[11px] text-muted-foreground truncate leading-tight">{activeAccount.email}</span>
                 )}
               </span>
-              <ChevronDown className={cn('w-3.5 h-3.5 text-muted-foreground transition-transform shrink-0', accountOpen && 'rotate-180')} />
+              {hasMultipleAccounts && (
+                <ChevronDown className={cn('w-3.5 h-3.5 text-muted-foreground transition-transform shrink-0', accountOpen && 'rotate-180')} />
+              )}
             </span>
           </button>
           {accountOpen && popoverPos && (
