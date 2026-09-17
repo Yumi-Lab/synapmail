@@ -240,14 +240,28 @@ const probeAccountList = () => {
  * letters survive the fold and stay readable, which is the whole point of the tile.
  */
 const probeFolderGlyphs = () => {
-  const sat = c => {
-    const m = (c || '').match(/[\d.]+/g)
-    if (!m || m.length < 3) return 0
-    const [r, g, b] = m.slice(0, 3).map(Number)
-    // A fully transparent colour paints nothing — report it as grey, not as a hue.
-    if (m.length >= 4 && Number(m[3]) === 0) return 0
+  // Colours are resolved through a canvas, never parsed: this app's tokens compute to
+  // `oklch(...)`, whose three numbers are NOT r,g,b — a hand-rolled parser reads
+  // `oklch(0.985 0 0)` (pure white) as saturation 1.00 and fails a monochrome tile.
+  // Measured on this bench; the same canvas technique is what probeCleanliness uses.
+  const cv = document.createElement('canvas')
+  cv.width = cv.height = 1
+  const ctx = cv.getContext('2d', { willReadFrequently: true })
+  const sat = colour => {
+    ctx.clearRect(0, 0, 1, 1)
+    ctx.fillStyle = colour
+    ctx.fillRect(0, 0, 1, 1)
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data
+    // A fully transparent colour paints nothing — it carries no hue to judge.
+    if (a === 0) return 0
     const max = Math.max(r, g, b)
     return max === 0 ? 0 : (max - Math.min(r, g, b)) / max
+  }
+  const alpha = colour => {
+    ctx.clearRect(0, 0, 1, 1)
+    ctx.fillStyle = colour
+    ctx.fillRect(0, 0, 1, 1)
+    return ctx.getImageData(0, 0, 1, 1).data[3]
   }
   const bar = document.querySelector('[data-sidebar]')
   if (!bar) return null
@@ -264,6 +278,9 @@ const probeFolderGlyphs = () => {
       bgSat: sat(cs.backgroundColor),
       color: cs.color,
       background: cs.backgroundColor,
+      // Alpha of the painted background: 0 means the tile class did not compile and the
+      // letters float with no plate. Read through the canvas so any colour syntax counts.
+      bgAlpha: alpha(cs.backgroundColor),
     }
   })
 }
@@ -523,12 +540,13 @@ try {
   // Read on the COLLAPSED state: that is the state the tile exists for.
   const glyphLetters = new Map()
   for (const g of glyphsCollapsed) {
-    console.log(`  ${g.key}: "${g.text}" visible=${g.visible} title="${g.title}" ink=${g.color} (sat ${g.inkSat.toFixed(3)}) bg=${g.background} (sat ${g.bgSat.toFixed(3)})`)
+    console.log(`  ${g.key}: "${g.text}" visible=${g.visible} title="${g.title}" ink=${g.color} (sat ${g.inkSat.toFixed(3)}) bg=${g.background} (sat ${g.bgSat.toFixed(3)}, alpha ${g.bgAlpha})`)
     if (!g.visible) failures.push(`folder tile ${g.key}: not visible while the bar is collapsed — the folder cannot be told apart`)
     if (g.text.length < FOLDER_GLYPH_MIN_LETTERS || g.text.length > FOLDER_GLYPH_MAX_LETTERS) {
       failures.push(`folder tile ${g.key}: "${g.text}" is ${g.text.length} letter(s) (expected ${FOLDER_GLYPH_MIN_LETTERS}-${FOLDER_GLYPH_MAX_LETTERS})`)
     }
     if (g.text !== g.text.toUpperCase()) failures.push(`folder tile ${g.key}: "${g.text}" is not upper-cased`)
+    if (g.bgAlpha === 0) failures.push(`folder tile ${g.key}: background paints nothing (alpha 0, "${g.background}") — the tile class did not compile`)
     if (g.inkSat > FOLDER_GLYPH_MAX_SATURATION || g.bgSat > FOLDER_GLYPH_MAX_SATURATION) {
       failures.push(`folder tile ${g.key}: not monochrome — ink saturation ${g.inkSat.toFixed(3)}, background ${g.bgSat.toFixed(3)} (max ${FOLDER_GLYPH_MAX_SATURATION})`)
     }

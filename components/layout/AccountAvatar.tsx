@@ -58,9 +58,10 @@ const INITIAL_LEN = 2
  * a letter" — a Unicode property escape needs the `u` flag, unavailable at this
  * project's compile target, while an ASCII letter class would cut "Élodie" or "王小明"
  * in the wrong place. Punctuation must be in here: without it `Nicolas (Yumi)` renders
- * as `N(` instead of `NY`.
+ * as `N(` instead of `NY`. Shared with the folder tiles, which split folder names by
+ * the same rule — one definition of "what a word is" for the whole bar.
  */
-const WORD_SPLIT = /[\s!-\/:-@[-`{-~]+/
+export const WORD_SPLIT = /[\s!-\/:-@[-`{-~]+/
 
 /**
  * The bubble's letters, as ONE source for the whole bar. Always exactly two:
