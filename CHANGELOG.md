@@ -11,14 +11,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Barre latérale recodée** (`components/layout/Sidebar.tsx`, `components/layout/AppShell.tsx`) : le logo et le nom
   laissent la place à un bouton hamburger qui replie/déplie la barre ; le texte se rabat, les icônes restent exactement
   en place (`scripts/check-sidebar-collapse.mjs` mesure chaque icône dans les deux états et échoue au moindre pixel).
-- **Sélecteur de comptes en tête** avec `components/layout/AccountAvatar.tsx` : bulle ronde à initiale, couleur du
+- **Sélecteur de comptes en tête** avec `components/layout/AccountAvatar.tsx` : bulle ronde portant **deux lettres**
+  (initiales des deux premiers mots du nom, sinon les deux premières lettres du nom ou de l'adresse), couleur du
   compte, compteur de non-lus en badge posé sur le coin de la bulle (plus de pastille à droite des libellés, dossiers
-  compris). Palette `-600`/`-700` pour un contraste ≥ 4.5:1 de l'initiale.
+  compris). Palette `-600`/`-700` pour un contraste ≥ 4.5:1 des initiales.
 - **La liste des comptes n'offre que les AUTRES comptes** : le compte actif est déjà en tête de la barre, le répéter
   en première ligne de la liste ne servait à rien — plus de ligne « sélectionnée », donc plus d'anneau ni de coche ;
   `scripts/check-sidebar-collapse.mjs` échoue si le compte actif réapparaît dans la liste ou si une bulle y est marquée.
-- **La barre suit le thème** (claire en clair, sombre en sombre), un seul accent violet plat, un seul motif de ligne
+- **La barre suit le thème** (claire en clair, sombre en sombre), un seul accent, un seul motif de ligne
   (36 px), aucune animation décorative ; défilement discret `scroll-thin` (`app/globals.css`) à la place de la barre native.
+- **En-tête sur une ligne** (`components/layout/AppShell.tsx`) : le compte occupe la première ligne, le bouton de repli
+  devient un bouton rond de 28 px posé **à cheval sur le bord droit** de la barre — il suit ce bord dans les deux états
+  et sur le tiroir mobile, et reste centré sur la ligne du compte sans jamais entrer dans le flux de la barre.
+- **Dossiers reconnaissables quand la barre est repliée** (`components/layout/FolderGlyph.tsx`) : les dossiers
+  personnalisés, qui partageaient tous la même icône générique, portent une tuile carrée monochrome à **exactement
+  deux caractères**, départagés sans jamais recourir à une troisième lettre (deux dossiers homonymes prennent des
+  paires différentes) ; les dossiers standards gardent leur icône.
+- **Accent de la barre = couleur du compte actif** (`components/layout/AccountAvatar.tsx`) : la palette de couleurs de
+  compte, source unique, publie la couleur du compte actif sur la racine de la barre en variable CSS `--synap-account`
+  (et six nuances dérivées par `color-mix`). Tout ce qui était accent dans la barre la lit : fond du dossier actif,
+  badges de non-lus, anneaux de focus, bouton « Nouveau message » (texte blanc, contraste ≥ 4.5:1 sur les cinq
+  couleurs) et les ombres du bouton de repli et du popover, teintées à 25 %. Changer de compte repeint la barre d'un
+  coup ; le reste de l'application garde l'accent global.
 - **Sélecteur de thème** (`components/ThemeToggle.tsx`) : icônes seules (soleil / lune / moniteur, nom en infobulle),
   un curseur unique qui glisse en 180 ms (`prefers-reduced-motion` respecté), vertical dans la barre repliée pour rester
   cliquable ; le même composant sert dans Réglages → Apparence et dans le pied de la barre.
@@ -53,6 +67,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `scripts/check-locales.mjs` (`npm run check:locales`) : parité stricte des clés entre `en`, `fr` et `zh`.
 - Clés `mail.collapseSidebar`, `mail.expandSidebar`, `mail.folders`, `mail.switchAccount`, `common.showPassword`,
   `common.hidePassword` (en/fr/zh).
+- **Barre de défilement qui s'efface** (`components/ui/ThinScroll.tsx`) : dans la barre, le curseur de défilement
+  apparaît au défilement ou au survol puis s'estompe après 2 s d'inactivité, sur un rail sans flèches ni fond, cohérent
+  clair/sombre (`prefers-reduced-motion` respecté).
+
+### Fixed
+- **Les jetons de thème acceptent enfin l'opacité** (`tailwind.config.ts`) : les couleurs du thème étaient déclarées
+  `hsl(var(--x))`, une forme qui ignore silencieusement le suffixe d'opacité de Tailwind — `bg-foreground/[0.06]`
+  rendait donc un aplat opaque. Elles passent par `color-mix(in oklab, …)`, si bien que toute la famille `/<alpha>`
+  fonctionne sur les jetons du thème comme sur les couleurs natives.
 
 ### Fixed
 - `mail.searchResults` passe en pluriel ICU (en/fr) : la bannière affichait « 1 résultats ».
