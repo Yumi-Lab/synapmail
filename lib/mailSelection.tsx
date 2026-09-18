@@ -132,8 +132,9 @@ interface MailSelectionContextValue {
   count: number
   /** Appelle l'action enregistrée, ou ne fait rien si la capacité est fausse. */
   run: <K extends MailActionName>(name: K, ...args: Parameters<MailActions[K]>) => void
-  /** Réservé à la liste : publie l'état et enregistre les actions. */
-  publish: (state: MailSelectionState) => void
+  /** Réservé à la boîte : publie l'état (`null` = la boîte est quittée, cible vide). */
+  publish: (state: MailSelectionState | null) => void
+  /** Réservé à la boîte : ajoute des actions au registre, sans effacer celles des autres. */
   register: (actions: Partial<MailActions>) => void
 }
 
@@ -145,12 +146,13 @@ export function MailSelectionProvider({ children }: { children: React.ReactNode 
   // une référence évite de re-rendre tous les consommateurs pour rien.
   const actionsRef = useRef<Partial<MailActions>>({})
 
-  const publish = useCallback((next: MailSelectionState) => {
-    setState(prev => (sameState(prev, next) ? prev : next))
+  const publish = useCallback((next: MailSelectionState | null) => {
+    const value = next ?? EMPTY_STATE
+    setState(prev => (sameState(prev, value) ? prev : value))
   }, [])
 
   const register = useCallback((actions: Partial<MailActions>) => {
-    actionsRef.current = actions
+    actionsRef.current = { ...actionsRef.current, ...actions }
   }, [])
 
   const can = useMemo(() => deriveCapabilities(state), [state])
