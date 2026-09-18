@@ -646,6 +646,8 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   deleteUidsRef.current = deleteUids
   const markReadUidsRef = useRef(markReadUids)
   markReadUidsRef.current = markReadUids
+  const apiStarRef = useRef(apiStar)
+  apiStarRef.current = apiStar
 
   const handleRefreshRef = useRef(handleRefresh)
   handleRefreshRef.current = handleRefresh
@@ -687,8 +689,11 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       remove: deleteTarget,
       markUnread: () => markReadUidsRef.current(targetUidsRef.current, false),
       moveTo: moveTarget,
+      // Drapeau standard IMAP (`\\Flagged`) sur toute la cible : posé pour n'importe quelle
+      // valeur, retiré pour `null`. Le lot « drapeaux de couleur » étendra cette action.
+      setFlag: flag => { if (activeAccountId) targetUidsRef.current.forEach(uid => apiStarRef.current(uid, activeAccountId, flag !== null)) },
     })
-  }, [register, archivePath, spamPath, moveTarget, deleteTarget])
+  }, [register, archivePath, spamPath, moveTarget, deleteTarget, activeAccountId])
 
   // Clavier de la liste : Cmd/Ctrl+A sélectionne tout le chargé, Échap vide,
   // Suppr supprime la sélection (confirmation au-delà d'un message).

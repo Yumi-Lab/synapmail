@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { COMPOSE_EVENT, COMPOSE_QUERY, MAIL_PATH } from '@/lib/compose'
 import { SCOPE_PARAM, SEARCH_PARAM, focusSearch, readScope } from '@/lib/search'
@@ -14,12 +14,16 @@ import { MdnToast } from '@/components/mail/MdnToast'
 import { useEmailNotifications } from '@/hooks/useEmailNotifications'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { toast } from '@/components/ui/toast'
+import { useMailSelection } from '@/lib/mailSelection'
 import type { Message } from '@/types/email'
 import type { EmailAccount } from '@/types/account'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
 type SelectionMode = 'none' | 'single' | 'thread'
+
+/** Les trois façons d'ouvrir la rédaction à partir d'un message. */
+type ComposeKind = 'reply' | 'replyAll' | 'forward'
 
 export function MailClient() {
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('none')
@@ -267,9 +271,40 @@ export function MailClient() {
     handleDelete()
   }, [folder, handleDelete])
 
+  // Répondre / Répondre à tous / Transférer pour une barre d'outils hors du volet de
+  // lecture (contexte `lib/mailSelection`). La cible est le message sélectionné, sinon
+  // le message ouvert. Si elle n'est pas encore chargée (une ligne Cmd-cliquée sans
+  // être ouverte), on l'ouvre et l'action part dès que le message arrive.
+  const { state: mailTarget, register: registerMailActions } = useMailSelection()
+  const pendingCompose = useRef<ComposeKind | null>(null)
+  const composeHandlers = useMemo(
+    () => ({ reply: handleReply, replyAll: handleReplyAll, forward: handleForward }),
+    [handleReply, handleReplyAll, handleForward]
+  )
+
+  useEffect(() => {
+    const composeFromToolbar = (kind: ComposeKind) => () => {
+      const uid = mailTarget.selectedUids[0] ?? mailTarget.openUid
+      if (!uid || !mailTarget.accountId) return
+      if (currentMessage?.uid === uid) return composeHandlers[kind](currentMessage)
+      pendingCompose.current = kind
+      handleSelect(uid, mailTarget.accountId)
+    }
+    registerMailActions({
+      reply: composeFromToolbar('reply'),
+      replyAll: composeFromToolbar('replyAll'),
+      forward: composeFromToolbar('forward'),
+    })
+  }, [registerMailActions, mailTarget, currentMessage, composeHandlers, handleSelect])
+
   // Keyboard shortcut: mark unread
   const handleMessageLoaded = useCallback((msg: Message) => {
     setCurrentMessage(msg)
+    const pending = pendingCompose.current
+    if (pending) {
+      pendingCompose.current = null
+      composeHandlers[pending](msg)
+    }
     // Show MDN toast if requested and not already shown for this message
     if (
       msg.dispositionNotificationTo &&
@@ -285,7 +320,7 @@ export function MailClient() {
         dispositionNotificationTo: msg.dispositionNotificationTo,
       })
     }
-  }, [])
+  }, [composeHandlers])
 
   const handleKbMarkUnread = useCallback(async (uid: string, accId: string) => {
     await fetch(`/api/messages/${uid}?account=${accId}&folder=${encodeURIComponent(folder)}`, {
