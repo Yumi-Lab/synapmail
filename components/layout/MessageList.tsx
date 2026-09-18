@@ -413,36 +413,6 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     return activeAccountId || ''
   }, [threads, checkedUids, activeAccountId])
 
-  // Single-message API actions
-  const apiMarkRead = async (uid: string, accountId: string, read: boolean) => {
-    await fetch(`/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isRead: read }),
-    })
-    setAccumulated(prev => prev.map(m => m.uid === uid ? { ...m, isRead: read } : m))
-    mutate()
-  }
-
-  const apiStar = async (uid: string, accountId: string, starred: boolean) => {
-    await fetch(`/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isStarred: starred }),
-    })
-    setAccumulated(prev => prev.map(m => m.uid === uid ? { ...m, isStarred: starred } : m))
-  }
-
-  const apiMove = async (uid: string, accountId: string, destination: string) => {
-    await fetch('/api/messages/bulk', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uids: [uid], action: 'move', accountId, folder, destination }),
-    })
-    setAccumulated(prev => prev.filter(m => m.uid !== uid))
-    mutate()
-  }
-
   const apiDelete = async (uid: string, accountId: string) => {
     await fetch(`/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`, {
       method: 'DELETE',
@@ -619,16 +589,23 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     }
   }
 
+  /**
+   * Clic droit, façon explorateur : DANS la sélection il la garde entière (le
+   * menu agit sur tout) ; hors d'elle il sélectionne cette ligne seule d'abord,
+   * pour que la cible visée soit toujours celle qu'on voit surlignée.
+   */
   const handleContextMenu = (e: React.MouseEvent, thread: ThreadGroup) => {
     e.preventDefault()
     const msg = thread.lastMessage
+    if (!checkedUids.has(msg.uid)) {
+      setCheckedUids(new Set(thread.messages.map(m => m.uid)))
+      rangeAnchorUid.current = msg.uid
+    }
     setContextMenu({
       x: e.clientX,
       y: e.clientY,
-      uid: msg.uid,
-      accountId: msg.accountId || activeAccountId || '',
       isRead: msg.isRead || readUids.has(msg.uid),
-      isStarred: msg.isStarred,
+      flag: msg.flag ?? (msg.isStarred ? DEFAULT_FLAG_KEY : null),
       folderPath: folder,
     })
   }
@@ -699,6 +676,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       archive: () => { if (archivePath) moveTarget(archivePath) },
       spam: () => { if (spamPath) moveTarget(spamPath) },
       remove: deleteTarget,
+      markRead: () => markReadUidsRef.current(targetUidsRef.current, true),
       markUnread: () => markReadUidsRef.current(targetUidsRef.current, false),
       setFlag: (flag) => setFlagUidsRef.current(targetUidsRef.current, flag),
       moveTo: moveTarget,
@@ -741,6 +719,11 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       <div
         key={thread.key}
         data-mail-row={msg.uid}
+        role="option"
+        // Sélectionné = coché OU ouvert : ce que l'œil voit surligné est ce que
+        // le lecteur d'écran annonce, et c'est ce que les actions visent.
+        aria-selected={isChecked || isSelected}
+        tabIndex={-1}
         draggable={perms.canOrganize}
         onDragStart={e => handleDragStart(e, thread)}
         onDragEnd={handleDragEnd}
@@ -990,7 +973,13 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       )}
 
       {/* Thread List */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto"
+        role="listbox"
+        aria-multiselectable
+        aria-label={t('messageList')}
+      >
         {loading && (
           <div className="space-y-0">
             {[...Array(8)].map((_, i) => (
@@ -1080,10 +1069,6 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
           menu={contextMenu}
           folders={folders}
           onClose={() => setContextMenu(null)}
-          onMarkRead={apiMarkRead}
-          onStar={apiStar}
-          onMove={apiMove}
-          onDelete={apiDelete}
         />
       )}
     </div>
