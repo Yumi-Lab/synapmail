@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
  * Measures the application header (`components/layout/Omnibar.tsx`) on the running
- * app: it is present on every page, it spans the whole window width above the
- * sidebar, its height is the one the component exports, Cmd/Ctrl+K focuses the
- * field, Escape clears it, and REAL clicks on the three actions reach the
- * dashboard / the compose window / the settings. Also checks the sidebar no longer
- * carries a dashboard row, and that nothing overflows horizontally at 390px.
+ * app: it is present on every page, it starts at the sidebar's right edge (the bar
+ * owns the full height) in BOTH collapse states, its height is the one the component
+ * exports, its three actions sit on the LEFT of a field centred on the header,
+ * Cmd/Ctrl+K focuses that field, Escape clears it, and REAL clicks on the three
+ * actions reach the dashboard / the compose window / the settings. Also checks the
+ * sidebar no longer carries a dashboard row, and that nothing overflows at 390px.
  * Fails (exit 1) on any drift.
  *
  * Needs a running dev server and SYNAPMAIL_TEST_* credentials (see .env).
@@ -26,12 +27,18 @@ const PAGES = ['/mail', '/dashboard', '/settings']
 // out of the component's own `OMNIBAR` export in this same run, so the shipped value
 // and the measured value cannot drift apart. A hand-retyped height fails here.
 const OMNIBAR_SOURCE = new URL('../components/layout/Omnibar.tsx', import.meta.url)
-const EXPECTED_HEIGHT = Number(readFileSync(OMNIBAR_SOURCE, 'utf8').match(/height:\s*(\d+)/)?.[1])
+const OMNIBAR_SRC = readFileSync(OMNIBAR_SOURCE, 'utf8')
+const EXPECTED_HEIGHT = Number(OMNIBAR_SRC.match(/height:\s*(\d+)/)?.[1])
+const EXPECTED_FIELD_MAX_WIDTH = Number(OMNIBAR_SRC.match(/searchMaxWidth:\s*(\d+)/)?.[1])
 if (!EXPECTED_HEIGHT) { console.error('HARNESS: could not read OMNIBAR.height from the component'); process.exit(2) }
+if (!EXPECTED_FIELD_MAX_WIDTH) { console.error('HARNESS: could not read OMNIBAR.searchMaxWidth from the component'); process.exit(2) }
 
 const BAR = '[data-omnibar]'
 const SEARCH = '[data-omnibar-search]'
 const MENU = '[data-omnibar-menu]'
+// The round collapse button is rendered by AppShell OUTSIDE the header — checking it
+// is still outside is half of what lot O1b asks for.
+const EDGE_TOGGLE = '[data-sidebar-edge-toggle="bar"]'
 const action = name => `[data-omnibar-action="${name}"]`
 // Navigations and the compose window settle well under this; the bar's own
 // transitions are colour-only (no layout animation to wait out).
@@ -60,14 +67,23 @@ const probeBar = sel => {
   const aside = document.querySelector('aside')
   const ar = aside?.getBoundingClientRect()
   const style = getComputedStyle(bar)
+  const box = s2 => {
+    const el = bar.querySelector(s2)
+    if (!el) return null
+    const b = el.getBoundingClientRect()
+    return { left: b.left, right: b.right, centre: b.left + b.width / 2, width: b.width }
+  }
   return {
     height: r.height,
     left: r.left,
     right: r.right,
     top: r.top,
     bottom: r.bottom,
+    centre: r.left + r.width / 2,
     windowWidth: document.documentElement.clientWidth,
-    asideTop: ar && ar.height ? ar.top : null,
+    asideRight: ar && ar.height ? ar.right : null,
+    field: box('[data-omnibar-search]'),
+    actions: ['dashboard', 'compose', 'settings'].map(n => box(`[data-omnibar-action="${n}"]`)),
     background: style.backgroundColor,
     horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     // Decorative animation is forbidden by GOAL.md: the header's state is static.
@@ -104,19 +120,71 @@ try {
     await new Promise(r => setTimeout(r, SETTLE_MS))
     const bar = await page.evaluate(probeBar, BAR)
     if (!bar) { failures.push(`${path}: no ${BAR} in the document`); continue }
-    console.log(`${path}: height=${bar.height.toFixed(2)}px left=${bar.left.toFixed(2)} right=${bar.right.toFixed(2)}/${bar.windowWidth} asideTop=${bar.asideTop?.toFixed(2) ?? 'n/a'}`)
+    console.log(`${path}: height=${bar.height.toFixed(2)}px left=${bar.left.toFixed(2)} right=${bar.right.toFixed(2)}/${bar.windowWidth} top=${bar.top.toFixed(2)} asideRight=${bar.asideRight?.toFixed(2) ?? 'n/a'}`)
     const drift = Math.abs(bar.height - EXPECTED_HEIGHT)
     if (drift > MAX_DRIFT_PX) failures.push(`${path}: header is ${bar.height.toFixed(2)}px tall, expected ${EXPECTED_HEIGHT}px (drift ${drift.toFixed(2)}px)`)
-    if (Math.abs(bar.left) > MAX_DRIFT_PX) failures.push(`${path}: header starts at x=${bar.left.toFixed(2)}, not at the window's left edge`)
+    if (Math.abs(bar.top) > MAX_DRIFT_PX) failures.push(`${path}: header top is ${bar.top.toFixed(2)}, not 0`)
+    // The bar owns the full height: the header begins where the bar ends, never above it.
+    if (bar.asideRight == null) failures.push(`${path}: no sidebar measured — cannot tell where the header should start`)
+    else if (Math.abs(bar.left - bar.asideRight) > MAX_DRIFT_PX) {
+      failures.push(`${path}: header starts at x=${bar.left.toFixed(2)}, not at the sidebar's right edge (${bar.asideRight.toFixed(2)})`)
+    }
     if (Math.abs(bar.right - bar.windowWidth) > MAX_DRIFT_PX) failures.push(`${path}: header ends at x=${bar.right.toFixed(2)}, not at the window's right edge (${bar.windowWidth})`)
-    if (bar.asideTop != null && bar.bottom - bar.asideTop > MAX_DRIFT_PX) {
-      failures.push(`${path}: header bottom (${bar.bottom.toFixed(2)}) overlaps the sidebar top (${bar.asideTop.toFixed(2)}) — it is not above the bar`)
+    // Actions on the LEFT, in order, all of them before the field.
+    if (bar.actions.some(a => !a)) failures.push(`${path}: an action is missing from the header`)
+    else if (!bar.field) failures.push(`${path}: no search field in the header`)
+    else {
+      const xs = bar.actions.map(a => a.left)
+      if (xs.some((x, i) => i > 0 && x <= xs[i - 1])) failures.push(`${path}: the actions are not in order dashboard, compose, settings (x = ${xs.map(v => v.toFixed(0)).join(', ')})`)
+      if (bar.actions.at(-1).right > bar.field.left) failures.push(`${path}: the actions are not left of the search field (last action ends at ${bar.actions.at(-1).right.toFixed(2)}, field starts at ${bar.field.left.toFixed(2)})`)
+      const offCentre = Math.abs(bar.field.centre - bar.centre)
+      console.log(`  actions x=${xs.map(v => v.toFixed(0)).join(',')} | field ${bar.field.left.toFixed(0)}..${bar.field.right.toFixed(0)} (w=${bar.field.width.toFixed(0)}), off-centre ${offCentre.toFixed(2)}px`)
+      if (offCentre > MAX_DRIFT_PX) failures.push(`${path}: the search field is ${offCentre.toFixed(2)}px off the header's centre`)
+      if (bar.field.width > EXPECTED_FIELD_MAX_WIDTH + MAX_DRIFT_PX) failures.push(`${path}: the field is ${bar.field.width.toFixed(2)}px wide, above the ${EXPECTED_FIELD_MAX_WIDTH}px bound`)
     }
     if (bar.horizontalOverflow) failures.push(`${path}: horizontal scrollbar at ${VIEWPORT.width}px`)
     if (bar.animated) failures.push(`${path}: an element of the header is running an animation (state must be static)`)
     const missing = await page.evaluate(sels => sels.filter(s => !document.querySelector(s)), [SEARCH, action('dashboard'), action('compose'), action('settings')])
     if (missing.length) failures.push(`${path}: missing from the header: ${missing.join(', ')}`)
   }
+
+  // --- The header follows the bar's right edge in BOTH collapse states ---
+  // Measured on the SAME page, one state after the other: the two readings share
+  // everything but the collapse, so a mismatch can only come from the collapse.
+  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await page.waitForSelector(EDGE_TOGGLE, { timeout: 20000 })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const edges = []
+  for (const pass of ['as loaded', 'after toggling']) {
+    const bar = await page.evaluate(probeBar, BAR)
+    edges.push({ pass, left: bar?.left, asideRight: bar?.asideRight })
+    console.log(`collapse ${pass}: header.left=${bar?.left.toFixed(2)} aside.right=${bar?.asideRight?.toFixed(2) ?? 'n/a'}`)
+    if (bar?.asideRight == null) { console.error('HARNESS: no sidebar measured — nothing to compare the header against'); process.exit(2) }
+    if (Math.abs(bar.left - bar.asideRight) > MAX_DRIFT_PX) {
+      failures.push(`collapse ${pass}: header starts at x=${bar.left.toFixed(2)}, sidebar ends at ${bar.asideRight.toFixed(2)}`)
+    }
+    if (pass === 'as loaded') {
+      await page.click(EDGE_TOGGLE)
+      // The bar animates its width; wait past the transition so the reading is the settled state.
+      await new Promise(r => setTimeout(r, SETTLE_MS))
+    }
+  }
+  // Same-run reference: if the toggle changed nothing, both readings are the same
+  // state and the pair proves nothing about the collapse.
+  if (Math.abs(edges[0].asideRight - edges[1].asideRight) <= MAX_DRIFT_PX) {
+    console.error('HARNESS: the bar kept the same width across the toggle — the collapse was not exercised')
+    process.exit(2)
+  }
+
+  // The round toggle floats on the bar's edge — it is NOT one of the header's controls.
+  const toggleInHeader = await page.evaluate(
+    (bar, tog) => !!document.querySelector(bar)?.querySelector(tog), BAR, EDGE_TOGGLE)
+  console.log(`collapse button inside the header: ${toggleInHeader}`)
+  if (toggleInHeader) failures.push('the round collapse button is rendered inside the header')
+  // The collapse is a persisted user preference: put it back as it was found, so the
+  // gate does not silently leave the account in the other state for the next reader.
+  await page.click(EDGE_TOGGLE)
+  await new Promise(r => setTimeout(r, SETTLE_MS))
 
   // --- The dashboard row left the sidebar (lot O1 removes it from there) ---
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })

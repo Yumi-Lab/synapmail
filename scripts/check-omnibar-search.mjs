@@ -66,9 +66,24 @@ try {
   // `networkidle2` can NEVER settle on it: waiting for it makes the harness die on a
   // transport timeout that says nothing about the product. Navigation is therefore
   // considered done when the DOM is ready and the element the step needs is present.
+  //
+  // Waiting for the element is NOT enough: the server-rendered field is in the DOM
+  // before React has hydrated it, and a keystroke sent during that window is dropped
+  // (observed: "typed \"facture\" -> url /mail?", 0 request, 1 run out of 2). React 18
+  // attaches its props to a DOM node AT hydration, so the presence of a `__reactProps$…`
+  // key on the element is the event handler being live — the exact condition a keystroke
+  // needs. That is what is waited on, not a fixed delay.
   const visit = async (path, selector = SEARCH) => {
     await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' })
-    if (selector) await page.waitForSelector(selector, { timeout: 20000 })
+    if (!selector) return
+    await page.waitForSelector(selector, { timeout: 20000 })
+    await page.waitForFunction(
+      sel => {
+        const el = document.querySelector(sel)
+        return !!el && Object.keys(el).some(k => k.startsWith('__reactProps$'))
+      },
+      { timeout: 20000 }, selector,
+    )
   }
 
   // Every /api/messages/search request the app issues, in order — this is the

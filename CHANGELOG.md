@@ -31,6 +31,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   plus de `sessionStorage`.
 
 ### Added
+- **Barre d'application (omnibar)** au-dessus de la zone principale, sur toutes les pages
+  (`components/layout/Omnibar.tsx`) : recherche globale, puis Tableau de bord, Nouveau message et Réglages en icônes
+  monochromes. La ligne « Tableau de bord » quitte la barre latérale, qui ne garde que comptes, dossiers et réglages.
+- **Recherche unique** : le champ de l'omnibar est le SEUL de l'application. Il écrit la requête dans l'URL de la boîte
+  (`/mail?q=…&scope=…`), que la liste relit — aucun composant n'en garde une seconde copie. Depuis une autre page,
+  Entrée navigue vers la boîte ; un lien profond restaure champ et portée ; ⌘K / Ctrl+K focalise le champ. L'ancien champ
+  de recherche de la liste est retiré.
+- **Portée « ce dossier » / « tous les dossiers »** pendant une recherche. Sur un compte à ~100 dossiers IMAP, la
+  recherche tous dossiers demande **≈ 30 à 50 s** (4 connexions IMAP réutilisées) : l'attente est couverte par la
+  bannière « Recherche… ». Des résultats progressifs, dossier par dossier, restent possibles plus tard.
+- `scripts/check-omnibar.mjs` et `scripts/check-omnibar-search.mjs` (puppeteer-core) : géométrie de la barre, raccourcis,
+  clics réels sur les trois actions, et mesure de bout en bout de la recherche.
 - **Chinois simplifié** (`locales/zh.json`) : troisième langue complète, détection `zh*`, choix « 中文 » dans Apparence.
 - `scripts/check-locales.mjs` (`npm run check:locales`) : parité stricte des clés entre `en`, `fr` et `zh`.
 - Clés `mail.collapseSidebar`, `mail.expandSidebar`, `mail.folders`, `mail.switchAccount`, `common.showPassword`,
