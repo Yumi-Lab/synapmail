@@ -108,3 +108,60 @@ export function parseQuery(q: string | null | undefined): string[] {
   add(buffer, quoted)
   return terms
 }
+
+/**
+ * Ce qu'une recherche « tous les dossiers » sait d'un dossier avant de l'ouvrir :
+ * son chemin, son rôle éventuel (`\Inbox`, `\Sent`… via SPECIAL-USE), son nombre
+ * de messages (LIST-STATUS, un seul aller-retour) et la date du message le plus
+ * récent que le cache local en connaisse.
+ */
+export type FolderRank = {
+  path: string
+  specialUse?: string | null
+  messages?: number | null
+  lastKnownDate?: string | null
+}
+
+/**
+ * Rôles privilégiés, dans l'ordre : ce sont les dossiers où l'on trouve ce qu'on
+ * cherche neuf fois sur dix, donc ceux qu'une recherche progressive doit rendre
+ * EN PREMIER pour être utile avant d'avoir tout couvert.
+ */
+const PRIORITY_SPECIAL_USE = ['\\Inbox', '\\Sent'] as const
+
+/**
+ * Ordonne les dossiers par UTILITÉ pour une recherche progressive : rôles
+ * privilégiés d'abord (réception puis envoyés), ensuite les dossiers dont le cache
+ * local connaît le message le plus récent (un dossier vivant vaut mieux qu'une
+ * archive de 2019), le reste ensuite par nombre de messages décroissant, et les
+ * dossiers VIDES écartés — les ouvrir coûte un aller-retour pour zéro résultat
+ * possible.
+ *
+ * Fonction PURE : elle ne touche ni au réseau ni à la base, son auto-contrôle est
+ * `scripts/check-search-order.mjs`.
+ *
+ * ponytail: un tri, pas un index. Tant que l'ouverture d'un dossier coûte ~300 ms
+ * (mesuré sur IONOS), l'ordre suffit à rendre les premiers résultats utiles ;
+ * seul un besoin mesuré de « tout, tout de suite » justifierait un index local.
+ */
+export function orderFoldersForSearch(folders: FolderRank[]): string[] {
+  const rank = (f: FolderRank): number => {
+    const special = PRIORITY_SPECIAL_USE.indexOf(f.specialUse as typeof PRIORITY_SPECIAL_USE[number])
+    if (special >= 0) return special
+    return PRIORITY_SPECIAL_USE.length
+  }
+  const freshness = (f: FolderRank): number => {
+    const t = f.lastKnownDate ? Date.parse(f.lastKnownDate) : NaN
+    return Number.isNaN(t) ? -Infinity : t
+  }
+  return folders
+    // `messages` absent = inconnu, donc gardé : seul un ZÉRO mesuré écarte un dossier.
+    .filter(f => f.messages !== 0)
+    .slice()
+    .sort((a, b) =>
+      rank(a) - rank(b) ||
+      freshness(b) - freshness(a) ||
+      (b.messages ?? 0) - (a.messages ?? 0) ||
+      a.path.localeCompare(b.path))
+    .map(f => f.path)
+}
