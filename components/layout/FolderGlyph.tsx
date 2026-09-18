@@ -16,7 +16,15 @@ import { twoLetters } from './AccountAvatar'
  * collapse contract keeps measuring one geometry. Letters at 10 px with a touch of
  * tracking: at 9 px and no tracking the pair read as one smudge inside a 16 px plate.
  */
-const TILE = 'w-4 h-4 rounded-md flex items-center justify-center select-none tracking-[0.3px] text-[10px] font-semibold leading-none'
+const TILE = 'w-4 h-4 flex items-center justify-center select-none tracking-[0.3px] text-[10px] font-semibold leading-none'
+/**
+ * A CASE, not a bubble. `rounded-md` resolves to `calc(var(--radius) - 2px)` = 8 px in
+ * this theme, which on a 16 px box is a perfect circle: the human gate of 19/09/2026
+ * read a folder tile as an account bubble, two kinds of object wearing one shape. The
+ * radius is therefore stated here in pixels and NEVER derived from `--radius`, whose
+ * job is the app's cards. Softly rounded corners, still unmistakably square.
+ */
+const TILE_RADIUS_PX = 3
 /**
  * The plate must READ as a plate. `bg-secondary` (the theme's neutral pair) computes to
  * oklch(0.97) on a bar at oklch(0.985) in light — a measured 1.03:1, which the human gate
@@ -30,7 +38,10 @@ const TILE = 'w-4 h-4 rounded-md flex items-center justify-center select-none tr
  */
 const TILE_INK_MIX = '24%'
 const TILE_IDLE = 'text-foreground'
-const TILE_FILL = { backgroundColor: `color-mix(in oklab, var(--foreground) ${TILE_INK_MIX}, var(--sidebar))` }
+const TILE_FILL = {
+  backgroundColor: `color-mix(in oklab, var(--foreground) ${TILE_INK_MIX}, var(--sidebar))`,
+  borderRadius: `${TILE_RADIUS_PX}px`,
+}
 
 /** Letters kept in a tile. Two, always — the same floor the account bubbles hold to. */
 const GLYPH_LEN = 2

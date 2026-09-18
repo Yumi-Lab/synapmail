@@ -107,6 +107,16 @@ const FOLDER_GLYPH_MAX_PLATE_BLEED_PX = 1.2
 // The tile must stay monochrome: it carries no accent, so its ink and its background must
 // be grey — measured as HSV saturation, the same metric the cleanliness pass already uses.
 const FOLDER_GLYPH_MAX_SATURATION = ACCENT_MIN_SATURATION
+// A folder tile is a CASE; an account bubble is a BUBBLE. The human gate of 19/09/2026
+// found the two wearing one shape: `rounded-md` resolves to `calc(var(--radius) - 2px)`
+// = 8 px in this theme, and 8 px on a 16 px box is a perfect circle. The two ceilings
+// below are a SHAPE A/B measured in the same pass on the same page: the tile's corner
+// must stay far from half its box, the bubble's must stay at half its own. 4 px on a
+// 16 px plate is a quarter of the side — visibly square, still softened.
+// Calibration bench: this script, headless Chrome, the shipped tile at 16 px.
+const FOLDER_GLYPH_MAX_RADIUS_PX = 4
+// A bubble is round when its corner reaches half its own side; below that it is a case.
+const BUBBLE_MIN_RADIUS_RATIO = 0.5
 
 // Colour tokens inside a composite computed value (background-image gradient, box-shadow).
 const COLOUR_TOKEN_SOURCE = '(?:rgba?|hsla?|oklch|oklab|lab|lch|color)\\([^)]*\\)'
@@ -185,6 +195,14 @@ const probeBubbles = () => {
     range.selectNodeContents(node)
     return range.getBoundingClientRect()
   }
+  // The painted corner, in pixels. `rounded-full` computes to a huge length (or to
+  // `calc(infinity * 1px)`), which parses to Infinity — clamped to half the box, the
+  // largest radius a box can actually paint, so the ratio below stays meaningful.
+  const cornerPx = (el, cs) => {
+    const box = Math.min(el.getBoundingClientRect().width, el.getBoundingClientRect().height)
+    const raw = parseFloat(cs.borderTopLeftRadius)
+    return Number.isFinite(raw) ? Math.min(raw, box / 2) : box / 2
+  }
   return [...document.querySelectorAll('[data-account-initial]')].map(glyph => {
     const bubble = glyph.parentElement
     const wrapper = bubble.parentElement
@@ -205,6 +223,8 @@ const probeBubbles = () => {
       badgeText: badge?.textContent ?? '',
       overBubble: dr ? overlap(dr, br) / (br.width * br.height) : 0,
       overGlyph: dr && gr.width && gr.height ? overlap(dr, gr) / (gr.width * gr.height) : 0,
+      radiusPx: cornerPx(bubble, style),
+      boxPx: Math.min(br.width, br.height),
       bg: style.backgroundColor,
       contrast: contrast(style.backgroundColor, getComputedStyle(glyph).color),
     }
@@ -316,6 +336,14 @@ const probeFolderGlyphs = () => {
   // SAME-RUN reference for the tile's contrast: whatever the bar actually paints behind
   // the tile, in the theme this pass is in — never a value carried over from a bench.
   const barBg = getComputedStyle(bar).backgroundColor
+  // The painted corner, in pixels. `rounded-full` computes to a huge length (or to
+  // `calc(infinity * 1px)`), which parses to Infinity — clamped to half the box, the
+  // largest radius a box can actually paint, so the ratio below stays meaningful.
+  const cornerPx = (el, cs) => {
+    const box = Math.min(el.getBoundingClientRect().width, el.getBoundingClientRect().height)
+    const raw = parseFloat(cs.borderTopLeftRadius)
+    return Number.isFinite(raw) ? Math.min(raw, box / 2) : box / 2
+  }
   // Published by the bar as the ONE width every icon column uses, collapsed or not.
   const iconColW = parseFloat(getComputedStyle(bar).getPropertyValue('--synap-icon-col'))
   return [...bar.querySelectorAll('[data-folder-glyph]')].map(el => {
@@ -341,6 +369,8 @@ const probeFolderGlyphs = () => {
       plateBleed: Math.max(0, r.left - ink.left, ink.right - r.right, r.top - ink.top, ink.bottom - r.bottom),
       // A plate that clips would cut a letter; the tile must never do that.
       overflow: cs.overflow,
+      radiusPx: cornerPx(el, cs),
+      boxPx: Math.min(r.width, r.height),
       fontSize: cs.fontSize,
       barBg,
       // The plate against the bar behind it, and the letters against the plate.
@@ -616,9 +646,13 @@ try {
   // Read on the COLLAPSED state: that is the state the tile exists for.
   const glyphLetters = new Map()
   for (const g of glyphsCollapsed) {
-    console.log(`  ${g.key}: "${g.text}" (${g.text.length} letters, ${g.fontSize}) visible=${g.visible} title="${g.title}" ink=${g.color} (sat ${g.inkSat.toFixed(3)}) bg=${g.background} (sat ${g.bgSat.toFixed(3)}, alpha ${g.bgAlpha}) tile/bar=${g.tileContrast.toFixed(3)}:1 on ${g.barBg} ink/tile=${g.inkContrast.toFixed(2)}:1`)
+    console.log(`  ${g.key}: "${g.text}" (${g.text.length} letters, ${g.fontSize}) visible=${g.visible} title="${g.title}" ink=${g.color} (sat ${g.inkSat.toFixed(3)}) bg=${g.background} (sat ${g.bgSat.toFixed(3)}, alpha ${g.bgAlpha}) tile/bar=${g.tileContrast.toFixed(3)}:1 on ${g.barBg} ink/tile=${g.inkContrast.toFixed(2)}:1 radius=${g.radiusPx.toFixed(2)}px on ${g.boxPx.toFixed(0)}px`)
     if (g.tileContrast < FOLDER_GLYPH_MIN_TILE_CONTRAST) {
       failures.push(`folder tile ${g.key}: plate ${g.background} on bar ${g.barBg} = ${g.tileContrast.toFixed(3)}:1 (min ${FOLDER_GLYPH_MIN_TILE_CONTRAST}:1) — the tile does not read as a tile`)
+    }
+    if (g.radiusPx > FOLDER_GLYPH_MAX_RADIUS_PX) {
+      const round = g.radiusPx >= g.boxPx / 2 - 0.01 ? ' — this is a circle, not a case' : ''
+      failures.push(`folder tile ${g.key}: corner radius ${g.radiusPx.toFixed(2)}px on a ${g.boxPx.toFixed(0)}px plate (max ${FOLDER_GLYPH_MAX_RADIUS_PX}px)${round}`)
     }
     const tight = Math.min(g.slotSlack.left, g.slotSlack.right, g.slotSlack.top, g.slotSlack.bottom)
     if (tight < 0) failures.push(`folder tile ${g.key}: letters "${g.text}" leave the ${g.slotW.toFixed(0)}px icon column (slack ${tight.toFixed(2)}px)`)
@@ -661,7 +695,7 @@ try {
   for (const b of bubbles) {
     const where = `${b.where} "${b.initial}" (${b.badgeText || 'no badge'})`
     const worstSlack = Math.min(...Object.values(b.slack))
-    console.log(`  ${where}: letters=${b.letters} font=${b.fontSize} bubble=${b.bubbleW.toFixed(0)}px inset=${worstSlack.toFixed(2)}px badge/bubble=${(b.overBubble * 100).toFixed(1)}% badge/glyph=${(b.overGlyph * 100).toFixed(1)}% contrast=${b.contrast.toFixed(2)} bg=${b.bg}`)
+    console.log(`  ${where}: letters=${b.letters} font=${b.fontSize} bubble=${b.bubbleW.toFixed(0)}px inset=${worstSlack.toFixed(2)}px badge/bubble=${(b.overBubble * 100).toFixed(1)}% badge/glyph=${(b.overGlyph * 100).toFixed(1)}% contrast=${b.contrast.toFixed(2)} radius=${b.radiusPx.toFixed(2)}px on ${b.boxPx.toFixed(0)}px bg=${b.bg}`)
     if (b.letters !== BUBBLE_LETTERS) failures.push(`${where}: ${b.letters} letter(s) in the bubble (expected exactly ${BUBBLE_LETTERS})`)
     if (worstSlack < GLYPH_INSET_PX) {
       const sides = Object.entries(b.slack).map(([k, v]) => `${k} ${v.toFixed(2)}px`).join(', ')
@@ -670,6 +704,12 @@ try {
     if (b.overBubble > MAX_BADGE_OVER_BUBBLE) failures.push(`${where}: badge covers ${(b.overBubble * 100).toFixed(1)}% of the bubble (max ${(MAX_BADGE_OVER_BUBBLE * 100)}%)`)
     if (b.overGlyph > MAX_BADGE_OVER_GLYPH) failures.push(`${where}: badge covers ${(b.overGlyph * 100).toFixed(1)}% of the initial (max ${(MAX_BADGE_OVER_GLYPH * 100)}%)`)
     if (b.contrast < MIN_CONTRAST) failures.push(`${where}: initial contrast ${b.contrast.toFixed(2)}:1 on ${b.bg} (min ${MIN_CONTRAST}:1)`)
+    // The other half of the shape A/B: a folder tile is a case, so a bubble must stay
+    // round — if either drifts toward the other the two objects stop being tellable apart.
+    const ratio = b.boxPx ? b.radiusPx / b.boxPx : 0
+    if (ratio < BUBBLE_MIN_RADIUS_RATIO) {
+      failures.push(`${where}: bubble corner ${b.radiusPx.toFixed(2)}px on a ${b.boxPx.toFixed(0)}px box = ${(ratio * 100).toFixed(0)}% of its side (min ${BUBBLE_MIN_RADIUS_RATIO * 100}%) — a bubble must stay round`)
+    }
   }
   const palette = [...new Set(bubbles.map(b => b.bg))]
   console.log(`distinct bubble colours exercised: ${palette.length} (${palette.join(', ')})`)
