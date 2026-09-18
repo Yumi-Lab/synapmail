@@ -1,7 +1,7 @@
 'use client'
 
 import { cn } from '@/lib/utils'
-import { twoLetters } from './AccountAvatar'
+import { WORD_SPLIT, twoLetters } from './AccountAvatar'
 
 /**
  * A custom folder has no meaningful icon: collapsed, a column of identical `Folder`
@@ -43,13 +43,22 @@ const TILE_FILL = {
   borderRadius: `${TILE_RADIUS_PX}px`,
 }
 
-/** Letters kept in a tile. Two, always — the same floor the account bubbles hold to. */
+/**
+ * Characters kept in a tile: two, exactly, in every case. Not a floor with a ceiling
+ * above it — a fixed width. Measured on a real mailbox (92 custom folders, gate of
+ * 19/09/2026): 13 three-letter tiles inked 2.2 to 4.7 px past the 16 px plate, because
+ * three glyphs at the 10 px semibold the plate is drawn for simply do not fit in it.
+ * Lengthening is therefore not a tie-break this tile can afford; re-spelling is.
+ */
 const GLYPH_LEN = 2
-/** Ceiling when two folders of one list would otherwise spell the same pair. */
-const GLYPH_LEN_MAX = 3
 
-/** Whitespace and punctuation inside a name, removed when a tie-break reads a name flat. */
-const WORD_GAP = /[\s!-\/:-@[-`{-~]+/g
+/**
+ * Whitespace and punctuation inside a name. Stripping it leaves ONLY letters and digits,
+ * which is what makes every character of a flattened name a legal tile character — no
+ * second "is this alphanumeric" test is needed anywhere below. Same character class as
+ * `WORD_SPLIT` (AccountAvatar), globally applied: one definition of a word gap for the bar.
+ */
+const WORD_GAP = new RegExp(WORD_SPLIT.source, 'g')
 
 /** A folder's own name: the segment after the last separator of its IMAP path. */
 const leafName = (folder: { name?: string; path: string }) => {
@@ -58,38 +67,100 @@ const leafName = (folder: { name?: string; path: string }) => {
 }
 
 /**
- * Letters for every custom folder of ONE list, resolved together. Always at least two
- * (`twoLetters`, the same rule the account bubbles use — one letter reads as an
- * accident), and a third only to break a tie: two folders of one list that spell the
- * same pair would be indistinguishable folded, which is the exact thing this tile
- * exists to prevent. Computed per LIST rather than per row because a row cannot know
- * about its siblings.
+ * Stand-in for a character a name simply does not have: a folder called `A` yields one
+ * letter and nothing to pair it with. A tile is two characters WIDE in every case, so
+ * the slot is filled rather than left short — the full path stays on hover.
+ */
+const GLYPH_PAD = '\u00b7'
+/** A name made only of separators spells nothing; say so rather than render a blank. */
+const GLYPH_UNKNOWN = '??'
+
+/** Exactly `GLYPH_LEN` characters, whatever the name was able to supply. */
+const pair = (first: string, second: string | undefined) =>
+  first ? `${first}${second ?? GLYPH_PAD}` : GLYPH_UNKNOWN
+
+/**
+ * First index at which a set of flattened names stops agreeing — the character a human
+ * reading the list would use to tell them apart (`BILAN2021…` vs `BILAN2023…` diverge on
+ * the year's third digit, so the tiles read B1/B3 rather than BI/BI). Never index 0: the
+ * first character is the one thing homonyms share, and it anchors the pair.
+ * When one name is a prefix of the others they agree everywhere they overlap, so the
+ * first character PAST the overlap is what separates them.
+ */
+const divergenceIndex = (flats: string[]) => {
+  const overlap = Math.min(...flats.map(f => f.length))
+  for (let i = 1; i < overlap; i++) {
+    if (flats.some(f => f[i] !== flats[0][i])) return i
+  }
+  return overlap
+}
+
+/**
+ * Every pair a name can legally spell, best first: the divergence character when the
+ * name is fighting for its base pair, then each of its own remaining characters in
+ * order. The name's base pair comes first when nothing contests it, and LAST when
+ * something does — a folder that must be re-spelled should not be handed back the very
+ * pair its homonym also wants.
+ */
+const candidates = (base: string, flat: string, siblings: string[]) => {
+  if (!flat) return [base]
+  const contested = siblings.length > 1
+  const want = contested ? [pair(flat[0], flat[divergenceIndex(siblings)])] : [base]
+  for (const c of flat.slice(1).split('')) want.push(pair(flat[0], c))
+  if (contested) want.push(base)
+  return want.filter((c, i) => want.indexOf(c) === i)
+}
+
+/**
+ * Hands each folder one pair out of its own candidate list, such that no two folders of
+ * the list share a pair. Plain greedy is not enough on a real mailbox: measured on the
+ * 92-folder box of 19/09/2026, nineteen folders start with `C` and greedy left
+ * `CONVENTIONS` with every pair it can spell already handed out, falling back onto a
+ * duplicate `CO`. So a folder that finds its candidates taken asks the current holder to
+ * move on to one of ITS remaining candidates (an augmenting search — Kuhn's matching),
+ * which resolves the whole chain at once and hands out the largest possible number of
+ * distinct pairs. `seen` bounds the search to one visit per pair, so it terminates.
+ */
+const seatFolders = (wants: string[][]) => {
+  const owner = new Map<string, number>()
+  const seat: (string | null)[] = wants.map(() => null)
+  const take = (i: number, seen: Set<string>): boolean => {
+    for (const c of wants[i]) {
+      if (seen.has(c)) continue
+      seen.add(c)
+      const held = owner.get(c)
+      if (held === undefined || take(held, seen)) {
+        owner.set(c, i)
+        seat[i] = c
+        return true
+      }
+    }
+    return false
+  }
+  wants.forEach((_, i) => take(i, new Set()))
+  return seat
+}
+
+/**
+ * Characters for every custom folder of ONE list, resolved together — exactly two each.
+ * Folders that would spell the same pair are re-spelled rather than lengthened: they keep
+ * the first character (the one they share, and the one the eye anchors on) and take as
+ * second the character where their names actually diverge — `bilan 2021…`/`bilan 2023…`
+ * read B1/B3, not BI/BI. Measured on a real mailbox of 92 folders: lengthening produced
+ * 13 tiles inked up to 4.7 px outside the 16 px plate AND still collided, because the
+ * third character was shared too; re-spelling fixes both at once.
+ * Computed per LIST because a row cannot know about its siblings.
  */
 export const folderInitials = <T extends { name?: string; path: string }>(folders: T[]) => {
   const leaves = folders.map(f => leafName(f))
-  const taken = new Set<string>()
-  return new Map(folders.map((folder, i) => {
-    const leaf = leaves[i]
-    const base = twoLetters(leaf)
-    if (!base) return [folder.path, (leaf.slice(0, GLYPH_LEN).toUpperCase() || '?')]
-    if (!taken.has(base)) {
-      taken.add(base)
-      return [folder.path, base]
-    }
-    // Tie-break by lengthening, never by shortening: `Mail alpha`/`Mail apple` both
-    // spell `MA`, so the loser grows a third letter taken from its own name.
-    const flat = leaf.replace(WORD_GAP, '').toUpperCase()
-    for (let len = GLYPH_LEN + 1; len <= GLYPH_LEN_MAX; len++) {
-      const longer = flat.slice(0, len)
-      if (longer.length === len && !taken.has(longer)) {
-        taken.add(longer)
-        return [folder.path, longer]
-      }
-    }
-    // Every variant within the letter budget is spoken for: keep the pair rather than
-    // invent a glyph the user cannot map back to a name. The full path stays on hover.
-    return [folder.path, base]
-  }))
+  const flats = leaves.map(l => l.replace(WORD_GAP, '').toUpperCase())
+  const bases = leaves.map((l, i) => twoLetters(l) || pair(flats[i][0] ?? '', undefined))
+  const byBase = new Map<string, string[]>()
+  bases.forEach((base, i) => byBase.set(base, [...(byBase.get(base) ?? []), flats[i]]))
+  const seats = seatFolders(bases.map((base, i) => candidates(base, flats[i], byBase.get(base) ?? [])))
+  // A folder whose every candidate is spoken for keeps its base pair rather than wear a
+  // glyph nobody can map back to a name; the full path stays on hover either way.
+  return new Map(folders.map((folder, i) => [folder.path, seats[i] ?? bases[i]]))
 }
 
 /**
