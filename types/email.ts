@@ -17,6 +17,8 @@ export interface Message {
   isRead: boolean
   isStarred: boolean
   isFlagged: boolean
+  /** Couleur du drapeau (clé de lib/flags.ts), `null` si le message n'est pas marqué. */
+  flag?: string | null
   hasAttachments: boolean
   threadId?: string
   folder: string

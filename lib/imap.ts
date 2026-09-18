@@ -4,6 +4,7 @@ import { decrypt } from './encrypt'
 import { refreshAccessToken } from './msOAuth'
 import { query } from './db'
 import { upsertContact } from './contacts'
+import { DEFAULT_FLAG_KEY, FLAG_BIT_KEYWORDS, FLAG_IMAP_FLAG, flagFromKeywords, keywordsForFlag } from './flags'
 import type { Message, Folder, AuthResults } from '@/types/email'
 
 /**
@@ -199,8 +200,9 @@ export async function listMessages(
           date: messageDate(msg.envelope?.date, msg.internalDate),
           preview: '',
           isRead: msg.flags?.has('\\Seen') ?? false,
-          isStarred: msg.flags?.has('\\Flagged') ?? false,
-          isFlagged: msg.flags?.has('\\Flagged') ?? false,
+          isStarred: msg.flags?.has(FLAG_IMAP_FLAG) ?? false,
+          isFlagged: msg.flags?.has(FLAG_IMAP_FLAG) ?? false,
+          flag: flagFromKeywords(msg.flags),
           hasAttachments: detectAttachments(msg.bodyStructure as unknown as Record<string, unknown>),
           threadId,
           folder,
@@ -359,8 +361,9 @@ export async function getMessage(
       date: messageDate(parsed.date, msg.envelope?.date, msg.internalDate),
       preview: parsed.text?.slice(0, 200) ?? '',
       isRead: msg.flags?.has('\\Seen') ?? false,
-      isStarred: msg.flags?.has('\\Flagged') ?? false,
-      isFlagged: msg.flags?.has('\\Flagged') ?? false,
+      isStarred: msg.flags?.has(FLAG_IMAP_FLAG) ?? false,
+      isFlagged: msg.flags?.has(FLAG_IMAP_FLAG) ?? false,
+      flag: flagFromKeywords(msg.flags),
       hasAttachments: (parsed.attachments?.length ?? 0) > 0,
       bodyHtml: parsed.html || undefined,
       bodyPlain: parsed.text || undefined,
@@ -444,13 +447,30 @@ export async function markStarred(
   uid: string,
   starred: boolean
 ): Promise<void> {
+  await setFlagBulk(account, folder, [uid], starred ? DEFAULT_FLAG_KEY : null)
+}
+
+/**
+ * Pose (ou retire) un drapeau de couleur sur un jeu de messages. La couleur est
+ * portée par les mots-clés d'Apple (voir lib/flags.ts) : on retire d'abord TOUS
+ * les bits, sinon une couleur en remplaçant une autre garderait les bits de la
+ * précédente et donnerait une troisième couleur.
+ */
+export async function setFlagBulk(
+  account: AccountConfig,
+  folder: string,
+  uids: string[],
+  flag: string | null
+): Promise<void> {
+  if (!uids.length) return
   const client = await createClient(account)
   try {
     await client.mailboxOpen(folder)
-    if (starred) {
-      await client.messageFlagsAdd(uid, ['\\Flagged'], { uid: true })
-    } else {
-      await client.messageFlagsRemove(uid, ['\\Flagged'], { uid: true })
+    const uidSet = uids.join(',')
+    const stale = flag === null ? [FLAG_IMAP_FLAG, ...FLAG_BIT_KEYWORDS] : [...FLAG_BIT_KEYWORDS]
+    await client.messageFlagsRemove(uidSet, stale, { uid: true })
+    if (flag !== null) {
+      await client.messageFlagsAdd(uidSet, [FLAG_IMAP_FLAG, ...keywordsForFlag(flag)], { uid: true })
     }
   } finally {
     await client.logout()
@@ -647,8 +667,9 @@ async function searchOpenFolder(
           date: messageDate(msg.envelope?.date, msg.internalDate),
           preview: '',
           isRead: msg.flags?.has('\\Seen') ?? false,
-          isStarred: msg.flags?.has('\\Flagged') ?? false,
-          isFlagged: msg.flags?.has('\\Flagged') ?? false,
+          isStarred: msg.flags?.has(FLAG_IMAP_FLAG) ?? false,
+          isFlagged: msg.flags?.has(FLAG_IMAP_FLAG) ?? false,
+          flag: flagFromKeywords(msg.flags),
           hasAttachments: detectAttachments(msg.bodyStructure as unknown as Record<string, unknown>),
           folder,
           accountId: '',

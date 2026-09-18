@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
-import { getMessage, deleteMessage, markRead, markStarred } from '@/lib/imap'
+import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
+import { getMessage, deleteMessage, markRead, setFlagBulk } from '@/lib/imap'
 
 export const dynamic = 'force-dynamic'
 
@@ -68,7 +69,10 @@ export async function PATCH(
 
   try {
     const body = await req.json()
-    const { isRead, isStarred } = body as { isRead?: boolean; isStarred?: boolean }
+    // `flag` porte la couleur (lib/flags.ts) ; `isStarred` reste accepté et vaut
+    // la couleur par défaut, pour ne rien casser des appels existants.
+    const { isRead, isStarred, flag } = body as
+      { isRead?: boolean; isStarred?: boolean; flag?: string | null }
 
     const account = await getAccessibleAccount(accountId, authCtx.id, ['organize'])
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
@@ -78,8 +82,13 @@ export async function PATCH(
     if (isRead !== undefined) {
       await markRead(config, folder, params.id, isRead)
     }
-    if (isStarred !== undefined) {
-      await markStarred(config, folder, params.id, isStarred)
+    if (flag !== undefined) {
+      if (flag !== null && !flagByKey(flag)) {
+        return NextResponse.json({ error: 'Unknown flag' }, { status: 400 })
+      }
+      await setFlagBulk(config, folder, [params.id], flag)
+    } else if (isStarred !== undefined) {
+      await setFlagBulk(config, folder, [params.id], isStarred ? DEFAULT_FLAG_KEY : null)
     }
 
     return NextResponse.json({ success: true })
