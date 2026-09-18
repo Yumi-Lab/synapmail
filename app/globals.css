@@ -178,6 +178,34 @@
     --list-width: 320px;
   }
 
+  /*
+   * Couleurs des sept drapeaux (convention Apple Mail). Elles vivent ici parce
+   * que la couleur d'un drapeau EST l'information : une classe utilitaire
+   * n'existerait que si Tailwind la lisait dans un fichier qu'il scanne, ce qui
+   * n'est pas le cas de lib/flags.ts. Les clés viennent de MAIL_FLAGS.
+   * Teintes choisies pour rester ≥ 3:1 (WCAG 1.4.11) contre les surfaces où le
+   * drapeau se peint — fond de carte, de menu et de ligne sélectionnée — et
+   * distinctes entre elles ainsi que de la couleur du texte, dans les 2 thèmes.
+   */
+  :root {
+    --flag-red: #dc2626;
+    --flag-orange: #cf4a0a;
+    --flag-yellow: #a16207;
+    --flag-green: #15803d;
+    --flag-blue: #2563eb;
+    --flag-purple: #9333ea;
+    --flag-gray: #52525b;
+  }
+  .dark {
+    --flag-red: #f87171;
+    --flag-orange: #fb923c;
+    --flag-yellow: #facc15;
+    --flag-green: #4ade80;
+    --flag-blue: #60a5fa;
+    --flag-purple: #c084fc;
+    --flag-gray: #a1a1aa;
+  }
+
   * {
     @apply border-border;
     outline-color: color-mix(in srgb, var(--ring) 50%, transparent);

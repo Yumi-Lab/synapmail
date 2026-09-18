@@ -2,8 +2,9 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useTranslations } from 'next-intl'
-import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, MailOpen, Eye, EyeOff, Archive, Clock } from 'lucide-react'
+import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, MailOpen, Eye, EyeOff, Archive, Clock, Flag } from 'lucide-react'
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
+import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } from '@/lib/flags'
 import { cn } from '@/lib/utils'
 import { parseDate } from '@/lib/dates'
 import {
@@ -130,7 +131,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   const t = useTranslations('mail')
   // État partagé : la liste est la SEULE à publier et à enregistrer des actions.
   const { publish, register } = useMailSelection()
-  const [filter, setFilter] = useState<'all' | 'unread'>('all')
+  const [filter, setFilter] = useState<MailListFilter>('all')
   const [page, setPage] = useState(1)
   const [accumulated, setAccumulated] = useState<Message[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
@@ -535,6 +536,17 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     mutate()
   }
 
+  const setFlagUids = async (uids: string[], flag: string | null) => {
+    if (!uids.length) return
+    await fetch('/api/messages/bulk', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uids, action: 'flag', accountId: getAccountId(), folder, destination: undefined, flag }),
+    })
+    setAccumulated(prev => prev.map(m => uids.includes(m.uid) ? { ...m, flag, isStarred: flag !== null, isFlagged: flag !== null } : m))
+    mutate()
+  }
+
   // Drag handlers
   const handleDragStart = useCallback((e: React.DragEvent, thread: ThreadGroup) => {
     const msg = thread.lastMessage
@@ -629,8 +641,8 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   deleteUidsRef.current = deleteUids
   const markReadUidsRef = useRef(markReadUids)
   markReadUidsRef.current = markReadUids
-  const apiStarRef = useRef(apiStar)
-  apiStarRef.current = apiStar
+  const setFlagUidsRef = useRef(setFlagUids)
+  setFlagUidsRef.current = setFlagUids
 
   const handleRefreshRef = useRef(handleRefresh)
   handleRefreshRef.current = handleRefresh
@@ -671,12 +683,10 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       spam: () => { if (spamPath) moveTarget(spamPath) },
       remove: deleteTarget,
       markUnread: () => markReadUidsRef.current(targetUidsRef.current, false),
+      setFlag: (flag) => setFlagUidsRef.current(targetUidsRef.current, flag),
       moveTo: moveTarget,
-      // Drapeau standard IMAP (`\\Flagged`) sur toute la cible : posé pour n'importe quelle
-      // valeur, retiré pour `null`. Le lot « drapeaux de couleur » étendra cette action.
-      setFlag: flag => { if (activeAccountId) targetUidsRef.current.forEach(uid => apiStarRef.current(uid, activeAccountId, flag !== null)) },
     })
-  }, [register, archivePath, spamPath, moveTarget, deleteTarget, activeAccountId])
+  }, [register, archivePath, spamPath, moveTarget, deleteTarget])
 
   // Clavier de la liste : Cmd/Ctrl+A sélectionne tout le chargé, Échap vide,
   // Suppr supprime la sélection (confirmation au-delà d'un message).
@@ -769,6 +779,15 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
               }
             </span>
             <div className="flex items-center gap-1 shrink-0">
+              {(() => {
+                const flag = flagByKey(msg.flag ?? (msg.isStarred ? DEFAULT_FLAG_KEY : null))
+                if (!flag) return null
+                return (
+                  <span title={t(`flags.${flag.labelKey}`)}>
+                    <Flag className="w-3 h-3 fill-current" style={{ color: flag.color }} />
+                  </span>
+                )
+              })()}
               {thread.messages.some(m => m.hasAttachments) && <Paperclip className="w-3 h-3 text-muted-foreground" />}
               {isSentFolder && (() => {
                 const receipt = trackingMap[msg.subject]
@@ -890,7 +909,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       ) : !isSearchMode ? (
         <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border shrink-0">
           <div className="flex rounded-lg overflow-hidden border border-border text-xs font-medium">
-            {(['all', 'unread'] as const).map(f => (
+            {MAIL_LIST_FILTERS.map(f => (
               <button key={f} onClick={() => { setFilter(f); setPage(1); setAccumulated([]); loadingLockRef.current = 0 }}
                 className={cn('px-3 py-1.5 transition-colors', filter === f ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-accent')}>
                 {t(f)}
