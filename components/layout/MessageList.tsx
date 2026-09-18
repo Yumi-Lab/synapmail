@@ -1,12 +1,12 @@
 'use client'
 
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
-import { useTranslations } from 'next-intl'
-import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, MailOpen, MoveRight, ChevronDown, Eye, EyeOff, Archive, Clock, Flag } from 'lucide-react'
+import { useLocale, useTranslations } from 'next-intl'
+import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, MailOpen, MoveRight, ChevronDown, Eye, EyeOff, Flag } from 'lucide-react'
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
 import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } from '@/lib/flags'
 import { cn } from '@/lib/utils'
-import { parseDate } from '@/lib/dates'
+import { formatRowDate } from '@/lib/dates'
 import {
   SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, isSearchQuery, type SearchScope,
 } from '@/lib/search'
@@ -16,23 +16,11 @@ import type { EmailAccount } from '@/types/account'
 import { MessageContextMenu, type ContextMenuState } from '@/components/ui/MessageContextMenu'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
-import { snoozePresets } from '@/lib/snooze-presets'
 
 const fetcher = async (url: string) => {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`Request failed: ${res.status}`)
   return res.json()
-}
-
-const formatDate = (iso: string) => {
-  const d = parseDate(iso)
-  if (!d) return ''
-  const now = new Date()
-  const isToday = d.toDateString() === now.toDateString()
-  if (isToday) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  const isThisYear = d.getFullYear() === now.getFullYear()
-  if (isThisYear) return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
-  return d.toLocaleDateString([], { year: '2-digit', month: 'short', day: 'numeric' })
 }
 
 const AVATAR_COLORS = [
@@ -129,6 +117,7 @@ interface AppSettings { thread_view: boolean; messages_per_page: number; mail_de
 export function MessageList({ folder, selectedUid, onSelect, onSelectThread, activeAccountId, search = '', searchScope = SCOPE_FOLDER, permissions }: Props) {
   const perms = permissions ?? DEFAULT_PERMISSIONS
   const t = useTranslations('mail')
+  const locale = useLocale()
   // État partagé : la liste est la SEULE à publier et à enregistrer des actions.
   const { publish, register } = useMailSelection()
   const [filter, setFilter] = useState<MailListFilter>('all')
@@ -160,10 +149,6 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   const [showMoveMenu, setShowMoveMenu] = useState(false)
   const moveMenuRef = useRef<HTMLDivElement>(null)
 
-  // Per-row snooze menu
-  const [snoozeFor, setSnoozeFor] = useState<string | null>(null)
-  const snoozeRef = useRef<HTMLDivElement>(null)
-
   // Context menu
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
 
@@ -191,7 +176,6 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       setReadUids(new Set())
       setSelectedThreadKey(null)
       setCheckedUids(new Set())
-      setSnoozeFor(null)
       rangeAnchorUid.current = null
     }
   }, [folder, activeAccountId])
@@ -205,21 +189,6 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [showMoveMenu])
-
-  // Close snooze menu when clicking outside / Escape
-  useEffect(() => {
-    if (!snoozeFor) return
-    const onDoc = (e: MouseEvent) => {
-      if (snoozeRef.current && !snoozeRef.current.contains(e.target as Node)) setSnoozeFor(null)
-    }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSnoozeFor(null) }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [snoozeFor])
 
   const accountParam = activeAccountId ? `&account=${activeAccountId}` : ''
 
@@ -413,67 +382,6 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     return activeAccountId || ''
   }, [threads, checkedUids, activeAccountId])
 
-  const apiDelete = async (uid: string, accountId: string) => {
-    await fetch(`/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`, {
-      method: 'DELETE',
-    })
-    setAccumulated(prev => prev.filter(m => m.uid !== uid))
-    mutate()
-  }
-
-  // Direction B — row quick actions (top-right corner)
-  const archiveThread = async (thread: ThreadGroup) => {
-    if (!archivePath) return
-    const accId = thread.lastMessage.accountId || activeAccountId || ''
-    const uids = thread.messages.map(m => m.uid)
-    await fetch('/api/messages/bulk', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uids, action: 'move', accountId: accId, folder, destination: archivePath }),
-    })
-    setAccumulated(prev => prev.filter(m => !uids.includes(m.uid)))
-    mutate()
-  }
-
-  const markThreadRead = async (thread: ThreadGroup, read: boolean) => {
-    const accId = thread.lastMessage.accountId || activeAccountId || ''
-    const uids = thread.messages.map(m => m.uid)
-    await fetch('/api/messages/bulk', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uids, action: read ? 'read' : 'unread', accountId: accId, folder }),
-    })
-    setAccumulated(prev => prev.map(m => uids.includes(m.uid) ? { ...m, isRead: read } : m))
-    setReadUids(prev => {
-      const next = new Set(prev)
-      uids.forEach(u => read ? next.add(u) : next.delete(u))
-      return next
-    })
-    mutate()
-  }
-
-  const snoozeThread = async (thread: ThreadGroup, until: Date) => {
-    const msg = thread.lastMessage
-    const accId = msg.accountId || activeAccountId || ''
-    const uids = thread.messages.map(m => m.uid)
-    await fetch(`/api/messages/${msg.uid}/snooze`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        until: until.toISOString(),
-        folder,
-        accountId: accId,
-        subject: msg.subject,
-        fromAddress: msg.from.address,
-        fromName: msg.from.name,
-      }),
-    })
-    setSnoozeFor(null)
-    setAccumulated(prev => prev.filter(m => !uids.includes(m.uid)))
-    mutate()
-    window.dispatchEvent(new CustomEvent('synapmail:snooze-changed'))
-  }
-
   // Primitives groupées : elles prennent les uids VISÉS en argument. La barre
   // d'actions de la liste leur passe la sélection cochée, le registre partagé
   // leur passe la sélection OU le message ouvert — une seule requête écrite ici.
@@ -528,6 +436,36 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     })
     setAccumulated(prev => prev.map(m => uids.includes(m.uid) ? { ...m, flag, isStarred: flag !== null, isFlagged: flag !== null } : m))
     mutate()
+  }
+
+  /**
+   * Reporte les uids visés. Le report est posé message par message (la route
+   * porte l'uid dans son chemin) ; les lignes disparaissent d'un coup, comme
+   * pour un déplacement, et le popover de la barre se rafraîchit.
+   */
+  const snoozeUids = async (uids: string[], until: Date) => {
+    if (!uids.length) return
+    const accountId = getAccountId()
+    const byUid = new Map(accumulated.map(m => [m.uid, m]))
+    await Promise.all(uids.map(uid => {
+      const msg = byUid.get(uid)
+      return fetch(`/api/messages/${uid}/snooze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          until: until.toISOString(),
+          folder,
+          accountId,
+          subject: msg?.subject,
+          fromAddress: msg?.from.address,
+          fromName: msg?.from.name,
+        }),
+      })
+    }))
+    setAccumulated(prev => prev.filter(m => !uids.includes(m.uid)))
+    clearSelection()
+    mutate()
+    window.dispatchEvent(new CustomEvent('synapmail:snooze-changed'))
   }
 
   const bulkMarkRead = (read: boolean) => markReadUids(checkedThreadUids, read)
@@ -637,6 +575,8 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   markReadUidsRef.current = markReadUids
   const setFlagUidsRef = useRef(setFlagUids)
   setFlagUidsRef.current = setFlagUids
+  const snoozeUidsRef = useRef(snoozeUids)
+  snoozeUidsRef.current = snoozeUids
 
   const handleRefreshRef = useRef(handleRefresh)
   handleRefreshRef.current = handleRefresh
@@ -679,6 +619,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       markRead: () => markReadUidsRef.current(targetUidsRef.current, true),
       markUnread: () => markReadUidsRef.current(targetUidsRef.current, false),
       setFlag: (flag) => setFlagUidsRef.current(targetUidsRef.current, flag),
+      snooze: (until) => snoozeUidsRef.current(targetUidsRef.current, until),
       moveTo: moveTarget,
     })
   }, [register, archivePath, spamPath, moveTarget, deleteTarget])
@@ -770,8 +711,8 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
         </div>
 
         <div className="min-w-0">
-          {/* line 1 — sender + date, right padding reserves the corner-action strip */}
-          <div className={cn('flex items-baseline justify-between gap-2', archivePath ? 'pr-[104px]' : 'pr-[80px]', compact ? '' : 'mb-0.5')}>
+          {/* line 1 — sender (truncates first) + full date and time */}
+          <div className={cn('flex items-baseline justify-between gap-2', compact ? '' : 'mb-0.5')}>
             <span className={cn('text-sm truncate', !isRead ? 'font-semibold text-foreground' : 'font-medium text-muted-foreground')}>
               {count > 1
                 ? thread.messages.map(m => m.from.name || m.from.address.split('@')[0]).filter((v, i, a) => a.indexOf(v) === i).slice(0, 3).join(', ')
@@ -801,7 +742,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
                 )
               })()}
               <span className={cn('text-xs tabular-nums', !isRead ? 'text-primary font-medium' : 'text-muted-foreground')}>
-                {formatDate(msg.date)}
+                {formatRowDate(msg.date, locale, t('grpToday'))}
               </span>
             </div>
           </div>
@@ -819,66 +760,6 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
           )}
         </div>
 
-        {/* corner actions — always visible, out of the text flow */}
-        <div className="absolute top-1.5 right-2 flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
-          {archivePath && perms.canOrganize && (
-            <button
-              onClick={() => archiveThread(thread)}
-              title={t('archiveAction')}
-              className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-            >
-              <Archive className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {perms.canOrganize && (
-            <button
-              onClick={() => markThreadRead(thread, !isRead)}
-              title={isRead ? t('markUnread') : t('markDone')}
-              className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-            >
-              {isRead ? <Mail className="w-3.5 h-3.5" /> : <MailOpen className="w-3.5 h-3.5" />}
-            </button>
-          )}
-          {perms.canDelete && (
-            <button
-              onClick={() => apiDelete(msg.uid, msg.accountId || activeAccountId || '')}
-              title={t('delete')}
-              className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {perms.canOrganize && (
-            <div className="relative" ref={snoozeFor === thread.key ? snoozeRef : undefined}>
-              <button
-                onClick={() => setSnoozeFor(snoozeFor === thread.key ? null : thread.key)}
-                title={t('snooze')}
-                className={cn(
-                  'w-6 h-6 flex items-center justify-center rounded transition-colors',
-                  snoozeFor === thread.key ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground hover:bg-accent',
-                )}
-              >
-                <Clock className="w-3.5 h-3.5" />
-              </button>
-              {snoozeFor === thread.key && (
-                <div className="absolute right-0 top-7 z-50 w-44 bg-popover border border-border rounded-lg shadow-xl py-1">
-                  {snoozePresets().map(p => (
-                    <button
-                      key={p.key}
-                      onClick={() => snoozeThread(thread, p.date)}
-                      className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
-                    >
-                      <span>{t(p.key)}</span>
-                      <span className="text-[10px] text-muted-foreground tabular-nums">
-                        {p.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
       </div>
     )
   }
