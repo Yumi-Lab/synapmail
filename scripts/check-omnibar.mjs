@@ -58,9 +58,13 @@ const GROUPS_SRC = SELECTION_SRC.slice(
   SELECTION_SRC.indexOf('MAIL_TOOLBAR_GROUPS'),
   SELECTION_SRC.indexOf('] as const', SELECTION_SRC.indexOf('MAIL_TOOLBAR_GROUPS')))
 const TOOLBAR_ORDER = [...GROUPS_SRC.matchAll(/action:\s*'(\w+)'/g)].map(m => m[1])
+// La première couleur du menu est LUE dans la source des drapeaux : le banc ne
+// nomme aucune couleur de son côté.
+const FLAGS_SRC = readFileSync(new URL('../lib/flags.ts', import.meta.url), 'utf8')
+const FIRST_FLAG_KEY = FLAGS_SRC.match(/\{\s*key:\s*'(\w+)'/)?.[1]
 const SELECTION_ATTR = SELECTION_SRC.match(/MAIL_SELECTION_COUNT_ATTR = '([\w-]+)'/)?.[1]
-if (TOOLBAR_ORDER.length < 2 || !SELECTION_ATTR) {
-  console.error('HARNESS: could not read MAIL_TOOLBAR_GROUPS / MAIL_SELECTION_COUNT_ATTR from lib/mailSelection.tsx')
+if (TOOLBAR_ORDER.length < 2 || !SELECTION_ATTR || !FIRST_FLAG_KEY) {
+  console.error('HARNESS: could not read MAIL_TOOLBAR_GROUPS / MAIL_SELECTION_COUNT_ATTR / MAIL_FLAGS')
   process.exit(2)
 }
 // Lot H2: the signed-in user sits at the far right of the header, and the one door to
@@ -489,12 +493,14 @@ try {
   const flagMenuOpen = await page.evaluate(() => !!document.querySelector('[data-mail-action-menu="setFlag"]'))
   if (!flagMenuOpen) failures.push('the flag button does not open its anchored menu')
   else {
-    await page.click('[data-mail-flag="red"]')
+    // Le menu rend `FlagPicker` (source unique, lib/flags.ts) : ses pastilles
+    // portent `data-flag`, pas un attribut propre à la barre d'outils.
+    await page.click(`[data-mail-action-menu="setFlag"] [data-flag="${FIRST_FLAG_KEY}"]`)
     await new Promise(r => setTimeout(r, SETTLE_MS * 2))
     const afterSet = await flagged()
     await page.click('[data-mail-action="setFlag"]')
     await new Promise(r => setTimeout(r, SETTLE_MS))
-    await page.click('[data-mail-flag="none"]')
+    await page.click('[data-mail-action-menu="setFlag"] [data-flag=""]')
     await new Promise(r => setTimeout(r, SETTLE_MS * 2))
     const afterClear = await flagged()
     console.log(`flag on the test message ${target.uid}: before=${before} after set=${afterSet} after remove=${afterClear}`)

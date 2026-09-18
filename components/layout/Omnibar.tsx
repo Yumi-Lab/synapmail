@@ -28,8 +28,12 @@ export const OMNIBAR = {
    * mail toolbar instead of being centred on the header: it takes the space left, so
    * it needs a floor rather than a reserve — below it, the toolbar folds groups into
    * its « … » menu (it measures, it does not guess a breakpoint).
+   *
+   * Mesuré à 390 px (gate H3 du 19/09) : à 200 px ce plancher ne laissait que 14 px
+   * à la barre d'outils, dont le bouton « … » fait 32 px — il débordait sous le
+   * champ. À 140 px la barre reçoit la place de son bouton, le champ reste saisissable.
    */
-  searchMinWidth: 200,
+  searchMinWidth: 140,
   /**
    * Width at and above which the bar is a column of its own rather than a drawer —
    * Tailwind's default `lg`, the same breakpoint `AppShell` folds the <aside> on
@@ -125,7 +129,9 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
       className="relative shrink-0 flex items-center gap-2 border-b border-border bg-background px-2 sm:px-3"
       style={{ height: OMNIBAR.height }}
     >
-      <div className="flex shrink-0 items-center gap-0.5">
+      {/* gap-1 : deux boîtes cliquables voisines gardent 4 px d'écart, le plancher
+          que le gate mesure — rien ne se touche ni ne se recouvre, même à 390 px. */}
+      <div className="flex shrink-0 items-center gap-1">
         <button
           type="button"
           onClick={onMenu}

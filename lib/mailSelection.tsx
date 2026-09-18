@@ -21,27 +21,11 @@ import type { LucideIcon } from 'lucide-react'
 export type MailFlagValue = string | null
 
 /**
- * Palette des drapeaux, dans l'ordre du menu — les sept couleurs que le protocole
- * IMAP transporte en mot-clé (`$MailFlagBit`, convention d'Apple Mail reprise par
- * les autres clients). Un consommateur LIT ce tableau : ni l'ordre, ni les noms ne
- * se recopient ailleurs. La teinte est un jeton Tailwind : le rendu suit le thème.
+ * La palette des sept drapeaux vit dans `lib/flags.ts` (clés, index IMAP,
+ * couleurs) et se rend par `components/mail/FlagPicker.tsx` : une barre d'outils
+ * qui propose des couleurs monte CE composant. Aucune seconde liste ici — la
+ * précédente divergeait déjà de la source (`grey` contre `gray`).
  */
-export interface MailFlagColor {
-  /** Valeur passée à `setFlag`, et clé i18n sous `mail.flagColors`. */
-  value: string
-  /** Classe de fond de la pastille du menu. */
-  swatch: string
-}
-
-export const MAIL_FLAG_COLORS: readonly MailFlagColor[] = [
-  { value: 'red', swatch: 'bg-red-500' },
-  { value: 'orange', swatch: 'bg-orange-500' },
-  { value: 'yellow', swatch: 'bg-yellow-400' },
-  { value: 'green', swatch: 'bg-emerald-500' },
-  { value: 'blue', swatch: 'bg-blue-500' },
-  { value: 'purple', swatch: 'bg-violet-500' },
-  { value: 'grey', swatch: 'bg-zinc-400' },
-] as const
 
 /** Actions qu'une barre d'outils peut déclencher. Une action non enregistrée ne fait rien. */
 export interface MailActions {

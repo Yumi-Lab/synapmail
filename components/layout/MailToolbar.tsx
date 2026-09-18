@@ -6,8 +6,9 @@ import useSWR from 'swr'
 import { MoreHorizontal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Folder } from '@/types/email'
+import { FlagPicker } from '@/components/mail/FlagPicker'
 import {
-  MAIL_FLAG_COLORS, MAIL_TOOLBAR_GROUPS, useMailSelection,
+  MAIL_TOOLBAR_GROUPS, useMailSelection,
   type MailActionName, type MailToolbarItem,
 } from '@/lib/mailSelection'
 
@@ -45,11 +46,12 @@ function useOverflowGroups(hostRef: React.RefObject<HTMLElement>, probeRef: Reac
       const widths = Array.from(probe.children).map(el => el.getBoundingClientRect().width)
       const total = widths.reduce((a, b) => a + b, 0)
       if (total <= available) { setHidden(prev => (prev.length ? [] : prev)); return }
+      // Le bouton « … » occupe la place d'un bouton : elle est retirée du budget
+      // TANT QU'il est affiché, donc à chaque tour — pas seulement au premier.
+      const budget = available - widths[0]
       const next: number[] = []
       let used = total
       for (const index of OVERFLOW_ORDER) {
-        // Le bouton « … » prend la place d'un bouton : on la compte une seule fois.
-        const budget = available - (next.length ? 0 : widths[0])
         if (used <= budget) break
         used -= widths[index]
         next.push(index)
@@ -71,6 +73,10 @@ function useOverflowGroups(hostRef: React.RefObject<HTMLElement>, probeRef: Reac
 const ACTION = 'w-8 h-8 shrink-0 flex items-center justify-center rounded-lg transition-colors ' +
   'text-foreground/70 hover:text-foreground hover:bg-foreground/[0.06] ' +
   'disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-foreground/70 disabled:cursor-default'
+/** Même bouton, déplié en ligne lisible : le menu « … » nomme ses actions. */
+const ACTION_ROW = 'w-full h-9 shrink-0 flex items-center gap-2 rounded-lg px-2 text-xs transition-colors ' +
+  'text-foreground/80 hover:text-foreground hover:bg-foreground/[0.06] ' +
+  'disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-foreground/80 disabled:cursor-default'
 const ICON = 'w-[18px] h-[18px]'
 const SEPARATOR = 'mx-1 h-5 w-px shrink-0 bg-border'
 const MENU_BOX = 'absolute left-0 top-full z-50 mt-1 rounded-xl border border-border bg-popover p-1 shadow-xl'
@@ -104,9 +110,18 @@ function useAnchoredMenu(open: boolean, close: () => void, triggerRef: React.Ref
   return boxRef
 }
 
-type ButtonProps = { item: MailToolbarItem; openMenu: MailActionName | null; setOpenMenu: (a: MailActionName | null) => void }
+type ButtonProps = {
+  item: MailToolbarItem
+  openMenu: MailActionName | null
+  setOpenMenu: (a: MailActionName | null) => void
+  /**
+   * `bar` = icône seule, le gabarit de la head bar. `row` = icône + libellé, le
+   * gabarit du menu « … » : replié, un bouton doit se LIRE, pas se deviner.
+   */
+  variant?: 'bar' | 'row'
+}
 
-function ToolbarButton({ item, openMenu, setOpenMenu }: ButtonProps) {
+function ToolbarButton({ item, openMenu, setOpenMenu, variant = 'bar' }: ButtonProps) {
   const t = useTranslations('mail')
   const { can, run, state } = useMailSelection()
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -122,6 +137,7 @@ function ToolbarButton({ item, openMenu, setOpenMenu }: ButtonProps) {
   )
   const folders = foldersRes?.data ?? []
 
+  const isRow = variant === 'row'
   const button = (
     <button
       ref={triggerRef}
@@ -130,14 +146,16 @@ function ToolbarButton({ item, openMenu, setOpenMenu }: ButtonProps) {
       title={label}
       aria-label={label}
       {...(isMenu ? { 'aria-haspopup': 'menu' as const, 'aria-expanded': open } : {})}
+      {...(isRow ? { role: 'menuitem' as const } : {})}
       onClick={() => {
         if (!isMenu) { run(item.action as Exclude<MailActionName, 'setFlag' | 'moveTo'>); return }
         setOpenMenu(open ? null : item.action)
       }}
       data-mail-action={item.action}
-      className={ACTION}
+      className={isRow ? ACTION_ROW : ACTION}
     >
       <item.Icon className={ICON} />
+      {isRow && <span className="flex-1 truncate text-left">{label}</span>}
     </button>
   )
 
@@ -147,31 +165,8 @@ function ToolbarButton({ item, openMenu, setOpenMenu }: ButtonProps) {
     <div ref={boxRef} className="relative shrink-0">
       {button}
       {open && item.action === 'setFlag' && (
-        <div role="menu" data-mail-action-menu="setFlag" className={cn(MENU_BOX, 'w-44')}>
-          {MAIL_FLAG_COLORS.map(colour => (
-            <button
-              key={colour.value}
-              type="button"
-              role="menuitem"
-              data-mail-flag={colour.value}
-              onClick={() => { run('setFlag', colour.value); setOpenMenu(null) }}
-              className={MENU_ROW}
-            >
-              <span className={cn('h-3 w-3 shrink-0 rounded-full', colour.swatch)} />
-              <span className="flex-1 truncate text-left">{t(`flagColors.${colour.value}`)}</span>
-            </button>
-          ))}
-          <div className="my-1 border-t border-border" />
-          <button
-            type="button"
-            role="menuitem"
-            data-mail-flag="none"
-            onClick={() => { run('setFlag', null); setOpenMenu(null) }}
-            className={MENU_ROW}
-          >
-            <span className="h-3 w-3 shrink-0 rounded-full border border-border" />
-            <span className="flex-1 truncate text-left">{t('flagRemove')}</span>
-          </button>
+        <div role="menu" data-mail-action-menu="setFlag" className={cn(MENU_BOX, 'w-auto')}>
+          <FlagPicker onPick={flag => { run('setFlag', flag); setOpenMenu(null) }} />
         </div>
       )}
       {open && item.action === 'moveTo' && (
@@ -195,15 +190,21 @@ function ToolbarButton({ item, openMenu, setOpenMenu }: ButtonProps) {
 }
 
 /** Un groupe = ses boutons, précédés d'un trait fin dès qu'il n'est pas le premier affiché. */
-function ToolbarGroup({ items, first, openMenu, setOpenMenu }: {
+function ToolbarGroup({ items, first, openMenu, setOpenMenu, variant = 'bar' }: {
   items: readonly MailToolbarItem[]
   first: boolean
-} & Pick<ButtonProps, 'openMenu' | 'setOpenMenu'>) {
+} & Pick<ButtonProps, 'openMenu' | 'setOpenMenu' | 'variant'>) {
+  const isRow = variant === 'row'
   return (
     <>
-      {!first && <span data-mail-toolbar-separator className={SEPARATOR} />}
+      {!first && (
+        <span
+          data-mail-toolbar-separator
+          className={isRow ? 'my-1 h-px w-full shrink-0 bg-border' : SEPARATOR}
+        />
+      )}
       {items.map(item => (
-        <ToolbarButton key={item.action} item={item} openMenu={openMenu} setOpenMenu={setOpenMenu} />
+        <ToolbarButton key={item.action} item={item} openMenu={openMenu} setOpenMenu={setOpenMenu} variant={variant} />
       ))}
     </>
   )
@@ -281,14 +282,21 @@ export function MailToolbar() {
             <MoreHorizontal className={ICON} />
           </button>
           {moreOpen && (
-            <div role="menu" data-mail-toolbar-more-menu className={cn(MENU_BOX, 'flex w-auto items-center p-1')}>
-              {overflowed.map((group, index) => (
+            // Ancré à DROITE du bouton (`left-auto right-0`) : à 390 px un menu ancré à
+            // gauche sortirait de l'écran. Liste verticale, chaque action nommée.
+            <div
+              role="menu"
+              data-mail-toolbar-more-menu
+              className={cn(MENU_BOX, 'left-auto right-0 flex w-48 flex-col items-stretch')}
+            >
+              {MAIL_TOOLBAR_GROUPS.map((items, index) => (
                 <ToolbarGroup
-                  key={group.i}
-                  items={group.items}
+                  key={index}
+                  items={items}
                   first={index === 0}
                   openMenu={openMenu}
                   setOpenMenu={setOpenMenu}
+                  variant="row"
                 />
               ))}
             </div>
