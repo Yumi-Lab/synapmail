@@ -15,7 +15,7 @@ import { useEmailNotifications } from '@/hooks/useEmailNotifications'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { toast } from '@/components/ui/toast'
 import { useMailSelection } from '@/lib/mailSelection'
-import { MAILBOX_CHANGED, STREAM_ACCOUNT_PARAM } from '@/lib/idle'
+import { MAILBOX_CHANGED, STREAM_ACCOUNT_PARAM } from '@/lib/stream'
 import type { Message } from '@/types/email'
 import type { EmailAccount } from '@/types/account'
 

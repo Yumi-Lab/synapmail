@@ -1,15 +1,6 @@
 import type { ImapFlow } from 'imapflow'
 import { createClient, type AccountConfig } from './imap'
 
-/** Boîte surveillée en temps réel : celle qui reçoit le courrier. */
-export const IDLE_FOLDER = 'INBOX'
-
-/** Nom du type d'événement poussé dans le flux SSE, lu par le client. */
-export const MAILBOX_CHANGED = 'mailbox_changed'
-
-/** Paramètre de `/api/stream` qui désigne le compte à surveiller. */
-export const STREAM_ACCOUNT_PARAM = 'account'
-
 // Attente de reconnexion : double à chaque échec, plafonnée. Une coupure réseau
 // ne doit pas marteler le serveur IMAP, et une coupure longue doit finir par
 // retrouver la boîte sans intervention.
@@ -72,6 +63,11 @@ export function watchMailbox(
       if (stopped) { void opened.logout().catch(() => {}); return }
       client = opened
       attempt = 0
+      // imapflow n'entre en IDLE tout seul qu'après 15 s d'inactivité : sans cet
+      // appel, la PREMIÈRE arrivée attend ce délai (mesuré : ~9 s de latence là
+      // où la DoD en demande moins de 5). `idle()` ne rend la main qu'à la fin
+      // de l'IDLE, d'où l'appel non attendu ; sa rupture passe par 'close'.
+      void opened.idle().catch(() => {})
     } catch {
       // Connexion refusée, identifiants rejetés, boîte absente : on réessaie.
       if (c) void c.logout().catch(() => {})

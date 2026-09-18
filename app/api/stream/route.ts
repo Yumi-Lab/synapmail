@@ -2,7 +2,8 @@ import { auth } from '@/lib/auth'
 import { NextResponse } from 'next/server'
 import { schedulerEvents, type ScheduledSentEvent, type RuleAppliedEvent, type AccountShareAcceptedEvent } from '@/lib/schedulerEvents'
 import { getAccessibleAccount } from '@/lib/accountAccess'
-import { IDLE_FOLDER, MAILBOX_CHANGED, STREAM_ACCOUNT_PARAM, watchMailbox, type MailboxWatcher } from '@/lib/idle'
+import { watchMailbox, type MailboxWatcher } from '@/lib/idle'
+import { IDLE_FOLDER, MAILBOX_CHANGED, STREAM_ACCOUNT_PARAM } from '@/lib/stream'
 
 export const dynamic = 'force-dynamic'
 
