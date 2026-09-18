@@ -6,6 +6,7 @@ import { query } from './db'
 import { upsertContact } from './contacts'
 import { DEFAULT_FLAG_KEY, FLAG_BIT_KEYWORDS, FLAG_IMAP_FLAG, flagFromKeywords, keywordsForFlag } from './flags'
 import type { MailListFilter } from './flags'
+import { SEARCH_FIELDS, SEARCH_RESULT_LIMIT } from './search'
 import type { Message, Folder, AuthResults } from '@/types/email'
 
 /**
@@ -602,64 +603,113 @@ export async function listFolders(account: AccountConfig): Promise<Folder[]> {
  */
 const SEARCH_CONNECTIONS = 4
 
+/** Ce qu'une recherche rapporte : les messages RENDUS et le nombre de correspondances. */
+export type SearchOutcome = { messages: Message[]; total: number }
+
 /**
  * Cherche dans PLUSIEURS dossiers en réutilisant les connexions : ouvrir une
  * connexion par dossier coûte une poignée de main TLS + un LOGIN à chaque fois,
  * ce qui rend la recherche « tous les dossiers » inutilisable sur un compte réel.
  * Un dossier illisible est ignoré quand d'autres restent à couvrir.
+ *
+ * `terms` vient de `parseQuery` (lib/search.ts) : TOUS doivent correspondre.
  */
 export async function searchMessagesIn(
   account: AccountConfig,
   folders: string[],
-  queryStr: string
-): Promise<Message[]> {
+  terms: string[]
+): Promise<SearchOutcome> {
+  if (terms.length === 0) return { messages: [], total: 0 }
   const queue = [...folders]
-  const worker = async (): Promise<Message[]> => {
+  const worker = async (): Promise<SearchOutcome> => {
     const client = await createClient(account)
     try {
       const found: Message[] = []
+      let total = 0
       for (let folder = queue.shift(); folder !== undefined; folder = queue.shift()) {
         try {
-          found.push(...await searchOpenFolder(client, folder, queryStr))
+          const outcome = await searchOpenFolder(client, folder, terms)
+          found.push(...outcome.messages)
+          total += outcome.total
         } catch (err) {
           if (folders.length === 1) throw err
         }
       }
-      return found
+      return { messages: found, total }
     } finally {
       await client.logout()
     }
   }
   const workers = Array.from({ length: Math.min(SEARCH_CONNECTIONS, folders.length) }, worker)
-  return (await Promise.all(workers)).flat()
+  const outcomes = await Promise.all(workers)
+  return {
+    messages: outcomes.flatMap(o => o.messages),
+    total: outcomes.reduce((sum, o) => sum + o.total, 0),
+  }
 }
 
+/**
+ * Cherche UNE expression exacte dans un dossier. Utilisé par le regroupement en
+ * fil de discussion, qui part d'un objet normalisé : le découper en mots
+ * élargirait le fil à des messages sans rapport.
+ */
 export async function searchMessages(
   account: AccountConfig,
   folder: string,
   queryStr: string
 ): Promise<Message[]> {
-  return searchMessagesIn(account, [folder], queryStr)
+  return (await searchMessagesIn(account, [folder], [queryStr])).messages
 }
 
+/**
+ * Un terme = un `SEARCH` qui interroge tous les champs du contrat en `OR` ; les
+ * termes sont croisés en INTERSECTION d'identifiants, ce qui donne le ET attendu
+ * (« 3d cpi » et « cpi 3d » rapportent le même ensemble).
+ *
+ * Pourquoi pas UNE seule requête ? IMAP enchaîne bien ses critères en ET, mais un
+ * objet de requête imapflow ne porte qu'une clé `or` : deux groupes `OR` dans la
+ * même requête demanderaient un `NOT NOT` imbriqué. Un `SEARCH` par terme ne
+ * transporte que des identifiants, sur une boîte DÉJÀ ouverte (mesuré 1,2 s par
+ * requête sur IONOS).
+ * ponytail: intersection côté client tant que les termes se comptent sur une main ;
+ * au-delà, c'est la requête unique qu'il faudrait construire, pas plus de tours.
+ */
 async function searchOpenFolder(
   client: ImapFlow,
   folder: string,
-  queryStr: string
-): Promise<Message[]> {
+  terms: string[]
+): Promise<SearchOutcome> {
   const lock = await client.getMailboxLock(folder)
   try {
-    const searchResult = await client.search({
-      or: [{ from: queryStr }, { subject: queryStr }],
-    })
-    const allUids = Array.isArray(searchResult) ? searchResult : []
-    const recentUids = [...allUids].reverse().slice(0, 50)
+    let matching: number[] | null = null
+    for (const term of terms) {
+      // `{ uid: true }` est indispensable : sans lui le serveur renvoie des NUMÉROS
+      // DE SÉQUENCE, que le `fetch` ci-dessous relirait comme des UID — donc les
+      // mauvais messages dès qu'un message a été supprimé du dossier.
+      const result = await client.search(
+        { or: SEARCH_FIELDS.map(field => ({ [field]: term })) },
+        { uid: true }
+      )
+      const uids = Array.isArray(result) ? result : []
+      if (matching === null) matching = uids
+      else {
+        const keep = new Set(uids)
+        matching = matching.filter(uid => keep.has(uid))
+      }
+      if (matching.length === 0) break
+    }
+    const allUids = matching ?? []
+    const recentUids = [...allUids].reverse().slice(0, SEARCH_RESULT_LIMIT)
 
     const messages: Message[] = []
     if (recentUids.length > 0) {
-      for await (const msg of client.fetch(recentUids as unknown as string, {
+      // Le troisième argument est ce qui fait de ce FETCH un `UID FETCH` ; `uid: true`
+      // dans le second ne fait que DEMANDER le champ UID. Les deux sont nécessaires :
+      // sans le troisième, les identifiants renvoyés par la recherche seraient relus
+      // comme des numéros de séquence (mesuré : 0 message rendu sur 212 trouvés).
+      for await (const msg of client.fetch(recentUids.join(','), {
         uid: true, flags: true, envelope: true, bodyStructure: true, internalDate: true,
-      })) {
+      }, { uid: true })) {
         messages.push({
           uid: String(msg.uid),
           messageId: msg.envelope?.messageId ?? '',
@@ -681,7 +731,7 @@ async function searchOpenFolder(
         })
       }
     }
-    return messages
+    return { messages, total: allUids.length }
   } finally {
     lock.release()
   }
