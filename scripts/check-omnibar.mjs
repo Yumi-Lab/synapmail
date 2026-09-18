@@ -149,6 +149,12 @@ const browser = await puppeteer.launch({ executablePath: CHROME, headless: true,
 const failures = []
 try {
   const page = await browser.newPage()
+// Le serveur de développement recompile une route à la première visite et la boîte
+// tient un flux SSE ouvert : `networkidle2` y met parfois plus que les 30 s par
+// défaut de puppeteer. Mesuré le 19/09 : deux exécutions tombées sur deux `goto`
+// DIFFÉRENTS, toutes deux hors des sections mesurées — une panne de banc, pas du
+// produit. Le plafond monte, le banc ne change rien de ce qu'il mesure.
+page.setDefaultNavigationTimeout(120000)
   await page.setViewport(VIEWPORT)
 
   await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2' })
