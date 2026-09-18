@@ -205,7 +205,10 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
 
       {/* Right-hand group: the scope toggle only while searching, then the signed-in
           user. One group, so the field's side reserve has a single thing to clear. */}
-      <div data-omnibar-right className="ml-auto flex shrink-0 items-center gap-2">
+      {/* Pas de `ml-auto` ici : le champ se centre déjà par ses deux marges auto. Une
+          troisième marge auto partagerait l'espace libre en TROIS et décalerait le
+          champ (mesuré : 52 px hors de la boîte, là où le champ atteint sa borne). */}
+      <div data-omnibar-right className="flex shrink-0 items-center gap-2">
       {/* Étendue de la recherche — n'apparaît que pendant une recherche, une seule ligne, deux positions */}
       {query && (
         <div className="hidden sm:flex shrink-0 items-center rounded-lg border border-border bg-muted/50 p-0.5 text-[11px]">

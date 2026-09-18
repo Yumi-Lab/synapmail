@@ -19,6 +19,10 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 // Tolerance for a position/size drift, in CSS pixels — same floor as the sidebar
 // gate: sub-pixel layout rounding is expected, anything a human could see is not.
 const MAX_DRIFT_PX = 1
+// Le champ est centré par `mx-auto` dans l'espace restant : le reste de la ligne
+// (marges, bornes min/max) peut le décaler de quelques pixels sans que ce soit un
+// défaut. Calibré sur le rendu réel du lot H3 (1440/1280/1024/390, cf. Journal).
+const FIELD_CENTRE_TOLERANCE_PX = 8
 const VIEWPORT = { width: 1440, height: 900 }
 const MOBILE_VIEWPORT = { width: 390, height: 844 }
 // Pages the header must be present on, per GOAL.md lot O1.
@@ -91,6 +95,8 @@ const probeBar = sel => {
     windowWidth: document.documentElement.clientWidth,
     asideRight: ar && ar.height ? ar.right : null,
     field: box('[data-omnibar-search]'),
+    // Lot H3: the mail toolbar sits between the left group and the field.
+    toolbar: box('[data-mail-toolbar]'),
     menu: box('[data-omnibar-menu]'),
     actions: ['dashboard', 'compose'].map(n => box(`[data-omnibar-action="${n}"]`)),
     user: box('[data-user-menu-trigger]'),
@@ -151,9 +157,16 @@ try {
       const xs = [bar.menu, ...bar.actions].map(a => a.left)
       if (xs.some((x, i) => i > 0 && x <= xs[i - 1])) failures.push(`${path}: the left group is not in order menu, dashboard, compose (x = ${xs.map(v => v.toFixed(0)).join(', ')})`)
       if (bar.actions.at(-1).right > bar.field.left) failures.push(`${path}: the actions are not left of the search field (last action ends at ${bar.actions.at(-1).right.toFixed(2)}, field starts at ${bar.field.left.toFixed(2)})`)
-      const offCentre = Math.abs(bar.field.centre - bar.centre)
-      console.log(`  menu+actions x=${xs.map(v => v.toFixed(0)).join(',')} | field ${bar.field.left.toFixed(0)}..${bar.field.right.toFixed(0)} (w=${bar.field.width.toFixed(0)}), off-centre ${offCentre.toFixed(2)}px`)
-      if (offCentre > MAX_DRIFT_PX) failures.push(`${path}: the search field is ${offCentre.toFixed(2)}px off the header's centre`)
+      // Lot H3 (arbitrage de Nicolas): once the mail toolbar shares the header, the
+      // field is no longer centred on the HEADER — it is centred in the space left
+      // between whatever precedes it and the user bubble. Off /mail there is no
+      // toolbar, so that space starts right after the left group.
+      const gapLeft = Math.max(bar.actions.at(-1).right, bar.toolbar?.right ?? 0)
+      const gapRight = bar.user ? bar.user.left : bar.right
+      const offCentre = Math.abs(bar.field.centre - (gapLeft + gapRight) / 2)
+      console.log(`  menu+actions x=${xs.map(v => v.toFixed(0)).join(',')} | toolbar ${bar.toolbar ? `${bar.toolbar.left.toFixed(0)}..${bar.toolbar.right.toFixed(0)}` : 'n/a'} | field ${bar.field.left.toFixed(0)}..${bar.field.right.toFixed(0)} (w=${bar.field.width.toFixed(0)}), off-centre-in-gap ${offCentre.toFixed(2)}px`)
+      if (offCentre > FIELD_CENTRE_TOLERANCE_PX) failures.push(`${path}: the search field is ${offCentre.toFixed(2)}px off the centre of the space left for it (${gapLeft.toFixed(0)}..${gapRight.toFixed(0)})`)
+      if (bar.toolbar && bar.field.left < bar.toolbar.right) failures.push(`${path}: the search field (x=${bar.field.left.toFixed(2)}) runs under the mail toolbar (ends at ${bar.toolbar.right.toFixed(2)})`)
       if (bar.field.width > EXPECTED_FIELD_MAX_WIDTH + MAX_DRIFT_PX) failures.push(`${path}: the field is ${bar.field.width.toFixed(2)}px wide, above the ${EXPECTED_FIELD_MAX_WIDTH}px bound`)
     }
     if (bar.horizontalOverflow) failures.push(`${path}: horizontal scrollbar at ${VIEWPORT.width}px`)
@@ -161,6 +174,9 @@ try {
     const missing = await page.evaluate(sels => sels.filter(s => !document.querySelector(s)), [SEARCH, action('dashboard'), action('compose'), USER_TRIGGER])
     if (missing.length) failures.push(`${path}: missing from the header: ${missing.join(', ')}`)
     // One door to the settings (lot H2): the left group no longer carries the action.
+    // Hors de la boîte, le groupe courrier n'existe pas (rien à griser inutilement).
+    if (path === '/mail' && !bar.toolbar) failures.push(`${path}: no mail toolbar in the header`)
+    if (path !== '/mail' && bar.toolbar) failures.push(`${path}: the mail toolbar shows outside the mailbox`)
     if (bar.strayActions.includes('settings')) failures.push(`${path}: the header still carries a "settings" action on the left`)
     // The user bubble is the RIGHTMOST thing in the header, past the field, with two letters.
     if (!bar.user) failures.push(`${path}: no user bubble in the header`)
