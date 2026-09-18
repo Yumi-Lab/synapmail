@@ -703,9 +703,13 @@ async function searchOpenFolder(
 
     const messages: Message[] = []
     if (recentUids.length > 0) {
-      for await (const msg of client.fetch(recentUids as unknown as string, {
+      // Le troisième argument est ce qui fait de ce FETCH un `UID FETCH` ; `uid: true`
+      // dans le second ne fait que DEMANDER le champ UID. Les deux sont nécessaires :
+      // sans le troisième, les identifiants renvoyés par la recherche seraient relus
+      // comme des numéros de séquence (mesuré : 0 message rendu sur 212 trouvés).
+      for await (const msg of client.fetch(recentUids.join(','), {
         uid: true, flags: true, envelope: true, bodyStructure: true, internalDate: true,
-      })) {
+      }, { uid: true })) {
         messages.push({
           uid: String(msg.uid),
           messageId: msg.envelope?.messageId ?? '',
