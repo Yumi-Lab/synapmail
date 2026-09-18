@@ -22,7 +22,16 @@ const MAX_DRIFT_PX = 1
 // Le champ est centré par `mx-auto` dans l'espace restant : le reste de la ligne
 // (marges, bornes min/max) peut le décaler de quelques pixels sans que ce soit un
 // défaut. Calibré sur le rendu réel du lot H3 (1440/1280/1024/390, cf. Journal).
-const FIELD_CENTRE_TOLERANCE_PX = 8
+// Lot H3c : le champ n'est plus centré, il est COLLÉ à la dernière icône. La valeur
+// attendue est lue dans le composant, jamais transcrite ici.
+const EXPECTED_FIELD_GAP = Number(readFileSync(new URL('../components/layout/Omnibar.tsx', import.meta.url), 'utf8').match(/searchGap:\s*(\d+)/)?.[1])
+
+// Géométrie et délai de l'infobulle, lus dans le composant qui les expose.
+const TOOLTIP_SRC = readFileSync(new URL('../components/ui/IconTooltip.tsx', import.meta.url), 'utf8')
+const EXPECTED_TOOLTIP_OFFSET = Number(TOOLTIP_SRC.match(/TOOLTIP_OFFSET_PX = (\d+)/)?.[1])
+const EXPECTED_TOOLTIP_DELAY = Number(TOOLTIP_SRC.match(/TOOLTIP_DELAY_MS = (\d+)/)?.[1])
+/** Survol + délai d'apparition + marge de rendu : la bulle a eu le temps de paraître. */
+const TOOLTIP_SETTLE_MS = EXPECTED_TOOLTIP_DELAY + 400
 const VIEWPORT = { width: 1440, height: 900 }
 // `hasTouch` : le gate ouvre le menu « … » par un VRAI tap (`page.tap`), le geste
 // que l'humain a fait — un `click()` programmatique ne prouverait pas le même chose.
@@ -130,6 +139,18 @@ const probeBar = sel => {
     field: box('[data-omnibar-search]'),
     // Lot H3: the mail toolbar sits between the left group and the field.
     toolbar: box('[data-mail-toolbar]'),
+    // Lot H3c: le champ se colle à la dernière ICÔNE, pas au conteneur de la barre
+    // (qui est `flex-1` et s'étend donc jusqu'au champ).
+    lastToolbarButton: (() => {
+      const buttons = [...bar.querySelectorAll('[data-mail-toolbar] button')]
+        .filter(el => el.getBoundingClientRect().width > 0)
+      const last = buttons.at(-1)
+      if (!last) return null
+      const b = last.getBoundingClientRect()
+      return { left: b.left, right: b.right, centre: b.left + b.width / 2, width: b.width }
+    })(),
+    // Lot H3c: une SEULE bulle par bouton — plus aucun `title` natif dans le header.
+    titled: [...bar.querySelectorAll('[title]')].map(el => el.getAttribute('title')),
     menu: box('[data-omnibar-menu]'),
     actions: ['dashboard', 'compose'].map(n => box(`[data-omnibar-action="${n}"]`)),
     user: box('[data-user-menu-trigger]'),
@@ -196,20 +217,22 @@ page.setDefaultNavigationTimeout(120000)
       const xs = [bar.menu, ...bar.actions].map(a => a.left)
       if (xs.some((x, i) => i > 0 && x <= xs[i - 1])) failures.push(`${path}: the left group is not in order menu, dashboard, compose (x = ${xs.map(v => v.toFixed(0)).join(', ')})`)
       if (bar.actions.at(-1).right > bar.field.left) failures.push(`${path}: the actions are not left of the search field (last action ends at ${bar.actions.at(-1).right.toFixed(2)}, field starts at ${bar.field.left.toFixed(2)})`)
-      // Lot H3 (arbitrage de Nicolas): once the mail toolbar shares the header, the
-      // field is no longer centred on the HEADER — it is centred in the space left
-      // between whatever precedes it and the user bubble. Off /mail there is no
-      // toolbar, so that space starts right after the left group.
-      const gapLeft = Math.max(bar.actions.at(-1).right, bar.toolbar?.right ?? 0)
-      const gapRight = bar.user ? bar.user.left : bar.right
-      const offCentre = Math.abs(bar.field.centre - (gapLeft + gapRight) / 2)
-      console.log(`  menu+actions x=${xs.map(v => v.toFixed(0)).join(',')} | toolbar ${bar.toolbar ? `${bar.toolbar.left.toFixed(0)}..${bar.toolbar.right.toFixed(0)}` : 'n/a'} | field ${bar.field.left.toFixed(0)}..${bar.field.right.toFixed(0)} (w=${bar.field.width.toFixed(0)}), off-centre-in-gap ${offCentre.toFixed(2)}px`)
-      if (offCentre > FIELD_CENTRE_TOLERANCE_PX) failures.push(`${path}: the search field is ${offCentre.toFixed(2)}px off the centre of the space left for it (${gapLeft.toFixed(0)}..${gapRight.toFixed(0)})`)
+      // Lot H3c : le champ commence juste après la DERNIÈRE icône visible — celle de
+      // la barre d'outils sur /mail, celle du groupe de gauche ailleurs — à l'écart
+      // `searchGap` lu dans le composant. L'espace libre part à sa droite.
+      const lastIcon = Math.max(bar.actions.at(-1).right, bar.lastToolbarButton?.right ?? 0)
+      const gap = bar.field.left - lastIcon
+      const freeRight = (bar.user ? bar.user.left : bar.right) - bar.field.right
+      console.log(`  menu+actions x=${xs.map(v => v.toFixed(0)).join(',')} | last icon ends ${lastIcon.toFixed(0)} | field ${bar.field.left.toFixed(0)}..${bar.field.right.toFixed(0)} (w=${bar.field.width.toFixed(0)}), gap ${gap.toFixed(2)}px, free space right ${freeRight.toFixed(2)}px`)
+      if (Math.abs(gap - EXPECTED_FIELD_GAP) > MAX_DRIFT_PX) failures.push(`${path}: the field starts ${gap.toFixed(2)}px after the last icon, expected ${EXPECTED_FIELD_GAP}px (Omnibar.tsx searchGap)`)
+      if (freeRight < -MAX_DRIFT_PX) failures.push(`${path}: the field overlaps the user bubble (${freeRight.toFixed(2)}px)`)
       if (bar.toolbar && bar.field.left < bar.toolbar.right) failures.push(`${path}: the search field (x=${bar.field.left.toFixed(2)}) runs under the mail toolbar (ends at ${bar.toolbar.right.toFixed(2)})`)
       if (bar.field.width > EXPECTED_FIELD_MAX_WIDTH + MAX_DRIFT_PX) failures.push(`${path}: the field is ${bar.field.width.toFixed(2)}px wide, above the ${EXPECTED_FIELD_MAX_WIDTH}px bound`)
     }
     if (bar.horizontalOverflow) failures.push(`${path}: horizontal scrollbar at ${VIEWPORT.width}px`)
     if (bar.animated) failures.push(`${path}: an element of the header is running an animation (state must be static)`)
+    // Lot H3c : la bulle système (positionnée sur le POINTEUR) est remplacée partout.
+    if (bar.titled.length) failures.push(`${path}: ${bar.titled.length} header element(s) still carry a native title: ${bar.titled.join(' | ')}`)
     const missing = await page.evaluate(sels => sels.filter(s => !document.querySelector(s)), [SEARCH, action('dashboard'), action('compose'), USER_TRIGGER])
     if (missing.length) failures.push(`${path}: missing from the header: ${missing.join(', ')}`)
     // One door to the settings (lot H2): the left group no longer carries the action.
@@ -439,6 +462,75 @@ page.setDefaultNavigationTimeout(120000)
   console.log(`constant says : ${TOOLBAR_ORDER.join(',')}`)
   if (order.join(',') !== TOOLBAR_ORDER.join(','))
     failures.push(`toolbar order is ${order.join(',')}, MAIL_TOOLBAR_GROUPS says ${TOOLBAR_ORDER.join(',')}`)
+
+  // --- Lot H3c: « Relever » avant « Nouveau message », et les infobulles ancrées ---
+  // L'action de tête est LUE dans la constante partagée, jamais transcrite ici.
+  const leadAction = TOOLBAR_ORDER[0]
+  const leadOrder = await page.evaluate(lead => {
+    const bar = document.querySelector('[data-omnibar]')
+    const box = sel => {
+      const el = bar?.querySelector(sel)
+      if (!el) return null
+      const b = el.getBoundingClientRect()
+      return { left: b.left, right: b.right, centre: b.left + b.width / 2, bottom: b.bottom }
+    }
+    return {
+      lead: box(`[data-mail-action="${lead}"]`),
+      compose: box('[data-omnibar-action="compose"]'),
+      dashboard: box('[data-omnibar-action="dashboard"]'),
+      inToolbar: !!document.querySelector(`[data-mail-toolbar] [data-mail-action="${lead}"]`),
+    }
+  }, leadAction)
+  console.log(`lead "${leadAction}" x=${leadOrder.lead?.left.toFixed(0) ?? 'n/a'} | dashboard ${leadOrder.dashboard?.left.toFixed(0)} | compose ${leadOrder.compose?.left.toFixed(0)} | still inside the toolbar: ${leadOrder.inToolbar}`)
+  if (!leadOrder.lead || !leadOrder.compose || !leadOrder.dashboard) failures.push(`the header is missing one of ${leadAction} / compose / dashboard`)
+  else {
+    if (!(leadOrder.dashboard.right <= leadOrder.lead.left)) failures.push(`"${leadAction}" (x=${leadOrder.lead.left.toFixed(2)}) is not right of the dashboard action (${leadOrder.dashboard.right.toFixed(2)})`)
+    if (!(leadOrder.lead.right <= leadOrder.compose.left)) failures.push(`"${leadAction}" (ends ${leadOrder.lead.right.toFixed(2)}) is not BEFORE compose (${leadOrder.compose.left.toFixed(2)}) — lot H3c asked for the swap`)
+  }
+  if (leadOrder.inToolbar) failures.push(`"${leadAction}" is rendered twice: the header took it and the mail toolbar still shows it`)
+
+  // Une bulle apparaît au SURVOL RÉEL et se pose sous l'icône, pas sous le pointeur.
+  const TIP = '[data-icon-tooltip]'
+  const tipVisible = () => page.evaluate(sel => [...document.querySelectorAll(sel)]
+    .filter(el => getComputedStyle(el).visibility !== 'hidden' && Number(getComputedStyle(el).opacity) > 0.5)
+    .map(el => {
+      const b = el.getBoundingClientRect()
+      const host = el.parentElement.getBoundingClientRect()
+      return { text: el.textContent.trim(), centre: b.left + b.width / 2, top: b.top, left: b.left, right: b.right, hostCentre: host.left + host.width / 2, hostBottom: host.bottom, windowWidth: document.documentElement.clientWidth }
+    }), TIP)
+
+  await page.mouse.move(0, 0)
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const tipsAtRest = await tipVisible()
+  console.log(`tooltips visible without hovering: ${tipsAtRest.length}`)
+  if (tipsAtRest.length) failures.push(`${tipsAtRest.length} tooltip(s) visible without any hover: ${tipsAtRest.map(t => t.text).join(' | ')}`)
+
+  // Trois positions : une au bord gauche, une au milieu, une au bord droit.
+  for (const [where, selector] of [['left edge', MENU], ['middle', `[data-mail-action="${TOOLBAR_ORDER[1]}"]`], ['right edge', USER_TRIGGER]]) {
+    await page.hover(selector)
+    await new Promise(r => setTimeout(r, TOOLTIP_SETTLE_MS))
+    const tips = await tipVisible()
+    if (tips.length !== 1) { failures.push(`hovering the ${where} icon (${selector}) showed ${tips.length} tooltip(s), expected exactly 1`); await page.mouse.move(0, 0); continue }
+    const tip = tips[0]
+    const offCentre = Math.abs(tip.centre - tip.hostCentre)
+    const below = tip.top - tip.hostBottom
+    console.log(`  ${where}: "${tip.text}" centre off by ${offCentre.toFixed(2)}px, top = icon bottom + ${below.toFixed(2)}px, x ${tip.left.toFixed(0)}..${tip.right.toFixed(0)}/${tip.windowWidth}`)
+    if (Math.abs(below - EXPECTED_TOOLTIP_OFFSET) > MAX_DRIFT_PX) failures.push(`${where}: the tooltip sits ${below.toFixed(2)}px under the icon, expected ${EXPECTED_TOOLTIP_OFFSET}px (IconTooltip.tsx)`)
+    if (tip.left < -MAX_DRIFT_PX || tip.right > tip.windowWidth + MAX_DRIFT_PX) failures.push(`${where}: the tooltip runs out of the window (${tip.left.toFixed(2)}..${tip.right.toFixed(2)} of ${tip.windowWidth})`)
+    // Au milieu la bulle est centrée sur l'icône ; aux bords elle s'aligne dessus, donc
+    // seule la contrainte « dans l'écran » ci-dessus s'applique.
+    if (where === 'middle' && offCentre > MAX_DRIFT_PX) failures.push(`middle: the tooltip centre is ${offCentre.toFixed(2)}px off its icon's centre`)
+    await page.mouse.move(0, 0)
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+  }
+
+  // Focus clavier : même bulle, sans souris.
+  await page.evaluate(sel => document.querySelector(sel)?.focus(), MENU)
+  await new Promise(r => setTimeout(r, TOOLTIP_SETTLE_MS))
+  const focusTips = await tipVisible()
+  console.log(`keyboard focus on the menu button -> ${focusTips.length} tooltip(s): ${focusTips.map(t => t.text).join(' | ') || 'none'}`)
+  if (focusTips.length !== 1) failures.push(`focusing the menu button with the keyboard showed ${focusTips.length} tooltip(s), expected exactly 1`)
+  await page.evaluate(() => document.activeElement?.blur())
 
   // 0 selected: only refresh is live — a button without a capability is greyed, never hidden.
   const at0 = await actionStates()

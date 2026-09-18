@@ -54,7 +54,19 @@ function useOverflowGroups(hostRef: React.RefObject<HTMLElement>, probeRef: Reac
     if (!host || !probe) return
 
     const measure = () => {
-      const available = host.getBoundingClientRect().width
+      // La barre ne s'étire plus : sa propre largeur ne dit plus la place disponible.
+      // Le budget est celui de la rangée qui la porte, moins le plancher que ses
+      // voisins réservent (le champ de recherche) — planchers LUS sur le rendu, donc
+      // toujours ceux qui sont livrés, jamais des constantes recopiées ici.
+      const row = host.parentElement
+      if (!row) return
+      const reserved = Array.from(row.children)
+        .filter(el => el !== host)
+        .reduce((sum, el) => {
+          const st = getComputedStyle(el)
+          return sum + (parseFloat(st.minWidth) || 0) + (parseFloat(st.marginLeft) || 0) + (parseFloat(st.marginRight) || 0)
+        }, 0)
+      const available = row.getBoundingClientRect().width - reserved
       // La sonde rend les groupes de la barre puis, en dernier, le bouton « … » :
       // sa largeur est MESURÉE elle aussi, jamais devinée.
       const boxes = Array.from(probe.children).map(el => el.getBoundingClientRect().width)
@@ -76,7 +88,11 @@ function useOverflowGroups(hostRef: React.RefObject<HTMLElement>, probeRef: Reac
 
     measure()
     const observer = new ResizeObserver(measure)
-    observer.observe(host)
+    // La rangée, PAS la barre : depuis le lot H3c la barre est `shrink-0`, sa propre
+    // boîte ne change donc plus quand la fenêtre rétrécit — l'observer posé sur elle
+    // ne se déclenchait plus (mesuré : 10 boutons encore affichés à 390 px après un
+    // redimensionnement, alors qu'un chargement direct à 390 px en repliait 9).
+    if (host.parentElement) observer.observe(host.parentElement)
     observer.observe(probe)
     return () => observer.disconnect()
   }, [hostRef, probeRef])
@@ -276,7 +292,10 @@ export function MailToolbar() {
   const overflowed = inBar.filter(g => hiddenSet.has(g.i))
 
   return (
-    <div ref={hostRef} data-mail-toolbar className="relative flex min-w-0 flex-1 items-center">
+    // `shrink-0` depuis le lot H3c : la barre garde sa largeur naturelle pour que le
+    // champ vienne se coller à sa dernière icône. Le budget de repli est donc lu sur
+    // la rangée qui la contient, plus sur elle-même (voir `useOverflowGroups`).
+    <div ref={hostRef} data-mail-toolbar className="relative flex shrink-0 items-center">
       {/* Sonde hors écran : la largeur que TOUS les groupes demanderaient, mesurée
           sur le rendu réel. Elle ne se voit pas et ne se clique pas. */}
       <div
@@ -328,12 +347,15 @@ export function MailToolbar() {
             </button>
           </IconTooltip>
           {moreOpen && (
-            // Ancré à DROITE du bouton (`left-auto right-0`) : à 390 px un menu ancré à
-            // gauche sortirait de l'écran. Liste verticale, chaque action nommée.
+            // Centré SOUS le bouton : ancré à gauche il sortait à droite, ancré à
+            // droite il sortait à gauche de 3 px à 390 px une fois « Relever » monté
+            // dans le groupe de gauche (lot H3c). Centré, ses deux bords tiennent —
+            // le bouton est toujours à plus d'une demi-largeur de menu des deux bords,
+            // et le gate le vérifie à 390 px (« entirely on screen »).
             <div
               role="menu"
               data-mail-toolbar-more-menu
-              className={cn(MENU_BOX, 'left-auto right-0 flex w-48 flex-col items-stretch')}
+              className={cn(MENU_BOX, 'left-1/2 flex w-48 -translate-x-1/2 flex-col items-stretch')}
             >
               {MAIL_TOOLBAR_GROUPS.map((items, index) => (
                 <ToolbarGroup

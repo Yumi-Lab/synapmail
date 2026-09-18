@@ -179,12 +179,14 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
         </IconTooltip>
       </div>
 
-      {/* Hors de la boîte, rien à griser : le groupe courrier n'existe pas. */}
-      {onMail && <MailToolbar />}
+      {/* Lot H3c : barre d'outils et champ partagent UNE rangée qui porte le `flex-1`.
+          La barre y garde sa largeur naturelle (`shrink-0`) et le champ prend ce qui
+          reste, borné : le champ se colle donc à la dernière icône, et la place en
+          trop tombe APRÈS lui — plus jamais entre la barre et le champ. */}
+      <div className="flex min-w-0 flex-1 items-center">
+        {/* Hors de la boîte, rien à griser : le groupe courrier n'existe pas. */}
+        {onMail && <MailToolbar />}
 
-      {/* Lot H3c : le champ commence juste après la dernière icône visible (écart
-          `searchGap`), il ne se centre plus dans la place restante. L'espace libre
-          part à sa droite, absorbé par la marge automatique du groupe du compte. */}
       <div
         data-omnibar-search-field
         className="relative flex min-w-0 flex-1 items-center"
@@ -233,6 +235,7 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
             {SEARCH_SHORTCUT}
           </kbd>
         )}
+      </div>
       </div>
 
       {/* Right-hand group: the scope toggle only while searching, then the signed-in
