@@ -557,9 +557,14 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
   const animated = []
   for (const el of bar.querySelectorAll('*')) {
     const st = getComputedStyle(el)
-    // Decorative motion only: a transition is not an animation, and a 0s animation is not running.
+    // Decorative motion only: a transition is not an animation, and a 0s animation is not
+    // running. Neither is a one-shot that has already PLAYED OUT: `animation-name` stays on
+    // the computed style forever once set, so reading that property alone reports a finished
+    // 180ms state-change flip as if it were an endless pulse. The Web Animations API knows
+    // the difference -- ask the element what is actually playing right now.
     if (st.animationName !== 'none' && parseFloat(st.animationDuration) > 0) {
-      animated.push(`${el.tagName.toLowerCase()}:${st.animationName}`)
+      const playing = el.getAnimations().filter(a => a.playState === 'running')
+      if (playing.length) animated.push(`${el.tagName.toLowerCase()}:${st.animationName}`)
     }
     // Account bubbles are excluded: their palette is deliberately multi-colour and is
     // contrast-gated above. Everything else the bar paints must share one accent hue.
@@ -577,6 +582,7 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
   }
   return {
     theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
+    collapsed: bar.dataset.collapsed,
     barBg: show(barBg),
     slot: !!bar.querySelector('[data-sidebar-slot="theme-toggle"]'),
     animated,
@@ -1241,7 +1247,7 @@ try {
     const c = clean[theme]
     const hues = c.accents.map(a => a.hue)
     const spread = hues.length ? Math.max(...hues) - Math.min(...hues) : 0
-    console.log(`${theme}: bar background ${c.barBg}, accent surfaces ${c.accents.length} spanning ${spread.toFixed(1)} deg of hue (${c.accents.map(a => `${a.colour} @${a.hue.toFixed(0)}deg`).join(', ') || 'none'}), animated elements ${c.animated.length}`)
+    console.log(`${theme}: bar collapsed=${c.collapsed}, bar background ${c.barBg}, accent surfaces ${c.accents.length} spanning ${spread.toFixed(1)} deg of hue (${c.accents.map(a => `${a.colour} @${a.hue.toFixed(0)}deg`).join(', ') || 'none'}), animated elements ${c.animated.length}`)
     if (!c.accents.length) { console.error('HARNESS: no accent surface found in the bar — nothing to measure'); process.exit(2) }
     if (spread > MAX_ACCENT_HUE_SPREAD_DEG) {
       failures.push(`${theme}: bar paints accents spanning ${spread.toFixed(1)} deg of hue (max ${MAX_ACCENT_HUE_SPREAD_DEG}): ${c.accents.map(a => `${a.colour} @${a.hue.toFixed(0)}deg`).join(', ')}`)
