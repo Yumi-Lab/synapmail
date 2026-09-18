@@ -6,7 +6,7 @@ import { openCompose } from '@/lib/compose'
 import { useTranslations } from 'next-intl'
 import {
   Mail, Send, FileText, AlertTriangle, Trash2,
-  PenSquare, Folder, Archive, ChevronDown, RefreshCw,
+  PenSquare, Folder, Archive, ChevronDown, RefreshCw, Share2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import useSWR from 'swr'
@@ -14,6 +14,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { ACCENT, AccountAvatar, UnreadBadge, useAccountAccent } from './AccountAvatar'
 import { folderGlyph, folderInitials } from './FolderGlyph'
 import { ThinScroll } from './ThinScroll'
+import { ACCOUNTS_SETTINGS_HREF } from '@/components/settings/SettingsSidebar'
+import type { EmailAccount } from '@/types/account'
 
 /**
  * Single source for the bar's geometry. `AppShell` sizes the <aside> from it and
@@ -81,6 +83,36 @@ const ROW_LABEL = 'flex-1 min-w-0 flex items-center gap-2 pr-3 text-sm whitespac
 // Header row only: the straddling toggle reaches half its width inside the bar,
 // so the account name/email needs more right padding than an ordinary row.
 const HEADER_LABEL_PAD = 'pr-8'
+// Gutter reserved at the right of a SHARED account's row for its one mark. Kept as a
+// pair — the column the mark occupies, and the padding the row adds so the mark never
+// lands on the name or the email.
+const SHARED_MARK_COL = 'w-7'
+const SHARED_MARK_PAD = 'pr-7'
+
+/**
+ * The ONLY sign that an inbox is shared: one monochrome glyph, in a fixed column
+ * at the right of the row. It carries its own box, so the name and the email of a
+ * shared account start at the exact same x as any other account's. Clicking it
+ * goes to where a share is removed, without switching the active account.
+ */
+function SharedMark({ account, label, className }: { account: EmailAccount; label: string; className?: string }) {
+  if (!account.isShared) return null
+  return (
+    <Link
+      href={ACCOUNTS_SETTINGS_HREF}
+      title={label}
+      aria-label={label}
+      data-account-shared-mark
+      className={cn(
+        'absolute right-0 top-0 h-full flex items-center justify-center',
+        SHARED_MARK_COL, 'text-muted-foreground hover:text-foreground transition-colors',
+        className,
+      )}
+    >
+      <Share2 className="w-3.5 h-3.5" />
+    </Link>
+  )
+}
 
 interface SidebarProps {
   /** Mobile drawer only: closes the drawer after a navigation. */
@@ -305,7 +337,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
               />
             </span>
             <span
-              className={cn(ROW_LABEL, HEADER_LABEL_PAD, collapsed && 'opacity-0')}
+              className={cn(ROW_LABEL, HEADER_LABEL_PAD, activeAccount.isShared && SHARED_MARK_PAD, collapsed && 'opacity-0')}
               style={{ transitionDuration: `${SIDEBAR.transitionMs}ms` }}
               aria-hidden={collapsed}
             >
@@ -322,6 +354,13 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
               )}
             </span>
           </button>
+          <SharedMark
+            account={activeAccount}
+            label={t('sharedBy', { name: activeAccount.ownerName ?? activeAccount.email })}
+            // Left of the chevron, and gone when the bar is folded: a collapsed bar
+            // shows the bubble alone, nothing may be painted beside it.
+            className={cn(hasMultipleAccounts ? 'right-6' : 'right-1', collapsed && 'hidden')}
+          />
           {accountOpen && popoverPos && (
             <div
               className={cn(
@@ -363,31 +402,31 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                 {filteredAccounts.map(acc => {
                   const unread = acc.unreadCount ?? 0
                   return (
-                    <button
-                      key={acc.id}
-                      onClick={() => switchAccount(acc.id)}
-                      // Every row has the same box: a fixed bubble, one gap, then the text —
-                      // so all names and emails of the list start at the exact same x.
-                      className={cn(ROW, ROW_IDLE, 'gap-2.5 px-3 rounded-none text-left')}
-                    >
-                      <AccountAvatar
-                        account={acc}
-                        colorIndex={accounts.indexOf(acc)}
-                        unread={unread}
-                        size="md"
-                      />
-                      <span className="flex-1 min-w-0 text-left">
-                        <span className="block text-sm font-medium truncate leading-tight">{acc.name || acc.email}</span>
-                        {acc.name && (
-                          <span className="block text-[11px] text-muted-foreground truncate leading-tight">{acc.email}</span>
-                        )}
-                        {acc.isShared && (
-                          <span className={cn('block text-[11px] truncate leading-tight', ACCENT.ink)}>
-                            {t('sharedBy', { name: acc.ownerName ?? acc.email })}
-                          </span>
-                        )}
-                      </span>
-                    </button>
+                    // The row is a button, the shared mark is a link: a link nested in a
+                    // button is invalid HTML, so they are siblings and the mark sits in
+                    // the gutter the row reserves for it (SHARED_MARK_PAD).
+                    <div key={acc.id} className="relative">
+                      <button
+                        onClick={() => switchAccount(acc.id)}
+                        // Every row has the same box: a fixed bubble, one gap, then the text —
+                        // so all names and emails of the list start at the exact same x.
+                        className={cn(ROW, ROW_IDLE, 'gap-2.5 px-3 rounded-none text-left', acc.isShared && SHARED_MARK_PAD)}
+                      >
+                        <AccountAvatar
+                          account={acc}
+                          colorIndex={accounts.indexOf(acc)}
+                          unread={unread}
+                          size="md"
+                        />
+                        <span className="flex-1 min-w-0 text-left">
+                          <span className="block text-sm font-medium truncate leading-tight">{acc.name || acc.email}</span>
+                          {acc.name && (
+                            <span className="block text-[11px] text-muted-foreground truncate leading-tight">{acc.email}</span>
+                          )}
+                        </span>
+                      </button>
+                      <SharedMark account={acc} label={t('sharedBy', { name: acc.ownerName ?? acc.email })} />
+                    </div>
                   )
                 })}
               </ThinScroll>

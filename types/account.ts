@@ -21,6 +21,8 @@ export interface EmailAccount {
   unreadCount?: number
   /** True when this account was shared with the current user rather than owned by them. GET /api/accounts only. */
   isShared?: boolean
+  /** Id of the `account_shares` row granting this access — only set when `isShared`. */
+  shareId?: string | null
   ownerName?: string | null
   expiresAt?: string | null
   permissions?: {

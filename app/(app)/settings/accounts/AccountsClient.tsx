@@ -38,10 +38,14 @@ interface Props {
 
 export function AccountsClient({ initialError, initialSuccess }: Props) {
   const t = useTranslations('settings.accounts')
+  const tShared = useTranslations('settings.accounts.receivedShares')
   const { data: accountsData, mutate } = useSWR<{ data: EmailAccount[] }>('/api/accounts', fetcher)
   // Credentials/sharing management is owner-only — accounts shared with this user
   // are visible in the Sidebar account switcher, not editable from this page.
   const accounts = accountsData?.data?.filter(a => !a.isShared)
+  // ...and the inboxes shared WITH this user get their own read-only section below:
+  // they cannot be edited, only given back.
+  const receivedShares = accountsData?.data?.filter(a => a.isShared) ?? []
 
   const [mode, setMode] = useState<'list' | 'add' | 'edit'>('list')
   const [editId, setEditId] = useState<string | null>(null)
@@ -52,6 +56,7 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
   const [success, setSuccess] = useState('')
   const [testResult, setTestResult] = useState<{ imap: { ok: boolean; error: string }; smtp: { ok: boolean; error: string } } | null>(null)
   const [expandedShareId, setExpandedShareId] = useState<string | null>(null)
+  const [leavingId, setLeavingId] = useState<string | null>(null)
 
   useEffect(() => {
     if (initialSuccess === 'microsoft') {
@@ -94,6 +99,22 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
     if (!confirm(t('delete') + ' ?')) return
     await fetch(`/api/accounts/${id}`, { method: 'DELETE' })
     mutate()
+  }
+
+  // Giving an inbox back writes the same `account_shares` row the owner's revoke does,
+  // through the same route — a share ends one way, whoever ends it.
+  const handleLeaveShare = async (account: EmailAccount) => {
+    if (!account.shareId || !confirm(tShared('leaveConfirm'))) return
+    setLeavingId(account.id)
+    try {
+      const res = await fetch(`/api/accounts/${account.id}/shares/${account.shareId}`, { method: 'DELETE' })
+      if (!res.ok) setError(tShared('leaveFailed'))
+      else mutate()
+    } catch {
+      setError(tShared('leaveFailed'))
+    } finally {
+      setLeavingId(null)
+    }
   }
 
   const handleWizardSave = async (data: AccountFormData) => {
@@ -262,6 +283,38 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
             </div>
           ))}
         </div>
+
+        {receivedShares.length > 0 && (
+          <section className="mt-8">
+            <h2 className="mb-3 text-sm font-medium text-foreground">{tShared('title')}</h2>
+            <div className="space-y-2.5">
+              {receivedShares.map(account => (
+                <div
+                  key={account.id}
+                  data-received-share={account.id}
+                  className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 shadow-sm"
+                >
+                  <Share2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-sm truncate">{account.name || account.email}</div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {tShared('sharedBy', { name: account.ownerName ?? account.email })}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost" size="sm"
+                    className="h-8 gap-1.5 text-destructive hover:text-destructive"
+                    disabled={leavingId === account.id}
+                    onClick={() => handleLeaveShare(account)}
+                    data-leave-share
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> {tShared('leave')}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </SettingsPage>
     )
   }
