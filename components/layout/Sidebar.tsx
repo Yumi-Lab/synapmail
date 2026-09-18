@@ -12,8 +12,7 @@ import { cn } from '@/lib/utils'
 import useSWR from 'swr'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { ThemeToggle } from '@/components/ThemeToggle'
-import type { EmailAccount } from '@/types/account'
-import { ACCENT, AccountAvatar, UnreadBadge } from './AccountAvatar'
+import { ACCENT, AccountAvatar, UnreadBadge, useAccountAccent } from './AccountAvatar'
 import { folderGlyph, folderInitials } from './FolderGlyph'
 import { ThinScroll } from './ThinScroll'
 
@@ -141,9 +140,6 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   // The popover is fixed-positioned so it escapes the bar when collapsed (56 px).
   const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
-  // Populated from /api/settings after mount (see effect below) rather than in the
-  // initializer, so the server and first client render match (no hydration mismatch).
-  const [activeAccountId, setActiveAccountId] = useState<string | null>(null)
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -177,33 +173,11 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     setAccountOpen(o => !o)
   }, [])
 
-  const { data: settingsData } = useSWR<{ data: { active_account_id: string | null } }>('/api/settings', fetcher)
-  useEffect(() => {
-    if (settingsData?.data?.active_account_id) setActiveAccountId(settingsData.data.active_account_id)
-  }, [settingsData])
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      setActiveAccountId((e as CustomEvent<string>).detail)
-    }
-    window.addEventListener('synapmail:account-change', handler)
-    return () => window.removeEventListener('synapmail:account-change', handler)
-  }, [])
-
-  // refreshInterval keeps the per-account unread counts fresh even while the
-  // switcher is closed (counts come from messages_cache — see GET /api/accounts).
-  const { data: accountsData } = useSWR<{ data: EmailAccount[] }>(
-    '/api/accounts',
-    fetcher,
-    { revalidateOnFocus: true, refreshInterval: 60000 }
-  )
-
-  const accounts = accountsData?.data ?? []
+  // Active account + the accent it publishes — the same hook the shell's edge toggle
+  // subscribes to, so the bar and the button straddling its edge can never disagree.
+  const { accounts, activeAccount, colorIndex: accountColorIdx, vars: accentStyle, setActiveAccountId } = useAccountAccent()
   const hasMultipleAccounts = accounts.length > 1
-  const activeAccount = accounts.find(a => a.id === activeAccountId) ?? accounts.find(a => a.isDefault) ?? accounts[0]
   const resolvedAccountId = activeAccount?.id ?? null
-  // Rank in the list — AccountAvatar resolves it against the palette.
-  const accountColorIdx = activeAccount ? accounts.indexOf(activeAccount) : 0
 
   const totalUnread = accounts.reduce((sum, a) => sum + (a.unreadCount ?? 0), 0)
   const otherUnread = totalUnread - (activeAccount?.unreadCount ?? 0)
@@ -309,6 +283,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
         ['--synap-icon-col' as string]: `${SIDEBAR.collapsedWidth}px`,
         ['--synap-row-h' as string]: `${SIDEBAR.rowHeight}px`,
         ['--synap-surface' as string]: SURFACE,
+        ...accentStyle,
       }}
       data-sidebar
       data-collapsed={collapsed ? 'true' : 'false'}
@@ -359,7 +334,10 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
           </button>
           {accountOpen && popoverPos && (
             <div
-              className="fixed z-50 flex flex-col rounded-xl border border-border bg-popover text-popover-foreground shadow-xl overflow-hidden"
+              className={cn(
+                'fixed z-50 flex flex-col rounded-xl border border-border overflow-hidden',
+                'bg-popover text-popover-foreground', ACCENT.shadow,
+              )}
               style={{
                 top: popoverPos.top,
                 left: popoverPos.left,
@@ -368,6 +346,9 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                 // badge's ring take the colour of what is ACTUALLY behind it, instead of
                 // the bar's, with no second palette.
                 ['--synap-surface' as string]: 'var(--popover)',
+                // Fixed positioning takes the popover out of the bar's box, so the
+                // accent it inherits would be the page's, not the bar's: republish.
+                ...accentStyle,
               }}
               data-account-popover
             >
@@ -411,7 +392,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                           <span className="block text-[11px] text-muted-foreground truncate leading-tight">{acc.email}</span>
                         )}
                         {acc.isShared && (
-                          <span className="block text-[11px] text-violet-400 truncate leading-tight">
+                          <span className={cn('block text-[11px] truncate leading-tight', ACCENT.ink)}>
                             {t('sharedBy', { name: acc.ownerName ?? acc.email })}
                           </span>
                         )}
