@@ -4,7 +4,7 @@ import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { listFolders, searchMessagesIn } from '@/lib/imap'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
-import { MIN_QUERY_LENGTH, SCOPE_ALL, SCOPE_PARAM, SEARCH_PARAM, SEARCH_RESULT_LIMIT, readScope } from '@/lib/search'
+import { MIN_QUERY_LENGTH, SCOPE_ALL, SCOPE_PARAM, SEARCH_FIELDS, SEARCH_PARAM, SEARCH_RESULT_LIMIT, parseQuery, readScope } from '@/lib/search'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,8 +25,11 @@ export async function GET(req: Request) {
   const accountParam = searchParams.get('account')
   const scope = readScope(searchParams.get(SCOPE_PARAM))
 
-  if (!q || q.length < MIN_QUERY_LENGTH) {
-    return NextResponse.json({ messages: [] })
+  // Une requête n'a de sens que par ses TERMES : « a b » n'en porte aucun d'assez
+  // long, et chercher « a b » tel quel ramènerait la boîte entière.
+  const terms = parseQuery(q)
+  if (!q || q.length < MIN_QUERY_LENGTH || terms.length === 0) {
+    return NextResponse.json({ messages: [], total: 0, fields: SEARCH_FIELDS })
   }
 
   try {
@@ -41,7 +44,7 @@ export async function GET(req: Request) {
       account = rows[0] ?? null
     }
     if (!account) {
-      return NextResponse.json({ messages: [], error: 'No account configured' })
+      return NextResponse.json({ messages: [], total: 0, fields: SEARCH_FIELDS, error: 'No account configured' })
     }
     const config = {
       id: account.id,
@@ -62,13 +65,17 @@ export async function GET(req: Request) {
     const folders = scope === SCOPE_ALL
       ? (await listFolders(config)).map(f => f.path)
       : [folder]
-    const messages = await searchMessagesIn(config, folders, q)
+    const { messages, total } = await searchMessagesIn(config, folders, terms)
     messages.sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
 
+    // `total` = correspondances RÉELLES (compte des identifiants), `messages` = ce
+    // qui a été rendu. L'interface dit « les 200 premiers sur 1 340 » à partir des deux.
     return NextResponse.json(guardApiPayload({
       messages: messages.slice(0, SEARCH_RESULT_LIMIT).map(m => ({ ...m, accountId: account.id })),
+      total,
+      fields: SEARCH_FIELDS,
     }, { enabled: isMachineRequest(req) && account.prompt_guard }))
   } catch (err) {
-    return NextResponse.json({ error: String(err), messages: [] }, { status: 500 })
+    return NextResponse.json({ error: String(err), messages: [], total: 0, fields: SEARCH_FIELDS }, { status: 500 })
   }
 }
