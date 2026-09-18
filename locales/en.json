@@ -122,7 +122,7 @@
     "searchAllFolders": "All folders",
     "searchThisFolder": "This folder",
     "clearSearch": "Clear search",
-    "searchResults": "{count} results for “{query}”",
+    "searchResults": "{count, plural, one {# result} other {# results}} for “{query}”",
     "searching": "Searching…",
     "noSearchResults": "No results"
   },

@@ -32,6 +32,17 @@ const EXPECTED_HEIGHT = Number(OMNIBAR_SRC.match(/height:\s*(\d+)/)?.[1])
 const EXPECTED_FIELD_MAX_WIDTH = Number(OMNIBAR_SRC.match(/searchMaxWidth:\s*(\d+)/)?.[1])
 if (!EXPECTED_HEIGHT) { console.error('HARNESS: could not read OMNIBAR.height from the component'); process.exit(2) }
 if (!EXPECTED_FIELD_MAX_WIDTH) { console.error('HARNESS: could not read OMNIBAR.searchMaxWidth from the component'); process.exit(2) }
+// The round toggle straddles the header's left edge, so half of it lies over the
+// header. The gap the first action must keep from it is NOT a bench constant: it is
+// what the two shipped constants imply — the header's left inset minus the half of
+// the button that overlaps it. Re-sizing the button or the inset moves this number
+// in the same run, so the gate can never certify a clearance the code stopped giving.
+const SIDEBAR_SRC = readFileSync(new URL('../components/layout/Sidebar.tsx', import.meta.url), 'utf8')
+const EDGE_BUTTON_SIZE = Number(SIDEBAR_SRC.match(/edgeButtonSize:\s*(\d+)/)?.[1])
+const EDGE_CLEARANCE_TERM = Number(OMNIBAR_SRC.match(/edgeClearance:\s*SIDEBAR\.edgeButtonSize \/ 2 \+ (\d+)/)?.[1])
+if (!EDGE_BUTTON_SIZE) { console.error('HARNESS: could not read SIDEBAR.edgeButtonSize from the component'); process.exit(2) }
+if (!EDGE_CLEARANCE_TERM) { console.error('HARNESS: could not read OMNIBAR.edgeClearance from the component'); process.exit(2) }
+const EXPECTED_EDGE_GAP = EDGE_CLEARANCE_TERM
 
 const BAR = '[data-omnibar]'
 const SEARCH = '[data-omnibar-search]'
@@ -176,15 +187,34 @@ try {
     process.exit(2)
   }
 
+  // --- The round toggle does not overlap the first action, in EITHER state ---
+  // Two overlapping hit areas is what the human gate caught on a9096c7 (2px overlap).
+  // Measured in both collapse states, because the button and the header both move.
+  for (const pass of ['after toggling', 'as loaded']) {
+    const gap = await page.evaluate((tog, act) => {
+      const t = document.querySelector(tog)?.getBoundingClientRect()
+      const a = document.querySelector(act)?.getBoundingClientRect()
+      if (!t || !a) return null
+      return { gap: a.left - t.right, toggle: [t.left, t.right], action: [a.left, a.right] }
+    }, EDGE_TOGGLE, action('dashboard'))
+    if (!gap) { console.error('HARNESS: could not measure the toggle or the first action'); process.exit(2) }
+    console.log(`edge clearance ${pass}: toggle ${gap.toggle.map(v => v.toFixed(0)).join('..')} | first action ${gap.action.map(v => v.toFixed(0)).join('..')} | gap ${gap.gap.toFixed(2)}px (expected >= ${EXPECTED_EDGE_GAP})`)
+    if (gap.gap < EXPECTED_EDGE_GAP - MAX_DRIFT_PX) {
+      failures.push(`${pass}: the collapse button and the first action are ${gap.gap.toFixed(2)}px apart, below the ${EXPECTED_EDGE_GAP}px the shipped constants imply`)
+    }
+    // Second reading is taken in the other state; this click is ALSO what puts the
+    // persisted collapse preference back the way the gate found it.
+    if (pass === 'after toggling') {
+      await page.click(EDGE_TOGGLE)
+      await new Promise(r => setTimeout(r, SETTLE_MS))
+    }
+  }
+
   // The round toggle floats on the bar's edge — it is NOT one of the header's controls.
   const toggleInHeader = await page.evaluate(
     (bar, tog) => !!document.querySelector(bar)?.querySelector(tog), BAR, EDGE_TOGGLE)
   console.log(`collapse button inside the header: ${toggleInHeader}`)
   if (toggleInHeader) failures.push('the round collapse button is rendered inside the header')
-  // The collapse is a persisted user preference: put it back as it was found, so the
-  // gate does not silently leave the account in the other state for the next reader.
-  await page.click(EDGE_TOGGLE)
-  await new Promise(r => setTimeout(r, SETTLE_MS))
 
   // --- The dashboard row left the sidebar (lot O1 removes it from there) ---
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
