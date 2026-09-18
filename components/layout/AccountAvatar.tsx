@@ -1,5 +1,7 @@
 'use client'
 
+import { useEffect, useState } from 'react'
+import useSWR from 'swr'
 import { cn } from '@/lib/utils'
 import type { EmailAccount } from '@/types/account'
 
@@ -11,22 +13,102 @@ import type { EmailAccount } from '@/types/account'
  * 2.15 (amber) and 2.54 (emerald). `scripts/check-sidebar-collapse.mjs` recomputes
  * these ratios from the rendered bubbles, so the floor is enforced, not asserted.
  */
-const ACCOUNT_COLORS = ['bg-blue-600', 'bg-violet-600', 'bg-emerald-700', 'bg-amber-700', 'bg-rose-600'] as const
+const ACCOUNT_COLORS = ['#2563eb', '#7c3aed', '#047857', '#b45309', '#e11d48'] as const
+
+/** The colour of the account ranked `colorIndex` in the list — the palette's only reader. */
+export const accountColor = (colorIndex: number) => ACCOUNT_COLORS[colorIndex % ACCOUNT_COLORS.length]
+
+/**
+ * Shades derived from the active account's colour, in ONE place: the percentages below
+ * are the whole vocabulary of the bar's accent. `tint` fills an active row, `tintStrong`
+ * a drop target, `deep` a pressed/hovered filled control, `lift` the same hue raised for
+ * a dark background (the accents are -600/-700 shades, too dark to read as ink there),
+ * `ring` a focus ring, `shadow` the colour a raised surface casts.
+ */
+const ACCENT_MIXES = {
+  tint: ['12%', 'transparent'],
+  'tint-strong': ['22%', 'transparent'],
+  deep: ['85%', 'black'],
+  lift: ['62%', 'white'],
+  ring: ['40%', 'transparent'],
+  shadow: ['25%', 'transparent'],
+} as const
+
+/**
+ * The custom properties every accent surface of the bar reads, published on the bar's
+ * root — and on the shell's edge toggle, which straddles the bar from outside it. One
+ * account colour in, the bar's whole accent out: switching account repaints the active
+ * folder, the compose control, the rings and the shadows in one step, with no second
+ * palette and nothing to keep in sync.
+ */
+export const accentVars = (colorIndex: number): Record<string, string> => {
+  const colour = accountColor(colorIndex)
+  const vars: Record<string, string> = { '--synap-account': colour }
+  for (const [name, [amount, into]] of Object.entries(ACCENT_MIXES)) {
+    vars[`--synap-account-${name}`] = `color-mix(in oklab, ${colour} ${amount}, ${into})`
+  }
+  return vars
+}
 
 /**
  * The bar's ONE accent, as one source. Every primary/active/selected state of the
  * sidebar is painted from here — `solid` for a filled control, `tint` for the
  * background of an active row, `ink` for the glyph that marks it. Nothing else in
  * the bar may introduce a second accent, a gradient or a decorative ring.
+ * The classes are written as literals, not composed from the names above: Tailwind
+ * scans source text, so a class built by interpolation would never be emitted.
  */
 export const ACCENT = {
-  solid: 'bg-violet-600 text-white',
-  solidHover: 'hover:bg-violet-700',
-  tint: 'bg-violet-600/10',
-  tintStrong: 'bg-violet-600/20',
-  ink: 'text-violet-600 dark:text-violet-400',
-  ring: 'ring-violet-600/40',
+  solid: 'bg-[color:var(--synap-account)] text-white',
+  solidHover: 'hover:bg-[color:var(--synap-account-deep)]',
+  tint: 'bg-[color:var(--synap-account-tint)]',
+  tintStrong: 'bg-[color:var(--synap-account-tint-strong)]',
+  ink: 'text-[color:var(--synap-account)] dark:text-[color:var(--synap-account-lift)]',
+  ring: 'ring-[color:var(--synap-account-ring)]',
+  /** Raised surfaces of the bar cast the account's colour rather than a neutral grey. */
+  shadow: 'shadow-[0_4px_16px_var(--synap-account-shadow)]',
 } as const
+
+/**
+ * Which account the bar is showing, as ONE rule: the explicitly selected one, else the
+ * default, else the first. The bar and the shell both need it — the bar to paint its
+ * rows, the shell to tint the toggle that straddles the bar's edge from outside it —
+ * and two answers to that question would mean two accents on screen at once.
+ */
+export const resolveActiveAccount = (accounts: EmailAccount[], activeId: string | null) =>
+  accounts.find(a => a.id === activeId) ?? accounts.find(a => a.isDefault) ?? accounts[0]
+
+const fetchJson = (url: string) => fetch(url).then(r => r.json())
+
+/**
+ * The active account and the accent it publishes. The selected id is read from the
+ * stored settings and kept live by the `synapmail:account-change` event, which the
+ * switcher fires before the PATCH lands — so the accent turns over on the click, not a
+ * revalidation later. Both SWR keys are the ones the bar already uses, so subscribing
+ * from a second component costs no extra request.
+ */
+export function useAccountAccent() {
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(null)
+  const { data: accountsData } = useSWR<{ data: EmailAccount[] }>(
+    '/api/accounts', fetchJson, { revalidateOnFocus: true, refreshInterval: 60000 },
+  )
+  const { data: settingsData } = useSWR<{ data: { active_account_id: string | null } }>('/api/settings', fetchJson)
+
+  useEffect(() => {
+    if (settingsData?.data?.active_account_id) setActiveAccountId(settingsData.data.active_account_id)
+  }, [settingsData])
+
+  useEffect(() => {
+    const handler = (e: Event) => setActiveAccountId((e as CustomEvent<string>).detail)
+    window.addEventListener('synapmail:account-change', handler)
+    return () => window.removeEventListener('synapmail:account-change', handler)
+  }, [])
+
+  const accounts = accountsData?.data ?? []
+  const activeAccount = resolveActiveAccount(accounts, activeAccountId)
+  const colorIndex = activeAccount ? accounts.indexOf(activeAccount) : 0
+  return { accounts, activeAccount, colorIndex, vars: accentVars(colorIndex), setActiveAccountId }
+}
 
 /** Above this the badge reads `99+`. Single source for every unread counter of the bar. */
 const UNREAD_CAP = 99
@@ -151,8 +233,8 @@ export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', ..
         className={cn(
           'rounded-full flex items-center justify-center font-semibold text-white select-none tracking-[0.02em]',
           SIZES[size],
-          ACCOUNT_COLORS[colorIndex % ACCOUNT_COLORS.length],
         )}
+        style={{ backgroundColor: accountColor(colorIndex) }}
       >
         <span data-account-initial>{accountInitials(account)}</span>
       </span>

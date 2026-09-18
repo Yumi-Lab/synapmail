@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl'
 import useSWR, { mutate } from 'swr'
 import { cn } from '@/lib/utils'
 import { Omnibar } from './Omnibar'
+import { ACCENT, useAccountAccent } from './AccountAvatar'
 import { Sidebar, SIDEBAR, HEADER_ROW_CENTER } from './Sidebar'
 import { UpdateBanner } from './UpdateBanner'
 
@@ -18,7 +19,7 @@ const fetcher = (url: string) => fetch(url).then(r => r.json())
  * collapse contract measures. `edgeX` is the aside's current width: the button
  * is centred on that edge, and animates with it.
  */
-function EdgeToggle({ place, edgeX, label, onClick, className }: {
+function EdgeToggle({ place, edgeX, label, onClick, className, accentStyle }: {
   /** Which bar this toggle straddles — the desktop bar or the mobile drawer. The
    *  desktop one stays mounted (display:none) below `lg`, so a test driving the
    *  drawer must be able to tell them apart. */
@@ -27,6 +28,9 @@ function EdgeToggle({ place, edgeX, label, onClick, className }: {
   label: string
   onClick: () => void
   className?: string
+  /** The bar's accent, republished here: the button straddles the bar from OUTSIDE
+   *  it, so it inherits nothing from the bar's root and must carry the vars itself. */
+  accentStyle: Record<string, string>
 }) {
   return (
     <button
@@ -36,11 +40,13 @@ function EdgeToggle({ place, edgeX, label, onClick, className }: {
       data-sidebar-edge-toggle={place}
       className={cn(
         'absolute z-20 items-center justify-center rounded-full',
-        'border border-border bg-card text-foreground/70 shadow-sm',
+        'border border-border bg-card text-foreground/70',
         'hover:text-foreground hover:bg-accent transition-[left,color,background-color]',
+        ACCENT.shadow,
         className ?? 'flex',
       )}
       style={{
+        ...accentStyle,
         width: SIDEBAR.edgeButtonSize,
         height: SIDEBAR.edgeButtonSize,
         left: edgeX - SIDEBAR.edgeButtonSize / 2,
@@ -59,6 +65,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // SSR-safe default (false) until the settings SWR resolves after mount — no hydration mismatch.
   const { data: settingsData } = useSWR<{ data: { sidebar_collapsed: boolean } }>('/api/settings', fetcher)
   const sidebarCollapsed = settingsData?.data?.sidebar_collapsed ?? false
+  // Same source as the bar's own accent — the toggle sits on the bar's edge and must
+  // wear the same account colour, not a second answer to who is active.
+  const { vars: accentStyle } = useAccountAccent()
 
   const toggleCollapse = () => {
     const next = !sidebarCollapsed
@@ -87,6 +96,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
       <EdgeToggle
         place="bar"
+        accentStyle={accentStyle}
         className="hidden lg:flex"
         edgeX={sidebarCollapsed ? SIDEBAR.collapsedWidth : SIDEBAR.expandedWidth}
         label={sidebarCollapsed ? t('expandSidebar') : t('collapseSidebar')}
@@ -108,6 +118,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </aside>
           <EdgeToggle
             place="drawer"
+            accentStyle={accentStyle}
             edgeX={SIDEBAR.expandedWidth}
             label={t('collapseSidebar')}
             onClick={() => setSidebarOpen(false)}
