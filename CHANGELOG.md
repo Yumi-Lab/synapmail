@@ -72,6 +72,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   clair/sombre (`prefers-reduced-motion` respecté).
 
 ### Fixed
+- **La croix de la fenêtre des réglages revenait à l'onglet précédent au lieu de fermer** (`components/settings/SettingsModal.tsx`) :
+  chaque changement d'onglet empilait une entrée d'historique et la croix ne fait qu'un retour arrière. Les onglets
+  remplacent désormais l'entrée courante : un seul retour ferme toujours la fenêtre.
 - **Filtres « Non lus » / « Avec drapeau » : chargement sans fin sur une grosse boîte** (`lib/imap.ts`) : une vue filtrée
   annonçait comme total la taille de la BOÎTE (9 137 messages) au lieu du nombre de messages trouvés (2) ; la liste croyait
   qu'il en restait des milliers et redemandait des pages vides en boucle (squelettes et sablier permanents). Le total d'une

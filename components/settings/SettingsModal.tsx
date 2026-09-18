@@ -74,7 +74,9 @@ export function SettingsModal() {
             )}
           >
             {NAV_ITEMS.map(({ seg, key, icon: Icon }) => (
-              <Link key={seg} href={`/settings/${seg}`} className={linkClass(segment === seg)}>
+              // `replace` : changer d'onglet ne doit pas empiler d'entrée d'historique, sinon la croix
+              // (un seul retour arrière) ramène à l'onglet précédent au lieu de fermer la fenêtre.
+              <Link key={seg} href={`/settings/${seg}`} replace className={linkClass(segment === seg)}>
                 <Icon className="h-4 w-4 shrink-0" />
                 <span>{t(key)}</span>
               </Link>
