@@ -129,7 +129,18 @@
     "refresh": "收取邮件",
     "flag": "标记",
     "selectionCount": "已选 {count} 封",
-    "confirmDeleteSelection": "删除 {count} 封邮件？"
+    "confirmDeleteSelection": "删除 {count} 封邮件？",
+    "flagged": "已标记",
+    "flagRemove": "移除标记",
+    "flags": {
+      "red": "红色",
+      "orange": "橙色",
+      "yellow": "黄色",
+      "green": "绿色",
+      "blue": "蓝色",
+      "purple": "紫色",
+      "gray": "灰色"
+    }
   },
   "compose": {
     "newMessage": "新邮件",

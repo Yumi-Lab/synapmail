@@ -129,7 +129,18 @@
     "refresh": "Relever",
     "flag": "Drapeau",
     "selectionCount": "{count} sélectionnés",
-    "confirmDeleteSelection": "Supprimer {count} messages ?"
+    "confirmDeleteSelection": "Supprimer {count} messages ?",
+    "flagged": "Avec drapeau",
+    "flagRemove": "Retirer le drapeau",
+    "flags": {
+      "red": "Rouge",
+      "orange": "Orange",
+      "yellow": "Jaune",
+      "green": "Vert",
+      "blue": "Bleu",
+      "purple": "Violet",
+      "gray": "Gris"
+    }
   },
   "compose": {
     "newMessage": "Nouveau message",

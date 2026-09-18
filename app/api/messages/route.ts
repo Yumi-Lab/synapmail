@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import type { MailListFilter } from '@/lib/flags'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
@@ -14,7 +15,7 @@ export async function GET(req: Request) {
   const folder = searchParams.get('folder') ?? 'INBOX'
   const page = parseInt(searchParams.get('page') ?? '1')
   const perPage = parseInt(searchParams.get('perPage') ?? '30')
-  const filter = (searchParams.get('filter') ?? 'all') as 'all' | 'unread' | 'starred'
+  const filter = (searchParams.get('filter') ?? 'all') as MailListFilter
   const accountParam = searchParams.get('account')
 
   try {
