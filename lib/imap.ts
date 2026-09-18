@@ -602,7 +602,7 @@ export async function listFolders(account: AccountConfig): Promise<Folder[]> {
  * dossier > 300 s ; 1 connexion partagée 152 s ; 4 connexions 44 s. Au-delà, les
  * serveurs IMAP grand public commencent à refuser les connexions simultanées.
  */
-const SEARCH_CONNECTIONS = 4
+export const SEARCH_CONNECTIONS = 4
 
 /** Ce qu'une recherche rapporte : les messages RENDUS et le nombre de correspondances. */
 export type SearchOutcome = { messages: Message[]; total: number }
