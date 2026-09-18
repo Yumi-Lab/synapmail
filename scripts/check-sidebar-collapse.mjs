@@ -144,6 +144,23 @@ const BUBBLE_MIN_RADIUS_RATIO = 0.5
 // Calibration bench: this script, headless Chrome, the shipped bar, both themes.
 const HOVER_MIN_ALPHA = 0.01
 
+// Lot A12: the bar's accent must BE the active account's own colour, so that switching
+// mailbox repaints the whole bar rather than leaving one violet bar behind five coloured
+// bubbles. The gate is a same-run A/B across TWO accounts of different colours: for each,
+// the accent-bearing surfaces of the bar (active folder tint, compose control, selection
+// ring, shadows) are read back and compared to the colour of THAT account's own bubble,
+// measured in the same pass on the same page — never to a constant, so the check stays
+// true if the palette changes. Hue is the comparison axis: a tint keeps its accent's hue
+// and loses only its saturation, so demanding equal rgb would fail by construction.
+// 6 deg leaves room for the rounding of an alpha-composited tint read back through a
+// canvas and nothing else — the palette's own families sit 60+ deg apart.
+// Calibration bench: this script, headless Chrome, the shipped bar, both themes.
+const MAX_ACCOUNT_ACCENT_HUE_DRIFT_DEG = 6
+// An accent surface that paints nothing has no hue to compare: below this alpha the
+// custom property did not resolve (the class never compiled) and the check must say so
+// rather than silently pass on a colour nobody can see.
+const ACCENT_MIN_ALPHA = 0.05
+
 // Colour tokens inside a composite computed value (background-image gradient, box-shadow).
 const COLOUR_TOKEN_SOURCE = '(?:rgba?|hsla?|oklch|oklab|lab|lch|color)\\([^)]*\\)'
 // Transition is 180 ms (SIDEBAR.transitionMs); wait well past it before measuring.
@@ -587,6 +604,95 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
  * twice per theme — once at rest, once with the pointer really over the row — so the pair
  * is a same-run A/B: the only thing that varies between the two reads is the pointer.
  */
+/**
+ * The bar's accent, as the browser actually paints it, next to the colour of the account
+ * bubble heading the bar — read in the SAME pass so the comparison is an A/B, not a
+ * constant. Surfaces measured: the active folder row's tint, the compose control's fill,
+ * the edge toggle's shadow (it straddles the bar from outside and carries the accent as
+ * its own custom properties) and the published `--synap-account` itself. Colours are
+ * resolved through a canvas — the same technique probeCleanliness uses — because the
+ * accent is a `color-mix()` whose serialisation no hand-rolled rgb parser reads.
+ */
+const probeAccountAccent = () => {
+  const cv = document.createElement('canvas')
+  cv.width = cv.height = 1
+  const ctx = cv.getContext('2d', { willReadFrequently: true })
+  const paint = (colour, backdrop) => {
+    ctx.clearRect(0, 0, 1, 1)
+    if (backdrop) { ctx.fillStyle = backdrop; ctx.fillRect(0, 0, 1, 1) }
+    ctx.fillStyle = colour
+    ctx.fillRect(0, 0, 1, 1)
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data
+    return { r, g, b, a: a / 255 }
+  }
+  const show = ({ r, g, b }) => `rgb(${r}, ${g}, ${b})`
+  const hue = ({ r, g, b }) => {
+    const [R, G, B] = [r / 255, g / 255, b / 255]
+    const max = Math.max(R, G, B), min = Math.min(R, G, B), d = max - min
+    if (!d) return null
+    const h = max === R ? ((G - B) / d) % 6 : max === G ? (B - R) / d + 2 : (R - G) / d + 4
+    return (h * 60 + 360) % 360
+  }
+  const lum = ({ r, g, b }) => {
+    const [x, y, z] = [r, g, b].map(v => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) })
+    return 0.2126 * x + 0.7152 * y + 0.0722 * z
+  }
+  const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)]; return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05) }
+
+  const bar = document.querySelector('[data-sidebar]')
+  const barBg = paint(getComputedStyle(bar).backgroundColor)
+  // The reference: the bubble of the account heading the bar, as painted right now.
+  const headerBubble = bar.querySelector('[data-sidebar-row="account"] [data-account-initial]')?.parentElement
+  if (!headerBubble) return null
+  const reference = paint(getComputedStyle(headerBubble).backgroundColor)
+
+  // Every accent surface, each with the backdrop it is actually composited over: a tint
+  // read on its own would report the hue of nothing.
+  const surfaces = []
+  const add = (name, el, prop, backdrop) => {
+    if (!el) return
+    const raw = getComputedStyle(el)[prop]
+    // A shadow is a composite value, and Tailwind always emits its ring placeholders
+    // BEFORE the shadow itself (`var(--tw-ring-offset-shadow), var(--tw-ring-shadow),
+    // var(--tw-shadow)`), which compute to a transparent `rgba(0, 0, 0, 0)`. Reading the
+    // first colour token would therefore measure the placeholder, not the shadow: take
+    // the last one, which is the layer the utility actually paints.
+    const tokens = prop === 'boxShadow' ? raw.match(/(?:rgba?|oklab|oklch|color|lab|lch)\([^)]*\)/g) ?? [] : [raw]
+    const colour = tokens[tokens.length - 1]
+    if (!colour) return
+    const alone = paint(colour)
+    const over = paint(colour, backdrop)
+    surfaces.push({ name, raw: colour, alpha: alone.a, painted: show(over), hue: hue(over) })
+  }
+  const activeRow = [...bar.querySelectorAll('[data-sidebar-row^="folder:"]')]
+    .find(r => getComputedStyle(r).backgroundColor !== 'rgba(0, 0, 0, 0)')
+  add('active folder tint', activeRow, 'backgroundColor', show(barBg))
+  const compose = bar.querySelector('[data-sidebar-row="compose"]')
+  add('compose fill', compose, 'backgroundColor', show(barBg))
+  const edge = document.querySelector('[data-sidebar-edge-toggle="bar"]')
+  add('edge toggle shadow', edge, 'boxShadow', show(barBg))
+
+  // The published property itself: read from the bar's root, painted alone.
+  const published = getComputedStyle(bar).getPropertyValue('--synap-account').trim()
+  const publishedPainted = published ? paint(published) : null
+
+  // The compose control carries white ink on the accent — the one contrast the palette
+  // has to hold at every account colour.
+  const composeInk = compose ? paint(getComputedStyle(compose).color, show(paint(getComputedStyle(compose).backgroundColor, show(barBg)))) : null
+  const composeBg = compose ? paint(getComputedStyle(compose).backgroundColor, show(barBg)) : null
+
+  return {
+    theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
+    account: bar.querySelector('[data-sidebar-row="account"] [data-account-initial]')?.textContent ?? '',
+    reference: show(reference),
+    referenceHue: hue(reference),
+    published,
+    publishedHue: publishedPainted ? hue(publishedPainted) : null,
+    surfaces,
+    composeContrast: composeInk && composeBg ? contrast(composeInk, composeBg) : null,
+  }
+}
+
 const probeHoverState = key => {
   const rows = [...document.querySelectorAll('[data-sidebar] [data-sidebar-row^="folder:"]')]
   // The ACTIVE folder paints a permanent accent tint, so it cannot show a hover change:
@@ -636,6 +742,12 @@ for (const [colour, expected] of [
 ]) {
   const got = alphaOf(colour)
   if (got !== expected) throw new Error(`alphaOf("${colour}") = ${got}, expected ${expected}`)
+}
+
+/** Shortest angular distance between two hues — 350 deg and 10 deg are 20 deg apart, not 340. */
+const hueGap = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d }
+for (const [a, b, expected] of [[350, 10, 20], [10, 350, 20], [272, 272, 0], [0, 180, 180]]) {
+  if (hueGap(a, b) !== expected) throw new Error(`hueGap(${a}, ${b}) = ${hueGap(a, b)}, expected ${expected}`)
 }
 
 const setTheme = theme => {
@@ -938,6 +1050,94 @@ try {
   if (list.checkGlyphs || list.checkChars) {
     failures.push(`account list: ${list.checkGlyphs} check icon(s) and ${list.checkChars} check character(s) left in the popover (expected none)`)
   }
+
+  // --- Lot A12: the bar's accent IS the active account's colour, in both themes ---
+  // Measured across TWO accounts in the SAME run: the bar's accent surfaces are compared
+  // to the colour of the bubble heading the bar at that moment, never to a constant. The
+  // popover is already open here, so the switch below is a real click on a shipped row.
+  const accentOf = async pick => {
+    if (pick) {
+      const clicked = await page.evaluate(() => {
+        const bar = document.querySelector('[data-sidebar]')
+        const here = getComputedStyle(bar.querySelector('[data-sidebar-row="account"] [data-account-initial]').parentElement).backgroundColor
+        // Picked by MEASUREMENT, not by name: the palette repeats every five accounts, so
+        // naming a second mailbox can land on the colour the bar already wears and the
+        // check would compare one colour with itself. Take the first row of the shipped
+        // popover whose bubble is painted a DIFFERENT colour.
+        const row = [...document.querySelectorAll('[data-account-popover] button')]
+          .find(b => {
+            const bubble = b.querySelector('[data-account-initial]')?.parentElement
+            return bubble && getComputedStyle(bubble).backgroundColor !== here
+          })
+        if (!row) return null
+        const label = (row.textContent ?? '').slice(0, 40)
+        row.click()
+        return label
+      })
+      if (!clicked) { console.error('HARNESS: every account listed wears the colour the bar already shows — the accent switch cannot be discriminated on this database'); process.exit(2) }
+      console.log(`accent arm B: clicked "${clicked}"`)
+      await new Promise(r => setTimeout(r, SETTLE_MS * 2))
+    }
+    const out = {}
+    for (const theme of THEMES) {
+      await page.evaluate(setTheme, theme)
+      await new Promise(r => setTimeout(r, SETTLE_MS))
+      out[theme] = await page.evaluate(probeAccountAccent)
+      if (!out[theme]) { console.error('HARNESS: the bar has no account header — the accent measured nothing'); process.exit(2) }
+    }
+    await page.evaluate(setTheme, 'light')
+    return out
+  }
+  // Arm A: the account the bar is on right now (the biggest mailbox, switched to above).
+  const accentA = await accentOf(null)
+  // Arm B: an account of a DIFFERENT colour — reached by a real click on a shipped row.
+  // The popover must be open for that click; reopening it is itself the shipped path.
+  await page.evaluate(() => {
+    if (!document.querySelector('[data-account-popover]')) document.querySelector('[data-sidebar-row="account"]')?.click()
+  })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const accentB = await accentOf(true)
+  for (const [arm, measured] of [['A', accentA], ['B', accentB]]) {
+    for (const theme of THEMES) {
+      const m = measured[theme]
+      console.log(`accent arm ${arm} (${theme}), account "${m.account}": published ${m.published || 'MISSING'} hue ${m.publishedHue?.toFixed(1)}deg vs bubble ${m.reference} hue ${m.referenceHue?.toFixed(1)}deg; compose ink contrast ${m.composeContrast?.toFixed(2)}:1`)
+      if (m.referenceHue == null) { console.error(`HARNESS: arm ${arm} (${theme}): the account bubble is neutral — no hue to compare against`); process.exit(2) }
+      if (!m.published) failures.push(`arm ${arm} (${theme}): the bar publishes no --synap-account — nothing reads the account's colour`)
+      if (m.publishedHue != null && hueGap(m.publishedHue, m.referenceHue) > MAX_ACCOUNT_ACCENT_HUE_DRIFT_DEG) {
+        failures.push(`arm ${arm} (${theme}): --synap-account is ${m.published} (hue ${m.publishedHue.toFixed(1)}deg), the account's bubble is ${m.reference} (hue ${m.referenceHue.toFixed(1)}deg) — ${hueGap(m.publishedHue, m.referenceHue).toFixed(1)}deg apart (max ${MAX_ACCOUNT_ACCENT_HUE_DRIFT_DEG})`)
+      }
+      if (!m.surfaces.length) { console.error(`HARNESS: arm ${arm} (${theme}): no accent surface found in the bar`); process.exit(2) }
+      for (const sf of m.surfaces) {
+        console.log(`  ${sf.name}: ${sf.raw} -> ${sf.painted} hue ${sf.hue?.toFixed(1)}deg alpha ${sf.alpha.toFixed(3)}`)
+        if (sf.alpha < ACCENT_MIN_ALPHA) {
+          failures.push(`arm ${arm} (${theme}): ${sf.name} paints alpha ${sf.alpha.toFixed(3)} (min ${ACCENT_MIN_ALPHA}) — "${sf.raw}" did not resolve`)
+          continue
+        }
+        if (sf.hue == null) { failures.push(`arm ${arm} (${theme}): ${sf.name} is neutral (${sf.painted}) — it carries no account colour`); continue }
+        const gap = hueGap(sf.hue, m.referenceHue)
+        if (gap > MAX_ACCOUNT_ACCENT_HUE_DRIFT_DEG) {
+          failures.push(`arm ${arm} (${theme}): ${sf.name} is ${sf.painted} (hue ${sf.hue.toFixed(1)}deg), the account's bubble is ${m.reference} (hue ${m.referenceHue.toFixed(1)}deg) — ${gap.toFixed(1)}deg apart (max ${MAX_ACCOUNT_ACCENT_HUE_DRIFT_DEG})`)
+        }
+      }
+      if (m.composeContrast != null && m.composeContrast < MIN_CONTRAST) {
+        failures.push(`arm ${arm} (${theme}): the compose control's ink measures ${m.composeContrast.toFixed(2)}:1 on this account's colour (min ${MIN_CONTRAST}:1)`)
+      }
+    }
+  }
+  // The two arms must actually differ, or the check above passed on one colour twice.
+  const armGap = hueGap(accentA.light.referenceHue, accentB.light.referenceHue)
+  console.log(`arm A "${accentA.light.account}" hue ${accentA.light.referenceHue.toFixed(1)}deg vs arm B "${accentB.light.account}" hue ${accentB.light.referenceHue.toFixed(1)}deg — ${armGap.toFixed(1)}deg apart`)
+  if (armGap <= MAX_ACCOUNT_ACCENT_HUE_DRIFT_DEG) {
+    console.error(`HARNESS: both arms landed on the same account colour (${armGap.toFixed(1)}deg apart) — the switch did not change the accent, nothing was discriminated`)
+    process.exit(2)
+  }
+  // Hand the page back in the state the later checks assume: an open popover overlays the
+  // bar, and a `page.hover()` aimed at a folder row underneath it would land on the
+  // popover instead — the row would never see the pointer and its hover check would read
+  // as a product failure. Dismissed the shipped way, by Escape.
+  await page.keyboard.press('Escape')
+  await page.evaluate(() => { document.querySelector('[data-account-popover]')?.remove() })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
 
   // --- Scrollbar (lot A8): native bar hidden, drawn thumb that fades when scrolling stops ---
   const sb = await page.evaluate(probeScrollbars)
