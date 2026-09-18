@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useTranslations } from 'next-intl'
-import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, MailOpen, MoveRight, ChevronDown, Eye, EyeOff, Archive, Clock } from 'lucide-react'
+import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, MailOpen, Eye, EyeOff, Archive, Clock } from 'lucide-react'
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
 import { cn } from '@/lib/utils'
 import { parseDate } from '@/lib/dates'
@@ -156,8 +156,6 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
 
   // Bulk selection
   const [checkedUids, setCheckedUids] = useState<Set<string>>(new Set())
-  const [showMoveMenu, setShowMoveMenu] = useState(false)
-  const moveMenuRef = useRef<HTMLDivElement>(null)
 
   // Per-row snooze menu
   const [snoozeFor, setSnoozeFor] = useState<string | null>(null)
@@ -194,16 +192,6 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       rangeAnchorUid.current = null
     }
   }, [folder, activeAccountId])
-
-  // Close move menu when clicking outside
-  useEffect(() => {
-    if (!showMoveMenu) return
-    const handler = (e: MouseEvent) => {
-      if (moveMenuRef.current && !moveMenuRef.current.contains(e.target as Node)) setShowMoveMenu(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showMoveMenu])
 
   // Close snooze menu when clicking outside / Escape
   useEffect(() => {
@@ -544,13 +532,8 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     })
     setAccumulated(prev => prev.filter(m => !uids.includes(m.uid)))
     clearSelection()
-    setShowMoveMenu(false)
     mutate()
   }
-
-  const bulkMarkRead = (read: boolean) => markReadUids(checkedThreadUids, read)
-  const bulkDelete = () => deleteUids(checkedThreadUids)
-  const bulkMove = (destination: string) => moveUids(checkedThreadUids, destination)
 
   // Drag handlers
   const handleDragStart = useCallback((e: React.DragEvent, thread: ThreadGroup) => {
@@ -899,37 +882,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
             }
           </button>
           <span className="text-xs text-primary font-medium mr-1">{checkedUids.size}</span>
-          {perms.canOrganize && (
-            <>
-              <button onClick={() => bulkMarkRead(true)} title={t('markRead')} className="ml-auto w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-                <MailOpen className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={() => bulkMarkRead(false)} title={t('markUnread')} className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-                <Mail className="w-3.5 h-3.5" />
-              </button>
-              <div className="relative" ref={moveMenuRef}>
-                <button onClick={() => setShowMoveMenu(v => !v)} title={t('move')} className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-                  <MoveRight className="w-3.5 h-3.5" />
-                  <ChevronDown className="w-2.5 h-2.5 -ml-0.5" />
-                </button>
-                {showMoveMenu && (
-                  <div className="absolute right-0 top-8 z-50 min-w-[180px] max-h-64 overflow-y-auto bg-popover border border-border rounded-lg shadow-lg py-1">
-                    {!foldersResponse && <p className="px-3 py-2 text-xs text-muted-foreground">Chargement…</p>}
-                    {folders.map(f => (
-                      <button key={f.path} onClick={() => bulkMove(f.path)} className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors truncate">
-                        {f.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-          {perms.canDelete && (
-            <button onClick={bulkDelete} title={t('delete')} className={cn('w-7 h-7 flex items-center justify-center rounded text-destructive hover:bg-destructive/10 transition-colors', !perms.canOrganize && 'ml-auto')}>
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          )}
+          <div className="flex-1" />
           <button onClick={clearSelection} className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors" title="Annuler la sélection">
             <X className="w-3.5 h-3.5" />
           </button>
