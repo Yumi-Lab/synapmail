@@ -569,7 +569,12 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
     theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
     collapsed: bar.dataset.collapsed,
     barBg: show(barBg),
-    slot: !!bar.querySelector('[data-sidebar-slot="theme-toggle"]'),
+    // Lot H2 moved the theme and the settings into the header's user menu: the bar's
+    // footer is gone, and a slot or a settings row coming back here is a regression.
+    footer: {
+      themeSlots: bar.querySelectorAll('[data-sidebar-slot="theme-toggle"]').length,
+      settingsRows: bar.querySelectorAll('[data-sidebar-row="settings"]').length,
+    },
     animated,
     accents: [...accents].map(([colour, h]) => ({ colour, hue: h })),
     rows: rows.map(r => {
@@ -1219,7 +1224,9 @@ try {
       failures.push(`${theme}: bar paints accents spanning ${spread.toFixed(1)} deg of hue (max ${MAX_ACCENT_HUE_SPREAD_DEG}): ${c.accents.map(a => `${a.colour} @${a.hue.toFixed(0)}deg`).join(', ')}`)
     }
     if (c.animated.length) failures.push(`${theme}: ${c.animated.length} animated element(s) in the bar: ${c.animated.join(', ')}`)
-    if (!c.slot) failures.push(`${theme}: the footer theme-toggle slot is missing`)
+    console.log(`  footer: theme-toggle slots=${c.footer.themeSlots}, settings rows=${c.footer.settingsRows}`)
+    if (c.footer.themeSlots) failures.push(`${theme}: ${c.footer.themeSlots} theme-toggle slot(s) still in the bar — lot H2 moves the theme into the user menu`)
+    if (c.footer.settingsRows) failures.push(`${theme}: ${c.footer.settingsRows} settings row(s) still in the bar — lot H2 moves the settings into the user menu`)
     const heights = [...new Set(c.rows.map(r => r.height.toFixed(2)))]
     console.log(`  row heights: ${heights.join(', ')} (rows: ${c.rows.length})`)
     if (heights.length > 1) failures.push(`${theme}: rows use ${heights.length} different heights (${heights.join(', ')}) — one motif expected`)

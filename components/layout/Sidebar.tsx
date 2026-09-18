@@ -6,12 +6,11 @@ import { openCompose } from '@/lib/compose'
 import { useTranslations } from 'next-intl'
 import {
   Mail, Send, FileText, AlertTriangle, Trash2,
-  Settings, PenSquare, Folder, Archive, ChevronDown, RefreshCw,
+  PenSquare, Folder, Archive, ChevronDown, RefreshCw,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import useSWR from 'swr'
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { ThemeToggle } from '@/components/ThemeToggle'
 import { ACCENT, AccountAvatar, UnreadBadge, useAccountAccent } from './AccountAvatar'
 import { folderGlyph, folderInitials } from './FolderGlyph'
 import { ThinScroll } from './ThinScroll'
@@ -454,25 +453,6 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
         </nav>
       </ThinScroll>
 
-      <div className="border-t border-border py-1">
-        {/* Theme toggle: horizontal in the open bar, vertical (compact) in the
-            56 px rail so it stays clickable when the bar is folded. */}
-        <div
-          data-sidebar-slot="theme-toggle"
-          className={cn('py-1', collapsed ? 'flex justify-center' : 'px-3')}
-        >
-          <ThemeToggle compact={collapsed} />
-        </div>
-        <Link
-          href="/settings"
-          onClick={() => handleFolderClick()}
-          title={t('settings')}
-          data-sidebar-row="settings"
-          className={cn(ROW, ROW_IDLE)}
-        >
-          <RowBody icon={Settings} label={t('settings')} collapsed={collapsed} />
-        </Link>
-      </div>
     </div>
   )
 }
