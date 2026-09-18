@@ -124,7 +124,11 @@
     "clearSearch": "清除搜索",
     "searchResults": "“{query}” 的 {count} 条结果",
     "searching": "搜索中…",
-    "noSearchResults": "没有结果"
+    "noSearchResults": "没有结果",
+    "refresh": "收取邮件",
+    "flag": "标记",
+    "selectionCount": "已选 {count} 封",
+    "confirmDeleteSelection": "删除 {count} 封邮件？"
   },
   "compose": {
     "newMessage": "新邮件",
