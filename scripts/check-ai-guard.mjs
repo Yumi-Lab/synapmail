@@ -246,6 +246,13 @@ try {
   check(await applies(owner, crypto.randomUUID()) === true, 'unknown mailbox id: the guard applies')
   check(await applies(owner, 'not-a-uuid') === true, 'malformed mailbox id: the guard applies')
   check(await applies(orphan, null) === true, 'user with no mailbox at all: the guard applies')
+
+  // No mailbox named by the caller: one mailbox asking for the guard is enough.
+  check(await applies(owner, null) === true, 'no mailbox named, one of the user\'s mailboxes guarded: the guard applies')
+  const lifted = await mkUser('lifted'); created.users.push(lifted)
+  created.accounts.push(await mkAccount(lifted, false))
+  created.accounts.push(await mkAccount(lifted, false))
+  check(await applies(lifted, null) === false, 'no mailbox named, every mailbox of the user switched off: the guard lifts')
 } finally {
   if (created.accounts.length) await pool.query('DELETE FROM email_accounts WHERE id = ANY($1)', [created.accounts])
   if (created.users.length) await pool.query('DELETE FROM users WHERE id = ANY($1)', [created.users])
