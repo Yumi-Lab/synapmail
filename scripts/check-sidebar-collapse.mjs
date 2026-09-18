@@ -133,6 +133,17 @@ const FOLDER_GLYPH_MAX_RADIUS_PX = 4
 // A bubble is round when its corner reaches half its own side; below that it is a case.
 const BUBBLE_MIN_RADIUS_RATIO = 0.5
 
+// Lot A13: this project maps every theme colour to a bare `var(--x)`, a form Tailwind
+// cannot compose an alpha onto — it emitted NO rule at all for the slash variants the bar
+// is written with, so a folder row had no hover feedback whatsoever (measured at the A8
+// gate: background-color rgba(0, 0, 0, 0) at rest AND under the pointer, identical) and
+// resting label ink rendered at full strength instead of the 70 % it asks for. The gate
+// below is a same-run A/B on ONE real row: its computed background at rest vs under a
+// real pointer move. No absolute colour is demanded — only that the two differ, which is
+// exactly what a dropped rule cannot produce.
+// Calibration bench: this script, headless Chrome, the shipped bar, both themes.
+const HOVER_MIN_ALPHA = 0.01
+
 // Colour tokens inside a composite computed value (background-image gradient, box-shadow).
 const COLOUR_TOKEN_SOURCE = '(?:rgba?|hsla?|oklch|oklab|lab|lch|color)\\([^)]*\\)'
 // Transition is 180 ms (SIDEBAR.transitionMs); wait well past it before measuring.
@@ -572,6 +583,26 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
 }
 
 /**
+ * Live background of the first folder row and the computed colour of its label. Called
+ * twice per theme — once at rest, once with the pointer really over the row — so the pair
+ * is a same-run A/B: the only thing that varies between the two reads is the pointer.
+ */
+const probeHoverState = key => {
+  const rows = [...document.querySelectorAll('[data-sidebar] [data-sidebar-row^="folder:"]')]
+  // The ACTIVE folder paints a permanent accent tint, so it cannot show a hover change:
+  // the row to measure is an IDLE one, picked once by the caller and then held fixed.
+  const row = key ? rows.find(r => r.dataset.sidebarRow === key)
+    : rows.find(r => getComputedStyle(r).backgroundColor === 'rgba(0, 0, 0, 0)')
+  if (!row) return null
+  const label = row.querySelector('span, a, div') ?? row
+  return {
+    key: row.dataset.sidebarRow,
+    background: getComputedStyle(row).backgroundColor,
+    ink: getComputedStyle(label).color,
+  }
+}
+
+/**
  * Alpha channel of a computed colour. Chrome serialises `rgb()`/`rgba()` for plain values
  * but keeps a `color-mix()` result in its own space — `color(srgb r g b / a)` — so a parser
  * that only knows the rgb form reads null on exactly the colour this check is about.
@@ -579,14 +610,15 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
  * means fully opaque.
  */
 const alphaOf = colour => {
-  const m = /^(rgba?|color)\(([^)]*)\)$/.exec(colour ?? '')
+  const m = /^(rgba?|color|oklab|oklch|lab|lch)\(([^)]*)\)$/.exec(colour ?? '')
   if (!m) return null
   const [channels, alpha] = m[2].split('/')
   if (alpha !== undefined) return Number(alpha.trim())
   // No `/`: only the legacy comma form can still carry an alpha, as a 4th number.
-  // `color()` spends its first token on the colourspace, so counting its tokens the
-  // same way reads a channel as an alpha (self-checked below).
-  if (m[1] === 'color') return 1
+  // `color()` spends its first token on the colourspace and the CSS Color 4 functions
+  // take exactly three channels, so counting tokens the same way would read a channel
+  // as an alpha (self-checked below).
+  if (m[1] !== 'rgb' && m[1] !== 'rgba') return 1
   const parts = channels.split(/[,\s]+/).filter(Boolean)
   return parts.length > 3 ? Number(parts[3]) : 1
 }
@@ -596,6 +628,10 @@ for (const [colour, expected] of [
   ['rgb(12, 12, 12)', 1],
   ['color(srgb 0.039 0.039 0.039 / 0.22)', 0.22],
   ['color(srgb 0.039 0.039 0.039)', 1],
+  // Chrome serialises a color-mix() over an oklch token in oklab — the exact form the
+  // hover fill of lot A13 comes back as, and the one a rgb-only parser reads as null.
+  ['oklab(0.145 0 0 / 0.06)', 0.06],
+  ['oklab(0.985 0 0)', 1],
   ['not a colour', null],
 ]) {
   const got = alphaOf(colour)
@@ -1022,6 +1058,25 @@ try {
     }
     const worst = c.rows.reduce((a, b) => (a.contrast < b.contrast ? a : b))
     console.log(`  worst row contrast: ${worst.contrast.toFixed(2)}:1 ("${worst.key}", ${worst.ink} on ${worst.on})`)
+    // Lot A13 — hover feedback, measured as a same-run A/B on ONE real row: read at rest,
+    // then with the pointer really moved over it. A theme token that cannot carry an alpha
+    // makes Tailwind drop `hover:bg-foreground/[0.06]` entirely, and the two reads come
+    // back byte-identical — which is precisely what this compares.
+    const atRest = await page.evaluate(probeHoverState, null)
+    if (!atRest) { console.error('HARNESS: no idle folder row found — nothing to hover'); process.exit(2) }
+    await page.hover(`[data-sidebar] [data-sidebar-row="${atRest.key}"]`)
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    const hovered = await page.evaluate(probeHoverState, atRest.key)
+    await page.mouse.move(0, 0)
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    const hoverAlpha = alphaOf(hovered.background) ?? 0
+    console.log(`  hover on "${atRest.key}": ${atRest.background} -> ${hovered.background} (alpha ${hoverAlpha.toFixed(3)}), label ink ${atRest.ink}`)
+    if (hovered.background === atRest.background) {
+      failures.push(`${theme}: row "${atRest.key}" paints the same background at rest and under the pointer (${atRest.background}) — no hover feedback`)
+    }
+    if (hoverAlpha < HOVER_MIN_ALPHA) {
+      failures.push(`${theme}: row "${atRest.key}" hover fill ${hovered.background} has alpha ${hoverAlpha.toFixed(3)} (min ${HOVER_MIN_ALPHA}) — the class emitted no paint`)
+    }
     // The folder tiles, re-measured in THIS theme: the plate is painted from the theme's
     // own tokens, so a fill that reads in dark can vanish in light (the defect the human
     // gate of 19/09/2026 found). Both themes are measured in the SAME run, each against
