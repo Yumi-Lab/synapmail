@@ -20,6 +20,8 @@ export interface DbEmailAccount {
   oauth_expires_at: number | null
   is_default: boolean
   color: string
+  /** Prompt-injection guard for this mailbox — see lib/promptGuard.ts. */
+  prompt_guard: boolean
   created_at: string
 }
 
@@ -43,7 +45,7 @@ export async function listAccounts(userId: string): Promise<Omit<DbEmailAccount,
   return query(
     `SELECT id, user_id, name, email, imap_host, imap_port, imap_secure,
             smtp_host, smtp_port, smtp_secure, username,
-            is_default, color, oauth_provider, created_at
+            is_default, color, prompt_guard, oauth_provider, created_at
      FROM email_accounts WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC`,
     [userId]
   )

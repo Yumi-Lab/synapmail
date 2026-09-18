@@ -125,6 +125,8 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS dashboard_account_id UUID REFERENCES email_accounts(id) ON DELETE SET NULL`)
   // Bandeau de mise à jour : version dont l'utilisateur a fermé l'annonce (auparavant en sessionStorage)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS update_dismissed_version VARCHAR(50)`)
+  // Garde contre l'injection d'instructions, par boîte. Activée par défaut : la sécurité est le défaut.
+  await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS prompt_guard BOOLEAN NOT NULL DEFAULT true`)
 
   await query(`
     CREATE TABLE IF NOT EXISTS contacts (

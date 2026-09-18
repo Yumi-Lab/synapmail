@@ -13,6 +13,8 @@ export interface EmailAccount {
   isDefault: boolean
   color: string
   oauthProvider?: 'google' | 'microsoft' | null
+  /** Prompt-injection guard for this mailbox (default on) — see lib/promptGuard.ts. */
+  promptGuard: boolean
   createdAt: string
   /** Unread count in the account's top-level INBOX — authoritative IMAP SEARCH UNSEEN
    *  (mailbox_stats), falling back to cached-row count. GET /api/accounts only. */
