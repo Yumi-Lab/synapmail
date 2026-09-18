@@ -27,18 +27,9 @@ export const SIDEBAR = {
   transitionMs: 180,
   /** Height of one row, published as `--synap-row-h` and consumed by the `ROW` class. */
   rowHeight: 36,
-  /** Vertical padding above the header row — the edge toggle centres on that row. */
+  /** Vertical padding above and below the header row carrying the account. */
   headerPadY: 8,
-  /** Round toggle straddling the bar's right edge: half outside, half inside. */
-  edgeButtonSize: 28,
 } as const
-
-/**
- * Distance from the top of the bar to the centre of its header row. `AppShell`
- * places the straddling toggle from it, so the button and the row it belongs to
- * are positioned from the same numbers.
- */
-export const HEADER_ROW_CENTER = SIDEBAR.headerPadY + SIDEBAR.rowHeight / 2
 
 /** The bar's surface, as a CSS value: the theme's own sidebar token, so the bar
  *  follows light/dark instead of forcing a dark background. Published on the root
@@ -288,8 +279,8 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
       data-sidebar
       data-collapsed={collapsed ? 'true' : 'false'}
     >
-      {/* Header — line 1 of the bar: the account. The bar's own toggle is the round
-          button AppShell straddles on the right edge, at HEADER_ROW_CENTER. */}
+      {/* Header — line 1 of the bar: the account. The bar folds from the menu button
+          of the application header, not from a control of its own. */}
       {activeAccount && (
         <div
           ref={accountBoxRef}
