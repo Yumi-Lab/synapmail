@@ -23,20 +23,25 @@ export interface MailFlag {
   key: string
   /** Index d'Apple (0..6), encodé sur les bits. */
   index: number
-  /** Classe Tailwind de la couleur du drapeau — la SEULE couleur de cette interface. */
-  colorClass: string
+  /**
+   * Couleur du drapeau — la SEULE couleur de cette interface. C'est une VALEUR
+   * CSS, pas une classe utilitaire : Tailwind ne scanne pas `lib/`, donc une
+   * classe nommée ici ne serait jamais générée. La variable est déclarée dans
+   * `app/globals.css` (clair + `.dark`), à poser en `style={{ color }}`.
+   */
+  color: string
   /** Clé i18n, sous l'espace `mail.flags`. */
   labelKey: string
 }
 
 export const MAIL_FLAGS: readonly MailFlag[] = [
-  { key: 'red',    index: 0, colorClass: 'text-red-500',    labelKey: 'red' },
-  { key: 'orange', index: 1, colorClass: 'text-orange-500', labelKey: 'orange' },
-  { key: 'yellow', index: 2, colorClass: 'text-yellow-500', labelKey: 'yellow' },
-  { key: 'green',  index: 3, colorClass: 'text-green-500',  labelKey: 'green' },
-  { key: 'blue',   index: 4, colorClass: 'text-blue-500',   labelKey: 'blue' },
-  { key: 'purple', index: 5, colorClass: 'text-purple-500', labelKey: 'purple' },
-  { key: 'gray',   index: 6, colorClass: 'text-zinc-400',   labelKey: 'gray' },
+  { key: 'red',    index: 0, color: 'var(--flag-red)',    labelKey: 'red' },
+  { key: 'orange', index: 1, color: 'var(--flag-orange)', labelKey: 'orange' },
+  { key: 'yellow', index: 2, color: 'var(--flag-yellow)', labelKey: 'yellow' },
+  { key: 'green',  index: 3, color: 'var(--flag-green)',  labelKey: 'green' },
+  { key: 'blue',   index: 4, color: 'var(--flag-blue)',   labelKey: 'blue' },
+  { key: 'purple', index: 5, color: 'var(--flag-purple)', labelKey: 'purple' },
+  { key: 'gray',   index: 6, color: 'var(--flag-gray)',   labelKey: 'gray' },
 ] as const
 
 /** Couleur d'un `\Flagged` sans bit — et couleur de l'ancien `isStarred: true`. */

@@ -36,7 +36,7 @@ export function FlagPicker({ current, onPick, className }: Props) {
             current === f.key && 'bg-accent'
           )}
         >
-          <Flag className={cn('w-3.5 h-3.5 fill-current', f.colorClass)} />
+          <Flag className="w-3.5 h-3.5 fill-current" style={{ color: f.color }} />
         </button>
       ))}
       <button

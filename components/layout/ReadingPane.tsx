@@ -1022,7 +1022,7 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
                 aria-expanded={flagMenu}
                 onClick={() => setFlagMenu(o => !o)}
               >
-                <Flag className={cn('w-3.5 h-3.5', flag ? cn('fill-current', flag.colorClass) : '')} />
+                <Flag className={cn('w-3.5 h-3.5', flag && 'fill-current')} style={flag ? { color: flag.color } : undefined} />
               </Button>
               {flagMenu && (
                 <div className="absolute top-full right-0 z-50 mt-1 rounded-xl border border-border bg-popover shadow-xl">

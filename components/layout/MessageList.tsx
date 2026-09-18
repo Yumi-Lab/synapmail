@@ -801,7 +801,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
                 if (!flag) return null
                 return (
                   <span title={t(`flags.${flag.labelKey}`)}>
-                    <Flag className={cn('w-3 h-3 fill-current', flag.colorClass)} />
+                    <Flag className="w-3 h-3 fill-current" style={{ color: flag.color }} />
                   </span>
                 )
               })()}
