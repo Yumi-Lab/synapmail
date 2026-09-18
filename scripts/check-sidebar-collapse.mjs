@@ -93,14 +93,16 @@ const MAX_ACCENT_HUE_SPREAD_DEG = 15
 // Below this saturation a painted surface is a neutral (the bar's own greys), not an accent.
 const ACCENT_MIN_SATURATION = 0.12
 
-// Lot A7: a custom folder is told apart when the bar is folded by the letters on its tile.
-// One letter is enough unless a sibling of the SAME list starts with it, in which case both
-// grow to two — so the ceiling is two, the floor one, and no two tiles of one list may match.
-// Two letters ALWAYS — the same floor the account bubbles hold to (a lone letter reads
-// as an accident, not an identity); a third only when two folders of one list would
-// otherwise spell the same pair. Human gate of 19/09/2026 rejected the one-letter tiles.
-const FOLDER_GLYPH_MIN_LETTERS = 2
-const FOLDER_GLYPH_MAX_LETTERS = 3
+// Lot A7b: a custom folder is told apart when the bar is folded by the characters on its
+// tile, and a tile carries EXACTLY two of them — not a floor of two with a ceiling above.
+// Measured on the largest real mailbox of this lane's database (92 custom folders, gate of
+// 19/09/2026): the previous lengthening rule produced 13 three-character tiles whose ink
+// spilled 2.2 to 4.7 px past the 16 px plate, AND still left duplicate pairs. Three glyphs
+// at the 10 px semibold this plate is drawn for do not fit in it, in either direction.
+const FOLDER_GLYPH_LETTERS = 2
+// Stand-in the rule pads with when a name has only one character to give (FolderGlyph's
+// `GLYPH_PAD`): the only character a tile may carry that its folder's name does not.
+const GLYPH_PAD = '\u00b7'
 // The tile must READ as a tile, not as letters floating on the bar. Origin: the human
 // gate measured the shipped `bg-secondary` fill at 1.03:1 (light) and 1.30:1 (dark)
 // against the bar and could not see a plate at all; the ceiling it asked for is 1.5:1.
@@ -392,6 +394,9 @@ const probeFolderGlyphs = () => {
       key: row?.dataset.sidebarRow ?? null,
       title: row?.getAttribute('title') ?? null,
       text: (el.textContent || '').trim(),
+      // Code points, not UTF-16 units: an accented character the rule can legitimately
+      // pick (`CÉ`) is one character to a reader and `.length` would have to agree.
+      chars: [...(el.textContent || '').trim()].length,
       visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && Number(cs.opacity) > 0,
       inkSat: sat(cs.color),
       bgSat: sat(cs.backgroundColor),
@@ -623,6 +628,36 @@ try {
 
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
   await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
+  // Which account of this database carries the most custom folders — asked of the app's own
+  // API, not hard-coded to a name: lot A7b exists because the rule was only ever measured on
+  // the small box the bench happens to sign into, and "the biggest one" must stay true as the
+  // database changes. Read once, up front, so the second pass below knows where to click.
+  const inventory = await page.evaluate(async base => {
+    const accounts = (await (await fetch(`${base}/api/accounts`)).json()).data ?? []
+    const counts = []
+    for (const a of accounts) {
+      const folders = (await (await fetch(`${base}/api/folders?account=${a.id}`)).json()).data ?? []
+      counts.push({ id: a.id, label: a.name || a.email, custom: folders.filter(f => !f.special).length })
+    }
+    return counts
+  }, BASE)
+  if (!inventory.length) { console.error('HARNESS: the accounts API returned nothing — no mailbox to measure'); process.exit(2) }
+  const biggest = inventory.reduce((best, a) => (a.custom > best.custom ? a : best))
+  // FIXTURE, not a measurement: the active account is a server-side preference that
+  // SURVIVES between runs, so a previous run leaving the session on the biggest mailbox
+  // would silently skip the switch this lot exists to exercise. Pinned here to the
+  // smallest mailbox that still has a tile to measure, through the same API the app uses,
+  // BEFORE any reading — the switch measured further down is then always a real click.
+  const smallest = inventory.filter(a => a.custom > 0 && a.id !== biggest.id)
+    .reduce((least, a) => (a.custom < least.custom ? a : least), { custom: Infinity })
+  if (!Number.isFinite(smallest.custom)) { console.error('HARNESS: this database has fewer than two mailboxes carrying custom folders — the switch cannot be measured'); process.exit(2) }
+  await page.evaluate(async ({ base, id }) => {
+    await fetch(`${base}/api/settings`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active_account_id: id }) })
+  }, { base: BASE, id: smallest.id })
+  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
+  const signedInAs = smallest.label
+  console.log(`accounts in this database: ${inventory.map(a => `${a.label}=${a.custom}`).join(', ')} — starting on "${signedInAs}" (${smallest.custom}), biggest is "${biggest.label}" (${biggest.custom})`)
   // Let the folder list settle so both states measure the same set of rows.
   await new Promise(r => setTimeout(r, 2500))
 
@@ -700,49 +735,112 @@ try {
   }
 
   // --- Custom folders: a tile of letters, readable folded, monochrome, full path on hover ---
-  if (!glyphsExpanded || !glyphsCollapsed) { console.error('HARNESS: the sidebar root was not found when reading folder tiles'); process.exit(2) }
-  if (!glyphsCollapsed.length) { console.error('HARNESS: no [data-folder-glyph] tile rendered — this account has no custom folder, nothing measured'); process.exit(2) }
-  console.log(`custom folder tiles: expanded=${glyphsExpanded.length} collapsed=${glyphsCollapsed.length}`)
-  if (glyphsExpanded.length !== glyphsCollapsed.length) {
-    failures.push(`folder tiles: ${glyphsExpanded.length} expanded vs ${glyphsCollapsed.length} collapsed — tiles were unmounted by the fold`)
+  // Named because it runs twice: once on the account the bench signs into, and once on the
+  // account of this database that has the MOST custom folders — the whole point of lot A7b
+  // is that a rule green on a 20-folder test box failed on a 92-folder real one.
+  const checkGlyphs = (label, expanded, collapsed) => {
+    if (!expanded || !collapsed) { console.error(`HARNESS: the sidebar root was not found when reading folder tiles (${label})`); process.exit(2) }
+    if (!collapsed.length) { console.error(`HARNESS: no [data-folder-glyph] tile rendered for ${label} — this account has no custom folder, nothing measured`); process.exit(2) }
+    console.log(`custom folder tiles (${label}): expanded=${expanded.length} collapsed=${collapsed.length}`)
+    if (expanded.length !== collapsed.length) {
+      failures.push(`folder tiles (${label}): ${expanded.length} expanded vs ${collapsed.length} collapsed — tiles were unmounted by the fold`)
+    }
+    // Read on the COLLAPSED state: that is the state the tile exists for.
+    const glyphLetters = new Map()
+    for (const g of collapsed) {
+      console.log(`  ${g.key}: "${g.text}" (${g.chars} chars, ${g.fontSize}) visible=${g.visible} title="${g.title}" ink=${g.color} (sat ${g.inkSat.toFixed(3)}) bg=${g.background} (sat ${g.bgSat.toFixed(3)}, alpha ${g.bgAlpha}) tile/bar=${g.tileContrast.toFixed(3)}:1 on ${g.barBg} ink/tile=${g.inkContrast.toFixed(2)}:1 radius=${g.radiusPx.toFixed(2)}px on ${g.boxPx.toFixed(0)}px bleed=${g.plateBleed.toFixed(2)}px`)
+      if (g.tileContrast < FOLDER_GLYPH_MIN_TILE_CONTRAST) {
+        failures.push(`folder tile ${label}/${g.key}: plate ${g.background} on bar ${g.barBg} = ${g.tileContrast.toFixed(3)}:1 (min ${FOLDER_GLYPH_MIN_TILE_CONTRAST}:1) — the tile does not read as a tile`)
+      }
+      if (g.radiusPx > FOLDER_GLYPH_MAX_RADIUS_PX) {
+        const round = g.radiusPx >= g.boxPx / 2 - 0.01 ? ' — this is a circle, not a case' : ''
+        failures.push(`folder tile ${label}/${g.key}: corner radius ${g.radiusPx.toFixed(2)}px on a ${g.boxPx.toFixed(0)}px plate (max ${FOLDER_GLYPH_MAX_RADIUS_PX}px)${round}`)
+      }
+      const tight = Math.min(g.slotSlack.left, g.slotSlack.right, g.slotSlack.top, g.slotSlack.bottom)
+      if (tight < 0) failures.push(`folder tile ${label}/${g.key}: letters "${g.text}" leave the ${g.slotW.toFixed(0)}px icon column (slack ${tight.toFixed(2)}px)`)
+      if (g.overflow !== 'visible') failures.push(`folder tile ${label}/${g.key}: overflow=${g.overflow} — a wide pair would be clipped mid-letter`)
+      if (g.plateBleed > FOLDER_GLYPH_MAX_PLATE_BLEED_PX) {
+        failures.push(`folder tile ${label}/${g.key}: letters "${g.text}" spill ${g.plateBleed.toFixed(2)}px past the plate (max ${FOLDER_GLYPH_MAX_PLATE_BLEED_PX}px)`)
+      }
+      if (!g.visible) failures.push(`folder tile ${label}/${g.key}: not visible while the bar is collapsed — the folder cannot be told apart`)
+      if (g.chars !== FOLDER_GLYPH_LETTERS) {
+        failures.push(`folder tile ${label}/${g.key}: "${g.text}" is ${g.chars} character(s) (expected exactly ${FOLDER_GLYPH_LETTERS})`)
+      }
+      if (g.text !== g.text.toUpperCase()) failures.push(`folder tile ${label}/${g.key}: "${g.text}" is not upper-cased`)
+      if (g.bgAlpha === 0) failures.push(`folder tile ${label}/${g.key}: background paints nothing (alpha 0, "${g.background}") — the tile class did not compile`)
+      if (g.inkSat > FOLDER_GLYPH_MAX_SATURATION || g.bgSat > FOLDER_GLYPH_MAX_SATURATION) {
+        failures.push(`folder tile ${label}/${g.key}: not monochrome — ink saturation ${g.inkSat.toFixed(3)}, background ${g.bgSat.toFixed(3)} (max ${FOLDER_GLYPH_MAX_SATURATION})`)
+      }
+      // The letters replace the name, so the full IMAP path must remain reachable on hover.
+      const path = (g.key || '').replace(/^folder:/, '')
+      if (!g.title || g.title !== path) failures.push(`folder tile ${label}/${g.key}: title "${g.title}" is not the folder's full path "${path}"`)
+      // The RULE, checked against the folder's own name — the geometric checks above would
+      // all pass on a rule that handed out distinct, well-fitting but MEANINGLESS pairs
+      // (a counter, a hash). Both characters must come from the name, and the first must
+      // be the name's own first: that is what makes a tile mappable back to a folder.
+      const flat = (g.title || '').split('/').filter(Boolean).pop()?.replace(/[^0-9A-Za-zÀ-ÿ]/g, '').toUpperCase() ?? ''
+      const [head, tail] = [...g.text]
+      if (flat && head !== flat[0]) {
+        failures.push(`folder tile ${label}/${g.key}: "${g.text}" does not start with its folder's own first character ("${flat[0]}")`)
+      }
+      if (flat && tail !== GLYPH_PAD && !flat.slice(1).includes(tail)) {
+        failures.push(`folder tile ${label}/${g.key}: "${g.text}" — second character "${tail}" is not in "${flat}", the tile spells something the folder does not`)
+      }
+      const clash = glyphLetters.get(g.text)
+      if (clash) failures.push(`folder tiles (${label}): "${g.text}" is carried by both ${clash} and ${g.key} — the two folders are indistinguishable folded`)
+      glyphLetters.set(g.text, g.key)
+    }
+    // Same letters in both states: the tile is the row's identity, not a collapsed-only decoration.
+    for (const e of expanded) {
+      const c = collapsed.find(x => x.key === e.key)
+      if (c && c.text !== e.text) failures.push(`folder tile ${label}/${e.key}: letters changed with the fold ("${e.text}" → "${c.text}")`)
+    }
+    return collapsed.length
   }
-  // Read on the COLLAPSED state: that is the state the tile exists for.
-  const glyphLetters = new Map()
-  for (const g of glyphsCollapsed) {
-    console.log(`  ${g.key}: "${g.text}" (${g.text.length} letters, ${g.fontSize}) visible=${g.visible} title="${g.title}" ink=${g.color} (sat ${g.inkSat.toFixed(3)}) bg=${g.background} (sat ${g.bgSat.toFixed(3)}, alpha ${g.bgAlpha}) tile/bar=${g.tileContrast.toFixed(3)}:1 on ${g.barBg} ink/tile=${g.inkContrast.toFixed(2)}:1 radius=${g.radiusPx.toFixed(2)}px on ${g.boxPx.toFixed(0)}px`)
-    if (g.tileContrast < FOLDER_GLYPH_MIN_TILE_CONTRAST) {
-      failures.push(`folder tile ${g.key}: plate ${g.background} on bar ${g.barBg} = ${g.tileContrast.toFixed(3)}:1 (min ${FOLDER_GLYPH_MIN_TILE_CONTRAST}:1) — the tile does not read as a tile`)
+  const signedInTiles = checkGlyphs(signedInAs, glyphsExpanded, glyphsCollapsed)
+
+  // --- Lot A7b: the SAME checks on the biggest real mailbox of this database ---
+  // The bar is still collapsed here. Switching account is done by a REAL click on the row
+  // of the shipped popover, exactly as a user would — not by writing a setting — so the
+  // whole switch path (popover, filter, SWR re-key, folder re-fetch) is what gets measured.
+  if (biggest.label === signedInAs) {
+    console.error(`HARNESS: the bench started on the biggest mailbox ("${signedInAs}", ${signedInTiles} tiles) — the switch was not exercised`)
+    process.exit(2)
+  } else {
+    await toggle() // expanded: the popover hangs off the header row
+    await page.click('[data-sidebar-row="account"]')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    const filter = await page.$('[data-account-popover] input')
+    if (filter) await filter.type(biggest.label)
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    const switched = await page.evaluate(label => {
+      const row = [...document.querySelectorAll('[data-account-popover] button')]
+        .find(b => (b.textContent ?? '').includes(label))
+      if (!row) return false
+      row.click()
+      return true
+    }, biggest.label)
+    if (!switched) { console.error(`HARNESS: no row for "${biggest.label}" in the account popover — the second pass measured nothing`); process.exit(2) }
+    // The folder list is re-fetched over IMAP on the switch: wait for the count the
+    // inventory promised rather than for a fixed delay, so a slow fetch is not read as a
+    // product failure. A count that never arrives is a harness failure, not a verdict.
+    await page.waitForFunction(
+      n => document.querySelectorAll('[data-sidebar] [data-folder-glyph]').length === n,
+      { timeout: 60000 }, biggest.custom,
+    ).catch(() => {})
+    const arrived = await page.evaluate(() => document.querySelectorAll('[data-sidebar] [data-folder-glyph]').length)
+    if (arrived !== biggest.custom) {
+      console.error(`HARNESS: after switching to "${biggest.label}" the bar shows ${arrived} tiles, the API promised ${biggest.custom} — the list never settled, nothing measured`)
+      process.exit(2)
     }
-    if (g.radiusPx > FOLDER_GLYPH_MAX_RADIUS_PX) {
-      const round = g.radiusPx >= g.boxPx / 2 - 0.01 ? ' — this is a circle, not a case' : ''
-      failures.push(`folder tile ${g.key}: corner radius ${g.radiusPx.toFixed(2)}px on a ${g.boxPx.toFixed(0)}px plate (max ${FOLDER_GLYPH_MAX_RADIUS_PX}px)${round}`)
-    }
-    const tight = Math.min(g.slotSlack.left, g.slotSlack.right, g.slotSlack.top, g.slotSlack.bottom)
-    if (tight < 0) failures.push(`folder tile ${g.key}: letters "${g.text}" leave the ${g.slotW.toFixed(0)}px icon column (slack ${tight.toFixed(2)}px)`)
-    if (g.overflow !== 'visible') failures.push(`folder tile ${g.key}: overflow=${g.overflow} — a wide pair would be clipped mid-letter`)
-    if (g.plateBleed > FOLDER_GLYPH_MAX_PLATE_BLEED_PX) {
-      failures.push(`folder tile ${g.key}: letters "${g.text}" spill ${g.plateBleed.toFixed(2)}px past the plate (max ${FOLDER_GLYPH_MAX_PLATE_BLEED_PX}px)`)
-    }
-    if (!g.visible) failures.push(`folder tile ${g.key}: not visible while the bar is collapsed — the folder cannot be told apart`)
-    if (g.text.length < FOLDER_GLYPH_MIN_LETTERS || g.text.length > FOLDER_GLYPH_MAX_LETTERS) {
-      failures.push(`folder tile ${g.key}: "${g.text}" is ${g.text.length} letter(s) (expected ${FOLDER_GLYPH_MIN_LETTERS}-${FOLDER_GLYPH_MAX_LETTERS})`)
-    }
-    if (g.text !== g.text.toUpperCase()) failures.push(`folder tile ${g.key}: "${g.text}" is not upper-cased`)
-    if (g.bgAlpha === 0) failures.push(`folder tile ${g.key}: background paints nothing (alpha 0, "${g.background}") — the tile class did not compile`)
-    if (g.inkSat > FOLDER_GLYPH_MAX_SATURATION || g.bgSat > FOLDER_GLYPH_MAX_SATURATION) {
-      failures.push(`folder tile ${g.key}: not monochrome — ink saturation ${g.inkSat.toFixed(3)}, background ${g.bgSat.toFixed(3)} (max ${FOLDER_GLYPH_MAX_SATURATION})`)
-    }
-    // The letters replace the name, so the full IMAP path must remain reachable on hover.
-    const path = (g.key || '').replace(/^folder:/, '')
-    if (!g.title || g.title !== path) failures.push(`folder tile ${g.key}: title "${g.title}" is not the folder's full path "${path}"`)
-    const clash = glyphLetters.get(g.text)
-    if (clash) failures.push(`folder tiles: "${g.text}" is carried by both ${clash} and ${g.key} — the two folders are indistinguishable folded`)
-    glyphLetters.set(g.text, g.key)
-  }
-  // Same letters in both states: the tile is the row's identity, not a collapsed-only decoration.
-  for (const e of glyphsExpanded) {
-    const c = glyphsCollapsed.find(x => x.key === e.key)
-    if (c && c.text !== e.text) failures.push(`folder tile ${e.key}: letters changed with the fold ("${e.text}" → "${c.text}")`)
+    const bigExpanded = await page.evaluate(probeFolderGlyphs)
+    await toggle()
+    const bigCollapsed = await page.evaluate(probeFolderGlyphs)
+    checkGlyphs(biggest.label, bigExpanded, bigCollapsed)
+    // The fold must not drift on a list this long either: same contract, more rows.
+    const bigState = await page.evaluate(probe, EDGE_TOGGLE.bar)
+    if (bigState.horizontalOverflow) failures.push(`"${biggest.label}" (${biggest.custom} folders): horizontal scrollbar present while collapsed`)
+    console.log(`"${biggest.label}": ${bigState.rows.length} rows measured collapsed, horizontal overflow ${bigState.horizontalOverflow}`)
   }
 
   // --- Account bubbles: badge on the corner, initial readable on every colour ---
@@ -935,8 +1033,8 @@ try {
       if (t.tileContrast < FOLDER_GLYPH_MIN_TILE_CONTRAST) {
         failures.push(`${theme}: folder tile ${t.key} plate ${t.background} on bar ${t.barBg} = ${t.tileContrast.toFixed(3)}:1 (min ${FOLDER_GLYPH_MIN_TILE_CONTRAST}:1)`)
       }
-      if (t.text.length < FOLDER_GLYPH_MIN_LETTERS) {
-        failures.push(`${theme}: folder tile ${t.key} carries ${t.text.length} letter ("${t.text}") — ${FOLDER_GLYPH_MIN_LETTERS} minimum`)
+      if (t.chars !== FOLDER_GLYPH_LETTERS) {
+        failures.push(`${theme}: folder tile ${t.key} carries ${t.chars} character(s) ("${t.text}") — exactly ${FOLDER_GLYPH_LETTERS} expected`)
       }
       if (t.inkSat > FOLDER_GLYPH_MAX_SATURATION || t.bgSat > FOLDER_GLYPH_MAX_SATURATION) {
         failures.push(`${theme}: folder tile ${t.key} is not monochrome — ink ${t.inkSat.toFixed(3)}, plate ${t.bgSat.toFixed(3)} (max ${FOLDER_GLYPH_MAX_SATURATION})`)

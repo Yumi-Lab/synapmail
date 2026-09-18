@@ -44,15 +44,6 @@ const TILE_FILL = {
 }
 
 /**
- * Characters kept in a tile: two, exactly, in every case. Not a floor with a ceiling
- * above it — a fixed width. Measured on a real mailbox (92 custom folders, gate of
- * 19/09/2026): 13 three-letter tiles inked 2.2 to 4.7 px past the 16 px plate, because
- * three glyphs at the 10 px semibold the plate is drawn for simply do not fit in it.
- * Lengthening is therefore not a tie-break this tile can afford; re-spelling is.
- */
-const GLYPH_LEN = 2
-
-/**
  * Whitespace and punctuation inside a name. Stripping it leaves ONLY letters and digits,
  * which is what makes every character of a flattened name a legal tile character — no
  * second "is this alphanumeric" test is needed anywhere below. Same character class as
@@ -75,7 +66,14 @@ const GLYPH_PAD = '\u00b7'
 /** A name made only of separators spells nothing; say so rather than render a blank. */
 const GLYPH_UNKNOWN = '??'
 
-/** Exactly `GLYPH_LEN` characters, whatever the name was able to supply. */
+/**
+ * A tile carries exactly two characters, in every case — a fixed width, not a floor with
+ * a ceiling above it. Measured on a real mailbox (92 custom folders, gate of 19/09/2026):
+ * the previous rule's 13 three-letter tiles inked 2.2 to 4.7 px past the 16 px plate,
+ * because three glyphs at the 10 px semibold this plate is drawn for do not fit in it.
+ * Lengthening is therefore not a tie-break the tile can afford; re-spelling is.
+ * This is the ONE place a pair is built, so that width cannot drift apart per caller.
+ */
 const pair = (first: string, second: string | undefined) =>
   first ? `${first}${second ?? GLYPH_PAD}` : GLYPH_UNKNOWN
 
