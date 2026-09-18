@@ -45,6 +45,24 @@ const MENU = '[data-omnibar-menu]'
 // absence, so re-introducing it fails here instead of only at the human gate.
 const EDGE_TOGGLE = '[data-sidebar-edge-toggle]'
 const action = name => `[data-omnibar-action="${name}"]`
+
+// --- Lot H3: la barre d'outils du courrier ---
+const TOOLBAR = '[data-mail-toolbar]'
+const ROW = '[data-mail-row]'
+// Les largeurs que le lot nomme, de la plus large à la plus étroite.
+const TOOLBAR_WIDTHS = [1440, 1280, 1024, 390]
+// L'ordre attendu est LU dans la constante partagée : ni l'ordre ni les noms ne se
+// recopient ici, sinon le banc mesurerait sa propre copie.
+const SELECTION_SRC = readFileSync(new URL('../lib/mailSelection.tsx', import.meta.url), 'utf8')
+const GROUPS_SRC = SELECTION_SRC.slice(
+  SELECTION_SRC.indexOf('MAIL_TOOLBAR_GROUPS'),
+  SELECTION_SRC.indexOf('] as const', SELECTION_SRC.indexOf('MAIL_TOOLBAR_GROUPS')))
+const TOOLBAR_ORDER = [...GROUPS_SRC.matchAll(/action:\s*'(\w+)'/g)].map(m => m[1])
+const SELECTION_ATTR = SELECTION_SRC.match(/MAIL_SELECTION_COUNT_ATTR = '([\w-]+)'/)?.[1]
+if (TOOLBAR_ORDER.length < 2 || !SELECTION_ATTR) {
+  console.error('HARNESS: could not read MAIL_TOOLBAR_GROUPS / MAIL_SELECTION_COUNT_ATTR from lib/mailSelection.tsx')
+  process.exit(2)
+}
 // Lot H2: the signed-in user sits at the far right of the header, and the one door to
 // the settings is inside its menu — the left group's "settings" action is gone.
 const USER_TRIGGER = '[data-user-menu-trigger]'
@@ -382,6 +400,150 @@ try {
     console.log(`click compose from ${from} -> ${composeUrl.pathname}${composeUrl.search}, compose window in the DOM: ${composeOpen}`)
     if (!composeOpen) failures.push(`clicking the compose action from ${from} did not open the compose window (landed on ${composeUrl.pathname}${composeUrl.search})`)
   }
+
+  // --- Lot H3: the mail toolbar in the header ---
+  // Order, disabled states and what a button actually DOES, measured on the running
+  // app. The expected order is READ from the shared constant, never transcribed here.
+  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await page.waitForSelector(TOOLBAR, { timeout: 20000 })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  const actionStates = () => page.evaluate(() => Object.fromEntries(
+    [...document.querySelectorAll('[data-mail-action]')].map(b => [b.dataset.mailAction, b.disabled === true])))
+  const actionOrder = () => page.evaluate(() =>
+    [...document.querySelectorAll('[data-mail-action]')].map(b => b.dataset.mailAction))
+
+  const order = await actionOrder()
+  console.log(`toolbar order : ${order.join(',')}`)
+  console.log(`constant says : ${TOOLBAR_ORDER.join(',')}`)
+  if (order.join(',') !== TOOLBAR_ORDER.join(','))
+    failures.push(`toolbar order is ${order.join(',')}, MAIL_TOOLBAR_GROUPS says ${TOOLBAR_ORDER.join(',')}`)
+
+  // 0 selected: only refresh is live — a button without a capability is greyed, never hidden.
+  const at0 = await actionStates()
+  console.log(`disabled@0    : ${JSON.stringify(at0)}`)
+  if (Object.keys(at0).length !== TOOLBAR_ORDER.length)
+    failures.push(`${Object.keys(at0).length} toolbar buttons in the DOM, the constant declares ${TOOLBAR_ORDER.length} — a button is hidden instead of greyed`)
+  const liveAt0 = Object.entries(at0).filter(([a, d]) => a !== 'refresh' && !d).map(([a]) => a)
+  if (liveAt0.length) failures.push(`with nothing selected these are still enabled: ${liveAt0.join(',')}`)
+  if (at0.refresh) failures.push('refresh is disabled although an account is active')
+
+  const rows = await page.$$(ROW)
+  if (rows.length < 3) { console.error(`HARNESS: ${rows.length} message rows — H3 needs at least 3`); process.exit(2) }
+
+  // 1 selected: everything the account allows is live.
+  await rows[2].click()
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const at1 = await actionStates()
+  console.log(`disabled@1    : ${JSON.stringify(at1)}`)
+  const deadAt1 = Object.entries(at1).filter(([, d]) => d).map(([a]) => a)
+  if (deadAt1.length) failures.push(`with one message open these are still disabled: ${deadAt1.join(',')}`)
+
+  // 2 selected (checkbox on the avatar): replying to two messages makes no sense.
+  await page.evaluate(sel => {
+    const avatar = n => document.querySelectorAll(sel)[n]?.firstElementChild
+    for (const n of [0, 1]) avatar(n)?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  }, ROW)
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const selected = await page.evaluate(attr => document.querySelector(`[${attr}]`)?.getAttribute(attr), SELECTION_ATTR)
+  const at2 = await actionStates()
+  console.log(`disabled@${selected}    : ${JSON.stringify(at2)}`)
+  if (selected !== '2') failures.push(`clicking two avatars selected ${selected} message(s), expected 2`)
+  else for (const a of ['reply', 'replyAll']) {
+    if (!at2[a]) failures.push(`${a} is still enabled with 2 messages selected — it targets ONE message`)
+  }
+  if (at2.remove) failures.push('delete is disabled with 2 messages selected, although it acts on the whole target')
+
+  // Back to one message: Échap vide la sélection (raccourci de la liste), puis on
+  // rouvre la 3e ligne. Sans cela la cible resterait à deux messages et « répondre »
+  // serait grisé à juste titre — un défaut de banc, pas du produit.
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  await (await page.$$(ROW))[2].click()
+  await new Promise(r => setTimeout(r, SETTLE_MS * 2))
+  const backToOne = await page.evaluate(attr => document.querySelector(`[${attr}]`)?.getAttribute(attr), SELECTION_ATTR)
+  if (backToOne !== '0') { console.error(`HARNESS: selection is ${backToOne} after Escape, expected 0 — nothing measured`); process.exit(2) }
+
+  // Flag: posé puis retiré sur un message de TEST, relu par l'API plutôt que sur le
+  // bouton (la barre d'outils n'a pas d'état de drapeau à qui se fier).
+  const target = await page.evaluate(async () => {
+    const uid = document.querySelectorAll('[data-mail-row]')[2]?.dataset.mailRow
+    // Le compte visé est le compte ACTIF (`user_settings.active_account_id`), pas un
+    // compte « par défaut » : aucun des comptes de ce banc ne porte `isDefault`.
+    const settings = (await (await fetch('/api/settings')).json())?.data ?? {}
+    const accounts = (await (await fetch('/api/accounts')).json())?.data ?? []
+    const account = settings.active_account_id ?? accounts.find(a => a.isDefault)?.id ?? accounts[0]?.id ?? null
+    return { uid, account, folder: 'INBOX' }
+  })
+  if (!target.uid || !target.account) { console.error(`HARNESS: no test message (${JSON.stringify(target)}) — the flag is not measured`); process.exit(2) }
+  const flagged = () => page.evaluate(async ({ uid, account, folder }) => {
+    const res = await fetch(`/api/messages/${uid}?account=${account}&folder=${encodeURIComponent(folder)}`)
+    if (!res.ok) return `HTTP ${res.status}`
+    return (await res.json())?.isStarred ?? null
+  }, target)
+
+  const before = await flagged()
+  if (typeof before !== 'boolean') { console.error(`HARNESS: cannot read the test message's flag (got ${before}) — nothing measured`); process.exit(2) }
+  await page.click('[data-mail-action="setFlag"]')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const flagMenuOpen = await page.evaluate(() => !!document.querySelector('[data-mail-action-menu="setFlag"]'))
+  if (!flagMenuOpen) failures.push('the flag button does not open its anchored menu')
+  else {
+    await page.click('[data-mail-flag="red"]')
+    await new Promise(r => setTimeout(r, SETTLE_MS * 2))
+    const afterSet = await flagged()
+    await page.click('[data-mail-action="setFlag"]')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    await page.click('[data-mail-flag="none"]')
+    await new Promise(r => setTimeout(r, SETTLE_MS * 2))
+    const afterClear = await flagged()
+    console.log(`flag on the test message ${target.uid}: before=${before} after set=${afterSet} after remove=${afterClear}`)
+    if (afterSet !== true) failures.push(`choosing a flag colour left isStarred=${afterSet}, expected true`)
+    if (afterClear !== false) failures.push(`removing the flag left isStarred=${afterClear}, expected false`)
+  }
+
+  // Reply: a real click must open the compose window.
+  const replyLive = await page.$('[data-mail-action="reply"]:not([disabled])')
+  if (!replyLive) failures.push('reply is disabled although one message is open')
+  else {
+    await replyLive.click()
+    await new Promise(r => setTimeout(r, SETTLE_MS * 4))
+    const opened = await page.evaluate(() =>
+      !!document.querySelector('[role="dialog"] .ProseMirror, [role="dialog"] [contenteditable="true"]'))
+    console.log(`click reply -> compose window in the DOM: ${opened}`)
+    if (!opened) failures.push('a real click on Reply did not open the compose window')
+    await page.keyboard.press('Escape')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+  }
+
+  // The removed duplicates: no second row of the same actions anywhere on /mail.
+  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await page.waitForSelector(ROW, { timeout: 20000 })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  await (await page.$$(ROW))[2].click()
+  await new Promise(r => setTimeout(r, SETTLE_MS * 2))
+  const strayReadingActions = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-reading-pane] button, [data-reading-archive]')]
+      .map(b => (b.textContent || '').trim().toLowerCase())
+      .filter(txt => ['répondre', 'reply', 'transférer', 'forward', 'répondre à tous'].includes(txt)))
+  console.log(`duplicate reply/forward buttons left in the reading pane: ${strayReadingActions.length}`)
+  if (strayReadingActions.length) failures.push(`the reading pane still carries ${strayReadingActions.join(', ')} — the head bar owns them now`)
+
+  // No horizontal overflow at any of the widths the lot names; the toolbar folds
+  // into its overflow menu rather than pushing the header wider.
+  for (const width of TOOLBAR_WIDTHS) {
+    await page.setViewport({ width, height: 900 })
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    const shot = await page.evaluate(() => ({
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      visible: document.querySelectorAll('[data-mail-action]').length,
+      more: !!document.querySelector('[data-mail-toolbar-more]'),
+    }))
+    console.log(`  ${width}px: buttons=${shot.visible} overflow-menu=${shot.more} horizontal-overflow=${shot.overflow}`)
+    if (shot.overflow) failures.push(`the header overflows horizontally at ${width}px`)
+    if (shot.visible < TOOLBAR_ORDER.length && !shot.more) failures.push(`${width}px: ${shot.visible}/${TOOLBAR_ORDER.length} buttons shown but no overflow menu`)
+  }
+  await page.setViewport(VIEWPORT)
 
   // --- Mobile: the header replaces the top bar and carries the drawer hamburger ---
   await page.setViewport(MOBILE_VIEWPORT)
