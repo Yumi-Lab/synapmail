@@ -43,6 +43,16 @@
   .scroll-thin::-webkit-scrollbar-corner {
     background: transparent;
   }
+
+  /* Viewport of a `ThinScroll`: the native bar is hidden because it cannot fade —
+     neither `::-webkit-scrollbar` nor `scrollbar-color` is animatable. The visible
+     thumb is drawn by the component, which owns its width and its fade timing. */
+  .scroll-hidden {
+    scrollbar-width: none;
+  }
+  .scroll-hidden::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* Compose modal — "Aurora" ambient drift */

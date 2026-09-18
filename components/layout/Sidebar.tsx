@@ -15,6 +15,7 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import type { EmailAccount } from '@/types/account'
 import { ACCENT, AccountAvatar, UnreadBadge } from './AccountAvatar'
 import { folderGlyph, folderInitials } from './FolderGlyph'
+import { ThinScroll } from './ThinScroll'
 
 /**
  * Single source for the bar's geometry. `AppShell` sizes the <aside> from it and
@@ -384,7 +385,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                   />
                 </div>
               )}
-              <div className="max-h-[min(60vh,22rem)] overflow-y-auto overscroll-contain scroll-thin py-1" data-scroll-thin>
+              <ThinScroll className="max-h-[min(60vh,22rem)]" viewportClassName="overscroll-contain py-1">
                 {filteredAccounts.length === 0 && (
                   <p className="px-3 py-4 text-xs text-muted-foreground text-center">{t('noAccountMatch')}</p>
                 )}
@@ -418,7 +419,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                     </button>
                   )
                 })}
-              </div>
+              </ThinScroll>
             </div>
           )}
         </div>
@@ -437,7 +438,8 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
       </div>
 
       {/* Folders */}
-      <nav className="flex-1 overflow-y-auto overflow-x-hidden scroll-thin mt-1" data-scroll-thin>
+      <ThinScroll className="flex-1 mt-1" viewportClassName="overscroll-contain">
+        <nav>
         {foldersLoading && FOLDER_PLACEHOLDERS.map(i => (
           <div key={i} className={ROW} aria-hidden>
             <span className={ICON_COL}><span className="w-4 h-4 rounded bg-foreground/[0.08]" /></span>
@@ -477,7 +479,8 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
             )}
           </>
         )}
-      </nav>
+        </nav>
+      </ThinScroll>
 
       <div className="border-t border-border py-1">
         {/* Theme toggle: horizontal in the open bar, vertical (compact) in the
