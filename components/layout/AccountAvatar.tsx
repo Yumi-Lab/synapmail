@@ -56,25 +56,37 @@ const INITIAL_LEN = 2
  * a letter" — a Unicode property escape needs the `u` flag, unavailable at this
  * project's compile target, while an ASCII letter class would cut "Élodie" or "王小明"
  * in the wrong place. Punctuation must be in here: without it `Nicolas (Yumi)` renders
- * as `N(` instead of `NY`.
+ * as `N(` instead of `NY`. Shared with the folder tiles, which split folder names by
+ * the same rule — one definition of "what a word is" for the whole bar.
  */
-const WORD_SPLIT = /[\s!-\/:-@[-`{-~]+/
+export const WORD_SPLIT = /[\s!-\/:-@[-`{-~]+/
 
 /**
- * The bubble's letters, as ONE source for the whole bar. Always exactly two:
- * the initials of the first two words of the name when there are two ("Nicolas
- * Michaut" → "NM"), otherwise the first two letters of the single word — name
- * first, then the local part of the email ("mathilde" → "MA", "bruno" → "BR").
- * A source too short to yield two characters falls back to the other field
- * rather than rendering a lone letter.
+ * Two letters from ONE source string, as the single rule for the whole bar: the
+ * initials of its first two words when it has two ("Nicolas Michaut" → "NM",
+ * "Controles EDOF" → "CE"), otherwise its own first two letters ("mathilde" → "MA",
+ * "GLS" → "GL"). Returns an EMPTY string when the source cannot yield two characters,
+ * so a caller can fall back to another source rather than render a lone letter —
+ * one letter reads as an accident, not an identity.
+ * Shared with the folder tiles: an account bubble and a folder tile must not spell
+ * their name by two different rules.
+ */
+export const twoLetters = (source: string) => {
+  const words = source.trim().split(WORD_SPLIT).filter(Boolean)
+  if (words.length >= INITIAL_LEN) return words.slice(0, INITIAL_LEN).map(w => w[0]).join('').toUpperCase()
+  const single = words[0] ?? ''
+  return single.length >= INITIAL_LEN ? single.slice(0, INITIAL_LEN).toUpperCase() : ''
+}
+
+/**
+ * The bubble's letters: `twoLetters` applied to the name first, then to the local
+ * part of the email, so a name too short to yield two characters falls back to the
+ * address instead of rendering a single letter.
  */
 export const accountInitials = (account: Pick<EmailAccount, 'name' | 'email'>) => {
-  const sources = [account.name ?? '', (account.email ?? '').split('@')[0] ?? '']
-  for (const source of sources) {
-    const words = source.trim().split(WORD_SPLIT).filter(Boolean)
-    if (words.length >= INITIAL_LEN) return words.slice(0, INITIAL_LEN).map(w => w[0]).join('').toUpperCase()
-    const single = words[0] ?? ''
-    if (single.length >= INITIAL_LEN) return single.slice(0, INITIAL_LEN).toUpperCase()
+  for (const source of [account.name ?? '', (account.email ?? '').split('@')[0] ?? '']) {
+    const letters = twoLetters(source)
+    if (letters) return letters
   }
   return '??'
 }

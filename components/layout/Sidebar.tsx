@@ -14,6 +14,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import type { EmailAccount } from '@/types/account'
 import { ACCENT, AccountAvatar, UnreadBadge } from './AccountAvatar'
+import { folderGlyph, folderInitials } from './FolderGlyph'
 
 /**
  * Single source for the bar's geometry. `AppShell` sizes the <aside> from it and
@@ -223,6 +224,8 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const folders: FolderItem[] = foldersData?.data ?? []
   const specialFolders = folders.filter(f => f.special)
   const customFolders = folders.filter(f => !f.special)
+  // Resolved once per list: a folder grows to two letters only when a sibling shares its first.
+  const customInitials = folderInitials(customFolders)
 
   const switchAccount = (id: string) => {
     if (typeof window !== 'undefined') {
@@ -265,7 +268,13 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     })
   }
 
-  const folderRow = (folder: FolderItem, icon: React.ComponentType<{ className?: string }>, label: string) => {
+  const folderRow = (
+    folder: FolderItem,
+    icon: React.ComponentType<{ className?: string }>,
+    label: string,
+    /** Custom folders hover their full IMAP path — the tile only shows its letters. */
+    title: string = label,
+  ) => {
     const isActive = pathname.startsWith('/mail') && currentFolder === folder.path
     const isDragOver = dragOverPath === folder.path
     const unread = folder.unreadCount ?? 0
@@ -277,7 +286,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
         onDragOver={e => handleDragOver(e, folder.path)}
         onDragLeave={handleDragLeave}
         onDrop={e => handleDrop(e, folder.path)}
-        title={label}
+        title={title}
         data-sidebar-row={`folder:${folder.path}`}
         className={cn(ROW, isDragOver ? ROW_DRAG : isActive ? ROW_ACTIVE : ROW_IDLE)}
       >
@@ -463,7 +472,9 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                 <span className="flex-1 truncate">{t('folders')}</span>
               </span>
             </div>
-            {customFolders.map(folder => folderRow(folder, Folder, folder.name))}
+            {customFolders.map(folder =>
+              folderRow(folder, folderGlyph(customInitials.get(folder.path) ?? '?'), folder.name, folder.path)
+            )}
           </>
         )}
       </nav>
