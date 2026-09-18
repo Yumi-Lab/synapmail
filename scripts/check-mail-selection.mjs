@@ -228,10 +228,14 @@ try {
   // Mesure directe : on écoute `dragstart` sur la ligne et on lit
   // `defaultPrevented`. Annulé = le rectangle a pris la main (défaut) ; non
   // annulé = le navigateur peut porter le message vers un dossier.
+  // `defaultPrevented` se lit APRÈS propagation : React pose ses gestionnaires
+  // sur la racine, donc un écouteur en phase de CAPTURE le lirait toujours faux
+  // et ce contrôle ne mesurerait rien. L'événement est donc gardé et relu au
+  // tour de boucle suivant, quand tout le monde a parlé.
   await page.evaluate(() => {
     window.__dragProbe = null
     document.addEventListener('dragstart', e => {
-      window.__dragProbe = { prevented: e.defaultPrevented }
+      setTimeout(() => { window.__dragProbe = { prevented: e.defaultPrevented } }, 0)
     }, true)
   })
   const b3 = await rowBox(0)

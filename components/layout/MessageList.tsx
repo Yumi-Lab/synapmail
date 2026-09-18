@@ -169,6 +169,8 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   const [marquee, setMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
   const marqueeRef = useRef<{
     startX: number; startY: number; startScroll: number
+    /** Dernière position connue du pointeur — c'est elle qui donne la DIRECTION. */
+    lastX: number; lastY: number
     additive: boolean; before: Set<string>; armed: boolean
   } | null>(null)
 
@@ -505,7 +507,9 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     // ligne est un rectangle de sélection, pas un glisser vers un dossier.
     const pending = marqueeRef.current
     if (pending && !pending.armed) {
-      if (Math.abs(e.clientY - pending.startY) >= Math.abs(e.clientX - pending.startX)) {
+      // La direction se lit sur la trace du pointeur, pas sur les coordonnées de
+      // l'événement de glisser : celles-ci ne sont pas fiables d'un moteur à l'autre.
+      if (Math.abs(pending.lastY - pending.startY) >= Math.abs(pending.lastX - pending.startX)) {
         e.preventDefault()
         pending.armed = true
         return
@@ -587,6 +591,8 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     marqueeRef.current = {
       startX: e.clientX,
       startY: e.clientY,
+      lastX: e.clientX,
+      lastY: e.clientY,
       startScroll: box.scrollTop,
       additive: e.metaKey || e.ctrlKey || e.shiftKey,
       before: new Set(checkedUids),
@@ -631,6 +637,8 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       const box = scrollRef.current
       if (!state || !box) return
       pointer = { x: e.clientX, y: e.clientY }
+      state.lastX = e.clientX
+      state.lastY = e.clientY
       // Sur une ligne, le rectangle n'est armé qu'une fois le glisser natif écarté.
       if (!state.armed) return
       if (Math.abs(e.clientX - state.startX) < MARQUEE_MIN_PX && Math.abs(e.clientY - state.startY) < MARQUEE_MIN_PX) return
