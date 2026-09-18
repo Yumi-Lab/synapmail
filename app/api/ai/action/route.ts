@@ -3,12 +3,19 @@ import { query } from '@/lib/db'
 import { callAI, AIProvider, AISettings } from '@/lib/ai'
 import { NextRequest, NextResponse } from 'next/server'
 import { htmlToText } from '@/lib/html'
+import { untrustedBlock } from '@/lib/promptGuard'
+import { promptGuardApplies } from '@/lib/accounts'
 
 type AIAction = 'summarize' | 'reply' | 'improve' | 'tone' | 'translate'
 
-function buildPrompt(action: AIAction, content: string, options: { tone?: string; targetLang?: string; context?: string }): string {
+function buildPrompt(
+  action: AIAction,
+  content: string,
+  options: { tone?: string; targetLang?: string; context?: string; promptGuard: boolean }
+): string {
   // Strip HTML fully (style/script/head blocks + all tags + entity decoding)
-  const plain = htmlToText(content)
+  // then fence it when the guard is on — see lib/promptGuard.ts.
+  const plain = untrustedBlock(htmlToText(content), { enabled: options.promptGuard })
 
   switch (action) {
     case 'summarize':
@@ -52,9 +59,10 @@ export async function POST(req: NextRequest) {
     context?: string
     tone?: string
     targetLang?: string
+    accountId?: string
   }
 
-  const { action, content, context, tone, targetLang } = body
+  const { action, content, context, tone, targetLang, accountId } = body
 
   if (!content?.trim()) return NextResponse.json({ error: 'Missing content' }, { status: 400 })
 
@@ -83,9 +91,12 @@ export async function POST(req: NextRequest) {
     systemPrompt: row.system_prompt,
   }
 
+  // The mailbox the content belongs to decides — see lib/accounts.ts.
+  const promptGuard = await promptGuardApplies(session.user.id, accountId)
+
   try {
-    const prompt = buildPrompt(action, content, { tone, targetLang, context })
-    const result = await callAI(settings, [{ role: 'user', content: prompt }])
+    const prompt = buildPrompt(action, content, { tone, targetLang, context, promptGuard })
+    const result = await callAI(settings, [{ role: 'user', content: prompt }], { promptGuard })
     return NextResponse.json({ data: { result } })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'AI error'

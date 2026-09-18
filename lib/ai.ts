@@ -1,4 +1,5 @@
 import { decrypt } from './encrypt'
+import { guardSystemPrompt } from './promptGuard'
 
 export type AIProvider = 'claude' | 'openai' | 'ollama' | 'custom'
 
@@ -15,12 +16,18 @@ interface AIMessage {
   content: string
 }
 
-export async function callAI(settings: AISettings, userMessages: AIMessage[]): Promise<string> {
+export async function callAI(
+  settings: AISettings,
+  userMessages: AIMessage[],
+  /** On when the mailbox the content comes from has its prompt-injection guard enabled. */
+  { promptGuard = false }: { promptGuard?: boolean } = {}
+): Promise<string> {
   const { provider, apiKeyEncrypted, baseUrl, model, systemPrompt } = settings
   const apiKey = apiKeyEncrypted ? decrypt(apiKeyEncrypted) : null
 
-  const systemPart: AIMessage[] = systemPrompt
-    ? [{ role: 'system', content: systemPrompt }]
+  const system = guardSystemPrompt(systemPrompt, { enabled: promptGuard })
+  const systemPart: AIMessage[] = system
+    ? [{ role: 'system', content: system }]
     : []
   const messages = [...systemPart, ...userMessages]
 

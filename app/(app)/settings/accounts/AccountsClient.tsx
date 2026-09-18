@@ -12,7 +12,7 @@ import type { EmailAccount } from '@/types/account'
 import { AccountWizard } from './AccountWizard'
 import type { AccountFormData } from './AccountWizard'
 import { AccountSharesPanel } from './AccountSharesPanel'
-import { SettingsPage, SettingsHeader, SettingsRow, Toggle } from '@/components/settings/primitives'
+import { SettingsPage, SettingsHeader, Toggle } from '@/components/settings/primitives'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -190,6 +190,8 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
           description="Vos comptes IMAP / SMTP connectés à Synapmail"
         />
 
+        <p className="mb-4 text-xs text-muted-foreground">{t('promptGuardDesc')}</p>
+
         <div className="mb-4 flex flex-wrap gap-2">
           <a href="/api/oauth/microsoft">
             <Button size="sm" variant="outline" className="gap-1.5">
@@ -243,16 +245,15 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
                     <Trash2 className="w-3.5 h-3.5" />
                   </Button>
                 </div>
-                <div className="border-t border-border px-4 py-3">
-                  <SettingsRow title={t('promptGuard')} description={t('promptGuardDesc')}>
-                    <span data-prompt-guard={account.id}>
-                      <Toggle
-                        checked={account.promptGuard}
-                        onChange={v => handlePromptGuard(account, v)}
-                        label={t('promptGuard')}
-                      />
-                    </span>
-                  </SettingsRow>
+                <div className="flex items-center justify-between gap-4 border-t border-border px-4 py-2.5">
+                  <span className="text-sm">{t('promptGuard')}</span>
+                  <span className="shrink-0" data-prompt-guard={account.id}>
+                    <Toggle
+                      checked={account.promptGuard}
+                      onChange={v => handlePromptGuard(account, v)}
+                      label={t('promptGuard')}
+                    />
+                  </span>
                 </div>
               </div>
               {expandedShareId === account.id && (
