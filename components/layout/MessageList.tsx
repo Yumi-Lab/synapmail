@@ -23,6 +23,16 @@ const fetcher = async (url: string) => {
   return res.json()
 }
 
+// Rectangle de sélection (lot M3c). Sous ce seuil, le geste reste un clic —
+// c'est aussi le seuil qu'utilise l'explorateur du système.
+const MARQUEE_MIN_PX = 4
+// Bande sensible le long des bords du conteneur, pas et cadence du défilement
+// automatique pendant le geste : mesurés à la main sur le banc, assez lents pour
+// rester visés, assez vifs pour traverser une page.
+const MARQUEE_EDGE_PX = 40
+const MARQUEE_SCROLL_PX = 24
+const MARQUEE_SCROLL_MS = 50
+
 const AVATAR_COLORS = [
   'bg-blue-500', 'bg-violet-500', 'bg-emerald-500', 'bg-amber-500',
   'bg-rose-500', 'bg-cyan-500', 'bg-pink-500', 'bg-teal-500',
@@ -152,6 +162,15 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
 
   // Drag state
   const [draggingUid, setDraggingUid] = useState<string | null>(null)
+
+  // Rectangle de sélection (lot M3c) — seul l'état DESSINÉ vit dans le rendu ;
+  // le geste lui-même (origine, sélection d'avant, mode additif) reste en
+  // référence : il change à chaque pixel et ne doit rien re-rendre.
+  const [marquee, setMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
+  const marqueeRef = useRef<{
+    startX: number; startY: number; startScroll: number
+    additive: boolean; before: Set<string>; armed: boolean
+  } | null>(null)
 
   // Sélection façon explorateur : la dernière ligne cliquée est l'ancre d'une
   // plage Maj-clic. Une référence suffit — elle ne pilote aucun rendu.
@@ -482,6 +501,17 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
 
   // Drag handlers
   const handleDragStart = useCallback((e: React.DragEvent, thread: ThreadGroup) => {
+    // Arbitrage de direction (lot M3c) : un geste surtout VERTICAL depuis une
+    // ligne est un rectangle de sélection, pas un glisser vers un dossier.
+    const pending = marqueeRef.current
+    if (pending && !pending.armed) {
+      if (Math.abs(e.clientY - pending.startY) >= Math.abs(e.clientX - pending.startX)) {
+        e.preventDefault()
+        pending.armed = true
+        return
+      }
+      marqueeRef.current = null
+    }
     const msg = thread.lastMessage
     const accId = msg.accountId || activeAccountId || ''
     const uidsToMove = checkedUids.has(msg.uid) ? checkedThreadUids : thread.messages.map(m => m.uid)
@@ -497,6 +527,141 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   const handleDragEnd = useCallback(() => setDraggingUid(null), [])
 
   /**
+   * Rectangle de sélection à la souris (lot M3c).
+   *
+   * Les lignes sont `draggable` et occupent toute la largeur : il n'y a pas de
+   * vide où commencer un rectangle. La direction du geste tranche donc, au
+   * `dragstart` : surtout VERTICAL (|dy| >= |dx|) → le glisser natif est annulé
+   * et le rectangle commence ; surtout HORIZONTAL → on part vers la barre
+   * latérale, le glisser-déposer reste ce qu'il était. Un appui hors d'une ligne
+   * (en-tête de date, marge basse) n'a pas de glisser natif à arbitrer : le
+   * rectangle démarre dès que le pointeur a bougé.
+   *
+   * Tout passe par la sélection de M1 : la barre d'outils et le clic droit
+   * voient le résultat sans une ligne de code en plus.
+   */
+
+  /** Sélectionne les lignes que le rectangle COUPE, dans les coordonnées de l'écran. */
+  const selectIntersecting = useCallback((top: number, bottom: number) => {
+    const state = marqueeRef.current
+    if (!state) return
+    const hit: string[] = []
+    document.querySelectorAll<HTMLElement>('[data-mail-row]').forEach(el => {
+      const r = el.getBoundingClientRect()
+      if (r.bottom >= top && r.top <= bottom) {
+        const uid = el.getAttribute('data-mail-row')
+        if (uid) hit.push(uid)
+      }
+    })
+    if (!state.additive) { setCheckedUids(new Set(hit)); return }
+    const next = new Set(state.before)
+    hit.forEach(uid => next.add(uid))
+    setCheckedUids(next)
+  }, [])
+
+  // Un rectangle relâché sur une ligne fait suivre un `click` : sans ce drapeau,
+  // il ouvrirait le message et effacerait la sélection qu'on vient de tracer.
+  const marqueeDrewRef = useRef(false)
+
+  const endMarquee = useCallback((restore: boolean) => {
+    const state = marqueeRef.current
+    if (!state) return
+    marqueeRef.current = null
+    if (state.armed) marqueeDrewRef.current = true
+    setMarquee(null)
+    if (restore) setCheckedUids(new Set(state.before))
+  }, [])
+
+  const beginMarquee = useCallback((e: React.MouseEvent) => {
+    // Bouton gauche seul : le clic droit ouvre le menu, le milieu ne nous regarde pas.
+    if (e.button !== 0) return
+    // Un rectangle tracé d'une ligne à une AUTRE ne produit aucun `click` (les
+    // deux extrémités n'ont pas le même élément) : le drapeau ne peut pas
+    // compter sur un clic pour se vider, c'est l'appui suivant qui le fait.
+    marqueeDrewRef.current = false
+    const box = scrollRef.current
+    if (!box) return
+    const target = e.target as HTMLElement | null
+    // La bulle porte déjà la case à cocher : un appui dessus n'est pas un rectangle.
+    if (target?.closest('.group\\/avatar')) return
+    marqueeRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startScroll: box.scrollTop,
+      additive: e.metaKey || e.ctrlKey || e.shiftKey,
+      before: new Set(checkedUids),
+      // Sur une ligne, le rectangle attend l'arbitrage du `dragstart` ; ailleurs,
+      // il n'y a rien à arbitrer.
+      armed: !target?.closest('[data-mail-row]'),
+    }
+  }, [checkedUids])
+
+  /**
+   * Le geste vit sur la FENÊTRE, pas sur le conteneur : le pointeur sort de la
+   * liste sans que le rectangle se fige, et un relâchement dehors le termine.
+   * Un seul jeu d'écouteurs, posé une fois — il sort tout de suite quand aucun
+   * geste n'est en cours.
+   */
+  useEffect(() => {
+    let pointer: { x: number; y: number } | null = null
+    let scroller: ReturnType<typeof setInterval> | null = null
+
+    const stopScroller = () => {
+      if (scroller) { clearInterval(scroller); scroller = null }
+    }
+
+    /** Redessine et re-sélectionne à partir de la dernière position connue. */
+    const paint = () => {
+      const state = marqueeRef.current
+      const box = scrollRef.current
+      if (!state || !box || !pointer) return
+      const r = box.getBoundingClientRect()
+      const anchorY = state.startY - r.top + state.startScroll
+      const nowY = pointer.y - r.top + box.scrollTop
+      const anchorX = state.startX - r.left
+      const nowX = pointer.x - r.left
+      const top = Math.min(anchorY, nowY)
+      const height = Math.abs(nowY - anchorY)
+      setMarquee({ left: Math.min(anchorX, nowX), top, width: Math.abs(nowX - anchorX), height })
+      selectIntersecting(top - box.scrollTop + r.top, top + height - box.scrollTop + r.top)
+    }
+
+    const onMove = (e: MouseEvent) => {
+      const state = marqueeRef.current
+      const box = scrollRef.current
+      if (!state || !box) return
+      pointer = { x: e.clientX, y: e.clientY }
+      // Sur une ligne, le rectangle n'est armé qu'une fois le glisser natif écarté.
+      if (!state.armed) return
+      if (Math.abs(e.clientX - state.startX) < MARQUEE_MIN_PX && Math.abs(e.clientY - state.startY) < MARQUEE_MIN_PX) return
+      // Le rectangle remplace la sélection du texte que le navigateur ferait.
+      e.preventDefault()
+      paint()
+      const r = box.getBoundingClientRect()
+      const step = e.clientY < r.top + MARQUEE_EDGE_PX ? -MARQUEE_SCROLL_PX
+        : e.clientY > r.bottom - MARQUEE_EDGE_PX ? MARQUEE_SCROLL_PX
+        : 0
+      stopScroller()
+      if (step !== 0) scroller = setInterval(() => { box.scrollTop += step; paint() }, MARQUEE_SCROLL_MS)
+    }
+
+    const onUp = () => { stopScroller(); endMarquee(false) }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && marqueeRef.current) { stopScroller(); endMarquee(true) }
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      stopScroller()
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [selectIntersecting, endMarquee])
+
+  /**
    * Clic sur une ligne, façon explorateur : Cmd/Ctrl bascule la ligne, Maj
    * étend la plage depuis la dernière ligne cliquée, un clic simple VIDE la
    * sélection et ouvre cette ligne — même quand une sélection est en cours
@@ -504,6 +669,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
    * La case au survol de la bulle (`toggleUid`) reste le chemin qui accumule.
    */
   const handleRowClick = (thread: ThreadGroup, e: React.MouseEvent) => {
+    if (marqueeDrewRef.current) { marqueeDrewRef.current = false; return }
     const uid = thread.lastMessage.uid
     if (e.metaKey || e.ctrlKey) {
       toggleChecked(uid)
@@ -848,11 +1014,19 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       {/* Thread List */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto"
+        className="relative flex-1 overflow-y-auto"
         role="listbox"
         aria-multiselectable
         aria-label={t('messageList')}
+        onMouseDown={beginMarquee}
       >
+        {marquee && (
+          <div
+            data-mail-marquee
+            className="pointer-events-none absolute z-20 border border-primary bg-primary/10"
+            style={{ left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height }}
+          />
+        )}
         {loading && (
           <div className="space-y-0">
             {[...Array(8)].map((_, i) => (

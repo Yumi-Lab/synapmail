@@ -149,6 +149,114 @@ try {
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
 
+  // --- Rectangle de sélection à la souris (lot M3c) ---
+  // Vrai geste souris : mousedown au milieu d'une ligne, déplacement VERTICAL,
+  // mouseup. Les lignes sont `draggable` : ce que ce banc mesure, c'est que
+  // l'arbitrage de direction annule bien le glisser natif et trace un rectangle.
+  const rowBox = async index => {
+    const handle = (await page.$$(ROW))[index]
+    if (!handle) { console.error(`HARNESS: row ${index} vanished`); process.exit(2) }
+    return handle.boundingBox()
+  }
+  // Le point de départ évite la bulle (qui porte la case à cocher) : on part du
+  // texte, comme un humain qui commence son rectangle sur une ligne.
+  const AVATAR_INSET = 80
+  const startOf = box => ({ x: box.x + AVATAR_INSET, y: box.y + box.height / 2 })
+
+  const rowsBefore = await page.$$eval(ROW, els => els.length)
+  const b0 = await rowBox(0)
+  const b1 = await rowBox(1)
+  const rowHeight = b1.y - b0.y
+  if (!(rowHeight > 0)) { console.error(`HARNESS: could not measure a row height (got ${rowHeight})`); process.exit(2) }
+  // Cible : couper EXACTEMENT les trois premières lignes. La distance vient de
+  // la hauteur mesurée dans CE passage, pas d'une constante.
+  const CUT_ROWS = 3
+  const from = startOf(b0)
+  const toY = b0.y + rowHeight * (CUT_ROWS - 1) + b0.height / 2
+
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  // Plusieurs pas : un seul saut ne produit pas de `dragstart` à arbitrer.
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(from.x, from.y + ((toY - from.y) * i) / 8)
+    await new Promise(r => setTimeout(r, 20))
+  }
+  const marqueeDuring = await page.$('[data-mail-marquee]').then(Boolean)
+  const countDuring = await readCount()
+  await page.mouse.up()
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const marqueeAfter = await page.$('[data-mail-marquee]').then(Boolean)
+  const countAfter = await readCount()
+  console.log(`vertical drag over ${CUT_ROWS} rows: marquee during=${marqueeDuring} after=${marqueeAfter} count during=${countDuring} after=${countAfter} (expected true/false/${CUT_ROWS}/${CUT_ROWS})`)
+  if (!marqueeDuring) failures.push('vertical drag: no marquee rectangle was drawn during the gesture')
+  if (marqueeAfter) failures.push('vertical drag: the marquee rectangle survived the mouseup')
+  if (countAfter !== CUT_ROWS) failures.push(`vertical drag: selection holds ${countAfter} messages, expected the ${CUT_ROWS} crossed rows`)
+  // Le rectangle ne doit pas non plus avoir OUVERT la ligne de départ.
+  const openedByMarquee = await page.$('[data-reading-archive]').then(Boolean)
+  console.log(`vertical drag opened a message: ${openedByMarquee} (expected false)`)
+  if (openedByMarquee) failures.push('vertical drag opened the message instead of only selecting')
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // --- Échap PENDANT le geste rétablit la sélection d'avant ---
+  await clickRow(0, ACCEL)
+  const beforeEsc = await readCount()
+  if (beforeEsc !== 1) { console.error(`HARNESS: could not seed a 1-row selection (got ${beforeEsc})`); process.exit(2) }
+  const b2 = await rowBox(2)
+  const escFrom = startOf(b2)
+  await page.mouse.move(escFrom.x, escFrom.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 6; i++) {
+    await page.mouse.move(escFrom.x, escFrom.y + (rowHeight * 2 * i) / 6)
+    await new Promise(r => setTimeout(r, 20))
+  }
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const countAfterEsc = await readCount()
+  const marqueeAfterEsc = await page.$('[data-mail-marquee]').then(Boolean)
+  await page.mouse.up()
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  console.log(`Escape during the gesture: count=${countAfterEsc} marquee=${marqueeAfterEsc} (expected ${beforeEsc}/false)`)
+  if (countAfterEsc !== beforeEsc) failures.push(`Escape during the gesture: selection holds ${countAfterEsc}, expected the ${beforeEsc} selected before it started`)
+  if (marqueeAfterEsc) failures.push('Escape during the gesture: the marquee rectangle is still drawn')
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // --- Un glisser HORIZONTAL reste le glisser-déposer natif ---
+  // Mesure directe : on écoute `dragstart` sur la ligne et on lit
+  // `defaultPrevented`. Annulé = le rectangle a pris la main (défaut) ; non
+  // annulé = le navigateur peut porter le message vers un dossier.
+  await page.evaluate(() => {
+    window.__dragProbe = null
+    document.addEventListener('dragstart', e => {
+      window.__dragProbe = { prevented: e.defaultPrevented }
+    }, true)
+  })
+  const b3 = await rowBox(0)
+  const hFrom = startOf(b3)
+  await page.mouse.move(hFrom.x, hFrom.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(hFrom.x - (200 * i) / 8, hFrom.y)
+    await new Promise(r => setTimeout(r, 20))
+  }
+  const marqueeOnHorizontal = await page.$('[data-mail-marquee]').then(Boolean)
+  await page.mouse.up()
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const dragProbe = await page.evaluate(() => window.__dragProbe)
+  console.log(`horizontal drag: marquee=${marqueeOnHorizontal} dragstart=${JSON.stringify(dragProbe)} (expected false / not prevented)`)
+  if (marqueeOnHorizontal) failures.push('horizontal drag drew a marquee instead of leaving the native drag alone')
+  if (!dragProbe) failures.push('horizontal drag: no dragstart fired — the native drag-to-folder path is gone')
+  else if (dragProbe.prevented) failures.push('horizontal drag: dragstart was cancelled, drag-to-folder can no longer start')
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const rowsAfter = await page.$$eval(ROW, els => els.length)
+  console.log(`rows: before=${rowsBefore} after=${rowsAfter} (nothing moved or deleted)`)
+  if (rowsAfter < rowsBefore) failures.push(`the marquee checks lost rows: ${rowsBefore} before, ${rowsAfter} after`)
+
   // --- The reading pane's Archive button carries an action ---
   // Opening a message and reading the button's own disabled state is what tells
   // a wired button from the dead one shipped before this lot. No click: archiving
