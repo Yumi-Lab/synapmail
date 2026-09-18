@@ -9,13 +9,16 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
+/** Where an account's sharing is managed — the one place the bar's shared mark points to. */
+export const ACCOUNTS_SETTINGS_HREF = '/settings/accounts'
+
 const NAV_ITEMS = [
   { href: '/settings/profile',       key: 'profile',       icon: User },
   { href: '/settings/appearance',    key: 'appearance',    icon: Palette },
   { href: '/settings/reading',       key: 'reading',       icon: BookOpen },
   { href: '/settings/notifications', key: 'notifications', icon: Bell },
   { href: '/settings/composition',   key: 'composition',   icon: PenSquare },
-  { href: '/settings/accounts',      key: 'accounts',      icon: Mail },
+  { href: ACCOUNTS_SETTINGS_HREF,    key: 'accounts',      icon: Mail },
   { href: '/settings/signatures',    key: 'signatures',    icon: FileSignature },
   { href: '/settings/templates',     key: 'templates',     icon: LayoutTemplate },
   { href: '/settings/contacts',      key: 'contacts',      icon: Users },

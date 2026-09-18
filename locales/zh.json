@@ -278,6 +278,14 @@
           "canManageRules": "管理规则",
           "canManageSignatures": "管理签名"
         }
+      },
+      "receivedShares": {
+        "title": "共享给我的邮箱",
+        "empty": "暂无他人共享给你的邮箱",
+        "sharedBy": "由 {name} 共享",
+        "leave": "移除此共享",
+        "leaveConfirm": "确定移除此共享？你将失去对该邮箱的访问权限。",
+        "leaveFailed": "移除共享失败"
       }
     },
     "profile": {

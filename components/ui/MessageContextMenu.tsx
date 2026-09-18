@@ -9,11 +9,12 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Archive, Flag, Forward, Mail, MailOpen, MailX, MoveRight, Reply, ReplyAll, Trash2, ChevronRight } from 'lucide-react'
+import { Archive, Clock, Flag, Forward, Mail, MailOpen, MailX, MoveRight, Reply, ReplyAll, Trash2, ChevronRight } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { FlagPicker } from '@/components/mail/FlagPicker'
 import { flagByKey } from '@/lib/flags'
 import { useMailSelection } from '@/lib/mailSelection'
+import { snoozePresets } from '@/lib/snooze-presets'
 import { cn } from '@/lib/utils'
 import type { Folder } from '@/types/email'
 
@@ -159,6 +160,29 @@ export function MessageContextMenu({ menu, folders, onClose }: Props) {
         </div>,
       )}
       {item('spam', <MailX className={ICON} />, t('spam'), () => run('spam'), { enabled: can.spam })}
+      {/* Reporter : retiré des lignes au lot M3b, il n'existait nulle part ailleurs. */}
+      {submenu(
+        'snooze',
+        <Clock className={ICON} />,
+        t('snooze'),
+        can.snooze,
+        <div className="min-w-[180px]">
+          {snoozePresets().map(p => (
+            <button
+              key={p.key}
+              type="button"
+              data-menu-snooze={p.key}
+              onClick={() => { run('snooze', p.date); onClose() }}
+              className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
+            >
+              <span>{t(p.key)}</span>
+              <span className="text-[10px] text-muted-foreground tabular-nums">
+                {p.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </button>
+          ))}
+        </div>,
+      )}
 
       {separator}
 

@@ -40,6 +40,8 @@ export interface MailActions {
   markRead: () => void
   markUnread: () => void
   moveTo: (destination: string) => void
+  /** Reporte la cible : elle disparaît de la liste jusqu'à cette date (lot M3b). */
+  snooze: (until: Date) => void
 }
 
 export type MailActionName = keyof MailActions
@@ -100,6 +102,7 @@ export function deriveCapabilities(state: MailSelectionState): MailCapabilities 
     markRead: organize,
     markUnread: organize,
     moveTo: organize,
+    snooze: organize,
   }
 }
 
