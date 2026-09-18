@@ -9,7 +9,10 @@ import { cn } from '@/lib/utils'
  * while scrolling has to be drawn. The native one is hidden (`.scroll-hidden`) and a
  * thumb is painted over the viewport, tracking `scrollTop/scrollHeight`.
  * Dragging the thumb is deliberately NOT implemented — the wheel, the trackpad and the
- * keyboard already scroll, and a drag handle would be code nobody exercises.
+ * keyboard already scroll, and a drag handle would be code nobody exercises. For the same
+ * reason the thumb does NOT react to hover: scrolling with the cursor left over the list
+ * is the normal case, and a hover rule would pin the thumb visible for as long as it stays
+ * there — the opposite of a bar that shows up while scrolling and then gets out of the way.
  */
 export const THIN_SCROLL = {
   /** Thumb width in px — the width the native thin bar reserved before it was hidden. */
@@ -39,7 +42,6 @@ export function ThinScroll({ className, viewportClassName, children, ...rest }: 
   const idleTimer = useRef<ReturnType<typeof setTimeout>>()
   const [thumb, setThumb] = useState<Thumb | null>(null)
   const [scrolling, setScrolling] = useState(false)
-  const [hovering, setHovering] = useState(false)
 
   const measure = useCallback(() => {
     const el = viewportRef.current
@@ -81,8 +83,6 @@ export function ThinScroll({ className, viewportClassName, children, ...rest }: 
     <div
       {...rest}
       className={cn('relative flex flex-col min-h-0', className)}
-      onMouseEnter={() => setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
       data-thin-scroll
     >
       <div
@@ -101,13 +101,13 @@ export function ThinScroll({ className, viewportClassName, children, ...rest }: 
           // shorthand outranks `motion-reduce:transition-none` and the reduced-motion user
           // would still get the 300 ms fade. Only the duration is inline, and
           // `transition-property: none` from the class beats it.
-          className="absolute rounded-full bg-foreground/25 pointer-events-none transition-opacity ease-out motion-reduce:transition-none"
+          className="absolute rounded-full scroll-thumb pointer-events-none transition-opacity ease-out motion-reduce:transition-none"
           style={{
             top: thumb.top,
             height: thumb.height,
             right: THIN_SCROLL.inset,
             width: THIN_SCROLL.thumbWidth,
-            opacity: scrolling || hovering ? 1 : 0,
+            opacity: scrolling ? 1 : 0,
             transitionDuration: `${THIN_SCROLL.fadeMs}ms`,
           }}
         />

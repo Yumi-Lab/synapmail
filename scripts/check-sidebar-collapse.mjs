@@ -61,6 +61,12 @@ const GLYPH_INSET_PX = 2
 const THIN_SCROLL_WIDTH_PX = 6
 const THIN_SCROLL_IDLE_MS = 2000
 const THIN_SCROLL_FADE_MS = 300
+// A drawn thumb at opacity 1 is still invisible if nothing is painted in it: the shipped
+// ink is `color-mix(in srgb, currentColor 22%, transparent)`, so any alpha above zero means
+// a rule applied, and zero means it did not (observed on `bg-foreground/25`, which compiles
+// to nothing on this project's raw `var(--x)` colour tokens). The criterion is "painted at
+// all", not a calibrated constant — the 22% itself is asserted by the same-run A/B below.
+const THUMB_MIN_ALPHA = 0
 // Margin over `idleMs + fadeMs` before reading the faded-out state: covers the timer's
 // own scheduling slack on a loaded headless bench. Not a threshold on the product —
 // the criterion is the opacity, which is 1 or 0, not a measured constant.
@@ -452,6 +458,7 @@ const probeScrollbars = () => {
         overflowing: vp ? vp.scrollHeight - vp.clientHeight : 0,
         hasThumb: !!thumb,
         opacity: st ? Number(st.opacity) : null,
+        thumbBg: st ? st.backgroundColor : null,
         transitionProp: st ? st.transitionProperty : null,
         transitionMs: st ? st.transitionDuration : null,
         thumbW: thumbBox ? thumbBox.width : null,
@@ -557,6 +564,37 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
       }
     }),
   }
+}
+
+/**
+ * Alpha channel of a computed colour. Chrome serialises `rgb()`/`rgba()` for plain values
+ * but keeps a `color-mix()` result in its own space — `color(srgb r g b / a)` — so a parser
+ * that only knows the rgb form reads null on exactly the colour this check is about.
+ * Both forms put the alpha after the `/` (or 4th in the legacy comma list); no `/` at all
+ * means fully opaque.
+ */
+const alphaOf = colour => {
+  const m = /^(rgba?|color)\(([^)]*)\)$/.exec(colour ?? '')
+  if (!m) return null
+  const [channels, alpha] = m[2].split('/')
+  if (alpha !== undefined) return Number(alpha.trim())
+  // No `/`: only the legacy comma form can still carry an alpha, as a 4th number.
+  // `color()` spends its first token on the colourspace, so counting its tokens the
+  // same way reads a channel as an alpha (self-checked below).
+  if (m[1] === 'color') return 1
+  const parts = channels.split(/[,\s]+/).filter(Boolean)
+  return parts.length > 3 ? Number(parts[3]) : 1
+}
+// Self-check: the three serialisations this gate can meet, plus the no-op it must catch.
+for (const [colour, expected] of [
+  ['rgba(0, 0, 0, 0)', 0],
+  ['rgb(12, 12, 12)', 1],
+  ['color(srgb 0.039 0.039 0.039 / 0.22)', 0.22],
+  ['color(srgb 0.039 0.039 0.039)', 1],
+  ['not a colour', null],
+]) {
+  const got = alphaOf(colour)
+  if (got !== expected) throw new Error(`alphaOf("${colour}") = ${got}, expected ${expected}`)
 }
 
 const setTheme = theme => {
@@ -793,43 +831,69 @@ try {
   const scroller = sb.containers.findIndex(c => c.overflowing > 0)
   if (scroller < 0) { console.error('HARNESS: no ThinScroll container overflows — the thumb was never exercised'); process.exit(2) }
 
-  // Real wheel input over the scrolling viewport, then read the thumb DURING the scroll…
+  // Real wheel input over the scrolling viewport, then read the thumb DURING the scroll.
+  // Run in BOTH themes: the ink is derived from `currentColor`, so a value that paints on
+  // the dark bar can resolve to nothing on the light one, and the paint is exactly what a
+  // user sees (an opacity of 1 over a fully transparent background is still invisible).
   const target = await page.evaluate(i => {
     const vp = document.querySelectorAll('[data-thin-scroll]')[i].querySelector('[data-thin-scroll-viewport]')
     const r = vp.getBoundingClientRect()
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
   }, scroller)
-  await page.mouse.move(target.x, target.y)
-  await page.mouse.wheel({ deltaY: 200 })
-  // Read AFTER the fade-in has run to completion: at 120ms the first attempt caught the
-  // thumb mid-transition at 0.74 and reported a product failure that was a harness one.
-  await new Promise(r => setTimeout(r, THIN_SCROLL_FADE_MS + FADE_SETTLE_MS))
-  const during = (await page.evaluate(probeScrollbars)).containers[scroller]
-  // …then take the pointer OFF the container before waiting out the idle delay: hovering
-  // the track legitimately pins the thumb at opacity 1, so leaving the mouse where the
-  // wheel was sent measures the hover rule, not the idle one (observed, same trap).
-  await page.mouse.move(VIEWPORT.width - 1, VIEWPORT.height - 1)
-  await new Promise(r => setTimeout(r, THIN_SCROLL_IDLE_MS + THIN_SCROLL_FADE_MS + FADE_SETTLE_MS))
-  const idle = (await page.evaluate(probeScrollbars)).containers[scroller]
 
-  const expectedH = (during.clientHeight * during.clientHeight) / during.scrollHeight
-  const expectedTop = (during.clientHeight - expectedH) * (during.scrollTop / (during.scrollHeight - during.clientHeight))
-  console.log(`thumb during scroll: opacity=${during.opacity} width=${during.thumbW}px height=${during.thumbH?.toFixed(2)}px (expected ${expectedH.toFixed(2)}) top=${during.thumbTop?.toFixed(2)}px (expected ${expectedTop.toFixed(2)}) transition=${during.transitionProp} ${during.transitionMs}`)
-  console.log(`thumb ${((THIN_SCROLL_IDLE_MS + THIN_SCROLL_FADE_MS + FADE_SETTLE_MS) / 1000).toFixed(1)}s later: opacity=${idle.opacity} (scrollTop ${idle.scrollTop})`)
-  if (!during.hasThumb) failures.push('no thumb rendered while the container was being scrolled')
-  if (during.scrollTop <= 0) { console.error('HARNESS: the wheel event did not move the viewport — the fade check measured nothing'); process.exit(2) }
-  if (during.opacity !== 1) failures.push(`thumb opacity ${during.opacity} while scrolling, expected 1`)
-  if (idle.opacity !== 0) failures.push(`thumb opacity ${idle.opacity} after ${THIN_SCROLL_IDLE_MS}ms without scrolling, expected 0 (faded out)`)
-  if (during.thumbW !== THIN_SCROLL_WIDTH_PX) failures.push(`thumb is ${during.thumbW}px wide, expected ${THIN_SCROLL_WIDTH_PX}px`)
-  if (Math.abs(during.thumbH - expectedH) > MAX_THUMB_DRIFT_PX) {
-    failures.push(`thumb height ${during.thumbH.toFixed(2)}px, expected clientHeight²/scrollHeight = ${expectedH.toFixed(2)}px (max ${MAX_THUMB_DRIFT_PX}px off)`)
+  const fade = {}
+  for (const theme of THEMES) {
+    await page.evaluate(setTheme, theme)
+    // Back to the top before each arm so the wheel always has somewhere to go — a container
+    // already at its end would not move and the arm would measure nothing.
+    await page.evaluate(i => {
+      document.querySelectorAll('[data-thin-scroll]')[i].querySelector('[data-thin-scroll-viewport]').scrollTop = 0
+    }, scroller)
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    await page.mouse.move(target.x, target.y)
+    await page.mouse.wheel({ deltaY: 200 })
+    // Read AFTER the fade-in has run to completion: at 120ms the first attempt caught the
+    // thumb mid-transition at 0.74 and reported a product failure that was a harness one.
+    await new Promise(r => setTimeout(r, THIN_SCROLL_FADE_MS + FADE_SETTLE_MS))
+    const during = (await page.evaluate(probeScrollbars)).containers[scroller]
+    // The pointer STAYS on the list while the idle delay runs: scrolling with the cursor
+    // left over the content is how a user actually scrolls, and an earlier version of this
+    // check moved it away first — which is precisely why it stayed green while the thumb
+    // was pinned visible by a hover rule (gate of 19/09/2026).
+    await new Promise(r => setTimeout(r, THIN_SCROLL_IDLE_MS + THIN_SCROLL_FADE_MS + FADE_SETTLE_MS))
+    const idle = (await page.evaluate(probeScrollbars)).containers[scroller]
+    fade[theme] = { during, idle }
+
+    const expectedH = (during.clientHeight * during.clientHeight) / during.scrollHeight
+    const expectedTop = (during.clientHeight - expectedH) * (during.scrollTop / (during.scrollHeight - during.clientHeight))
+    const paintedAlpha = alphaOf(during.thumbBg)
+    console.log(`${theme}: thumb during scroll: opacity=${during.opacity} paint=${during.thumbBg} (alpha ${paintedAlpha}) width=${during.thumbW}px height=${during.thumbH?.toFixed(2)}px (expected ${expectedH.toFixed(2)}) top=${during.thumbTop?.toFixed(2)}px (expected ${expectedTop.toFixed(2)}) transition=${during.transitionProp} ${during.transitionMs}`)
+    console.log(`${theme}: thumb ${((THIN_SCROLL_IDLE_MS + THIN_SCROLL_FADE_MS + FADE_SETTLE_MS) / 1000).toFixed(1)}s later, pointer still on the list: opacity=${idle.opacity} (scrollTop ${idle.scrollTop})`)
+    if (!during.hasThumb) failures.push(`${theme}: no thumb rendered while the container was being scrolled`)
+    if (during.scrollTop <= 0) { console.error('HARNESS: the wheel event did not move the viewport — the fade check measured nothing'); process.exit(2) }
+    if (during.opacity !== 1) failures.push(`${theme}: thumb opacity ${during.opacity} while scrolling, expected 1`)
+    if (paintedAlpha === null) failures.push(`${theme}: thumb background "${during.thumbBg}" is not a colour the alpha can be read from`)
+    else if (paintedAlpha <= THUMB_MIN_ALPHA) {
+      failures.push(`${theme}: thumb paints ${during.thumbBg} (alpha ${paintedAlpha}) while scrolling — nothing is drawn, the bar is invisible whatever its opacity`)
+    }
+    if (idle.opacity !== 0) failures.push(`${theme}: thumb opacity ${idle.opacity} ${THIN_SCROLL_IDLE_MS}ms after the last scroll with the pointer left on the list, expected 0 (faded out)`)
+    if (during.thumbW !== THIN_SCROLL_WIDTH_PX) failures.push(`${theme}: thumb is ${during.thumbW}px wide, expected ${THIN_SCROLL_WIDTH_PX}px`)
+    if (Math.abs(during.thumbH - expectedH) > MAX_THUMB_DRIFT_PX) {
+      failures.push(`${theme}: thumb height ${during.thumbH.toFixed(2)}px, expected clientHeight²/scrollHeight = ${expectedH.toFixed(2)}px (max ${MAX_THUMB_DRIFT_PX}px off)`)
+    }
+    if (Math.abs(during.thumbTop - expectedTop) > MAX_THUMB_DRIFT_PX) {
+      failures.push(`${theme}: thumb sits ${during.thumbTop.toFixed(2)}px from the top, expected ${expectedTop.toFixed(2)}px for scrollTop=${during.scrollTop} (max ${MAX_THUMB_DRIFT_PX}px off)`)
+    }
+    if (!during.transitionProp?.includes('opacity')) failures.push(`${theme}: thumb transitions "${during.transitionProp}", expected opacity`)
+    if (during.transitionMs !== `${THIN_SCROLL_FADE_MS / 1000}s`) {
+      failures.push(`${theme}: thumb fade lasts ${during.transitionMs}, expected ${THIN_SCROLL_FADE_MS / 1000}s`)
+    }
   }
-  if (Math.abs(during.thumbTop - expectedTop) > MAX_THUMB_DRIFT_PX) {
-    failures.push(`thumb sits ${during.thumbTop.toFixed(2)}px from the top, expected ${expectedTop.toFixed(2)}px for scrollTop=${during.scrollTop} (max ${MAX_THUMB_DRIFT_PX}px off)`)
-  }
-  if (!during.transitionProp?.includes('opacity')) failures.push(`thumb transitions "${during.transitionProp}", expected opacity`)
-  if (during.transitionMs !== `${THIN_SCROLL_FADE_MS / 1000}s`) {
-    failures.push(`thumb fade lasts ${during.transitionMs}, expected ${THIN_SCROLL_FADE_MS / 1000}s`)
+  // Same-run A/B on the paint itself: the ink comes from `currentColor`, so the two themes
+  // must NOT resolve to the same colour — an identical value in both would mean the thumb
+  // is painted from a fixed constant that ignores the surface it sits on.
+  if (fade.light.during.thumbBg === fade.dark.during.thumbBg) {
+    failures.push(`thumb paints the same ${fade.light.during.thumbBg} in light and dark — it does not derive from the bar's own ink`)
   }
 
   // --- Cleanliness: one accent, one row motif, static, follows the theme ---
