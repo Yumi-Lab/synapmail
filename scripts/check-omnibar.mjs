@@ -318,23 +318,26 @@ try {
   // Light-dismiss: ONE click outside closes the menu AND reaches its target. Clicking a
   // folder row must both close the menu and open that folder — a veil that swallowed the
   // click would close the menu while leaving the folder untouched.
-  const folderBefore = new URL(page.url()).search
+  const folderBefore = new URL(page.url()).searchParams.get('folder')
+  // A FOLDER row, not the account switcher (whose click opens a dropdown and moves no
+  // URL) and not the folder already open: the proof is that the URL lands on that folder,
+  // so the target has to be a row whose click is a navigation in the first place.
   const folderTarget = await page.evaluate(() => {
     const here = new URL(location.href).searchParams.get('folder')
-    const row = [...document.querySelectorAll('[data-sidebar] [data-sidebar-row]')]
-      .find(el => el.dataset.sidebarRow && el.dataset.sidebarRow !== here && el.getBoundingClientRect().height > 0)
+    const row = [...document.querySelectorAll('[data-sidebar] [data-sidebar-row^="folder:"]')]
+      .find(el => el.dataset.sidebarRow.slice('folder:'.length) !== here && el.getBoundingClientRect().height > 0)
     if (!row) return null
     const r = row.getBoundingClientRect()
-    return { key: row.dataset.sidebarRow, x: r.left + r.width / 2, y: r.top + r.height / 2 }
+    return { key: row.dataset.sidebarRow, folder: row.dataset.sidebarRow.slice('folder:'.length), x: r.left + r.width / 2, y: r.top + r.height / 2 }
   })
   if (!folderTarget) { console.error('HARNESS: no other folder row to click through to — light-dismiss not measured'); process.exit(2) }
   await page.mouse.click(folderTarget.x, folderTarget.y)
   await new Promise(r => setTimeout(r, SETTLE_MS * 2))
   const dismissed = !(await menuOpen())
-  const folderAfter = new URL(page.url()).search
-  console.log(`light-dismiss: one click on folder "${folderTarget.key}" -> menu closed=${dismissed}, url ${folderBefore || '(none)'} -> ${folderAfter || '(none)'}`)
+  const folderAfter = new URL(page.url()).searchParams.get('folder')
+  console.log(`light-dismiss: one click on folder "${folderTarget.folder}" -> menu closed=${dismissed}, folder ${folderBefore || '(none)'} -> ${folderAfter || '(none)'}`)
   if (!dismissed) failures.push('one click outside does not close the user menu')
-  if (folderAfter === folderBefore) failures.push(`the click that closed the menu did not reach the folder row "${folderTarget.key}" — the URL never moved off ${folderBefore || '(none)'}`)
+  if (folderAfter !== folderTarget.folder) failures.push(`the click that closed the menu did not reach the folder row "${folderTarget.folder}" — the mailbox is on ${folderAfter || '(none)'}`)
 
   // Settings entry: the ONLY remaining path to /settings from the header.
   await page.click(USER_TRIGGER)
