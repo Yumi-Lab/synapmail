@@ -7,6 +7,7 @@ import { MoreHorizontal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Folder } from '@/types/email'
 import { FlagPicker } from '@/components/mail/FlagPicker'
+import { IconTooltip, type TooltipAlign } from '@/components/ui/IconTooltip'
 import {
   MAIL_TOOLBAR_GROUPS, useMailSelection,
   type MailActionName, type MailToolbarItem,
@@ -21,11 +22,22 @@ const fetcher = (url: string) => fetch(url).then(r => r.json())
 const MENU_ACTIONS = new Set<MailActionName>(['setFlag', 'moveTo'])
 
 /**
- * Ordre dans lequel les groupes passent au menu « … » quand la place manque : le
- * DERNIER groupe part le premier. Relever (groupe 0) et le groupe répondre/supprimer
- * restent visibles le plus longtemps — la priorité demandée au lot H3.
+ * Groupe que le header rend AVANT « Nouveau message » depuis le lot H3c (« Relever,
+ * faut qu'il soit avant »). Il sort de la barre d'outils mais reste défini dans
+ * `MAIL_TOOLBAR_GROUPS` : ni son icône ni son libellé ne sont recopiés, et le menu
+ * « … » continue de le lister en tête.
  */
-const OVERFLOW_ORDER = MAIL_TOOLBAR_GROUPS.map((_, i) => i).reverse()
+const LEAD_GROUP = 0
+
+/** Les groupes que la barre rend elle-même — tout sauf celui que le header a pris. */
+const IN_BAR_GROUPS = MAIL_TOOLBAR_GROUPS.map((_, i) => i).filter(i => i !== LEAD_GROUP)
+
+/**
+ * Ordre dans lequel les groupes passent au menu « … » quand la place manque : le
+ * DERNIER groupe part le premier. Le groupe archiver/supprimer reste visible le plus
+ * longtemps — la priorité demandée au lot H3.
+ */
+const OVERFLOW_ORDER = [...IN_BAR_GROUPS].reverse()
 
 /**
  * Largeur qu'il faut pour afficher les groupes visibles. Mesurée, pas devinée :
@@ -43,17 +55,20 @@ function useOverflowGroups(hostRef: React.RefObject<HTMLElement>, probeRef: Reac
 
     const measure = () => {
       const available = host.getBoundingClientRect().width
-      const widths = Array.from(probe.children).map(el => el.getBoundingClientRect().width)
-      const total = widths.reduce((a, b) => a + b, 0)
+      // La sonde rend les groupes de la barre puis, en dernier, le bouton « … » :
+      // sa largeur est MESURÉE elle aussi, jamais devinée.
+      const boxes = Array.from(probe.children).map(el => el.getBoundingClientRect().width)
+      const moreWidth = boxes[boxes.length - 1] ?? 0
+      const widths = new Map(IN_BAR_GROUPS.map((group, i) => [group, boxes[i] ?? 0]))
+      const total = IN_BAR_GROUPS.reduce((sum, group) => sum + (widths.get(group) ?? 0), 0)
       if (total <= available) { setHidden(prev => (prev.length ? [] : prev)); return }
-      // Le bouton « … » occupe la place d'un bouton : elle est retirée du budget
-      // TANT QU'il est affiché, donc à chaque tour — pas seulement au premier.
-      const budget = available - widths[0]
+      // Le bouton « … » prend de la place TANT QU'il est affiché, donc à chaque tour.
+      const budget = available - moreWidth
       const next: number[] = []
       let used = total
       for (const index of OVERFLOW_ORDER) {
         if (used <= budget) break
-        used -= widths[index]
+        used -= widths.get(index) ?? 0
         next.push(index)
       }
       setHidden(prev => (prev.length === next.length && prev.every((v, i) => v === next[i]) ? prev : next))
@@ -119,9 +134,11 @@ type ButtonProps = {
    * gabarit du menu « … » : replié, un bouton doit se LIRE, pas se deviner.
    */
   variant?: 'bar' | 'row'
+  /** De quel bord l'infobulle s'aligne — voir `IconTooltip`. Sans effet en variante `row`. */
+  align?: TooltipAlign
 }
 
-function ToolbarButton({ item, openMenu, setOpenMenu, variant = 'bar' }: ButtonProps) {
+function ToolbarButton({ item, openMenu, setOpenMenu, variant = 'bar', align = 'center' }: ButtonProps) {
   const t = useTranslations('mail')
   const { can, run, state } = useMailSelection()
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -143,7 +160,6 @@ function ToolbarButton({ item, openMenu, setOpenMenu, variant = 'bar' }: ButtonP
       ref={triggerRef}
       type="button"
       disabled={!enabled}
-      title={label}
       aria-label={label}
       {...(isMenu ? { 'aria-haspopup': 'menu' as const, 'aria-expanded': open } : {})}
       {...(isRow ? { role: 'menuitem' as const } : {})}
@@ -159,11 +175,15 @@ function ToolbarButton({ item, openMenu, setOpenMenu, variant = 'bar' }: ButtonP
     </button>
   )
 
-  if (!isMenu) return button
+  // Dans le menu « … » chaque action porte déjà son libellé en clair : une bulle y
+  // serait une seconde étiquette pour la même chose.
+  const tipped = isRow ? button : <IconTooltip label={label} shortcut={item.shortcut} align={align}>{button}</IconTooltip>
+
+  if (!isMenu) return tipped
 
   return (
     <div ref={boxRef} className="relative shrink-0">
-      {button}
+      {tipped}
       {open && item.action === 'setFlag' && (
         <div role="menu" data-mail-action-menu="setFlag" className={cn(MENU_BOX, 'w-auto')}>
           <FlagPicker onPick={flag => { run('setFlag', flag); setOpenMenu(null) }} />
@@ -190,10 +210,10 @@ function ToolbarButton({ item, openMenu, setOpenMenu, variant = 'bar' }: ButtonP
 }
 
 /** Un groupe = ses boutons, précédés d'un trait fin dès qu'il n'est pas le premier affiché. */
-function ToolbarGroup({ items, first, openMenu, setOpenMenu, variant = 'bar' }: {
+function ToolbarGroup({ items, first, openMenu, setOpenMenu, variant = 'bar', align }: {
   items: readonly MailToolbarItem[]
   first: boolean
-} & Pick<ButtonProps, 'openMenu' | 'setOpenMenu' | 'variant'>) {
+} & Pick<ButtonProps, 'openMenu' | 'setOpenMenu' | 'variant' | 'align'>) {
   const isRow = variant === 'row'
   return (
     <>
@@ -204,9 +224,27 @@ function ToolbarGroup({ items, first, openMenu, setOpenMenu, variant = 'bar' }: 
         />
       )}
       {items.map(item => (
-        <ToolbarButton key={item.action} item={item} openMenu={openMenu} setOpenMenu={setOpenMenu} variant={variant} />
+        <ToolbarButton key={item.action} item={item} openMenu={openMenu} setOpenMenu={setOpenMenu} variant={variant} align={align} />
       ))}
     </>
+  )
+}
+
+/**
+ * Le groupe de tête de `MAIL_TOOLBAR_GROUPS` (« Relever »), rendu par le header
+ * entre le Tableau de bord et Nouveau message — lot H3c. Même bouton, même source :
+ * ce composant ne fait que le sortir de la barre d'outils, qui l'ignore ensuite.
+ */
+export function MailToolbarLead() {
+  const [openMenu, setOpenMenu] = useState<MailActionName | null>(null)
+  return (
+    <ToolbarGroup
+      items={MAIL_TOOLBAR_GROUPS[LEAD_GROUP]}
+      first
+      openMenu={openMenu}
+      setOpenMenu={setOpenMenu}
+      align="start"
+    />
   )
 }
 
@@ -231,8 +269,11 @@ export function MailToolbar() {
   const hidden = useOverflowGroups(hostRef, probeRef)
 
   const hiddenSet = useMemo(() => new Set(hidden), [hidden])
-  const visible = MAIL_TOOLBAR_GROUPS.map((items, i) => ({ items, i })).filter(g => !hiddenSet.has(g.i))
-  const overflowed = MAIL_TOOLBAR_GROUPS.map((items, i) => ({ items, i })).filter(g => hiddenSet.has(g.i))
+  // Le groupe de tête est rendu par le header (MailToolbarLead) : la barre ne le
+  // rend pas une seconde fois, mais le menu « … » le liste toujours en premier.
+  const inBar = MAIL_TOOLBAR_GROUPS.map((items, i) => ({ items, i })).filter(g => g.i !== LEAD_GROUP)
+  const visible = inBar.filter(g => !hiddenSet.has(g.i))
+  const overflowed = inBar.filter(g => hiddenSet.has(g.i))
 
   return (
     <div ref={hostRef} data-mail-toolbar className="relative flex min-w-0 flex-1 items-center">
@@ -244,14 +285,18 @@ export function MailToolbar() {
         className="pointer-events-none absolute left-0 top-0 flex items-center opacity-0"
         style={{ visibility: 'hidden' }}
       >
-        {MAIL_TOOLBAR_GROUPS.map((items, i) => (
-          <span key={i} className="flex items-center">
+        {IN_BAR_GROUPS.map((group, i) => (
+          <span key={group} className="flex items-center">
             {i > 0 && <span className={SEPARATOR} />}
-            {items.map(item => (
+            {MAIL_TOOLBAR_GROUPS[group].map(item => (
               <span key={item.action} className={ACTION}><item.Icon className={ICON} /></span>
             ))}
           </span>
         ))}
+        <span className="flex items-center">
+          <span className={SEPARATOR} />
+          <span className={ACTION}><MoreHorizontal className={ICON} /></span>
+        </span>
       </div>
 
       {visible.map((group, index) => (
@@ -268,19 +313,20 @@ export function MailToolbar() {
         <>
         <span data-mail-toolbar-separator className={SEPARATOR} />
         <div ref={moreBoxRef} className="relative shrink-0">
-          <button
-            ref={moreRef}
-            type="button"
-            title={t('moreActions')}
-            aria-label={t('moreActions')}
-            aria-haspopup="menu"
-            aria-expanded={moreOpen}
-            onClick={() => setMoreOpen(o => !o)}
-            data-mail-toolbar-more
-            className={ACTION}
-          >
-            <MoreHorizontal className={ICON} />
-          </button>
+          <IconTooltip label={t('moreActions')} align="end">
+            <button
+              ref={moreRef}
+              type="button"
+              aria-label={t('moreActions')}
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen(o => !o)}
+              data-mail-toolbar-more
+              className={ACTION}
+            >
+              <MoreHorizontal className={ICON} />
+            </button>
+          </IconTooltip>
           {moreOpen && (
             // Ancré à DROITE du bouton (`left-auto right-0`) : à 390 px un menu ancré à
             // gauche sortirait de l'écran. Liste verticale, chaque action nommée.

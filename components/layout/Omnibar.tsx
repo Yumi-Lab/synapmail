@@ -7,7 +7,8 @@ import { useTranslations } from 'next-intl'
 import { LayoutGrid, Menu, PenSquare, Search, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { UserMenu } from './UserMenu'
-import { MailToolbar } from './MailToolbar'
+import { MailToolbar, MailToolbarLead } from './MailToolbar'
+import { IconTooltip } from '@/components/ui/IconTooltip'
 import { MAIL_PATH, openCompose } from '@/lib/compose'
 import {
   SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT, SEARCH_PARAM,
@@ -35,6 +36,12 @@ export const OMNIBAR = {
    */
   searchMinWidth: 140,
   /**
+   * Écart fixe entre la dernière icône de la barre d'outils et le champ (px).
+   * Lot H3c : le champ ne se centre plus dans la place restante — il se colle à la
+   * barre, et l'espace libre part à sa DROITE, avant la bulle du compte.
+   */
+  searchGap: 12,
+  /**
    * Width at and above which the bar is a column of its own rather than a drawer —
    * Tailwind's default `lg`, the same breakpoint `AppShell` folds the <aside> on
    * (`hidden lg:flex`). The header's single menu button reads it to know whether a
@@ -48,6 +55,11 @@ const ACTION = 'w-8 h-8 shrink-0 flex items-center justify-center rounded-lg ' +
   'text-foreground/70 hover:text-foreground hover:bg-foreground/[0.06] transition-colors'
 
 const ICON = 'w-[18px] h-[18px]'
+
+/** Raccourci affiché dans l'infobulle de « Nouveau message » — la touche que `useKeyboardShortcuts` écoute. */
+const COMPOSE_SHORTCUT = 'C'
+/** Raccourci du champ de recherche, déjà rendu dans le champ lui-même. */
+const SEARCH_SHORTCUT = '⌘K'
 
 /**
  * Application header, above the content column only — the bar owns the full height
@@ -76,6 +88,7 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
   const urlQuery = searchParams.get(SEARCH_PARAM) ?? ''
   const scope = readScope(searchParams.get(SCOPE_PARAM))
   const [query, setQuery] = useState(urlQuery)
+  const onMail = pathname === MAIL_PATH
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // L'URL reste la source : une navigation (retour arrière, lien, changement de
@@ -126,48 +139,60 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
   return (
     <header
       data-omnibar
-      className="relative shrink-0 flex items-center gap-2 border-b border-border bg-background px-2 sm:px-3"
+      className="relative shrink-0 flex items-center border-b border-border bg-background px-2 sm:px-3"
       style={{ height: OMNIBAR.height }}
     >
       {/* gap-1 : deux boîtes cliquables voisines gardent 4 px d'écart, le plancher
           que le gate mesure — rien ne se touche ni ne se recouvre, même à 390 px. */}
       <div className="flex shrink-0 items-center gap-1">
-        <button
-          type="button"
-          onClick={onMenu}
-          title={menuLabel}
-          aria-label={menuLabel}
-          aria-expanded={menuExpanded}
-          data-omnibar-menu
-          className={ACTION}
-        >
-          <Menu className={ICON} />
-        </button>
-        <Link href="/dashboard" title={t('dashboard')} aria-label={t('dashboard')} data-omnibar-action="dashboard" className={ACTION}>
-          <LayoutGrid className={ICON} />
-        </Link>
-        <button
-          type="button"
-          onClick={() => openCompose(pathname, router.push)}
-          title={t('compose')}
-          aria-label={t('compose')}
-          data-omnibar-action="compose"
-          className={ACTION}
-        >
-          <PenSquare className={ICON} />
-        </button>
+        <IconTooltip label={menuLabel} align="start">
+          <button
+            type="button"
+            onClick={onMenu}
+            aria-label={menuLabel}
+            aria-expanded={menuExpanded}
+            data-omnibar-menu
+            className={ACTION}
+          >
+            <Menu className={ICON} />
+          </button>
+        </IconTooltip>
+        <IconTooltip label={t('dashboard')} align="start">
+          <Link href="/dashboard" aria-label={t('dashboard')} data-omnibar-action="dashboard" className={ACTION}>
+            <LayoutGrid className={ICON} />
+          </Link>
+        </IconTooltip>
+        {/* Lot H3c : « Relever » passe AVANT « Nouveau message » (demande de Nicolas).
+            Sa définition reste celle de MAIL_TOOLBAR_GROUPS — seul l'endroit où le
+            header la rend change ; le menu « … » la garde en tête. */}
+        {onMail && <MailToolbarLead />}
+        <IconTooltip label={t('compose')} shortcut={COMPOSE_SHORTCUT}>
+          <button
+            type="button"
+            onClick={() => openCompose(pathname, router.push)}
+            aria-label={t('compose')}
+            data-omnibar-action="compose"
+            className={ACTION}
+          >
+            <PenSquare className={ICON} />
+          </button>
+        </IconTooltip>
       </div>
 
       {/* Hors de la boîte, rien à griser : le groupe courrier n'existe pas. */}
-      {pathname === MAIL_PATH && <MailToolbar />}
+      {onMail && <MailToolbar />}
 
-      {/* Lot H3 : la head bar porte aussi la barre d'outils du courrier, donc le champ
-          n'est plus centré sur le header (arbitrage de Nicolas) — il occupe la place
-          qui reste entre le groupe de gauche et le compte, et s'y centre. */}
+      {/* Lot H3c : le champ commence juste après la dernière icône visible (écart
+          `searchGap`), il ne se centre plus dans la place restante. L'espace libre
+          part à sa droite, absorbé par la marge automatique du groupe du compte. */}
       <div
         data-omnibar-search-field
-        className="relative flex min-w-0 flex-1 items-center justify-self-center mx-auto"
-        style={{ maxWidth: OMNIBAR.searchMaxWidth, minWidth: OMNIBAR.searchMinWidth }}
+        className="relative flex min-w-0 flex-1 items-center"
+        style={{
+          maxWidth: OMNIBAR.searchMaxWidth,
+          minWidth: OMNIBAR.searchMinWidth,
+          marginLeft: OMNIBAR.searchGap,
+        }}
       >
         <Search className="absolute left-2.5 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
         <input
@@ -192,29 +217,29 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
             placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         />
         {query ? (
-          <button
-            type="button"
-            onClick={clear}
-            title={t('clearSearch')}
-            aria-label={t('clearSearch')}
-            data-omnibar-search-clear
-            className="absolute right-2 text-muted-foreground hover:text-foreground"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+          <IconTooltip label={t('clearSearch')} align="end">
+            <button
+              type="button"
+              onClick={clear}
+              aria-label={t('clearSearch')}
+              data-omnibar-search-clear
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </IconTooltip>
         ) : (
-          <kbd className="absolute right-2 hidden sm:block text-[10px] text-muted-foreground pointer-events-none">
-            ⌘K
+          <kbd className="absolute right-2 top-1/2 hidden -translate-y-1/2 text-[10px] text-muted-foreground pointer-events-none sm:block">
+            {SEARCH_SHORTCUT}
           </kbd>
         )}
       </div>
 
       {/* Right-hand group: the scope toggle only while searching, then the signed-in
           user. One group, so the field's side reserve has a single thing to clear. */}
-      {/* Pas de `ml-auto` ici : le champ se centre déjà par ses deux marges auto. Une
-          troisième marge auto partagerait l'espace libre en TROIS et décalerait le
-          champ (mesuré : 52 px hors de la boîte, là où le champ atteint sa borne). */}
-      <div data-omnibar-right className="flex shrink-0 items-center gap-2">
+      {/* `ml-auto` depuis le lot H3c : le champ ne porte plus de marges automatiques,
+          c'est donc CE groupe qui absorbe l'espace libre et reste collé au bord droit. */}
+      <div data-omnibar-right className="ml-auto flex shrink-0 items-center gap-2 pl-2">
       {/* Étendue de la recherche — n'apparaît que pendant une recherche, une seule ligne, deux positions */}
       {query && (
         <div className="hidden sm:flex shrink-0 items-center rounded-lg border border-border bg-muted/50 p-0.5 text-[11px]">
