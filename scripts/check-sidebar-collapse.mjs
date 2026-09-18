@@ -56,12 +56,25 @@ const MAX_TEXT_X_SPREAD_PX = MAX_DRIFT_PX
 // own rect says nothing about where the ink is), and compared against the bubble's box
 // shrunk by this margin on each side — the visual breathing room the human gate asks for.
 const GLYPH_INSET_PX = 2
-// Scrollbar width declared by the `.scroll-thin` utility in app/globals.css, asserted
-// against the compiled stylesheet rather than against a layout gutter: on macOS Chrome
-// both a styled and a native container reserve 0px (overlay scrollbars), so the gutter
-// cannot discriminate on this bench — measured, see the Journal. What IS discriminating
-// here is the computed property pair, measured on a same-run UNSTYLED reference.
-const SCROLL_THIN_PX = 6
+// Lot A8 — the bar's scrollbar is DRAWN (`components/layout/ThinScroll.tsx`), because a
+// native bar cannot fade. These mirror THIN_SCROLL there: one source, asserted here.
+const THIN_SCROLL_WIDTH_PX = 6
+const THIN_SCROLL_IDLE_MS = 2000
+const THIN_SCROLL_FADE_MS = 300
+// A drawn thumb at opacity 1 is still invisible if nothing is painted in it: the shipped
+// ink is `color-mix(in srgb, currentColor 22%, transparent)`, so any alpha above zero means
+// a rule applied, and zero means it did not (observed on `bg-foreground/25`, which compiles
+// to nothing on this project's raw `var(--x)` colour tokens). The criterion is "painted at
+// all", not a calibrated constant — the 22% itself is asserted by the same-run A/B below.
+const THUMB_MIN_ALPHA = 0
+// Margin over `idleMs + fadeMs` before reading the faded-out state: covers the timer's
+// own scheduling slack on a loaded headless bench. Not a threshold on the product —
+// the criterion is the opacity, which is 1 or 0, not a measured constant.
+const FADE_SETTLE_MS = 800
+// Thumb height is clientHeight²/scrollHeight, thumb top is that ratio applied to the
+// scroll offset. Both are RECOMPUTED from the same run's own scroll metrics, never
+// compared to a constant. 1 px is sub-pixel layout rounding, as everywhere here.
+const MAX_THUMB_DRIFT_PX = MAX_DRIFT_PX
 // Mobile width GOAL.md fixes for the drawer check: no horizontal overflow at 390.
 const MOBILE_VIEWPORT = { width: 390, height: 844 }
 // The bar must follow the theme. Discriminating criterion, measured on the SAME run
@@ -407,16 +420,17 @@ const probeScrollbars = () => {
     host.appendChild(box)
     return box
   }
-  const styled = make('scroll-thin')
+  // Same-run A/B: the hidden-bar utility against an unstyled reference of the same box.
+  const styled = make('scroll-hidden')
   const bare = make('')
   document.body.appendChild(host)
 
   // The shipped rule, straight out of the cascade: proves the utility survived the
   // build. Walks nested groups (@layer/@media/@supports) — Tailwind may wrap it.
-  let webkitWidth = null
+  let webkitDisplay = null
   const walk = rules => {
     for (const r of rules ?? []) {
-      if (r.selectorText === '.scroll-thin::-webkit-scrollbar') webkitWidth = r.style.width
+      if (r.selectorText === '.scroll-hidden::-webkit-scrollbar') webkitDisplay = r.style.display
       if (r.cssRules) walk(r.cssRules)
     }
   }
@@ -427,13 +441,31 @@ const probeScrollbars = () => {
   const result = {
     styled: read(styled),
     bare: read(bare),
-    webkitWidth,
-    containers: [...document.querySelectorAll('[data-scroll-thin]')].map(el => ({
-      tag: el.tagName.toLowerCase(),
-      hasClass: el.classList.contains('scroll-thin'),
-      ...read(el),
-      overflowing: el.scrollHeight - el.clientHeight,
-    })),
+    webkitDisplay,
+    containers: [...document.querySelectorAll('[data-thin-scroll]')].map(el => {
+      const vp = el.querySelector('[data-thin-scroll-viewport]')
+      const thumb = el.querySelector('[data-thin-scroll-thumb]')
+      const st = thumb && getComputedStyle(thumb)
+      const hostBox = el.getBoundingClientRect()
+      const thumbBox = thumb && thumb.getBoundingClientRect()
+      return {
+        tag: el.tagName.toLowerCase(),
+        viewportHidden: vp ? getComputedStyle(vp).scrollbarWidth : null,
+        gutter: vp ? gutter(vp) : null,
+        clientHeight: vp?.clientHeight ?? 0,
+        scrollHeight: vp?.scrollHeight ?? 0,
+        scrollTop: vp?.scrollTop ?? 0,
+        overflowing: vp ? vp.scrollHeight - vp.clientHeight : 0,
+        hasThumb: !!thumb,
+        opacity: st ? Number(st.opacity) : null,
+        thumbBg: st ? st.backgroundColor : null,
+        transitionProp: st ? st.transitionProperty : null,
+        transitionMs: st ? st.transitionDuration : null,
+        thumbW: thumbBox ? thumbBox.width : null,
+        thumbH: thumbBox ? thumbBox.height : null,
+        thumbTop: thumbBox ? thumbBox.top - hostBox.top : null,
+      }
+    }),
   }
   host.remove()
   return result
@@ -532,6 +564,37 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
       }
     }),
   }
+}
+
+/**
+ * Alpha channel of a computed colour. Chrome serialises `rgb()`/`rgba()` for plain values
+ * but keeps a `color-mix()` result in its own space — `color(srgb r g b / a)` — so a parser
+ * that only knows the rgb form reads null on exactly the colour this check is about.
+ * Both forms put the alpha after the `/` (or 4th in the legacy comma list); no `/` at all
+ * means fully opaque.
+ */
+const alphaOf = colour => {
+  const m = /^(rgba?|color)\(([^)]*)\)$/.exec(colour ?? '')
+  if (!m) return null
+  const [channels, alpha] = m[2].split('/')
+  if (alpha !== undefined) return Number(alpha.trim())
+  // No `/`: only the legacy comma form can still carry an alpha, as a 4th number.
+  // `color()` spends its first token on the colourspace, so counting its tokens the
+  // same way reads a channel as an alpha (self-checked below).
+  if (m[1] === 'color') return 1
+  const parts = channels.split(/[,\s]+/).filter(Boolean)
+  return parts.length > 3 ? Number(parts[3]) : 1
+}
+// Self-check: the three serialisations this gate can meet, plus the no-op it must catch.
+for (const [colour, expected] of [
+  ['rgba(0, 0, 0, 0)', 0],
+  ['rgb(12, 12, 12)', 1],
+  ['color(srgb 0.039 0.039 0.039 / 0.22)', 0.22],
+  ['color(srgb 0.039 0.039 0.039)', 1],
+  ['not a colour', null],
+]) {
+  const got = alphaOf(colour)
+  if (got !== expected) throw new Error(`alphaOf("${colour}") = ${got}, expected ${expected}`)
 }
 
 const setTheme = theme => {
@@ -742,35 +805,95 @@ try {
     failures.push(`account list: ${list.checkGlyphs} check icon(s) and ${list.checkChars} check character(s) left in the popover (expected none)`)
   }
 
-  // --- Scrollbars: the bar's scroll containers never show the native bar ---
+  // --- Scrollbar (lot A8): native bar hidden, drawn thumb that fades when scrolling stops ---
   const sb = await page.evaluate(probeScrollbars)
-  console.log(`scroll-thin vs native reference (same run): scrollbar-width ${sb.styled.widthProp} vs ${sb.bare.widthProp}, scrollbar-color "${sb.styled.colorProp}" vs "${sb.bare.colorProp}", gutter ${sb.styled.gutter}px vs ${sb.bare.gutter}px`)
-  console.log(`shipped ::-webkit-scrollbar width in the compiled stylesheet: ${sb.webkitWidth ?? 'MISSING'}`)
-  if (sb.webkitWidth !== `${SCROLL_THIN_PX}px`) {
-    failures.push(`compiled stylesheet ships .scroll-thin::-webkit-scrollbar width=${sb.webkitWidth ?? 'nothing'}, expected ${SCROLL_THIN_PX}px`)
+  console.log(`scroll-hidden vs native reference (same run): scrollbar-width ${sb.styled.widthProp} vs ${sb.bare.widthProp}, gutter ${sb.styled.gutter}px vs ${sb.bare.gutter}px`)
+  console.log(`shipped .scroll-hidden::-webkit-scrollbar display in the compiled stylesheet: ${sb.webkitDisplay ?? 'MISSING'}`)
+  if (sb.webkitDisplay !== 'none') {
+    failures.push(`compiled stylesheet ships .scroll-hidden::-webkit-scrollbar display=${sb.webkitDisplay ?? 'nothing'}, expected none`)
   }
-  // Discriminating on this bench: the reference resolves to `auto`, the styled one to `thin`.
-  if (sb.styled.widthProp !== 'thin') failures.push(`.scroll-thin resolves scrollbar-width=${sb.styled.widthProp}, expected thin`)
+  if (sb.styled.widthProp !== 'none') failures.push(`.scroll-hidden resolves scrollbar-width=${sb.styled.widthProp}, expected none`)
   if (sb.styled.widthProp === sb.bare.widthProp) {
-    failures.push(`.scroll-thin resolves the same scrollbar-width as the unstyled reference (${sb.bare.widthProp}) — the utility is not applying`)
+    failures.push(`.scroll-hidden resolves the same scrollbar-width as the unstyled reference (${sb.bare.widthProp}) — the utility is not applying`)
   }
-  if (sb.styled.colorProp === sb.bare.colorProp) {
-    failures.push(`.scroll-thin resolves the same scrollbar-color as the unstyled reference ("${sb.bare.colorProp}") — the utility is not applying`)
-  }
-  // Never worse than native, whatever this platform reserves.
-  if (sb.styled.gutter > sb.bare.gutter) failures.push(`.scroll-thin reserves ${sb.styled.gutter}px, more than the native reference (${sb.bare.gutter}px)`)
-  if (sb.bare.gutter === 0) console.log('  note: this browser uses overlay scrollbars (reference gutter 0px) — the gutter comparison is not discriminating here, the computed-property A/B above is')
+  if (sb.styled.gutter > sb.bare.gutter) failures.push(`.scroll-hidden reserves ${sb.styled.gutter}px, more than the native reference (${sb.bare.gutter}px)`)
 
-  console.log(`scroll containers marked in the bar: ${sb.containers.length}`)
-  if (!sb.containers.length) { console.error('HARNESS: no [data-scroll-thin] container found — nothing to measure'); process.exit(2) }
+  console.log(`ThinScroll containers in the bar: ${sb.containers.length}`)
+  if (!sb.containers.length) { console.error('HARNESS: no [data-thin-scroll] container found — nothing to measure'); process.exit(2) }
   for (const c of sb.containers) {
-    console.log(`  <${c.tag}>: class=${c.hasClass} scrollbar-width=${c.widthProp} gutter=${c.gutter}px overflowing=${c.overflowing}px`)
-    if (!c.hasClass) failures.push(`<${c.tag}> scroll container is missing the scroll-thin class`)
-    if (c.widthProp !== 'thin') failures.push(`<${c.tag}> resolves scrollbar-width=${c.widthProp}, expected thin`)
-    if (c.gutter > sb.bare.gutter) failures.push(`<${c.tag}> reserves ${c.gutter}px, more than the native reference (${sb.bare.gutter}px) — native bar showing`)
+    console.log(`  <${c.tag}>: viewport scrollbar-width=${c.viewportHidden} gutter=${c.gutter}px overflowing=${c.overflowing}px thumb=${c.hasThumb}`)
+    if (c.viewportHidden !== 'none') failures.push(`<${c.tag}> viewport resolves scrollbar-width=${c.viewportHidden}, expected none — the native bar is showing`)
+    if (c.gutter > sb.bare.gutter) failures.push(`<${c.tag}> viewport reserves ${c.gutter}px, more than the native reference (${sb.bare.gutter}px)`)
   }
-  if (!sb.containers.some(c => c.overflowing > 0)) {
-    failures.push('no marked scroll container actually overflows — the thin scrollbar was never exercised')
+  // The fade can only be measured on a container that actually scrolls. The folder nav is
+  // the one that overflows in the bar; if none does, the check measured nothing — harness
+  // failure, not a product verdict.
+  const scroller = sb.containers.findIndex(c => c.overflowing > 0)
+  if (scroller < 0) { console.error('HARNESS: no ThinScroll container overflows — the thumb was never exercised'); process.exit(2) }
+
+  // Real wheel input over the scrolling viewport, then read the thumb DURING the scroll.
+  // Run in BOTH themes: the ink is derived from `currentColor`, so a value that paints on
+  // the dark bar can resolve to nothing on the light one, and the paint is exactly what a
+  // user sees (an opacity of 1 over a fully transparent background is still invisible).
+  const target = await page.evaluate(i => {
+    const vp = document.querySelectorAll('[data-thin-scroll]')[i].querySelector('[data-thin-scroll-viewport]')
+    const r = vp.getBoundingClientRect()
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+  }, scroller)
+
+  const fade = {}
+  for (const theme of THEMES) {
+    await page.evaluate(setTheme, theme)
+    // Back to the top before each arm so the wheel always has somewhere to go — a container
+    // already at its end would not move and the arm would measure nothing.
+    await page.evaluate(i => {
+      document.querySelectorAll('[data-thin-scroll]')[i].querySelector('[data-thin-scroll-viewport]').scrollTop = 0
+    }, scroller)
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    await page.mouse.move(target.x, target.y)
+    await page.mouse.wheel({ deltaY: 200 })
+    // Read AFTER the fade-in has run to completion: at 120ms the first attempt caught the
+    // thumb mid-transition at 0.74 and reported a product failure that was a harness one.
+    await new Promise(r => setTimeout(r, THIN_SCROLL_FADE_MS + FADE_SETTLE_MS))
+    const during = (await page.evaluate(probeScrollbars)).containers[scroller]
+    // The pointer STAYS on the list while the idle delay runs: scrolling with the cursor
+    // left over the content is how a user actually scrolls, and an earlier version of this
+    // check moved it away first — which is precisely why it stayed green while the thumb
+    // was pinned visible by a hover rule (gate of 19/09/2026).
+    await new Promise(r => setTimeout(r, THIN_SCROLL_IDLE_MS + THIN_SCROLL_FADE_MS + FADE_SETTLE_MS))
+    const idle = (await page.evaluate(probeScrollbars)).containers[scroller]
+    fade[theme] = { during, idle }
+
+    const expectedH = (during.clientHeight * during.clientHeight) / during.scrollHeight
+    const expectedTop = (during.clientHeight - expectedH) * (during.scrollTop / (during.scrollHeight - during.clientHeight))
+    const paintedAlpha = alphaOf(during.thumbBg)
+    console.log(`${theme}: thumb during scroll: opacity=${during.opacity} paint=${during.thumbBg} (alpha ${paintedAlpha}) width=${during.thumbW}px height=${during.thumbH?.toFixed(2)}px (expected ${expectedH.toFixed(2)}) top=${during.thumbTop?.toFixed(2)}px (expected ${expectedTop.toFixed(2)}) transition=${during.transitionProp} ${during.transitionMs}`)
+    console.log(`${theme}: thumb ${((THIN_SCROLL_IDLE_MS + THIN_SCROLL_FADE_MS + FADE_SETTLE_MS) / 1000).toFixed(1)}s later, pointer still on the list: opacity=${idle.opacity} (scrollTop ${idle.scrollTop})`)
+    if (!during.hasThumb) failures.push(`${theme}: no thumb rendered while the container was being scrolled`)
+    if (during.scrollTop <= 0) { console.error('HARNESS: the wheel event did not move the viewport — the fade check measured nothing'); process.exit(2) }
+    if (during.opacity !== 1) failures.push(`${theme}: thumb opacity ${during.opacity} while scrolling, expected 1`)
+    if (paintedAlpha === null) failures.push(`${theme}: thumb background "${during.thumbBg}" is not a colour the alpha can be read from`)
+    else if (paintedAlpha <= THUMB_MIN_ALPHA) {
+      failures.push(`${theme}: thumb paints ${during.thumbBg} (alpha ${paintedAlpha}) while scrolling — nothing is drawn, the bar is invisible whatever its opacity`)
+    }
+    if (idle.opacity !== 0) failures.push(`${theme}: thumb opacity ${idle.opacity} ${THIN_SCROLL_IDLE_MS}ms after the last scroll with the pointer left on the list, expected 0 (faded out)`)
+    if (during.thumbW !== THIN_SCROLL_WIDTH_PX) failures.push(`${theme}: thumb is ${during.thumbW}px wide, expected ${THIN_SCROLL_WIDTH_PX}px`)
+    if (Math.abs(during.thumbH - expectedH) > MAX_THUMB_DRIFT_PX) {
+      failures.push(`${theme}: thumb height ${during.thumbH.toFixed(2)}px, expected clientHeight²/scrollHeight = ${expectedH.toFixed(2)}px (max ${MAX_THUMB_DRIFT_PX}px off)`)
+    }
+    if (Math.abs(during.thumbTop - expectedTop) > MAX_THUMB_DRIFT_PX) {
+      failures.push(`${theme}: thumb sits ${during.thumbTop.toFixed(2)}px from the top, expected ${expectedTop.toFixed(2)}px for scrollTop=${during.scrollTop} (max ${MAX_THUMB_DRIFT_PX}px off)`)
+    }
+    if (!during.transitionProp?.includes('opacity')) failures.push(`${theme}: thumb transitions "${during.transitionProp}", expected opacity`)
+    if (during.transitionMs !== `${THIN_SCROLL_FADE_MS / 1000}s`) {
+      failures.push(`${theme}: thumb fade lasts ${during.transitionMs}, expected ${THIN_SCROLL_FADE_MS / 1000}s`)
+    }
+  }
+  // Same-run A/B on the paint itself: the ink comes from `currentColor`, so the two themes
+  // must NOT resolve to the same colour — an identical value in both would mean the thumb
+  // is painted from a fixed constant that ignores the surface it sits on.
+  if (fade.light.during.thumbBg === fade.dark.during.thumbBg) {
+    failures.push(`thumb paints the same ${fade.light.during.thumbBg} in light and dark — it does not derive from the bar's own ink`)
   }
 
   // --- Cleanliness: one accent, one row motif, static, follows the theme ---
