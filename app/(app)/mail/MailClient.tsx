@@ -15,6 +15,7 @@ import { useEmailNotifications } from '@/hooks/useEmailNotifications'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { toast } from '@/components/ui/toast'
 import { useMailSelection } from '@/lib/mailSelection'
+import { MAILBOX_CHANGED, STREAM_ACCOUNT_PARAM } from '@/lib/stream'
 import type { Message } from '@/types/email'
 import type { EmailAccount } from '@/types/account'
 
@@ -179,9 +180,16 @@ export function MailClient() {
     canSend: true, canDelete: true, canOrganize: true, canManageRules: true, canManageSignatures: true,
   }
 
-  // SSE connection — receives scheduled_sent events from the server
+  const { state: mailTarget, register: registerMailActions, run: runMail } = useMailSelection()
+
+  // Flux SSE : événements du planificateur ET temps réel de la boîte. Le compte
+  // actif est passé au serveur, qui met sa boîte de réception sous IDLE ; changer
+  // de compte rouvre le flux sur la nouvelle boîte.
   useEffect(() => {
-    const es = new EventSource('/api/stream')
+    const url = resolvedActiveId
+      ? `/api/stream?${STREAM_ACCOUNT_PARAM}=${encodeURIComponent(resolvedActiveId)}`
+      : '/api/stream'
+    const es = new EventSource(url)
     es.onmessage = (e: MessageEvent<string>) => {
       try {
         const data = JSON.parse(e.data) as { type: string; subject?: string; to?: string }
@@ -193,11 +201,15 @@ export function MailClient() {
             timeout: 6000,
           })
           window.dispatchEvent(new CustomEvent('synapmail:scheduled-sent'))
+        } else if (data.type === MAILBOX_CHANGED) {
+          // La liste sait déjà se relire : on déclenche SON action, aucune
+          // logique de relecture dupliquée ici.
+          runMail('refresh')
         }
       } catch { /* ignore malformed */ }
     }
     return () => es.close()
-  }, [])
+  }, [resolvedActiveId, runMail])
 
   useEmailNotifications(folder, resolvedActiveId)
 
@@ -275,7 +287,6 @@ export function MailClient() {
   // lecture (contexte `lib/mailSelection`). La cible est le message sélectionné, sinon
   // le message ouvert. Si elle n'est pas encore chargée (une ligne Cmd-cliquée sans
   // être ouverte), on l'ouvre et l'action part dès que le message arrive.
-  const { state: mailTarget, register: registerMailActions } = useMailSelection()
   const pendingCompose = useRef<ComposeKind | null>(null)
   const composeHandlers = useMemo(
     () => ({ reply: handleReply, replyAll: handleReplyAll, forward: handleForward }),
