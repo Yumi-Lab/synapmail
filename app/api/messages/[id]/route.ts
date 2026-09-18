@@ -3,12 +3,13 @@ import { authenticate } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { getMessage, deleteMessage, markRead, setFlagBulk } from '@/lib/imap'
+import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 
 export const dynamic = 'force-dynamic'
 
 type AccountRow = {
   id: string; imap_host: string; imap_port: number; imap_secure: boolean;
-  username: string; password_encrypted: string;
+  username: string; password_encrypted: string; prompt_guard: boolean;
   oauth_provider: string | null; oauth_access_token: string | null;
   oauth_refresh_token: string | null; oauth_expires_at: number | null;
 }
@@ -48,7 +49,9 @@ export async function GET(
     const message = await getMessage(accountConfig(account), folder, params.id)
     if (!message) return NextResponse.json({ error: 'Message not found' }, { status: 404 })
 
-    return NextResponse.json({ ...message, accountId })
+    return NextResponse.json(guardApiPayload({ ...message, accountId }, {
+      enabled: isMachineRequest(req) && account.prompt_guard,
+    }))
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

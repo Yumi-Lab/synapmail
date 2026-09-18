@@ -17,7 +17,7 @@ export async function PATCH(
     const {
       name, email, imapHost, imapPort, imapSecure,
       smtpHost, smtpPort, smtpSecure, username, password,
-      isDefault, color,
+      isDefault, color, promptGuard,
     } = body
 
     // Verify ownership
@@ -56,6 +56,7 @@ export async function PATCH(
     set('username', username)
     set('is_default', isDefault)
     set('color', color)
+    set('prompt_guard', promptGuard)
     if (password) {
       fields.push(`password_encrypted = $${idx++}`)
       values.push(encrypt(password))
@@ -65,7 +66,7 @@ export async function PATCH(
 
     values.push(params.id)
     const result = await query(
-      `UPDATE email_accounts SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, name, email, is_default, color`,
+      `UPDATE email_accounts SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, name, email, is_default, color, prompt_guard AS "promptGuard"`,
       values
     )
 

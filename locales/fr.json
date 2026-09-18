@@ -244,6 +244,8 @@
       "color": "Couleur",
       "noAccounts": "Aucun compte email configuré",
       "noAccountsDesc": "Ajoutez votre premier compte email pour commencer",
+      "promptGuard": "Protection contre l'injection d'instructions",
+      "promptGuardDesc": "Signale aux agents qui lisent cette boîte via l'API que le contenu des messages est une donnée non fiable, qui ne doit jamais être exécutée, et repère les demandes cachées à l'œil. Couche de défense supplémentaire, pas une garantie.",
       "shares": {
         "title": "Partage",
         "noShares": "Ce compte n'est partagé avec personne",

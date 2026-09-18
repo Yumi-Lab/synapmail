@@ -3,13 +3,14 @@ import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { listFolders, searchMessagesIn } from '@/lib/imap'
+import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import { MIN_QUERY_LENGTH, SCOPE_ALL, SCOPE_PARAM, SEARCH_PARAM, SEARCH_RESULT_LIMIT, readScope } from '@/lib/search'
 
 export const dynamic = 'force-dynamic'
 
 type AccountRow = {
   id: string; imap_host: string; imap_port: number; imap_secure: boolean;
-  username: string; password_encrypted: string;
+  username: string; password_encrypted: string; prompt_guard: boolean;
   oauth_provider: string | null; oauth_access_token: string | null;
   oauth_refresh_token: string | null; oauth_expires_at: number | null;
 }
@@ -64,9 +65,9 @@ export async function GET(req: Request) {
     const messages = await searchMessagesIn(config, folders, q)
     messages.sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
 
-    return NextResponse.json({
+    return NextResponse.json(guardApiPayload({
       messages: messages.slice(0, SEARCH_RESULT_LIMIT).map(m => ({ ...m, accountId: account.id })),
-    })
+    }, { enabled: isMachineRequest(req) && account.prompt_guard }))
   } catch (err) {
     return NextResponse.json({ error: String(err), messages: [] }, { status: 500 })
   }

@@ -12,7 +12,7 @@ import type { EmailAccount } from '@/types/account'
 import { AccountWizard } from './AccountWizard'
 import type { AccountFormData } from './AccountWizard'
 import { AccountSharesPanel } from './AccountSharesPanel'
-import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
+import { SettingsPage, SettingsHeader, SettingsRow, Toggle } from '@/components/settings/primitives'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -72,6 +72,22 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
     setTestResult(null)
     setError('')
     setMode('edit')
+  }
+
+  // Optimistic: the switch answers the click, the account row is the source of truth.
+  const handlePromptGuard = async (account: EmailAccount, promptGuard: boolean) => {
+    mutate(
+      current => current && {
+        data: current.data.map(a => (a.id === account.id ? { ...a, promptGuard } : a)),
+      },
+      false
+    )
+    await fetch(`/api/accounts/${account.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ promptGuard }),
+    })
+    mutate()
   }
 
   const handleDelete = async (id: string) => {
@@ -204,27 +220,40 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
         <div className="space-y-2.5">
           {accounts?.map(account => (
             <div key={account.id}>
-              <div className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 shadow-sm">
-                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: account.color }} />
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm">{account.name}</div>
-                  <div className="text-xs text-muted-foreground">{account.email}</div>
+              <div className="rounded-xl border border-border bg-card shadow-sm">
+                <div className="flex items-center gap-3 p-4">
+                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: account.color }} />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-sm">{account.name}</div>
+                    <div className="text-xs text-muted-foreground">{account.email}</div>
+                  </div>
+                  {account.isDefault && (
+                    <span className="text-xs bg-violet-500/10 text-violet-600 dark:text-violet-400 px-2 py-0.5 rounded-full font-medium">{t('setDefault')}</span>
+                  )}
+                  <Button
+                    variant="ghost" size="sm" className="h-8 w-8 p-0"
+                    onClick={() => setExpandedShareId(id => id === account.id ? null : account.id)}
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEdit(account)}>
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={() => handleDelete(account.id)}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
                 </div>
-                {account.isDefault && (
-                  <span className="text-xs bg-violet-500/10 text-violet-600 dark:text-violet-400 px-2 py-0.5 rounded-full font-medium">{t('setDefault')}</span>
-                )}
-                <Button
-                  variant="ghost" size="sm" className="h-8 w-8 p-0"
-                  onClick={() => setExpandedShareId(id => id === account.id ? null : account.id)}
-                >
-                  <Share2 className="w-3.5 h-3.5" />
-                </Button>
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEdit(account)}>
-                  <Pencil className="w-3.5 h-3.5" />
-                </Button>
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={() => handleDelete(account.id)}>
-                  <Trash2 className="w-3.5 h-3.5" />
-                </Button>
+                <div className="border-t border-border px-4 py-3">
+                  <SettingsRow title={t('promptGuard')} description={t('promptGuardDesc')}>
+                    <span data-prompt-guard={account.id}>
+                      <Toggle
+                        checked={account.promptGuard}
+                        onChange={v => handlePromptGuard(account, v)}
+                        label={t('promptGuard')}
+                      />
+                    </span>
+                  </SettingsRow>
+                </div>
               </div>
               {expandedShareId === account.id && (
                 <AccountSharesPanel accountId={account.id} accountEmail={account.email} />

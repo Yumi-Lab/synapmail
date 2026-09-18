@@ -244,6 +244,8 @@
       "color": "Color",
       "noAccounts": "No email accounts configured",
       "noAccountsDesc": "Add your first email account to get started",
+      "promptGuard": "Instruction-injection protection",
+      "promptGuardDesc": "Tells agents reading this mailbox through the API that message content is untrusted data and must never be obeyed, and flags requests hidden from the eye. Extra layer of defence, not a guarantee.",
       "shares": {
         "title": "Sharing",
         "noShares": "This account isn't shared with anyone",
