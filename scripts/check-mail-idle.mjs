@@ -15,6 +15,8 @@
  * connection to the same mailbox and records when the SERVER announces the new
  * message. That reference arm, measured in the SAME run, is what says whether a
  * missed deadline is the app's latency or the IMAP server's announcement cadence.
+ * Both criteria are checked: the absolute ceiling the user experiences, and the
+ * delay the app adds on top of the announcement, which is the part our code owns.
  *
  * Nothing touches a real message: the bench appends ITS OWN message and expunges
  * exactly that uid at the end. No other message is read, moved, flagged or deleted.
@@ -35,8 +37,15 @@ import { decrypt } from '../lib/encrypt.ts'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const VIEWPORT = { width: 1440, height: 900 }
-// The DoD's deadline: a message must show up within this, without a refetch.
-const REALTIME_MS = 5000
+// The DoD's deadline, decided by the human on 2026-09-19 after this bench had
+// MEASURED that IONOS itself only announces a new message 7.5-9.2s after the
+// append: an absolute ceiling the whole chain must hold, plus a budget on the
+// only part the app controls (the delay it adds on top of the announcement).
+// Calibration bench: IONOS IMAP, test account, dev server on :3106, commit 55e6995.
+const REALTIME_MS = 15000
+// How much the app may add on top of the server's announcement, measured in the
+// SAME pass by the reference arm below. This is the real criterion on our code.
+const APP_BUDGET_MS = 3000
 // No /api/messages call may happen during this window before the append: it is
 // what proves the refetch that follows was caused by the append, not by a poll.
 const QUIET_MS = 3000
@@ -44,6 +53,8 @@ const POLL_MS = 100
 // How long the reference arm is given to hear the server out. Must exceed the
 // deadline, otherwise a missed deadline could never be attributed to the server.
 const REFERENCE_MS = 30000
+// The bench must not stop looking at the row before the ceiling: the two numbers
+// (row shown, server announced) are only comparable inside the same pass.
 
 /** `--no-idle` drops the account from the stream URL: the negative control. */
 const NO_IDLE = process.argv.includes('--no-idle')
@@ -194,7 +205,7 @@ try {
     await new Promise(r => setTimeout(r, POLL_MS))
   }
   const elapsed = (shownAt ?? Date.now()) - appendedAt
-  console.log(`row visible after ${elapsed}ms (deadline ${REALTIME_MS}ms, periodic refetch every ${REFRESH_MS}ms)`)
+  console.log(`row visible after ${elapsed}ms (ceiling ${REALTIME_MS}ms, periodic refetch every ${REFRESH_MS}ms)`)
   if (!shownAt) fail(`the appended message did not appear within ${REALTIME_MS}ms`)
 
   const pushed = listCalls.filter(t => t >= appendedAt).length
@@ -206,9 +217,15 @@ try {
   await reference.logout().catch(() => {})
   const serverMs = announcedAt ? announcedAt - appendedAt : null
   console.log(`reference arm — server announced the message after ${serverMs ?? `NEVER (>${REFERENCE_MS}ms)`}ms`)
-  if (serverMs === null) console.log('  → the deadline cannot be attributed: the server never announced on the reference connection either')
-  else if (serverMs >= REALTIME_MS) console.log(`  → the ${REALTIME_MS}ms deadline is BELOW the server's own announcement cadence: no client code can meet it on this server`)
-  else console.log(`  → the app added ${elapsed - serverMs}ms on top of the server's announcement`)
+  if (serverMs === null) {
+    // Without the reference arm there is no same-pass control, so the app's own
+    // share is unknown: the run proves nothing and must not be read as a pass.
+    fail(`the server never announced the message on the reference connection within ${REFERENCE_MS}ms — the app's share cannot be measured`)
+  } else {
+    const appMs = elapsed - serverMs
+    console.log(`app share: ${appMs}ms on top of the server's announcement (budget ${APP_BUDGET_MS}ms)`)
+    if (shownAt && appMs > APP_BUDGET_MS) fail(`the app added ${appMs}ms on top of the server's ${serverMs}ms announcement, over the ${APP_BUDGET_MS}ms budget`)
+  }
 } finally {
   await browser.close()
   if (uid) {
