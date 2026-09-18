@@ -5,6 +5,7 @@ import { refreshAccessToken } from './msOAuth'
 import { query } from './db'
 import { upsertContact } from './contacts'
 import { DEFAULT_FLAG_KEY, FLAG_BIT_KEYWORDS, FLAG_IMAP_FLAG, flagFromKeywords, keywordsForFlag } from './flags'
+import type { MailListFilter } from './flags'
 import type { Message, Folder, AuthResults } from '@/types/email'
 
 /**
@@ -133,7 +134,7 @@ export async function listMessages(
   folder: string,
   page: number,
   perPage: number,
-  filter: 'all' | 'unread' | 'starred' = 'all',
+  filter: MailListFilter = 'all',
   userId?: string
 ): Promise<{ messages: Message[]; total: number }> {
   const client = await createClient(account)

@@ -128,7 +128,18 @@
     "refresh": "Refresh",
     "flag": "Flag",
     "selectionCount": "{count} selected",
-    "confirmDeleteSelection": "Delete {count} messages?"
+    "confirmDeleteSelection": "Delete {count} messages?",
+    "flagged": "Flagged",
+    "flagRemove": "Remove flag",
+    "flags": {
+      "red": "Red",
+      "orange": "Orange",
+      "yellow": "Yellow",
+      "green": "Green",
+      "blue": "Blue",
+      "purple": "Purple",
+      "gray": "Grey"
+    }
   },
   "compose": {
     "newMessage": "New message",

@@ -1,7 +1,7 @@
 'use client'
 
 import { useTranslations } from 'next-intl'
-import { Reply, Forward, Trash2, Archive, Star, MoreHorizontal, Paperclip, Download, X, FileText, Image as ImageIcon, ReplyAll, MailX, CheckCircle2, AlertCircle, ShieldCheck, ShieldAlert, ShieldX, Filter, AlarmClock, CornerUpLeft, Users, ChevronRight } from 'lucide-react'
+import { Reply, Forward, Trash2, Archive, Star, Flag, MoreHorizontal, Paperclip, Download, X, FileText, Image as ImageIcon, ReplyAll, MailX, CheckCircle2, AlertCircle, ShieldCheck, ShieldAlert, ShieldX, Filter, AlarmClock, CornerUpLeft, Users, ChevronRight } from 'lucide-react'
 import { AIToolbar } from '@/components/ai/AIToolbar'
 import useSWR from 'swr'
 import type { Message } from '@/types/email'
@@ -14,6 +14,8 @@ import { isInlinePgpMessage, extractInlinePgpMessage } from '@/lib/pgp'
 import { PgpDecryptPrompt } from '@/components/mail/PgpDecryptPrompt'
 import type { EmailAccount } from '@/types/account'
 import { useMailSelection } from '@/lib/mailSelection'
+import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
+import { FlagPicker } from '@/components/mail/FlagPicker'
 
 const fetcher = async (url: string) => {
   const r = await fetch(url)
@@ -789,7 +791,26 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
   // ouvert quand rien n'est coché, et passe par la même route que la liste.
   const { can, run } = useMailSelection()
   const perms = permissions ?? DEFAULT_PERMISSIONS
-  const [isStarred, setIsStarred] = useState<boolean | null>(null)
+  // `null` = pas encore touché dans cette session : la valeur du message fait foi.
+  const [flagKey, setFlagKey] = useState<string | null | undefined>(undefined)
+  const [flagMenu, setFlagMenu] = useState(false)
+  const flagMenuRef = useRef<HTMLDivElement>(null)
+
+  // Light-dismiss : UN clic dehors ferme, et ce clic atteint sa cible (pas de
+  // voile qui l'avale). Échap ferme aussi. L'écouteur n'existe que menu ouvert.
+  useEffect(() => {
+    if (!flagMenu) return
+    const onDown = (e: MouseEvent) => {
+      if (!flagMenuRef.current?.contains(e.target as Node)) setFlagMenu(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFlagMenu(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [flagMenu])
 
   const swrKey = uid && accountId
     ? `/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`
@@ -812,7 +833,7 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
 
   useEffect(() => {
     if (message) {
-      setIsStarred(message.isStarred)
+      setFlagKey(undefined)
       onMessageLoaded?.(message)
       if (!message.isRead && accountId && perms.canOrganize) {
         fetch(`/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`, {
@@ -832,16 +853,14 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
     onDelete?.()
   }
 
-  const handleStar = async () => {
-    if (!uid || !accountId || !message) return
-    const newStarred = !isStarred
-    setIsStarred(newStarred)
-    await fetch(`/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isStarred: newStarred }),
-    })
-    mutate({ ...message, isStarred: newStarred }, false)
+  // L'écriture appartient à la liste (action partagée du lot M1) : elle pose le
+  // drapeau ET rafraîchit ses lignes. Le volet ne garde que l'état de son icône.
+  const handleFlag = (flag: string | null) => {
+    if (!message) return
+    setFlagKey(flag)
+    setFlagMenu(false)
+    run('setFlag', flag)
+    mutate({ ...message, flag, isStarred: flag !== null }, false)
   }
 
   if (!uid) {
@@ -923,7 +942,7 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
     )
   }
 
-  const starred = isStarred ?? message.isStarred
+  const flag = flagByKey(flagKey !== undefined ? flagKey : (message.flag ?? (message.isStarred ? DEFAULT_FLAG_KEY : null)))
   const spoofedBrand = detectSpoofedBrand(message.from.name ?? '', message.from.address ?? '')
   const urgencyWord = detectUrgencyInSubject(message.subject ?? '')
 
@@ -993,14 +1012,24 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
         <div className="flex-1" />
         {perms.canOrganize && (
           <>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn('h-8 w-8 p-0', starred && 'text-yellow-500 hover:text-yellow-600')}
-              onClick={handleStar}
-            >
-              <Star className={cn('w-3.5 h-3.5', starred && 'fill-current')} />
-            </Button>
+            <div className="relative" ref={flagMenuRef}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                data-reading-flag
+                title={flag ? t(`flags.${flag.labelKey}`) : t('flag')}
+                aria-expanded={flagMenu}
+                onClick={() => setFlagMenu(o => !o)}
+              >
+                <Flag className={cn('w-3.5 h-3.5', flag ? cn('fill-current', flag.colorClass) : '')} />
+              </Button>
+              {flagMenu && (
+                <div className="absolute top-full right-0 z-50 mt-1 rounded-xl border border-border bg-popover shadow-xl">
+                  <FlagPicker current={flag?.key ?? null} onPick={handleFlag} />
+                </div>
+              )}
+            </div>
             <Button
               variant="ghost"
               size="sm"
