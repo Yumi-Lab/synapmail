@@ -140,7 +140,8 @@ export async function listMessages(
   const client = await createClient(account)
   try {
     const mailbox = await client.mailboxOpen(folder)
-    const total = mailbox.exists
+    // Size of the view being paged: the whole mailbox for "all", the MATCHES for a filter.
+    let total = mailbox.exists
 
     // For "all" we derive the page range directly from mailbox.exists:
     // sequence numbers are 1..N, with N being the newest message.
@@ -157,6 +158,9 @@ export async function listMessages(
       const criteria = filter === 'unread' ? { seen: false } : { flagged: true }
       const raw = await client.search(criteria)
       const allSeqs = Array.isArray(raw) ? raw : []
+      // A filtered view ends where its matches end. Reporting the mailbox size here made the
+      // list believe thousands of messages remained: it kept asking for empty pages forever.
+      total = allSeqs.length
       const reversed = [...allSeqs].reverse()
       pageSeqs = reversed.slice((page - 1) * perPage, page * perPage) as number[]
     }

@@ -72,6 +72,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   clair/sombre (`prefers-reduced-motion` respecté).
 
 ### Fixed
+- **Filtres « Non lus » / « Avec drapeau » : chargement sans fin sur une grosse boîte** (`lib/imap.ts`) : une vue filtrée
+  annonçait comme total la taille de la BOÎTE (9 137 messages) au lieu du nombre de messages trouvés (2) ; la liste croyait
+  qu'il en restait des milliers et redemandait des pages vides en boucle (squelettes et sablier permanents). Le total d'une
+  vue filtrée est désormais le nombre de correspondances.
 - **Sous-dossiers d'un dossier spécial affichés comme des doublons** (`app/api/folders/route.ts`, nouveau
   `lib/specialFolders.ts`) : la détection testait le mot « spam », « corbeille »… sur tout le CHEMIN, si bien que
   « Spam/AMELI », « Spam/Crypto » apparaissaient tous sous le nom « Spam » et « Corbeille/CONVENTIONS » comme une seconde
