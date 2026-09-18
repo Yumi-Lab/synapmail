@@ -567,14 +567,63 @@ export async function listFolders(account: AccountConfig): Promise<Folder[]> {
   }
 }
 
+/**
+ * Nombre de connexions IMAP ouvertes en parallèle par une recherche multi-dossiers.
+ * Une connexion ne peut ouvrir qu'un dossier à la fois (verrou de boîte), donc la
+ * couverture d'un compte entier se partage entre quelques connexions. Calibré sur
+ * le compte de test (IONOS, 100 dossiers, requête « facture ») : 1 connexion par
+ * dossier > 300 s ; 1 connexion partagée 152 s ; 4 connexions 44 s. Au-delà, les
+ * serveurs IMAP grand public commencent à refuser les connexions simultanées.
+ */
+const SEARCH_CONNECTIONS = 4
+
+/**
+ * Cherche dans PLUSIEURS dossiers en réutilisant les connexions : ouvrir une
+ * connexion par dossier coûte une poignée de main TLS + un LOGIN à chaque fois,
+ * ce qui rend la recherche « tous les dossiers » inutilisable sur un compte réel.
+ * Un dossier illisible est ignoré quand d'autres restent à couvrir.
+ */
+export async function searchMessagesIn(
+  account: AccountConfig,
+  folders: string[],
+  queryStr: string
+): Promise<Message[]> {
+  const queue = [...folders]
+  const worker = async (): Promise<Message[]> => {
+    const client = await createClient(account)
+    try {
+      const found: Message[] = []
+      for (let folder = queue.shift(); folder !== undefined; folder = queue.shift()) {
+        try {
+          found.push(...await searchOpenFolder(client, folder, queryStr))
+        } catch (err) {
+          if (folders.length === 1) throw err
+        }
+      }
+      return found
+    } finally {
+      await client.logout()
+    }
+  }
+  const workers = Array.from({ length: Math.min(SEARCH_CONNECTIONS, folders.length) }, worker)
+  return (await Promise.all(workers)).flat()
+}
+
 export async function searchMessages(
   account: AccountConfig,
   folder: string,
   queryStr: string
 ): Promise<Message[]> {
-  const client = await createClient(account)
+  return searchMessagesIn(account, [folder], queryStr)
+}
+
+async function searchOpenFolder(
+  client: ImapFlow,
+  folder: string,
+  queryStr: string
+): Promise<Message[]> {
+  const lock = await client.getMailboxLock(folder)
   try {
-    await client.mailboxOpen(folder)
     const searchResult = await client.search({
       or: [{ from: queryStr }, { subject: queryStr }],
     })
@@ -608,6 +657,6 @@ export async function searchMessages(
     }
     return messages
   } finally {
-    await client.logout()
+    lock.release()
   }
 }

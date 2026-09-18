@@ -118,7 +118,13 @@
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
     "folders": "Folders",
-    "switchAccount": "Switch account"
+    "switchAccount": "Switch account",
+    "searchAllFolders": "All folders",
+    "searchThisFolder": "This folder",
+    "clearSearch": "Clear search",
+    "searchResults": "{count} results for “{query}”",
+    "searching": "Searching…",
+    "noSearchResults": "No results"
   },
   "compose": {
     "newMessage": "New message",

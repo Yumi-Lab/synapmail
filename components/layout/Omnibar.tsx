@@ -1,12 +1,16 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useRef, useState } from 'react'
-import { usePathname, useRouter } from 'next/navigation'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useTranslations } from 'next-intl'
-import { LayoutGrid, Menu, PenSquare, Search, Settings } from 'lucide-react'
+import { LayoutGrid, Menu, PenSquare, Search, Settings, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { openCompose } from '@/lib/compose'
+import { MAIL_PATH, openCompose } from '@/lib/compose'
+import {
+  SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT, SEARCH_PARAM,
+  buildSearchHref, readScope, type SearchScope,
+} from '@/lib/search'
 
 /**
  * Single source for the header's geometry. `AppShell` mounts the bar from it and
@@ -30,15 +34,47 @@ const ICON = 'w-[18px] h-[18px]'
  * search on the left, transverse actions on the right. On mobile it replaces the
  * former top bar and carries the drawer's hamburger.
  *
- * O1 ships the field, its shortcuts and its geometry; wiring the query to the
- * message list is lot O2.
+ * The field is the app's ONLY search input: it writes the query into the mailbox
+ * URL (`/mail?q=…&scope=…`), which the message list reads back. No component
+ * keeps a second copy of the query, from any page.
  */
-export function Omnibar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
+function OmnibarInner({ onOpenDrawer }: { onOpenDrawer: () => void }) {
   const t = useTranslations('mail')
   const pathname = usePathname()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const inputRef = useRef<HTMLInputElement>(null)
-  const [query, setQuery] = useState('')
+  const urlQuery = searchParams.get(SEARCH_PARAM) ?? ''
+  const scope = readScope(searchParams.get(SCOPE_PARAM))
+  const [query, setQuery] = useState(urlQuery)
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // L'URL reste la source : une navigation (retour arrière, lien, changement de
+  // dossier) réaligne le champ, qui n'en garde jamais une version divergente.
+  useEffect(() => setQuery(urlQuery), [urlQuery])
+
+  const submit = useCallback((next: string, nextScope: SearchScope) => {
+    const href = buildSearchHref(searchParams.toString(), next, nextScope)
+    // Depuis la boîte, remplacer l'entrée d'historique : la frappe ne doit pas
+    // empiler une entrée par caractère. Depuis ailleurs, on y navigue vraiment.
+    if (pathname === MAIL_PATH) router.replace(href)
+    else router.push(href)
+  }, [pathname, router, searchParams])
+
+  // Frappe → URL, débounce partagé avec l'ancien champ de la liste.
+  const onQueryChange = (next: string) => {
+    setQuery(next)
+    if (debounce.current) clearTimeout(debounce.current)
+    debounce.current = setTimeout(() => submit(next, scope), SEARCH_DEBOUNCE_MS)
+  }
+
+  const clear = () => {
+    if (debounce.current) clearTimeout(debounce.current)
+    setQuery('')
+    submit('', scope)
+  }
+
+  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current) }, [])
 
   // The app-wide shortcut hook bails out on any modifier (hooks/useKeyboardShortcuts.ts),
   // so the field owns its own listener. Works from anywhere, including from another field.
@@ -49,8 +85,13 @@ export function Omnibar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
       inputRef.current?.focus()
       inputRef.current?.select()
     }
+    const onFocusRequest = () => { inputRef.current?.focus(); inputRef.current?.select() }
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener(SEARCH_FOCUS_EVENT, onFocusRequest)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener(SEARCH_FOCUS_EVENT, onFocusRequest)
+    }
   }, [])
 
   return (
@@ -79,10 +120,15 @@ export function Omnibar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
           ref={inputRef}
           type="text"
           value={query}
-          onChange={e => setQuery(e.target.value)}
+          onChange={e => onQueryChange(e.target.value)}
           onKeyDown={e => {
+            if (e.key === 'Enter') {
+              if (debounce.current) clearTimeout(debounce.current)
+              submit(e.currentTarget.value, scope)
+              return
+            }
             if (e.key !== 'Escape') return
-            setQuery('')
+            clear()
             e.currentTarget.blur()
           }}
           placeholder={t('searchMail')}
@@ -91,10 +137,47 @@ export function Omnibar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
           className="w-full h-8 pl-8 pr-12 text-xs rounded-lg border border-border bg-muted/50
             placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         />
-        <kbd className="absolute right-2 hidden sm:block text-[10px] text-muted-foreground pointer-events-none">
-          ⌘K
-        </kbd>
+        {query ? (
+          <button
+            type="button"
+            onClick={clear}
+            title={t('clearSearch')}
+            aria-label={t('clearSearch')}
+            data-omnibar-search-clear
+            className="absolute right-2 text-muted-foreground hover:text-foreground"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        ) : (
+          <kbd className="absolute right-2 hidden sm:block text-[10px] text-muted-foreground pointer-events-none">
+            ⌘K
+          </kbd>
+        )}
       </div>
+
+      {/* Étendue de la recherche — n'apparaît que pendant une recherche, une seule ligne, deux positions */}
+      {query && (
+        <div className="hidden sm:flex shrink-0 items-center rounded-lg border border-border bg-muted/50 p-0.5 text-[11px]">
+          {([SCOPE_FOLDER, SCOPE_ALL] as const).map(value => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => {
+                if (debounce.current) clearTimeout(debounce.current)
+                submit(query, value)
+              }}
+              data-omnibar-scope={value}
+              aria-pressed={scope === value}
+              className={cn(
+                'px-2 h-6 rounded-md transition-colors',
+                scope === value ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {t(value === SCOPE_ALL ? 'searchAllFolders' : 'searchThisFolder')}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="ml-auto flex items-center gap-0.5">
         <Link href="/dashboard" title={t('dashboard')} aria-label={t('dashboard')} data-omnibar-action="dashboard" className={ACTION}>
@@ -115,5 +198,17 @@ export function Omnibar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
         </Link>
       </div>
     </header>
+  )
+}
+
+/**
+ * `useSearchParams` impose une frontière Suspense (convention du dépôt) : la
+ * barre est rendue derrière un repli de la bonne hauteur, jamais de saut.
+ */
+export function Omnibar(props: { onOpenDrawer: () => void }) {
+  return (
+    <Suspense fallback={<div className="shrink-0 border-b border-border bg-background" style={{ height: OMNIBAR.height }} />}>
+      <OmnibarInner {...props} />
+    </Suspense>
   )
 }

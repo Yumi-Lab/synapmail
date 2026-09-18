@@ -2,10 +2,12 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useTranslations } from 'next-intl'
-import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, MailOpen, MoveRight, ChevronDown, Eye, EyeOff, Archive, Clock, PenSquare } from 'lucide-react'
+import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Trash2, Mail, MailOpen, MoveRight, ChevronDown, Eye, EyeOff, Archive, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { parseDate } from '@/lib/dates'
-import { dispatchCompose } from '@/lib/compose'
+import {
+  SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, isSearchQuery, type SearchScope,
+} from '@/lib/search'
 import useSWR, { mutate as globalMutate } from 'swr'
 import type { Message, Folder, ReadReceipt } from '@/types/email'
 import type { EmailAccount } from '@/types/account'
@@ -114,13 +116,15 @@ interface Props {
   onSelect: (uid: string, accountId: string) => void
   onSelectThread: (messages: Message[], subject: string) => void
   activeAccountId?: string | null
-  searchInputRef?: React.RefObject<HTMLInputElement>
+  /** Recherche en cours, portée par l'URL de la boîte et pilotée par la barre d'application. */
+  search?: string
+  searchScope?: SearchScope
   permissions?: MailPermissions
 }
 
 interface AppSettings { thread_view: boolean; messages_per_page: number; mail_density: DensityMode }
 
-export function MessageList({ folder, onSelect, onSelectThread, activeAccountId, searchInputRef, permissions }: Props) {
+export function MessageList({ folder, onSelect, onSelectThread, activeAccountId, search = '', searchScope = SCOPE_FOLDER, permissions }: Props) {
   const perms = permissions ?? DEFAULT_PERMISSIONS
   const t = useTranslations('mail')
   const [filter, setFilter] = useState<'all' | 'unread'>('all')
@@ -128,8 +132,6 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
   const [accumulated, setAccumulated] = useState<Message[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
   const [readUids, setReadUids] = useState<Set<string>>(new Set())
-  const [searchQuery, setSearchQuery] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
 
   const { data: settingsData } = useSWR<{ data: AppSettings }>('/api/settings', fetcher)
@@ -170,9 +172,6 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
   const loadingLockRef = useRef(0) // last page auto-requested — prevents re-firing while in flight
 
   const prevListKey = useRef(`${folder}|${activeAccountId ?? ''}`)
-  const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const internalSearchRef = useRef<HTMLInputElement>(null)
-  const effectiveSearchRef = searchInputRef ?? internalSearchRef
 
   useEffect(() => {
     const listKey = `${folder}|${activeAccountId ?? ''}`
@@ -182,19 +181,11 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
       setAccumulated([])
       loadingLockRef.current = 0
       setReadUids(new Set())
-      setSearchQuery('')
-      setDebouncedSearch('')
       setSelectedThreadKey(null)
       setCheckedUids(new Set())
       setSnoozeFor(null)
     }
   }, [folder, activeAccountId])
-
-  useEffect(() => {
-    if (searchTimeout.current) clearTimeout(searchTimeout.current)
-    searchTimeout.current = setTimeout(() => setDebouncedSearch(searchQuery), 400)
-    return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current) }
-  }, [searchQuery])
 
   // Close move menu when clicking outside
   useEffect(() => {
@@ -225,8 +216,10 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
 
   const isSentFolder = /sent/i.test(folder)
 
+  const isSearchMode = isSearchQuery(search)
+
   const { data, error, isValidating, mutate } = useSWR<{ messages: Message[]; total: number }>(
-    debouncedSearch
+    isSearchMode
       ? null
       : `/api/messages?folder=${encodeURIComponent(folder)}&filter=${filter}&page=${page}&perPage=${perPage}${accountParam}`,
     fetcher,
@@ -234,8 +227,9 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
   )
 
   const { data: searchData, isValidating: isSearching } = useSWR<{ messages: Message[] }>(
-    debouncedSearch && debouncedSearch.length >= 2
-      ? `/api/messages/search?q=${encodeURIComponent(debouncedSearch)}&folder=${encodeURIComponent(folder)}${accountParam}`
+    isSearchMode
+      ? `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}&folder=${encodeURIComponent(folder)}` +
+        `&${SCOPE_PARAM}=${searchScope}${accountParam}`
       : null,
     fetcher
   )
@@ -267,7 +261,6 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
     }
   }, [data, page, refreshKey])
 
-  const isSearchMode = debouncedSearch.length >= 2
   const messages = isSearchMode ? (searchData?.messages ?? []) : accumulated
   const total = data?.total ?? 0
   const loadError = !isSearchMode && !!error && accumulated.length === 0
@@ -567,7 +560,6 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
   }
 
   const handleRefresh = () => { setPage(1); loadingLockRef.current = 0; setRefreshKey(k => k + 1); mutate() }
-  const clearSearch = () => { setSearchQuery(''); setDebouncedSearch('') }
   const hasSelection = checkedUids.size > 0
 
   const renderRow = (thread: ThreadGroup) => {
@@ -734,37 +726,6 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
 
   return (
     <div className="flex flex-col h-full bg-background border-r border-border">
-      {/* Search bar */}
-      <div className="px-3 pt-3 pb-2 shrink-0 flex items-center gap-2">
-        <div className="relative flex flex-1 items-center">
-          <Search className="absolute left-2.5 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
-          <input
-            ref={effectiveSearchRef}
-            type="text"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder={t('search')}
-            className="w-full h-8 pl-8 pr-8 text-xs rounded-lg border border-border bg-muted/50 placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-          />
-          {searchQuery && (
-            <button onClick={clearSearch} className="absolute right-2 text-muted-foreground hover:text-foreground">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-        {/* Nouveau message, toujours à portée depuis la liste (la barre peut être repliée) */}
-        <button
-          type="button"
-          onClick={dispatchCompose}
-          title={t('compose')}
-          aria-label={t('compose')}
-          data-compose-button
-          className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-border bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-        >
-          <PenSquare className="w-4 h-4" />
-        </button>
-      </div>
-
       {/* Toolbar */}
       {hasSelection ? (
         <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border shrink-0 bg-primary/5">
@@ -843,8 +804,11 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
         </div>
       ) : (
         <div className="px-4 py-2 border-b border-border shrink-0">
-          <p className="text-xs text-muted-foreground">
-            {isSearching ? 'Recherche…' : `${messages.length} résultat${messages.length !== 1 ? 's' : ''} pour « ${debouncedSearch} »`}
+          <p className="text-xs text-muted-foreground" data-search-summary>
+            {isSearching
+              ? t('searching')
+              : t('searchResults', { count: messages.length, query: search })}
+            {searchScope === SCOPE_ALL && ` · ${t('searchAllFolders')}`}
           </p>
         </div>
       )}
@@ -887,7 +851,7 @@ export function MessageList({ folder, onSelect, onSelectThread, activeAccountId,
             <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-3">
               <Search className="w-6 h-6 opacity-30" />
             </div>
-            <p className="text-sm font-medium">{isSearchMode ? 'Aucun résultat' : t('noMessages')}</p>
+            <p className="text-sm font-medium">{isSearchMode ? t('noSearchResults') : t('noMessages')}</p>
           </div>
         )}
 
