@@ -128,6 +128,7 @@
     "noSearchResults": "没有结果",
     "refresh": "收取邮件",
     "flag": "标记",
+    "moreActions": "更多操作",
     "selectionCount": "已选 {count} 封",
     "confirmDeleteSelection": "删除 {count} 封邮件？",
     "flagged": "已标记",

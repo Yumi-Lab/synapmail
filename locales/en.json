@@ -128,6 +128,7 @@
     "noSearchResults": "No results",
     "refresh": "Refresh",
     "flag": "Flag",
+    "moreActions": "More actions",
     "selectionCount": "{count} selected",
     "confirmDeleteSelection": "Delete {count} messages?",
     "flagged": "Flagged",

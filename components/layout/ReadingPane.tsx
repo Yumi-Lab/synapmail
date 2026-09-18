@@ -1,7 +1,7 @@
 'use client'
 
 import { useTranslations } from 'next-intl'
-import { Reply, Forward, Trash2, Archive, Star, Flag, MoreHorizontal, Paperclip, Download, X, FileText, Image as ImageIcon, ReplyAll, MailX, CheckCircle2, AlertCircle, ShieldCheck, ShieldAlert, ShieldX, Filter, AlarmClock, CornerUpLeft, Users, ChevronRight } from 'lucide-react'
+import { Star, Flag, MoreHorizontal, Paperclip, Download, X, FileText, Image as ImageIcon, MailX, CheckCircle2, AlertCircle, ShieldCheck, ShieldAlert, ShieldX, Filter, AlarmClock, CornerUpLeft, Users, ChevronRight } from 'lucide-react'
 import { AIToolbar } from '@/components/ai/AIToolbar'
 import useSWR from 'swr'
 import type { Message } from '@/types/email'
@@ -743,8 +743,11 @@ interface Props {
   accountId: string | null
   folder: string
   activeAccountId?: string | null
-  onDelete?: () => void
+  /** Ouvre la rédaction depuis la bannière IA — le bouton Répondre vit dans la head bar. */
   onReply?: (msg: Message) => void
+  /** Encore acceptées pour `ThreadPane` et l'appelant commun, mais plus câblées ici :
+   *  supprimer, répondre à tous et transférer sont des boutons de la head bar. */
+  onDelete?: () => void
   onReplyAll?: (msg: Message) => void
   onForward?: (msg: Message) => void
   onMessageLoaded?: (msg: Message) => void
@@ -785,15 +788,14 @@ const REASON_CLASS: Record<FocusReason, string> = {
   attachment: 'text-muted-foreground border-border bg-muted',
 }
 
-export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete, onReply, onReplyAll, onForward, onMessageLoaded, onAiReply, permissions }: Props) {
+export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, onMessageLoaded, onAiReply, permissions }: Props) {
   const t = useTranslations('mail')
-  // Archiver n'est pas réimplémenté ici : l'action partagée vise le message
-  // ouvert quand rien n'est coché, et passe par la même route que la liste.
-  const { can, run } = useMailSelection()
   const perms = permissions ?? DEFAULT_PERMISSIONS
   // `null` = pas encore touché dans cette session : la valeur du message fait foi.
   const [flagKey, setFlagKey] = useState<string | null | undefined>(undefined)
   const [flagMenu, setFlagMenu] = useState(false)
+  // La barre d'outils de la head bar porte les actions ; le volet ne fait qu'appeler `setFlag`.
+  const { run } = useMailSelection()
   const flagMenuRef = useRef<HTMLDivElement>(null)
 
   // Light-dismiss : UN clic dehors ferme, et ce clic atteint sa cible (pas de
@@ -844,14 +846,6 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
       }
     }
   }, [message?.uid]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleDelete = async () => {
-    if (!uid || !accountId) return
-    await fetch(`/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`, {
-      method: 'DELETE',
-    })
-    onDelete?.()
-  }
 
   // L'écriture appartient à la liste (action partagée du lot M1) : elle pose le
   // drapeau ET rafraîchit ses lignes. Le volet ne garde que l'état de son icône.
@@ -994,21 +988,9 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
         </div>
       </div>
 
-      {/* Actions */}
+      {/* Actions — répondre / transférer / archiver / supprimer vivent dans la head bar
+          (barre d'outils partagée) : ici ne restent que ce qu'elle ne porte pas. */}
       <div className="flex items-center gap-1.5 px-4 py-2 border-b border-border shrink-0">
-        {perms.canSend && (
-          <>
-            <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs" onClick={() => onReply?.(message)}>
-              <Reply className="w-3.5 h-3.5" /> {t('reply')}
-            </Button>
-            <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs" onClick={() => onReplyAll?.(message)}>
-              <ReplyAll className="w-3.5 h-3.5" /> {t('replyAll')}
-            </Button>
-            <Button variant="ghost" size="sm" className="gap-1.5 h-8 text-xs" onClick={() => onForward?.(message)}>
-              <Forward className="w-3.5 h-3.5" /> {t('forward')}
-            </Button>
-          </>
-        )}
         <div className="flex-1" />
         {perms.canOrganize && (
           <>
@@ -1030,23 +1012,7 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
                 </div>
               )}
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 w-8 p-0"
-              data-reading-archive
-              title={t('archiveAction')}
-              disabled={!can.archive}
-              onClick={() => { run('archive'); onDelete?.() }}
-            >
-              <Archive className="w-3.5 h-3.5" />
-            </Button>
           </>
-        )}
-        {perms.canDelete && (
-          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={handleDelete}>
-            <Trash2 className="w-3.5 h-3.5" />
-          </Button>
         )}
         <Button
           variant="ghost"

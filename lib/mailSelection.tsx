@@ -20,6 +20,13 @@ import type { LucideIcon } from 'lucide-react'
 /** Couleur de drapeau (lot M2) — `null` retire le drapeau. */
 export type MailFlagValue = string | null
 
+/**
+ * La palette des sept drapeaux vit dans `lib/flags.ts` (clés, index IMAP,
+ * couleurs) et se rend par `components/mail/FlagPicker.tsx` : une barre d'outils
+ * qui propose des couleurs monte CE composant. Aucune seconde liste ici — la
+ * précédente divergeait déjà de la source (`grey` contre `gray`).
+ */
+
 /** Actions qu'une barre d'outils peut déclencher. Une action non enregistrée ne fait rien. */
 export interface MailActions {
   refresh: () => void

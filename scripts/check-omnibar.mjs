@@ -19,8 +19,14 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 // Tolerance for a position/size drift, in CSS pixels — same floor as the sidebar
 // gate: sub-pixel layout rounding is expected, anything a human could see is not.
 const MAX_DRIFT_PX = 1
+// Le champ est centré par `mx-auto` dans l'espace restant : le reste de la ligne
+// (marges, bornes min/max) peut le décaler de quelques pixels sans que ce soit un
+// défaut. Calibré sur le rendu réel du lot H3 (1440/1280/1024/390, cf. Journal).
+const FIELD_CENTRE_TOLERANCE_PX = 8
 const VIEWPORT = { width: 1440, height: 900 }
-const MOBILE_VIEWPORT = { width: 390, height: 844 }
+// `hasTouch` : le gate ouvre le menu « … » par un VRAI tap (`page.tap`), le geste
+// que l'humain a fait — un `click()` programmatique ne prouverait pas le même chose.
+const MOBILE_VIEWPORT = { width: 390, height: 844, hasTouch: true, isMobile: true }
 // Pages the header must be present on, per GOAL.md lot O1.
 const PAGES = ['/mail', '/dashboard', '/settings']
 // The header's height is NOT an absolute constant calibrated elsewhere: it is read
@@ -41,6 +47,28 @@ const MENU = '[data-omnibar-menu]'
 // absence, so re-introducing it fails here instead of only at the human gate.
 const EDGE_TOGGLE = '[data-sidebar-edge-toggle]'
 const action = name => `[data-omnibar-action="${name}"]`
+
+// --- Lot H3: la barre d'outils du courrier ---
+const TOOLBAR = '[data-mail-toolbar]'
+const ROW = '[data-mail-row]'
+// Les largeurs que le lot nomme, de la plus large à la plus étroite.
+const TOOLBAR_WIDTHS = [1440, 1280, 1024, 390]
+// L'ordre attendu est LU dans la constante partagée : ni l'ordre ni les noms ne se
+// recopient ici, sinon le banc mesurerait sa propre copie.
+const SELECTION_SRC = readFileSync(new URL('../lib/mailSelection.tsx', import.meta.url), 'utf8')
+const GROUPS_SRC = SELECTION_SRC.slice(
+  SELECTION_SRC.indexOf('MAIL_TOOLBAR_GROUPS'),
+  SELECTION_SRC.indexOf('] as const', SELECTION_SRC.indexOf('MAIL_TOOLBAR_GROUPS')))
+const TOOLBAR_ORDER = [...GROUPS_SRC.matchAll(/action:\s*'(\w+)'/g)].map(m => m[1])
+// La première couleur du menu est LUE dans la source des drapeaux : le banc ne
+// nomme aucune couleur de son côté.
+const FLAGS_SRC = readFileSync(new URL('../lib/flags.ts', import.meta.url), 'utf8')
+const FIRST_FLAG_KEY = FLAGS_SRC.match(/\{\s*key:\s*'(\w+)'/)?.[1]
+const SELECTION_ATTR = SELECTION_SRC.match(/MAIL_SELECTION_COUNT_ATTR = '([\w-]+)'/)?.[1]
+if (TOOLBAR_ORDER.length < 2 || !SELECTION_ATTR || !FIRST_FLAG_KEY) {
+  console.error('HARNESS: could not read MAIL_TOOLBAR_GROUPS / MAIL_SELECTION_COUNT_ATTR / MAIL_FLAGS')
+  process.exit(2)
+}
 // Lot H2: the signed-in user sits at the far right of the header, and the one door to
 // the settings is inside its menu — the left group's "settings" action is gone.
 const USER_TRIGGER = '[data-user-menu-trigger]'
@@ -48,6 +76,15 @@ const USER_MENU = '[data-user-menu]'
 const userItem = name => `[data-user-menu-item="${name}"]`
 // Two letters, like an account bubble — the rule lives in AccountAvatar.twoLetters.
 const USER_INITIALS_LEN = 2
+// Toutes les boîtes cliquables du header, mesurées ensemble à 390 px : deux
+// d'entre elles ne doivent jamais se recouvrir.
+const HEADER_BOXES = `${MENU}, [data-omnibar-action], [data-mail-toolbar-more], ${SEARCH}, ${USER_TRIGGER}`
+// Plancher d'écart entre deux cibles tactiles voisines, en pixels CSS — la valeur
+// que le gate humain du 19/09 a demandée (« écarts ≥ 4 px ») et que `gap-1` livre.
+const MIN_HIT_GAP_PX = 4
+// Largeur d'un bouton du gabarit `ACTION` (`w-8`), LUE dans la feuille Tailwind par
+// le composant : un « … » plus étroit que ça est un bouton écrasé, pas un bouton.
+const MORE_BUTTON_PX = 32
 // Navigations and the compose window settle well under this; the bar's own
 // transitions are colour-only (no layout animation to wait out).
 const SETTLE_MS = 600
@@ -91,6 +128,8 @@ const probeBar = sel => {
     windowWidth: document.documentElement.clientWidth,
     asideRight: ar && ar.height ? ar.right : null,
     field: box('[data-omnibar-search]'),
+    // Lot H3: the mail toolbar sits between the left group and the field.
+    toolbar: box('[data-mail-toolbar]'),
     menu: box('[data-omnibar-menu]'),
     actions: ['dashboard', 'compose'].map(n => box(`[data-omnibar-action="${n}"]`)),
     user: box('[data-user-menu-trigger]'),
@@ -110,6 +149,12 @@ const browser = await puppeteer.launch({ executablePath: CHROME, headless: true,
 const failures = []
 try {
   const page = await browser.newPage()
+// Le serveur de développement recompile une route à la première visite et la boîte
+// tient un flux SSE ouvert : `networkidle2` y met parfois plus que les 30 s par
+// défaut de puppeteer. Mesuré le 19/09 : deux exécutions tombées sur deux `goto`
+// DIFFÉRENTS, toutes deux hors des sections mesurées — une panne de banc, pas du
+// produit. Le plafond monte, le banc ne change rien de ce qu'il mesure.
+page.setDefaultNavigationTimeout(120000)
   await page.setViewport(VIEWPORT)
 
   await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2' })
@@ -151,9 +196,16 @@ try {
       const xs = [bar.menu, ...bar.actions].map(a => a.left)
       if (xs.some((x, i) => i > 0 && x <= xs[i - 1])) failures.push(`${path}: the left group is not in order menu, dashboard, compose (x = ${xs.map(v => v.toFixed(0)).join(', ')})`)
       if (bar.actions.at(-1).right > bar.field.left) failures.push(`${path}: the actions are not left of the search field (last action ends at ${bar.actions.at(-1).right.toFixed(2)}, field starts at ${bar.field.left.toFixed(2)})`)
-      const offCentre = Math.abs(bar.field.centre - bar.centre)
-      console.log(`  menu+actions x=${xs.map(v => v.toFixed(0)).join(',')} | field ${bar.field.left.toFixed(0)}..${bar.field.right.toFixed(0)} (w=${bar.field.width.toFixed(0)}), off-centre ${offCentre.toFixed(2)}px`)
-      if (offCentre > MAX_DRIFT_PX) failures.push(`${path}: the search field is ${offCentre.toFixed(2)}px off the header's centre`)
+      // Lot H3 (arbitrage de Nicolas): once the mail toolbar shares the header, the
+      // field is no longer centred on the HEADER — it is centred in the space left
+      // between whatever precedes it and the user bubble. Off /mail there is no
+      // toolbar, so that space starts right after the left group.
+      const gapLeft = Math.max(bar.actions.at(-1).right, bar.toolbar?.right ?? 0)
+      const gapRight = bar.user ? bar.user.left : bar.right
+      const offCentre = Math.abs(bar.field.centre - (gapLeft + gapRight) / 2)
+      console.log(`  menu+actions x=${xs.map(v => v.toFixed(0)).join(',')} | toolbar ${bar.toolbar ? `${bar.toolbar.left.toFixed(0)}..${bar.toolbar.right.toFixed(0)}` : 'n/a'} | field ${bar.field.left.toFixed(0)}..${bar.field.right.toFixed(0)} (w=${bar.field.width.toFixed(0)}), off-centre-in-gap ${offCentre.toFixed(2)}px`)
+      if (offCentre > FIELD_CENTRE_TOLERANCE_PX) failures.push(`${path}: the search field is ${offCentre.toFixed(2)}px off the centre of the space left for it (${gapLeft.toFixed(0)}..${gapRight.toFixed(0)})`)
+      if (bar.toolbar && bar.field.left < bar.toolbar.right) failures.push(`${path}: the search field (x=${bar.field.left.toFixed(2)}) runs under the mail toolbar (ends at ${bar.toolbar.right.toFixed(2)})`)
       if (bar.field.width > EXPECTED_FIELD_MAX_WIDTH + MAX_DRIFT_PX) failures.push(`${path}: the field is ${bar.field.width.toFixed(2)}px wide, above the ${EXPECTED_FIELD_MAX_WIDTH}px bound`)
     }
     if (bar.horizontalOverflow) failures.push(`${path}: horizontal scrollbar at ${VIEWPORT.width}px`)
@@ -161,6 +213,9 @@ try {
     const missing = await page.evaluate(sels => sels.filter(s => !document.querySelector(s)), [SEARCH, action('dashboard'), action('compose'), USER_TRIGGER])
     if (missing.length) failures.push(`${path}: missing from the header: ${missing.join(', ')}`)
     // One door to the settings (lot H2): the left group no longer carries the action.
+    // Hors de la boîte, le groupe courrier n'existe pas (rien à griser inutilement).
+    if (path === '/mail' && !bar.toolbar) failures.push(`${path}: no mail toolbar in the header`)
+    if (path !== '/mail' && bar.toolbar) failures.push(`${path}: the mail toolbar shows outside the mailbox`)
     if (bar.strayActions.includes('settings')) failures.push(`${path}: the header still carries a "settings" action on the left`)
     // The user bubble is the RIGHTMOST thing in the header, past the field, with two letters.
     if (!bar.user) failures.push(`${path}: no user bubble in the header`)
@@ -367,6 +422,152 @@ try {
     if (!composeOpen) failures.push(`clicking the compose action from ${from} did not open the compose window (landed on ${composeUrl.pathname}${composeUrl.search})`)
   }
 
+  // --- Lot H3: the mail toolbar in the header ---
+  // Order, disabled states and what a button actually DOES, measured on the running
+  // app. The expected order is READ from the shared constant, never transcribed here.
+  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await page.waitForSelector(TOOLBAR, { timeout: 20000 })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  const actionStates = () => page.evaluate(() => Object.fromEntries(
+    [...document.querySelectorAll('[data-mail-action]')].map(b => [b.dataset.mailAction, b.disabled === true])))
+  const actionOrder = () => page.evaluate(() =>
+    [...document.querySelectorAll('[data-mail-action]')].map(b => b.dataset.mailAction))
+
+  const order = await actionOrder()
+  console.log(`toolbar order : ${order.join(',')}`)
+  console.log(`constant says : ${TOOLBAR_ORDER.join(',')}`)
+  if (order.join(',') !== TOOLBAR_ORDER.join(','))
+    failures.push(`toolbar order is ${order.join(',')}, MAIL_TOOLBAR_GROUPS says ${TOOLBAR_ORDER.join(',')}`)
+
+  // 0 selected: only refresh is live — a button without a capability is greyed, never hidden.
+  const at0 = await actionStates()
+  console.log(`disabled@0    : ${JSON.stringify(at0)}`)
+  if (Object.keys(at0).length !== TOOLBAR_ORDER.length)
+    failures.push(`${Object.keys(at0).length} toolbar buttons in the DOM, the constant declares ${TOOLBAR_ORDER.length} — a button is hidden instead of greyed`)
+  const liveAt0 = Object.entries(at0).filter(([a, d]) => a !== 'refresh' && !d).map(([a]) => a)
+  if (liveAt0.length) failures.push(`with nothing selected these are still enabled: ${liveAt0.join(',')}`)
+  if (at0.refresh) failures.push('refresh is disabled although an account is active')
+
+  const rows = await page.$$(ROW)
+  if (rows.length < 3) { console.error(`HARNESS: ${rows.length} message rows — H3 needs at least 3`); process.exit(2) }
+
+  // 1 selected: everything the account allows is live.
+  await rows[2].click()
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const at1 = await actionStates()
+  console.log(`disabled@1    : ${JSON.stringify(at1)}`)
+  const deadAt1 = Object.entries(at1).filter(([, d]) => d).map(([a]) => a)
+  if (deadAt1.length) failures.push(`with one message open these are still disabled: ${deadAt1.join(',')}`)
+
+  // 2 selected (checkbox on the avatar): replying to two messages makes no sense.
+  await page.evaluate(sel => {
+    const avatar = n => document.querySelectorAll(sel)[n]?.firstElementChild
+    for (const n of [0, 1]) avatar(n)?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  }, ROW)
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const selected = await page.evaluate(attr => document.querySelector(`[${attr}]`)?.getAttribute(attr), SELECTION_ATTR)
+  const at2 = await actionStates()
+  console.log(`disabled@${selected}    : ${JSON.stringify(at2)}`)
+  if (selected !== '2') failures.push(`clicking two avatars selected ${selected} message(s), expected 2`)
+  else for (const a of ['reply', 'replyAll']) {
+    if (!at2[a]) failures.push(`${a} is still enabled with 2 messages selected — it targets ONE message`)
+  }
+  if (at2.remove) failures.push('delete is disabled with 2 messages selected, although it acts on the whole target')
+
+  // Back to one message: Échap vide la sélection (raccourci de la liste), puis on
+  // rouvre la 3e ligne. Sans cela la cible resterait à deux messages et « répondre »
+  // serait grisé à juste titre — un défaut de banc, pas du produit.
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  await (await page.$$(ROW))[2].click()
+  await new Promise(r => setTimeout(r, SETTLE_MS * 2))
+  const backToOne = await page.evaluate(attr => document.querySelector(`[${attr}]`)?.getAttribute(attr), SELECTION_ATTR)
+  if (backToOne !== '0') { console.error(`HARNESS: selection is ${backToOne} after Escape, expected 0 — nothing measured`); process.exit(2) }
+
+  // Flag: posé puis retiré sur un message de TEST, relu par l'API plutôt que sur le
+  // bouton (la barre d'outils n'a pas d'état de drapeau à qui se fier).
+  const target = await page.evaluate(async () => {
+    const uid = document.querySelectorAll('[data-mail-row]')[2]?.dataset.mailRow
+    // Le compte visé est le compte ACTIF (`user_settings.active_account_id`), pas un
+    // compte « par défaut » : aucun des comptes de ce banc ne porte `isDefault`.
+    const settings = (await (await fetch('/api/settings')).json())?.data ?? {}
+    const accounts = (await (await fetch('/api/accounts')).json())?.data ?? []
+    const account = settings.active_account_id ?? accounts.find(a => a.isDefault)?.id ?? accounts[0]?.id ?? null
+    return { uid, account, folder: 'INBOX' }
+  })
+  if (!target.uid || !target.account) { console.error(`HARNESS: no test message (${JSON.stringify(target)}) — the flag is not measured`); process.exit(2) }
+  const flagged = () => page.evaluate(async ({ uid, account, folder }) => {
+    const res = await fetch(`/api/messages/${uid}?account=${account}&folder=${encodeURIComponent(folder)}`)
+    if (!res.ok) return `HTTP ${res.status}`
+    return (await res.json())?.isStarred ?? null
+  }, target)
+
+  const before = await flagged()
+  if (typeof before !== 'boolean') { console.error(`HARNESS: cannot read the test message's flag (got ${before}) — nothing measured`); process.exit(2) }
+  await page.click('[data-mail-action="setFlag"]')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const flagMenuOpen = await page.evaluate(() => !!document.querySelector('[data-mail-action-menu="setFlag"]'))
+  if (!flagMenuOpen) failures.push('the flag button does not open its anchored menu')
+  else {
+    // Le menu rend `FlagPicker` (source unique, lib/flags.ts) : ses pastilles
+    // portent `data-flag`, pas un attribut propre à la barre d'outils.
+    await page.click(`[data-mail-action-menu="setFlag"] [data-flag="${FIRST_FLAG_KEY}"]`)
+    await new Promise(r => setTimeout(r, SETTLE_MS * 2))
+    const afterSet = await flagged()
+    await page.click('[data-mail-action="setFlag"]')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    await page.click('[data-mail-action-menu="setFlag"] [data-flag=""]')
+    await new Promise(r => setTimeout(r, SETTLE_MS * 2))
+    const afterClear = await flagged()
+    console.log(`flag on the test message ${target.uid}: before=${before} after set=${afterSet} after remove=${afterClear}`)
+    if (afterSet !== true) failures.push(`choosing a flag colour left isStarred=${afterSet}, expected true`)
+    if (afterClear !== false) failures.push(`removing the flag left isStarred=${afterClear}, expected false`)
+  }
+
+  // Reply: a real click must open the compose window.
+  const replyLive = await page.$('[data-mail-action="reply"]:not([disabled])')
+  if (!replyLive) failures.push('reply is disabled although one message is open')
+  else {
+    await replyLive.click()
+    await new Promise(r => setTimeout(r, SETTLE_MS * 4))
+    const opened = await page.evaluate(() =>
+      !!document.querySelector('[role="dialog"] .ProseMirror, [role="dialog"] [contenteditable="true"]'))
+    console.log(`click reply -> compose window in the DOM: ${opened}`)
+    if (!opened) failures.push('a real click on Reply did not open the compose window')
+    await page.keyboard.press('Escape')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+  }
+
+  // The removed duplicates: no second row of the same actions anywhere on /mail.
+  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await page.waitForSelector(ROW, { timeout: 20000 })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  await (await page.$$(ROW))[2].click()
+  await new Promise(r => setTimeout(r, SETTLE_MS * 2))
+  const strayReadingActions = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-reading-pane] button, [data-reading-archive]')]
+      .map(b => (b.textContent || '').trim().toLowerCase())
+      .filter(txt => ['répondre', 'reply', 'transférer', 'forward', 'répondre à tous'].includes(txt)))
+  console.log(`duplicate reply/forward buttons left in the reading pane: ${strayReadingActions.length}`)
+  if (strayReadingActions.length) failures.push(`the reading pane still carries ${strayReadingActions.join(', ')} — the head bar owns them now`)
+
+  // No horizontal overflow at any of the widths the lot names; the toolbar folds
+  // into its overflow menu rather than pushing the header wider.
+  for (const width of TOOLBAR_WIDTHS) {
+    await page.setViewport({ width, height: 900 })
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    const shot = await page.evaluate(() => ({
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      visible: document.querySelectorAll('[data-mail-action]').length,
+      more: !!document.querySelector('[data-mail-toolbar-more]'),
+    }))
+    console.log(`  ${width}px: buttons=${shot.visible} overflow-menu=${shot.more} horizontal-overflow=${shot.overflow}`)
+    if (shot.overflow) failures.push(`the header overflows horizontally at ${width}px`)
+    if (shot.visible < TOOLBAR_ORDER.length && !shot.more) failures.push(`${width}px: ${shot.visible}/${TOOLBAR_ORDER.length} buttons shown but no overflow menu`)
+  }
+  await page.setViewport(VIEWPORT)
+
   // --- Mobile: the header replaces the top bar and carries the drawer hamburger ---
   await page.setViewport(MOBILE_VIEWPORT)
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
@@ -405,6 +606,58 @@ try {
   const drawerClosed = await page.evaluate(() => !document.querySelector('[data-sidebar-drawer]'))
   console.log(`mobile: floating toggles in the drawer=${drawerToggles}, one click on the veil closes it: ${drawerClosed}`)
   if (!drawerClosed) failures.push('mobile: one click on the veil does not close the drawer')
+
+  // --- Lot H3 / gate 390 : aucune boîte cliquable du header ne recouvre sa voisine,
+  // et un VRAI tap sur « … » ouvre un menu qui nomme les 10 actions, dans l'écran ---
+  const boxes = await page.evaluate(sel => [...document.querySelectorAll(sel)]
+    .map(el => {
+      const r = el.getBoundingClientRect()
+      return { name: el.dataset.omnibarMenu !== undefined ? 'menu'
+        : el.dataset.omnibarAction ?? (el.dataset.mailToolbarMore !== undefined ? 'more'
+        : el.dataset.omnibarSearch !== undefined ? 'search' : 'user'),
+        x: r.x, y: r.y, w: r.width, h: r.height }
+    })
+    .filter(b => b.w > 0 && b.h > 0), HEADER_BOXES)
+  for (const [i, a] of boxes.entries()) {
+    for (const b of boxes.slice(i + 1)) {
+      // Écart horizontal réel entre deux boîtes; négatif = elles se recouvrent.
+      const gapX = Math.max(a.x, b.x) - Math.min(a.x + a.w, b.x + b.w)
+      const gapY = Math.max(a.y, b.y) - Math.min(a.y + a.h, b.y + b.h)
+      if (gapX < MIN_HIT_GAP_PX && gapY < MIN_HIT_GAP_PX)
+        failures.push(`mobile: « ${a.name} » et « ${b.name} » ne laissent que ${Math.max(gapX, gapY).toFixed(1)}px d'écart (plancher ${MIN_HIT_GAP_PX}px)`)
+    }
+  }
+  console.log(`mobile: ${boxes.length} boîtes cliquables mesurées : ${boxes.map(b => `${b.name} ${b.w.toFixed(0)}×${b.h.toFixed(0)}@${b.x.toFixed(0)}`).join(' | ')}`)
+
+  const moreBox = boxes.find(b => b.name === 'more')
+  if (!moreBox) failures.push(`mobile: no « … » button at ${MOBILE_VIEWPORT.width}px, although the toolbar cannot fit`)
+  else {
+    if (Math.abs(moreBox.w - MORE_BUTTON_PX) > MAX_DRIFT_PX)
+      failures.push(`mobile: the « … » button is ${moreBox.w.toFixed(1)}px wide, the ACTION template says ${MORE_BUTTON_PX}px — it is being crushed`)
+    // Un VRAI tap (touche), pas un `click()` programmatique : c'est le geste du gate.
+    await page.tap('[data-mail-toolbar-more]')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    const menu = await page.evaluate(() => {
+      const box = document.querySelector('[data-mail-toolbar-more-menu]')
+      if (!box) return null
+      const r = box.getBoundingClientRect()
+      return {
+        actions: [...box.querySelectorAll('[data-mail-action]')].map(b => b.dataset.mailAction),
+        inside: r.left >= 0 && r.right <= document.documentElement.clientWidth
+          && r.top >= 0 && r.bottom <= document.documentElement.clientHeight,
+        rect: { x: r.x, y: r.y, w: r.width, h: r.height },
+      }
+    })
+    if (!menu) failures.push('mobile: a real tap on « … » opened no menu')
+    else {
+      console.log(`mobile: tap « … » -> ${menu.actions.length} actions (${menu.actions.join(',')}), entirely on screen=${menu.inside}`)
+      if (menu.actions.join(',') !== TOOLBAR_ORDER.join(','))
+        failures.push(`mobile: the « … » menu lists ${menu.actions.join(',')}, MAIL_TOOLBAR_GROUPS declares ${TOOLBAR_ORDER.join(',')}`)
+      if (!menu.inside) failures.push(`mobile: the « … » menu leaves the screen (${JSON.stringify(menu.rect)})`)
+    }
+    await page.keyboard.press('Escape')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+  }
 
   // --- Sign out, LAST: it invalidates the session every check above needs ---
   await page.setViewport(VIEWPORT)

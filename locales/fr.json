@@ -128,6 +128,7 @@
     "noSearchResults": "Aucun résultat",
     "refresh": "Relever",
     "flag": "Drapeau",
+    "moreActions": "Plus d’actions",
     "selectionCount": "{count} sélectionnés",
     "confirmDeleteSelection": "Supprimer {count} messages ?",
     "flagged": "Avec drapeau",
