@@ -97,14 +97,18 @@ export function ThinScroll({ className, viewportClassName, children, ...rest }: 
         <div
           aria-hidden
           data-thin-scroll-thumb
-          className="absolute rounded-full bg-foreground/25 pointer-events-none motion-reduce:transition-none"
+          // The fade lives in a CLASS, not in an inline `transition` shorthand: an inline
+          // shorthand outranks `motion-reduce:transition-none` and the reduced-motion user
+          // would still get the 300 ms fade. Only the duration is inline, and
+          // `transition-property: none` from the class beats it.
+          className="absolute rounded-full bg-foreground/25 pointer-events-none transition-opacity ease-out motion-reduce:transition-none"
           style={{
             top: thumb.top,
             height: thumb.height,
             right: THIN_SCROLL.inset,
             width: THIN_SCROLL.thumbWidth,
             opacity: scrolling || hovering ? 1 : 0,
-            transition: `opacity ${THIN_SCROLL.fadeMs}ms ease-out`,
+            transitionDuration: `${THIN_SCROLL.fadeMs}ms`,
           }}
         />
       )}
