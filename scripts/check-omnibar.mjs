@@ -24,7 +24,9 @@ const MAX_DRIFT_PX = 1
 // défaut. Calibré sur le rendu réel du lot H3 (1440/1280/1024/390, cf. Journal).
 const FIELD_CENTRE_TOLERANCE_PX = 8
 const VIEWPORT = { width: 1440, height: 900 }
-const MOBILE_VIEWPORT = { width: 390, height: 844 }
+// `hasTouch` : le gate ouvre le menu « … » par un VRAI tap (`page.tap`), le geste
+// que l'humain a fait — un `click()` programmatique ne prouverait pas le même chose.
+const MOBILE_VIEWPORT = { width: 390, height: 844, hasTouch: true, isMobile: true }
 // Pages the header must be present on, per GOAL.md lot O1.
 const PAGES = ['/mail', '/dashboard', '/settings']
 // The header's height is NOT an absolute constant calibrated elsewhere: it is read
@@ -74,6 +76,15 @@ const USER_MENU = '[data-user-menu]'
 const userItem = name => `[data-user-menu-item="${name}"]`
 // Two letters, like an account bubble — the rule lives in AccountAvatar.twoLetters.
 const USER_INITIALS_LEN = 2
+// Toutes les boîtes cliquables du header, mesurées ensemble à 390 px : deux
+// d'entre elles ne doivent jamais se recouvrir.
+const HEADER_BOXES = `${MENU}, [data-omnibar-action], [data-mail-toolbar-more], ${SEARCH}, ${USER_TRIGGER}`
+// Plancher d'écart entre deux cibles tactiles voisines, en pixels CSS — la valeur
+// que le gate humain du 19/09 a demandée (« écarts ≥ 4 px ») et que `gap-1` livre.
+const MIN_HIT_GAP_PX = 4
+// Largeur d'un bouton du gabarit `ACTION` (`w-8`), LUE dans la feuille Tailwind par
+// le composant : un « … » plus étroit que ça est un bouton écrasé, pas un bouton.
+const MORE_BUTTON_PX = 32
 // Navigations and the compose window settle well under this; the bar's own
 // transitions are colour-only (no layout animation to wait out).
 const SETTLE_MS = 600
@@ -589,6 +600,58 @@ try {
   const drawerClosed = await page.evaluate(() => !document.querySelector('[data-sidebar-drawer]'))
   console.log(`mobile: floating toggles in the drawer=${drawerToggles}, one click on the veil closes it: ${drawerClosed}`)
   if (!drawerClosed) failures.push('mobile: one click on the veil does not close the drawer')
+
+  // --- Lot H3 / gate 390 : aucune boîte cliquable du header ne recouvre sa voisine,
+  // et un VRAI tap sur « … » ouvre un menu qui nomme les 10 actions, dans l'écran ---
+  const boxes = await page.evaluate(sel => [...document.querySelectorAll(sel)]
+    .map(el => {
+      const r = el.getBoundingClientRect()
+      return { name: el.dataset.omnibarMenu !== undefined ? 'menu'
+        : el.dataset.omnibarAction ?? (el.dataset.mailToolbarMore !== undefined ? 'more'
+        : el.dataset.omnibarSearch !== undefined ? 'search' : 'user'),
+        x: r.x, y: r.y, w: r.width, h: r.height }
+    })
+    .filter(b => b.w > 0 && b.h > 0), HEADER_BOXES)
+  for (const [i, a] of boxes.entries()) {
+    for (const b of boxes.slice(i + 1)) {
+      // Écart horizontal réel entre deux boîtes; négatif = elles se recouvrent.
+      const gapX = Math.max(a.x, b.x) - Math.min(a.x + a.w, b.x + b.w)
+      const gapY = Math.max(a.y, b.y) - Math.min(a.y + a.h, b.y + b.h)
+      if (gapX < MIN_HIT_GAP_PX && gapY < MIN_HIT_GAP_PX)
+        failures.push(`mobile: « ${a.name} » et « ${b.name} » ne laissent que ${Math.max(gapX, gapY).toFixed(1)}px d'écart (plancher ${MIN_HIT_GAP_PX}px)`)
+    }
+  }
+  console.log(`mobile: ${boxes.length} boîtes cliquables mesurées : ${boxes.map(b => `${b.name} ${b.w.toFixed(0)}×${b.h.toFixed(0)}@${b.x.toFixed(0)}`).join(' | ')}`)
+
+  const moreBox = boxes.find(b => b.name === 'more')
+  if (!moreBox) failures.push(`mobile: no « … » button at ${MOBILE_VIEWPORT.width}px, although the toolbar cannot fit`)
+  else {
+    if (Math.abs(moreBox.w - MORE_BUTTON_PX) > MAX_DRIFT_PX)
+      failures.push(`mobile: the « … » button is ${moreBox.w.toFixed(1)}px wide, the ACTION template says ${MORE_BUTTON_PX}px — it is being crushed`)
+    // Un VRAI tap (touche), pas un `click()` programmatique : c'est le geste du gate.
+    await page.tap('[data-mail-toolbar-more]')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    const menu = await page.evaluate(() => {
+      const box = document.querySelector('[data-mail-toolbar-more-menu]')
+      if (!box) return null
+      const r = box.getBoundingClientRect()
+      return {
+        actions: [...box.querySelectorAll('[data-mail-action]')].map(b => b.dataset.mailAction),
+        inside: r.left >= 0 && r.right <= document.documentElement.clientWidth
+          && r.top >= 0 && r.bottom <= document.documentElement.clientHeight,
+        rect: { x: r.x, y: r.y, w: r.width, h: r.height },
+      }
+    })
+    if (!menu) failures.push('mobile: a real tap on « … » opened no menu')
+    else {
+      console.log(`mobile: tap « … » -> ${menu.actions.length} actions (${menu.actions.join(',')}), entirely on screen=${menu.inside}`)
+      if (menu.actions.join(',') !== TOOLBAR_ORDER.join(','))
+        failures.push(`mobile: the « … » menu lists ${menu.actions.join(',')}, MAIL_TOOLBAR_GROUPS declares ${TOOLBAR_ORDER.join(',')}`)
+      if (!menu.inside) failures.push(`mobile: the « … » menu leaves the screen (${JSON.stringify(menu.rect)})`)
+    }
+    await page.keyboard.press('Escape')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+  }
 
   // --- Sign out, LAST: it invalidates the session every check above needs ---
   await page.setViewport(VIEWPORT)
