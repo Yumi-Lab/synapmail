@@ -8,7 +8,7 @@ import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } f
 import { cn } from '@/lib/utils'
 import { parseDate } from '@/lib/dates'
 import {
-  SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, isSearchQuery, type SearchScope,
+  SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, isSearchQuery, type SearchField, type SearchScope,
 } from '@/lib/search'
 import useSWR, { mutate as globalMutate } from 'swr'
 import type { Message, Folder, ReadReceipt } from '@/types/email'
@@ -223,7 +223,9 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     { refreshInterval: 60000 }
   )
 
-  const { data: searchData, isValidating: isSearching } = useSWR<{ messages: Message[] }>(
+  // `total` = correspondances réelles côté serveur, `fields` = champs interrogés :
+  // le bandeau les dit plutôt que de les retaper (source unique : lib/search.ts).
+  const { data: searchData, isValidating: isSearching } = useSWR<{ messages: Message[]; total: number; fields: SearchField[] }>(
     isSearchMode
       ? `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}&folder=${encodeURIComponent(folder)}` +
         `&${SCOPE_PARAM}=${searchScope}${accountParam}`
@@ -244,6 +246,23 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     () => folders.find(f => /archives?\b/i.test(f.name) || /archives?\b/i.test(f.path))?.path ?? null,
     [folders]
   )
+  // Un résultat porte son CHEMIN IMAP (« INBOX.Clients.2026 ») : le bandeau affiche
+  // le nom déjà connu de la liste des dossiers, et à défaut le dernier segment —
+  // le séparateur est propre au serveur, il vient donc du dossier lui-même.
+  const folderNames = useMemo(() => {
+    const byPath = new Map<string, string>()
+    const walk = (list: Folder[]) => list.forEach(f => {
+      byPath.set(f.path, f.name)
+      if (f.children?.length) walk(f.children)
+    })
+    walk(folders)
+    return byPath
+  }, [folders])
+  const folderLabel = useCallback(
+    (path: string) => folderNames.get(path) ?? path.split(/[/.]/).pop() ?? path,
+    [folderNames]
+  )
+
   const spamPath = useMemo(
     () => folders.find(f => /(spam|junk|ind[ée]sirable)/i.test(f.name) || /(spam|junk)/i.test(f.path))?.path ?? null,
     [folders]
@@ -264,6 +283,11 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
 
   const messages = isSearchMode ? (searchData?.messages ?? []) : accumulated
   const total = data?.total ?? 0
+  // Le serveur peut avoir trouvé plus que ce qu'il rend (plafond SEARCH_RESULT_LIMIT) :
+  // le bandeau annonce alors « X premiers sur N » au lieu de laisser croire à N = X.
+  const searchTotal = searchData?.total ?? messages.length
+  const searchTruncated = searchTotal > messages.length
+  const showResultFolder = isSearchMode && searchScope === SCOPE_ALL
   const loadError = !isSearchMode && !!error && accumulated.length === 0
   const loading = isSearchMode ? (!searchData && isSearching) : (!data && !error)
 
@@ -761,6 +785,13 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
                 : (msg.from.name || msg.from.address)
               }
             </span>
+            {/* Portée « tous les dossiers » : un résultat ne dit rien s'il ne dit pas
+                d'où il vient. Discret, et seulement quand le dossier peut varier. */}
+            {showResultFolder && msg.folder && (
+              <span className="shrink-0 max-w-[40%] truncate text-[11px] text-muted-foreground/70" data-result-folder>
+                {folderLabel(msg.folder)}
+              </span>
+            )}
             <div className="flex items-center gap-1 shrink-0">
               {(() => {
                 const flag = flagByKey(msg.flag ?? (msg.isStarred ? DEFAULT_FLAG_KEY : null))
@@ -919,9 +950,16 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
           <p className="text-xs text-muted-foreground" data-search-summary>
             {isSearching
               ? t('searching')
-              : t('searchResults', { count: messages.length, query: search })}
-            {searchScope === SCOPE_ALL && ` · ${t('searchAllFolders')}`}
+              : <>
+                  {t('searchResults', { count: searchTotal, query: search })}
+                  {` · ${t('searchFieldsLabel')}`}
+                  {` · ${searchScope === SCOPE_ALL ? t('searchAllFolders') : t('searchThisFolder')}`}
+                  {searchTruncated && ` · ${t('searchTruncated', { shown: messages.length, total: searchTotal })}`}
+                </>}
           </p>
+          {!isSearching && messages.length === 0 && (
+            <p className="mt-1 text-xs text-muted-foreground/70" data-search-hint>{t('searchNoBodyHint')}</p>
+          )}
         </div>
       )}
 
