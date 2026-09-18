@@ -36,6 +36,9 @@ if (!COUNT_ATTR) { console.error('HARNESS: could not read MAIL_SELECTION_COUNT_A
 
 const LIST = `[${COUNT_ATTR}]`
 const ROW = '[data-mail-row]'
+// Preuve que le volet de lecture a rendu un message. Archiver / supprimer /
+// répondre ont migré dans la head bar : le drapeau est ce qui reste au volet.
+const PANE_ACTION = '[data-reading-flag]'
 
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split('\n')) {
   const m = line.match(/^([A-Z_]+)=(.*)$/)
@@ -63,6 +66,17 @@ try {
     return res.ok
   }, { base: BASE, email: EMAIL, password: PASSWORD })
   if (!loggedIn) { console.error('HARNESS: credentials login failed'); process.exit(2) }
+
+  // Le compte et le dossier réellement affichés se lisent sur les requêtes de la
+  // liste : aucune constante de banc à tenir à jour, aucune boîte devinée.
+  const listRequests = []
+  page.on('request', req => {
+    const u = new URL(req.url())
+    if (!u.pathname.startsWith('/api/messages')) return
+    const account = u.searchParams.get('account')
+    const folder = u.searchParams.get('folder')
+    if (account && folder) listRequests.push({ account, folder })
+  })
 
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
   await page.waitForSelector(ROW, { timeout: 30000 })
@@ -127,28 +141,6 @@ try {
   await new Promise(r => setTimeout(r, SETTLE_MS))
   check('Escape after select-all', await readCount(), 0)
 
-  // --- A plain click REPLACES the selection and opens that row ---
-  // Explorer/Finder rule: only Cmd/Ctrl, Shift and the hover checkbox accumulate.
-  // A bare click on the row body empties a multi-selection and opens the row —
-  // without this, the right-click of lot M3 (which selects) leaves the list
-  // unopenable until Escape.
-  await clickRow(0, ACCEL)
-  await clickRow(2, ACCEL)
-  const beforePlain = await readCount()
-  if (beforePlain !== 2) { console.error(`HARNESS: could not build a 2-row selection (got ${beforePlain})`); process.exit(2) }
-  await clickRow(1)
-  const afterPlain = await readCount()
-  console.log(`plain click on a 3rd row after a 2-row selection: count=${afterPlain} (expected 0)`)
-  if (afterPlain > 1) failures.push(`plain click accumulated instead of replacing: selection holds ${afterPlain}, expected 0 or 1`)
-  // Opened = the reading pane rendered its toolbar for that message. Waited for,
-  // not polled: fetching the body is an IMAP round-trip, far longer than SETTLE_MS.
-  const openedAfterPlain = await page.waitForSelector('[data-reading-archive]', { timeout: OPEN_MS }).then(() => true, () => false)
-  console.log(`plain click opened the message: ${openedAfterPlain} (expected true)`)
-  if (!openedAfterPlain) failures.push('plain click on a selected list did not open the message')
-
-  await page.keyboard.press('Escape')
-  await new Promise(r => setTimeout(r, SETTLE_MS))
-
   // --- Rectangle de sélection à la souris (lot M3c) ---
   // Vrai geste souris : mousedown au milieu d'une ligne, déplacement VERTICAL,
   // mouseup. Les lignes sont `draggable` : ce que ce banc mesure, c'est que
@@ -191,8 +183,10 @@ try {
   if (!marqueeDuring) failures.push('vertical drag: no marquee rectangle was drawn during the gesture')
   if (marqueeAfter) failures.push('vertical drag: the marquee rectangle survived the mouseup')
   if (countAfter !== CUT_ROWS) failures.push(`vertical drag: selection holds ${countAfter} messages, expected the ${CUT_ROWS} crossed rows`)
-  // Le rectangle ne doit pas non plus avoir OUVERT la ligne de départ.
-  const openedByMarquee = await page.$('[data-reading-archive]').then(Boolean)
+  // Le rectangle ne doit pas non plus avoir OUVERT la ligne de départ. Ce contrôle
+  // passe AVANT tout clic simple : une fois un message ouvert, le volet le reste,
+  // et la présence du volet ne dirait plus rien de ce geste-ci.
+  const openedByMarquee = await page.$(PANE_ACTION).then(Boolean)
   console.log(`vertical drag opened a message: ${openedByMarquee} (expected false)`)
   if (openedByMarquee) failures.push('vertical drag opened the message instead of only selecting')
 
@@ -261,17 +255,65 @@ try {
   console.log(`rows: before=${rowsBefore} after=${rowsAfter} (nothing moved or deleted)`)
   if (rowsAfter < rowsBefore) failures.push(`the marquee checks lost rows: ${rowsBefore} before, ${rowsAfter} after`)
 
-  // --- The reading pane's Archive button carries an action ---
-  // Opening a message and reading the button's own disabled state is what tells
-  // a wired button from the dead one shipped before this lot. No click: archiving
-  // would move a real message out of a real mailbox.
-  await clickRow(0)
-  await page.waitForSelector('[data-reading-archive]', { timeout: 20000 })
-  const archive = await page.$eval('[data-reading-archive]', el => ({
+  // --- A plain click REPLACES the selection and opens that row ---
+  // Explorer/Finder rule: only Cmd/Ctrl, Shift and the hover checkbox accumulate.
+  // A bare click on the row body empties a multi-selection and opens the row —
+  // without this, the right-click of lot M3 (which selects) leaves the list
+  // unopenable until Escape.
+  // La liste est servie depuis le cache local : certaines lignes portent un uid
+  // qui n'est plus dans la boîte IMAP (le serveur répond alors 404) et n'ouvrent
+  // rien — c'est une donnée périmée du banc, pas le produit mesuré ici. On
+  // demande donc au serveur QUELLE ligne s'ouvre vraiment, et on clique
+  // celle-là : l'assertion « un clic simple ouvre » garde tout son sens, elle
+  // porte juste sur un message qui existe.
+  // La route d'un message exige le compte ET le dossier. Plutôt que de les
+  // deviner, on relit ceux que la liste elle-même vient d'employer : le banc
+  // interroge exactement la boîte qui est affichée.
+  const listQuery = listRequests.at(-1)
+  if (!listQuery) { console.error('HARNESS: never saw the list fetch its own messages'); process.exit(2) }
+  const openableIndex = await page.evaluate(async ({ account, folder }) => {
+    const rows = [...document.querySelectorAll('[data-mail-row]')]
+    for (let i = 0; i < Math.min(rows.length, 8); i++) {
+      const uid = rows[i].getAttribute('data-mail-row')
+      const res = await fetch(`/api/messages/${uid}?account=${encodeURIComponent(account)}&folder=${encodeURIComponent(folder)}`)
+      if (res.ok) return i
+    }
+    return -1
+  }, listQuery)
+  if (openableIndex < 0) { console.error('HARNESS: no row in the first 8 still exists server-side (stale local cache)'); process.exit(2) }
+  console.log(`row chosen for the open check: ${openableIndex} (first one the server still serves)`)
+  // Les deux lignes accumulées doivent être AUTRES que celle qu'on ouvrira.
+  const [selA, selB] = [0, 1, 2, 3].filter(i => i !== openableIndex)
+
+  await clickRow(selA, ACCEL)
+  await clickRow(selB, ACCEL)
+  const beforePlain = await readCount()
+  if (beforePlain !== 2) { console.error(`HARNESS: could not build a 2-row selection (got ${beforePlain})`); process.exit(2) }
+  await clickRow(openableIndex)
+  const afterPlain = await readCount()
+  console.log(`plain click on a 3rd row after a 2-row selection: count=${afterPlain} (expected 0)`)
+  if (afterPlain > 1) failures.push(`plain click accumulated instead of replacing: selection holds ${afterPlain}, expected 0 or 1`)
+  // Opened = the reading pane rendered its toolbar for that message. Waited for,
+  // not polled: fetching the body is an IMAP round-trip, far longer than SETTLE_MS.
+  const openedAfterPlain = await page.waitForSelector(PANE_ACTION, { timeout: OPEN_MS }).then(() => true, () => false)
+  console.log(`plain click opened the message: ${openedAfterPlain} (expected true)`)
+  if (!openedAfterPlain) failures.push('plain click on a selected list did not open the message')
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // --- Le volet de lecture rend bien ses actions sur un message ouvert ---
+  // Archiver / supprimer / répondre ont migré dans la head bar : ce qui reste au
+  // volet est le drapeau. On ouvre et on lit SON état désactivé — un bouton
+  // inerte se distingue ainsi d'un bouton câblé, sans rien poser sur un vrai
+  // message (poser un drapeau écrirait dans une boîte réelle).
+  await clickRow(openableIndex)
+  await page.waitForSelector(PANE_ACTION, { timeout: OPEN_MS })
+  const paneAction = await page.$eval(PANE_ACTION, el => ({
     disabled: el.disabled === true || el.getAttribute('aria-disabled') === 'true',
   }))
-  console.log(`reading-pane archive: disabled=${archive.disabled}`)
-  if (archive.disabled) failures.push('reading pane: the Archive button is still inert with a message open')
+  console.log(`reading-pane flag button: disabled=${paneAction.disabled} (expected false)`)
+  if (paneAction.disabled) failures.push('reading pane: the flag button is inert with a message open')
 } finally {
   await browser.close()
 }

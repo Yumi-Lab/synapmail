@@ -172,6 +172,8 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     /** Dernière position connue du pointeur — c'est elle qui donne la DIRECTION. */
     lastX: number; lastY: number
     additive: boolean; before: Set<string>; armed: boolean
+    /** Un rectangle a-t-il vraiment été tracé ? Armé ne suffit pas : un simple clic arme aussi. */
+    drew: boolean
   } | null>(null)
 
   // Sélection façon explorateur : la dernière ligne cliquée est l'ancre d'une
@@ -571,7 +573,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     const state = marqueeRef.current
     if (!state) return
     marqueeRef.current = null
-    if (state.armed) marqueeDrewRef.current = true
+    if (state.drew) marqueeDrewRef.current = true
     setMarquee(null)
     if (restore) setCheckedUids(new Set(state.before))
   }, [])
@@ -596,6 +598,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       startScroll: box.scrollTop,
       additive: e.metaKey || e.ctrlKey || e.shiftKey,
       before: new Set(checkedUids),
+      drew: false,
       // Sur une ligne, le rectangle attend l'arbitrage du `dragstart` ; ailleurs,
       // il n'y a rien à arbitrer.
       armed: !target?.closest('[data-mail-row]'),
@@ -644,6 +647,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       if (Math.abs(e.clientX - state.startX) < MARQUEE_MIN_PX && Math.abs(e.clientY - state.startY) < MARQUEE_MIN_PX) return
       // Le rectangle remplace la sélection du texte que le navigateur ferait.
       e.preventDefault()
+      state.drew = true
       paint()
       const r = box.getBoundingClientRect()
       const step = e.clientY < r.top + MARQUEE_EDGE_PX ? -MARQUEE_SCROLL_PX
