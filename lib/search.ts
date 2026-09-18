@@ -202,3 +202,53 @@ export function parseNdjsonChunk<T>(pending: string, received: string): { items:
   }
   return { items, pending: rest }
 }
+
+/** L'état accumulé d'une recherche progressive côté client. */
+export type SearchStreamState<TMessage> = {
+  messages: TMessage[]
+  total: number
+  searched: number
+  folders: number
+}
+
+/** Un message rendu par la recherche, réduit à ce dont l'accumulation a besoin. */
+type StreamedMessage = { folder: string; uid: number | string; date: string }
+
+export const EMPTY_SEARCH_STREAM: SearchStreamState<never> = {
+  messages: [], total: 0, searched: 0, folders: 0,
+}
+
+/**
+ * Ajoute à l'état courant les lignes NDJSON reçues : dédoublonne par dossier+uid
+ * (un même message peut revenir si un dossier est couvert deux fois), trie du plus
+ * récent au plus ancien, et PLAFONNE à `SEARCH_RESULT_LIMIT` — le même plafond que
+ * les deux chemins non diffusés de la route. Sans ce plafond, une requête large
+ * rendrait des milliers de lignes dans une liste non virtualisée, et `total >
+ * messages.length` ne serait jamais vrai : le bandeau ne dirait jamais
+ * « X premiers sur N ».
+ *
+ * Fonction PURE : elle ne lit aucun flux et ne mute pas l'état reçu. Auto-contrôle :
+ * `scripts/check-search-order.mjs`.
+ */
+export function accumulateSearchStream<TMessage extends StreamedMessage>(
+  prev: SearchStreamState<TMessage>,
+  items: (Partial<SearchStreamChunk<TMessage>> & { error?: string })[]
+): SearchStreamState<TMessage> {
+  const seen = new Set(prev.messages.map(m => `${m.folder}#${m.uid}`))
+  const next = [...prev.messages]
+  let { total, searched, folders } = prev
+  for (const item of items) {
+    if (item.error) continue
+    for (const m of item.messages ?? []) {
+      const key = `${m.folder}#${m.uid}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      next.push(m)
+    }
+    total += item.total ?? 0
+    searched = Math.max(searched, item.searched ?? 0)
+    folders = Math.max(folders, item.folders ?? 0)
+  }
+  next.sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
+  return { messages: next.slice(0, SEARCH_RESULT_LIMIT), total, searched, folders }
+}

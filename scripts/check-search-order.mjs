@@ -17,7 +17,8 @@ registerHooks({
     return next(spec, ctx)
   },
 })
-const { orderFoldersForSearch, parseNdjsonChunk } = await import(new URL('../lib/search.ts', import.meta.url).href)
+const { orderFoldersForSearch, parseNdjsonChunk, accumulateSearchStream, EMPTY_SEARCH_STREAM, SEARCH_RESULT_LIMIT } =
+  await import(new URL('../lib/search.ts', import.meta.url).href)
 
 let failed = 0
 const check = (label, actual, expected) => {
@@ -113,6 +114,80 @@ check('blank lines are skipped, not turned into objects',
 
 check('a line cut mid-stream is dropped rather than throwing',
   parseNdjsonChunk('', '{"broken\n{"n":1}\n').items, [{ n: 1 }])
+
+console.log('accumulateSearchStream')
+
+// Un dossier rend des messages : ils s'ajoutent, le compte total s'additionne et
+// la progression retient le dernier état annoncé par le serveur.
+const chunk = (folder, uids, total, searched, folders) => ({
+  folder, total, searched, folders,
+  messages: uids.map(uid => ({ folder, uid, date: new Date(2026, 0, uid).toISOString() })),
+})
+
+check('a chunk adds its messages and its share of the total',
+  (({ messages, ...rest }) => ({ uids: messages.map(m => m.uid), ...rest }))(
+    accumulateSearchStream(EMPTY_SEARCH_STREAM, [chunk('INBOX', [2, 1], 7, 1, 40)])),
+  { uids: [2, 1], total: 7, searched: 1, folders: 40 })
+
+check('totals add up across chunks, progress is the latest value',
+  (({ messages, ...rest }) => rest)(
+    accumulateSearchStream(
+      accumulateSearchStream(EMPTY_SEARCH_STREAM, [chunk('INBOX', [1], 7, 1, 40)]),
+      [chunk('Sent', [2], 5, 2, 40)])),
+  { total: 12, searched: 2, folders: 40 })
+
+check('the same message seen twice is kept once',
+  accumulateSearchStream(
+    accumulateSearchStream(EMPTY_SEARCH_STREAM, [chunk('INBOX', [1], 1, 1, 2)]),
+    [chunk('INBOX', [1], 1, 2, 2)]).messages.length,
+  1)
+
+check('the same uid in two folders is not a duplicate',
+  accumulateSearchStream(EMPTY_SEARCH_STREAM, [chunk('INBOX', [1], 1, 1, 2), chunk('Sent', [1], 1, 2, 2)])
+    .messages.length,
+  2)
+
+check('a chunk carrying an error contributes nothing',
+  accumulateSearchStream(EMPTY_SEARCH_STREAM, [{ folder: 'Broken', error: 'nope' }]),
+  EMPTY_SEARCH_STREAM)
+
+check('messages come out most recent first, across chunks',
+  accumulateSearchStream(
+    accumulateSearchStream(EMPTY_SEARCH_STREAM, [chunk('INBOX', [1, 3], 2, 1, 2)]),
+    [chunk('Sent', [2], 1, 2, 2)]).messages.map(m => m.uid),
+  [3, 2, 1])
+
+// LE contrôle du verdict CHANGES_REQUESTED : sans plafond, une requête large
+// poussait des milliers de lignes dans une liste non virtualisée et `total >
+// messages.length` restait faux — le bandeau ne disait jamais « X premiers sur N ».
+const flood = accumulateSearchStream(EMPTY_SEARCH_STREAM, [
+  chunk('INBOX', Array.from({ length: SEARCH_RESULT_LIMIT * 3 }, (_, i) => i + 1), 9000, 1, 2),
+])
+check('a flooding chunk is capped at SEARCH_RESULT_LIMIT',
+  flood.messages.length, SEARCH_RESULT_LIMIT)
+
+check('the cap keeps the most recent results, not the first received',
+  flood.messages[0].uid, SEARCH_RESULT_LIMIT * 3)
+
+check('once capped, the banner can tell the results are truncated',
+  flood.total > flood.messages.length, true)
+
+check('the cap holds as chunks keep arriving',
+  [1, 2, 3].reduce(
+    (state, n) => accumulateSearchStream(state, [
+      chunk(`F${n}`, Array.from({ length: SEARCH_RESULT_LIMIT }, (_, i) => i + 1), 500, n, 3),
+    ]),
+    EMPTY_SEARCH_STREAM).messages.length,
+  SEARCH_RESULT_LIMIT)
+
+check('the previous state is never mutated',
+  (() => {
+    const before = accumulateSearchStream(EMPTY_SEARCH_STREAM, [chunk('INBOX', [1], 1, 1, 2)])
+    const snapshot = JSON.stringify(before)
+    accumulateSearchStream(before, [chunk('Sent', [2], 1, 2, 2)])
+    return JSON.stringify(before) === snapshot
+  })(),
+  true)
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1) }
 console.log('\ncheck-search-order: OK')

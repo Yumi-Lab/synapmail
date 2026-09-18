@@ -8,8 +8,9 @@ import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } f
 import { cn } from '@/lib/utils'
 import { parseDate } from '@/lib/dates'
 import {
-  SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, STREAM_PARAM, isSearchQuery, parseNdjsonChunk,
-  type SearchField, type SearchScope, type SearchStreamChunk,
+  EMPTY_SEARCH_STREAM, SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, STREAM_PARAM,
+  accumulateSearchStream, isSearchQuery, parseNdjsonChunk,
+  type SearchField, type SearchScope, type SearchStreamChunk, type SearchStreamState,
 } from '@/lib/search'
 import useSWR, { mutate as globalMutate } from 'swr'
 import type { Message, Folder, ReadReceipt } from '@/types/email'
@@ -239,18 +240,16 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   // Portée « tous les dossiers » : la réponse arrive dossier par dossier (NDJSON).
   // Les résultats s'accumulent au fil de l'eau, la progression est affichée, et
   // changer de requête interrompt la précédente au lieu de la laisser courir.
-  const [streamed, setStreamed] = useState<{ messages: Message[]; total: number; searched: number; folders: number }>(
-    { messages: [], total: 0, searched: 0, folders: 0 }
-  )
+  const [streamed, setStreamed] = useState<SearchStreamState<Message>>(EMPTY_SEARCH_STREAM)
   const [streaming, setStreaming] = useState(false)
   const streamAbort = useRef<AbortController | null>(null)
   const stopStream = useCallback(() => { streamAbort.current?.abort() }, [])
 
   useEffect(() => {
-    if (!isStreamingScope) { setStreamed({ messages: [], total: 0, searched: 0, folders: 0 }); return }
+    if (!isStreamingScope) { setStreamed(EMPTY_SEARCH_STREAM); return }
     const controller = new AbortController()
     streamAbort.current = controller
-    setStreamed({ messages: [], total: 0, searched: 0, folders: 0 })
+    setStreamed(EMPTY_SEARCH_STREAM)
     setStreaming(true)
     const url = `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}` +
       `&folder=${encodeURIComponent(folder)}&${SCOPE_PARAM}=${SCOPE_ALL}&${STREAM_PARAM}=1${accountParam}`
@@ -269,27 +268,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
             parseNdjsonChunk<SearchStreamChunk<Message> & { error?: string }>(pending, decoder.decode(value, { stream: true }))
           pending = rest
           if (items.length === 0) continue
-          setStreamed(prev => {
-            const seen = new Set(prev.messages.map(m => `${m.folder}#${m.uid}`))
-            const next = [...prev.messages]
-            let total = prev.total
-            let searched = prev.searched
-            let folders = prev.folders
-            for (const item of items) {
-              if (item.error) continue
-              for (const m of item.messages ?? []) {
-                const key = `${m.folder}#${m.uid}`
-                if (seen.has(key)) continue
-                seen.add(key)
-                next.push(m)
-              }
-              total += item.total ?? 0
-              searched = Math.max(searched, item.searched ?? 0)
-              folders = Math.max(folders, item.folders ?? 0)
-            }
-            next.sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
-            return { messages: next, total, searched, folders }
-          })
+          setStreamed(prev => accumulateSearchStream(prev, items))
         }
       } catch {
         // Une interruption volontaire n'est pas une panne : les résultats déjà
