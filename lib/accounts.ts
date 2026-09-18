@@ -51,5 +51,22 @@ export async function listAccounts(userId: string): Promise<Omit<DbEmailAccount,
   )
 }
 
+/**
+ * Whether the prompt-injection guard applies to content whose mailbox is not
+ * named by the caller: on as soon as ONE of the user's mailboxes asks for it,
+ * so an unattributed piece of mail is never treated as trusted by default.
+ */
+export async function promptGuardApplies(userId: string, accountId?: string | null): Promise<boolean> {
+  if (accountId) {
+    const account = await getAccountById(accountId, userId)
+    return account?.prompt_guard ?? false
+  }
+  const rows = await query<{ on: boolean }>(
+    'SELECT bool_or(prompt_guard) AS on FROM email_accounts WHERE user_id = $1',
+    [userId]
+  )
+  return rows[0]?.on ?? false
+}
+
 export const encryptPassword = encrypt
 export const decryptPassword = decrypt
