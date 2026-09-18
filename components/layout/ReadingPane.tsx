@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 import { isInlinePgpMessage, extractInlinePgpMessage } from '@/lib/pgp'
 import { PgpDecryptPrompt } from '@/components/mail/PgpDecryptPrompt'
 import type { EmailAccount } from '@/types/account'
+import { useMailSelection } from '@/lib/mailSelection'
 
 const fetcher = async (url: string) => {
   const r = await fetch(url)
@@ -784,6 +785,9 @@ const REASON_CLASS: Record<FocusReason, string> = {
 
 export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete, onReply, onReplyAll, onForward, onMessageLoaded, onAiReply, permissions }: Props) {
   const t = useTranslations('mail')
+  // Archiver n'est pas réimplémenté ici : l'action partagée vise le message
+  // ouvert quand rien n'est coché, et passe par la même route que la liste.
+  const { can, run } = useMailSelection()
   const perms = permissions ?? DEFAULT_PERMISSIONS
   const [isStarred, setIsStarred] = useState<boolean | null>(null)
 
@@ -997,7 +1001,14 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
             >
               <Star className={cn('w-3.5 h-3.5', starred && 'fill-current')} />
             </Button>
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 p-0"
+              title={t('archiveAction')}
+              disabled={!can.archive}
+              onClick={() => { run('archive'); onDelete?.() }}
+            >
               <Archive className="w-3.5 h-3.5" />
             </Button>
           </>
