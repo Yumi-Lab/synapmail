@@ -28,9 +28,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   plus de `sessionStorage`.
 
 ### Added
-- **Barre d'application (omnibar)** au-dessus de la zone principale, sur toutes les pages
-  (`components/layout/Omnibar.tsx`) : recherche globale, puis Tableau de bord, Nouveau message et Réglages en icônes
-  monochromes. La ligne « Tableau de bord » quitte la barre latérale, qui ne garde que comptes, dossiers et réglages.
+- **Barre d'application (omnibar)** au-dessus de la zone de contenu, sur toutes les pages
+  (`components/layout/Omnibar.tsx`) : Tableau de bord, Nouveau message et Réglages en icônes monochromes à gauche, puis
+  la recherche globale dans un champ de 640 px centré sur la barre. La ligne « Tableau de bord » quitte la barre
+  latérale, qui ne garde que comptes, dossiers et réglages. La barre latérale occupe TOUTE la hauteur : l'omnibar
+  commence à son bord droit et suit son animation de repli sans décalage (elle en est un frère de flex, il n'y a rien à
+  synchroniser). Le bouton rond de repli reste flottant à cheval sur le bord de la barre, hors de l'omnibar ; le retrait
+  gauche de celle-ci est dérivé de la taille du bouton pour que les deux zones cliquables ne se recouvrent jamais.
 - **Recherche unique** : le champ de l'omnibar est le SEUL de l'application. Il écrit la requête dans l'URL de la boîte
   (`/mail?q=…&scope=…`), que la liste relit — aucun composant n'en garde une seconde copie. Depuis une autre page,
   Entrée navigue vers la boîte ; un lien profond restaure champ et portée ; ⌘K / Ctrl+K focalise le champ. L'ancien champ
@@ -38,12 +42,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Portée « ce dossier » / « tous les dossiers »** pendant une recherche. Sur un compte à ~100 dossiers IMAP, la
   recherche tous dossiers demande **≈ 30 à 50 s** (4 connexions IMAP réutilisées) : l'attente est couverte par la
   bannière « Recherche… ». Des résultats progressifs, dossier par dossier, restent possibles plus tard.
-- `scripts/check-omnibar.mjs` et `scripts/check-omnibar-search.mjs` (puppeteer-core) : géométrie de la barre, raccourcis,
-  clics réels sur les trois actions, et mesure de bout en bout de la recherche.
+- `scripts/check-omnibar.mjs` et `scripts/check-omnibar-search.mjs` (puppeteer-core) : géométrie de la barre (hauteur,
+  bord gauche aligné sur la barre latérale dans les deux états de repli, champ centré, dégagement du bouton rond),
+  raccourcis, clics réels sur les trois actions, et mesure de bout en bout de la recherche. Les seuils sont lus dans les
+  composants au même run, jamais retapés dans le script.
 - **Chinois simplifié** (`locales/zh.json`) : troisième langue complète, détection `zh*`, choix « 中文 » dans Apparence.
 - `scripts/check-locales.mjs` (`npm run check:locales`) : parité stricte des clés entre `en`, `fr` et `zh`.
 - Clés `mail.collapseSidebar`, `mail.expandSidebar`, `mail.folders`, `mail.switchAccount`, `common.showPassword`,
   `common.hidePassword` (en/fr/zh).
+
+### Fixed
+- `mail.searchResults` passe en pluriel ICU (en/fr) : la bannière affichait « 1 résultats ».
 
 ### Removed
 - Dépendance `next-themes` ; police `next/font/google` (pile système, aucune ressource Google chargée).
