@@ -266,6 +266,14 @@
           "canManageRules": "Gérer les règles",
           "canManageSignatures": "Gérer les signatures"
         }
+      },
+      "receivedShares": {
+        "title": "Boîtes partagées avec moi",
+        "empty": "Personne ne vous a partagé de boîte",
+        "sharedBy": "Partagée par {name}",
+        "leave": "Retirer ce partage",
+        "leaveConfirm": "Retirer ce partage ? Vous perdrez l'accès à cette boîte.",
+        "leaveFailed": "Le retrait du partage a échoué"
       }
     },
     "profile": {

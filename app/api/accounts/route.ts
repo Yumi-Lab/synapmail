@@ -21,6 +21,7 @@ export async function GET(req: Request) {
               -- the cached-row count until the first background sync populates it
               COALESCE(s.unread_count, u.cnt, 0)::int AS "unreadCount",
               false AS "isShared", NULL::text AS "ownerName", NULL::timestamptz AS "expiresAt",
+              NULL::uuid AS "shareId",
               true AS "canSend", true AS "canDelete", true AS "canOrganize",
               true AS "canManageRules", true AS "canManageSignatures"
        FROM email_accounts a
@@ -42,6 +43,7 @@ export async function GET(req: Request) {
               a.oauth_provider AS "oauthProvider", a.created_at AS "createdAt",
               COALESCE(ms.unread_count, um.cnt, 0)::int AS "unreadCount",
               true AS "isShared", owner.name AS "ownerName", sh.expires_at AS "expiresAt",
+              sh.id AS "shareId",
               sh.can_send AS "canSend", sh.can_delete AS "canDelete", sh.can_organize AS "canOrganize",
               sh.can_manage_rules AS "canManageRules", sh.can_manage_signatures AS "canManageSignatures"
        FROM account_shares sh

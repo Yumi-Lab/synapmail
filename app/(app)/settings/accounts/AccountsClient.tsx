@@ -42,6 +42,9 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
   // Credentials/sharing management is owner-only — accounts shared with this user
   // are visible in the Sidebar account switcher, not editable from this page.
   const accounts = accountsData?.data?.filter(a => !a.isShared)
+  // ...and the inboxes shared WITH this user get their own read-only section below:
+  // they cannot be edited, only given back.
+  const receivedShares = accountsData?.data?.filter(a => a.isShared) ?? []
 
   const [mode, setMode] = useState<'list' | 'add' | 'edit'>('list')
   const [editId, setEditId] = useState<string | null>(null)
@@ -52,6 +55,7 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
   const [success, setSuccess] = useState('')
   const [testResult, setTestResult] = useState<{ imap: { ok: boolean; error: string }; smtp: { ok: boolean; error: string } } | null>(null)
   const [expandedShareId, setExpandedShareId] = useState<string | null>(null)
+  const [leavingId, setLeavingId] = useState<string | null>(null)
 
   useEffect(() => {
     if (initialSuccess === 'microsoft') {
