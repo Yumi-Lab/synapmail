@@ -124,7 +124,11 @@
     "clearSearch": "Effacer la recherche",
     "searchResults": "{count, plural, one {# résultat} other {# résultats}} pour « {query} »",
     "searching": "Recherche…",
-    "noSearchResults": "Aucun résultat"
+    "noSearchResults": "Aucun résultat",
+    "refresh": "Relever",
+    "flag": "Drapeau",
+    "selectionCount": "{count} sélectionnés",
+    "confirmDeleteSelection": "Supprimer {count} messages ?"
   },
   "compose": {
     "newMessage": "Nouveau message",

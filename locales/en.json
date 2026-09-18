@@ -124,7 +124,11 @@
     "clearSearch": "Clear search",
     "searchResults": "{count, plural, one {# result} other {# results}} for “{query}”",
     "searching": "Searching…",
-    "noSearchResults": "No results"
+    "noSearchResults": "No results",
+    "refresh": "Refresh",
+    "flag": "Flag",
+    "selectionCount": "{count} selected",
+    "confirmDeleteSelection": "Delete {count} messages?"
   },
   "compose": {
     "newMessage": "New message",
