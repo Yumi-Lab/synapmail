@@ -7,6 +7,7 @@ import { useTranslations } from 'next-intl'
 import { LayoutGrid, Menu, PenSquare, Search, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { UserMenu } from './UserMenu'
+import { MailToolbar } from './MailToolbar'
 import { MAIL_PATH, openCompose } from '@/lib/compose'
 import {
   SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT, SEARCH_PARAM,
@@ -23,12 +24,12 @@ export const OMNIBAR = {
   /** The field is bounded: it never stretches from one edge of the window to the other. */
   searchMaxWidth: 640,
   /**
-   * Space kept free on EACH side of the centred field, for the actions on the left
-   * and the scope toggle on the right. The field is centred on the header, so it can
-   * only be as wide as the header minus twice this reserve: that is what keeps a
-   * mathematically centred field from ever running under either group.
+   * Floor the field never goes under. Since lot H3 the field shares the row with the
+   * mail toolbar instead of being centred on the header: it takes the space left, so
+   * it needs a floor rather than a reserve — below it, the toolbar folds groups into
+   * its « … » menu (it measures, it does not guess a breakpoint).
    */
-  sideReserve: 200,
+  searchMinWidth: 200,
   /**
    * Width at and above which the bar is a column of its own rather than a drawer —
    * Tailwind's default `lg`, the same breakpoint `AppShell` folds the <aside> on
@@ -151,18 +152,16 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
         </button>
       </div>
 
-      {/* Centred on the header itself — not on what is left between the two groups,
-          which would drift with their width. Percentages resolve against the header. */}
+      {/* Hors de la boîte, rien à griser : le groupe courrier n'existe pas. */}
+      {pathname === MAIL_PATH && <MailToolbar />}
+
+      {/* Lot H3 : la head bar porte aussi la barre d'outils du courrier, donc le champ
+          n'est plus centré sur le header (arbitrage de Nicolas) — il occupe la place
+          qui reste entre le groupe de gauche et le compte, et s'y centre. */}
       <div
         data-omnibar-search-field
-        className="relative flex flex-1 min-w-0 items-center
-          sm:absolute sm:left-1/2 sm:top-1/2 sm:flex-none sm:-translate-x-1/2 sm:-translate-y-1/2
-          sm:w-[var(--synap-omnibar-field-w)]"
-        style={{
-          maxWidth: OMNIBAR.searchMaxWidth,
-          ['--synap-omnibar-field-w' as string]:
-            `min(${OMNIBAR.searchMaxWidth}px, calc(100% - ${OMNIBAR.sideReserve * 2}px))`,
-        }}
+        className="relative flex min-w-0 flex-1 items-center justify-self-center mx-auto"
+        style={{ maxWidth: OMNIBAR.searchMaxWidth, minWidth: OMNIBAR.searchMinWidth }}
       >
         <Search className="absolute left-2.5 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
         <input

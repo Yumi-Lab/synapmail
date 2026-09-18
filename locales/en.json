@@ -128,6 +128,17 @@
     "noSearchResults": "No results",
     "refresh": "Refresh",
     "flag": "Flag",
+    "flagColors": {
+      "red": "Red",
+      "orange": "Orange",
+      "yellow": "Yellow",
+      "green": "Green",
+      "blue": "Blue",
+      "purple": "Purple",
+      "grey": "Grey"
+    },
+    "flagRemove": "Remove flag",
+    "moreActions": "More actions",
     "selectionCount": "{count} selected",
     "confirmDeleteSelection": "Delete {count} messages?"
   },
