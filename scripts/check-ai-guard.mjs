@@ -15,6 +15,13 @@
  * applied here the way the route applies it, so the route's own source is read
  * as well, to confirm it wires the same mailbox flag into both places.
  *
+ * The decision itself — which mailbox lifts the guard — is then exercised
+ * against a REAL database (`promptGuardApplies`), on rows the bench creates and
+ * deletes: an owned mailbox on and off, a mailbox SHARED by another user (the
+ * owner's setting is the one that applies), an unknown id, a malformed id, a
+ * mailbox belonging to someone else, and a user with no mailbox at all. Every
+ * case that cannot be resolved must keep the guard ON. Needs DATABASE_URL.
+ *
  * Negative control — proves the check can see the defect it exists for:
  *   node --experimental-strip-types scripts/check-ai-guard.mjs --break=<case>
  * where <case> is one of the BREAKAGES below.
@@ -22,6 +29,7 @@
  *   node --experimental-strip-types scripts/check-ai-guard.mjs
  */
 import { readFileSync } from 'node:fs'
+import crypto from 'node:crypto'
 import { register } from 'node:module'
 
 // `lib/` imports its siblings without an extension (the bundler resolves them);
@@ -37,7 +45,15 @@ register('data:text/javascript,' + encodeURIComponent(`
   }
 `))
 
+for (const f of [new URL('../.env.local', import.meta.url), new URL('../.env', import.meta.url)]) {
+  for (const line of readFileSync(f, 'utf8').split('\n')) {
+    const m = line.match(/^([A-Z_]+)=(.*)$/)
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim()
+  }
+}
+
 const { callAI } = await import('../lib/ai.ts')
+const { promptGuardApplies } = await import('../lib/accounts.ts')
 const {
   PROMPT_GUARD_NOTICE, guardSystemPrompt, untrustedBlock, wrapUntrusted,
 } = await import('../lib/promptGuard.ts')
@@ -48,6 +64,8 @@ const BREAKAGES = {
   'no-fence': 'mail content is interpolated raw, without delimiters',
   'fixed-token': 'every call reuses the same delimiter token',
   'guard-off-differs': 'a guard-off prompt is no longer the historical prompt',
+  'open-on-doubt': 'an unresolvable mailbox lifts the guard instead of keeping it',
+  'caller-sends-no-mailbox': 'the interface calls the assistant without naming the mailbox',
 }
 const BREAK = process.argv.find(a => a.startsWith('--break='))?.split('=')[1] ?? null
 if (BREAK && !(BREAK in BREAKAGES)) {
@@ -161,6 +179,78 @@ check(/callAI\([^)]*\{\s*promptGuard\s*\}\s*\)/.test(route),
   'route: the mailbox flag is passed to callAI')
 check(/promptGuardApplies\(session\.user\.id, accountId\)/.test(route),
   'route: the flag comes from the mailbox, not from the caller')
+
+// ── the callers ─────────────────────────────────────────────────────────────
+// A perfect route is worthless if the interface never names the mailbox: the
+// request would always fall back to the conservative rule and a mailbox whose
+// owner switched the guard OFF would still be fenced. Read the two call sites.
+const toolbar = readFileSync(new URL('../components/ai/AIToolbar.tsx', import.meta.url), 'utf8')
+const compose = readFileSync(new URL('../components/ai/AICompose.tsx', import.meta.url), 'utf8')
+const toolbarSrc = BREAK === 'caller-sends-no-mailbox' ? toolbar.replace(/accountId: message\.accountId,\s*/, '') : toolbar
+check(/body:\s*JSON\.stringify\(\{[^}]*accountId:\s*message\.accountId/.test(toolbarSrc),
+  'reading pane: the assistant call names the message\'s mailbox')
+check(/accountId\?:\s*string/.test(compose) && /accountId\s*\?\s*\{\s*accountId\s*\}/.test(compose),
+  'compose: the mailbox is forwarded when the caller knows it, and omitted otherwise')
+
+// ── the decision, against a real database ───────────────────────────────────
+// Everything above measures the PROMPT. This measures WHO decides: a mailbox
+// that cannot be resolved must keep the guard on (fail closed).
+const { default: pg } = await import('pg')
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
+/** Fails closed unless the breakage is asked for — mirrors the defect being controlled. */
+const applies = async (userId, accountId) => {
+  const real = await promptGuardApplies(userId, accountId)
+  if (BREAK !== 'open-on-doubt') return real
+  if (!accountId) return real
+  // The defect, reproduced: owner-only lookup, `?? false`, and a lookup error
+  // swallowed the same way — every unresolved mailbox lifts the guard.
+  try {
+    const { rows } = await pool.query('SELECT prompt_guard FROM email_accounts WHERE id = $1 AND user_id = $2', [accountId, userId])
+    return rows[0]?.prompt_guard ?? false
+  } catch { return false }
+}
+
+const suffix = crypto.randomBytes(6).toString('hex')
+const mkUser = async (tag) => (await pool.query(
+  `INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING id`,
+  [`check-ai-guard-${tag}-${suffix}@bench.invalid`, `bench ${tag}`, 'x']
+)).rows[0].id
+const mkAccount = async (ownerId, guard) => (await pool.query(
+  `INSERT INTO email_accounts
+     (user_id, name, email, imap_host, imap_port, imap_secure, smtp_host, smtp_port, smtp_secure,
+      username, password_encrypted, prompt_guard)
+   VALUES ($1, 'bench', $2, 'imap.invalid', 993, true, 'smtp.invalid', 465, true, 'bench', 'x', $3)
+   RETURNING id`,
+  [ownerId, `bench-${suffix}@bench.invalid`, guard]
+)).rows[0].id
+
+const created = { users: [], accounts: [] }
+try {
+  const owner = await mkUser('owner'); created.users.push(owner)
+  const guest = await mkUser('guest'); created.users.push(guest)
+  const orphan = await mkUser('orphan'); created.users.push(orphan)
+  const guarded = await mkAccount(owner, true); created.accounts.push(guarded)
+  const open = await mkAccount(owner, false); created.accounts.push(open)
+
+  check(await applies(owner, guarded) === true, 'owned mailbox, switch on: the guard applies')
+  check(await applies(owner, open) === false, 'owned mailbox, switch off: the owner\'s choice is honoured')
+
+  // A mailbox shared with someone else: the OWNER's setting is the one that applies.
+  await pool.query(
+    `INSERT INTO account_shares (account_id, invited_by, invitee_user_id, status, accepted_at)
+     VALUES ($1, $2, $3, 'active', NOW())`, [guarded, owner, guest])
+  check(await applies(guest, guarded) === true, 'shared mailbox guarded by its owner: the guard applies to the guest too')
+
+  // Nothing the caller can name must be able to lift the guard by accident.
+  check(await applies(guest, open) === true, 'mailbox of another user, not shared: unresolvable, so the guard applies')
+  check(await applies(owner, crypto.randomUUID()) === true, 'unknown mailbox id: the guard applies')
+  check(await applies(owner, 'not-a-uuid') === true, 'malformed mailbox id: the guard applies')
+  check(await applies(orphan, null) === true, 'user with no mailbox at all: the guard applies')
+} finally {
+  if (created.accounts.length) await pool.query('DELETE FROM email_accounts WHERE id = ANY($1)', [created.accounts])
+  if (created.users.length) await pool.query('DELETE FROM users WHERE id = ANY($1)', [created.users])
+  await pool.end()
+}
 
 // ── verdict ─────────────────────────────────────────────────────────────────
 if (BREAK) {

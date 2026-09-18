@@ -1,5 +1,6 @@
 import { query } from './db'
 import { encrypt, decrypt } from './encrypt'
+import { getAccessibleAccount } from './accountAccess'
 
 export interface DbEmailAccount {
   id: string
@@ -52,20 +53,32 @@ export async function listAccounts(userId: string): Promise<Omit<DbEmailAccount,
 }
 
 /**
- * Whether the prompt-injection guard applies to content whose mailbox is not
- * named by the caller: on as soon as ONE of the user's mailboxes asks for it,
- * so an unattributed piece of mail is never treated as trusted by default.
+ * Whether the prompt-injection guard applies to a piece of mail content.
+ *
+ * Fails CLOSED: the guard is only ever lifted when the mailbox is found and its
+ * owner has explicitly switched it off. A mailbox that cannot be resolved — an
+ * unknown or malformed id, one the caller has no access to, a database error —
+ * keeps the guard on, as does a user with no mailbox at all. A mailbox reached
+ * through a share is read with the same access rule as the message routes, and
+ * the setting that applies is the one its OWNER chose.
+ *
+ * With no mailbox named by the caller, the guard is on as soon as ONE of the
+ * user's mailboxes asks for it, so unattributed content is never trusted.
  */
 export async function promptGuardApplies(userId: string, accountId?: string | null): Promise<boolean> {
-  if (accountId) {
-    const account = await getAccountById(accountId, userId)
-    return account?.prompt_guard ?? false
+  try {
+    if (accountId) {
+      const account = await getAccessibleAccount(accountId, userId)
+      return account?.prompt_guard ?? true
+    }
+    const rows = await query<{ on: boolean | null }>(
+      'SELECT bool_or(prompt_guard) AS on FROM email_accounts WHERE user_id = $1',
+      [userId]
+    )
+    return rows[0]?.on ?? true
+  } catch {
+    return true
   }
-  const rows = await query<{ on: boolean }>(
-    'SELECT bool_or(prompt_guard) AS on FROM email_accounts WHERE user_id = $1',
-    [userId]
-  )
-  return rows[0]?.on ?? false
 }
 
 export const encryptPassword = encrypt

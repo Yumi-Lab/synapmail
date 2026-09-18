@@ -16,6 +16,13 @@ interface Props {
   getContent: () => string
   onResult: (text: string) => void
   onError: (msg: string) => void
+  /**
+   * Mailbox the draft is written from, when the caller knows it. Left out, the
+   * route falls back to its conservative rule (guard on as soon as one mailbox
+   * asks for it) — see lib/accounts.ts. Never guess it: a wrong mailbox could
+   * lift the guard the right one asked for.
+   */
+  accountId?: string
 }
 
 type ToneOption = { value: string; label: string; emoji: string }
@@ -37,7 +44,7 @@ function ComingSoonBadge() {
   )
 }
 
-export function AICompose({ getContent, onResult, onError }: Props) {
+export function AICompose({ getContent, onResult, onError, accountId }: Props) {
   const { data } = useSWR<{ data: AISettingsData }>('/api/ai/settings', fetcher)
   const settings = data?.data
 
@@ -69,7 +76,7 @@ export function AICompose({ getContent, onResult, onError }: Props) {
       const res = await fetch('/api/ai/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, content, ...extra }),
+        body: JSON.stringify({ action, content, ...(accountId ? { accountId } : {}), ...extra }),
       })
       const json = await res.json() as { data?: { result: string }; error?: string }
       if (res.ok && json.data?.result) {

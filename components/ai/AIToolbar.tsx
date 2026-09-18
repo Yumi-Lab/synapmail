@@ -63,7 +63,8 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
       const res = await fetch('/api/ai/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: apiAction, content, ...extra }),
+        // The mailbox decides whether the guard applies — see lib/accounts.ts.
+        body: JSON.stringify({ action: apiAction, content, accountId: message.accountId, ...extra }),
       })
       const json = await res.json() as { data?: { result: string }; error?: string }
       if (res.ok && json.data?.result) {
