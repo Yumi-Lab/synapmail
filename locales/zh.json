@@ -140,7 +140,9 @@
       "blue": "蓝色",
       "purple": "紫色",
       "gray": "灰色"
-    }
+    },
+    "noFolders": "没有文件夹",
+    "messageList": "邮件列表"
   },
   "compose": {
     "newMessage": "新邮件",

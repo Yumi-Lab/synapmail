@@ -23,6 +23,8 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const VIEWPORT = { width: 1440, height: 900 }
 // The list settles well under this: a click only re-renders rows, no network call.
 const SETTLE_MS = 400
+// Opening a message fetches its body over IMAP: orders of magnitude slower than a re-render.
+const OPEN_MS = 20000
 // Enough rows to make a 3-row range meaningful; below this the bench cannot conclude.
 const MIN_ROWS = 4
 
@@ -124,6 +126,28 @@ try {
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
   check('Escape after select-all', await readCount(), 0)
+
+  // --- A plain click REPLACES the selection and opens that row ---
+  // Explorer/Finder rule: only Cmd/Ctrl, Shift and the hover checkbox accumulate.
+  // A bare click on the row body empties a multi-selection and opens the row —
+  // without this, the right-click of lot M3 (which selects) leaves the list
+  // unopenable until Escape.
+  await clickRow(0, ACCEL)
+  await clickRow(2, ACCEL)
+  const beforePlain = await readCount()
+  if (beforePlain !== 2) { console.error(`HARNESS: could not build a 2-row selection (got ${beforePlain})`); process.exit(2) }
+  await clickRow(1)
+  const afterPlain = await readCount()
+  console.log(`plain click on a 3rd row after a 2-row selection: count=${afterPlain} (expected 0)`)
+  if (afterPlain > 1) failures.push(`plain click accumulated instead of replacing: selection holds ${afterPlain}, expected 0 or 1`)
+  // Opened = the reading pane rendered its toolbar for that message. Waited for,
+  // not polled: fetching the body is an IMAP round-trip, far longer than SETTLE_MS.
+  const openedAfterPlain = await page.waitForSelector('[data-reading-archive]', { timeout: OPEN_MS }).then(() => true, () => false)
+  console.log(`plain click opened the message: ${openedAfterPlain} (expected true)`)
+  if (!openedAfterPlain) failures.push('plain click on a selected list did not open the message')
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
 
   // --- The reading pane's Archive button carries an action ---
   // Opening a message and reading the button's own disabled state is what tells

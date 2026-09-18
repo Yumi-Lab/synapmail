@@ -140,7 +140,9 @@
       "blue": "Bleu",
       "purple": "Violet",
       "gray": "Gris"
-    }
+    },
+    "noFolders": "Aucun dossier",
+    "messageList": "Liste des messages"
   },
   "compose": {
     "newMessage": "Nouveau message",

@@ -30,6 +30,7 @@ export interface MailActions {
   remove: () => void
   spam: () => void
   setFlag: (flag: MailFlagValue) => void
+  markRead: () => void
   markUnread: () => void
   moveTo: (destination: string) => void
 }
@@ -89,6 +90,7 @@ export function deriveCapabilities(state: MailSelectionState): MailCapabilities 
     remove: n > 0 && state.canDelete,
     spam: organize && state.hasSpam,
     setFlag: organize,
+    markRead: organize,
     markUnread: organize,
     moveTo: organize,
   }
