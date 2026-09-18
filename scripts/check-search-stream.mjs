@@ -49,7 +49,7 @@ registerHooks({
     return next(spec, ctx)
   },
 })
-const { SEARCH_RESULT_LIMIT, SEARCH_PARAM, SCOPE_PARAM, SCOPE_ALL, MIN_QUERY_LENGTH } =
+const { SEARCH_RESULT_LIMIT, SEARCH_PARAM, SCOPE_PARAM, SCOPE_ALL, STREAM_PARAM, MIN_QUERY_LENGTH } =
   await import(new URL('../lib/search.ts', import.meta.url).href)
 
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split('\n')) {
@@ -127,6 +127,23 @@ try {
   // server that first navigation alone costs seconds and has nothing to do with
   // what lot S2 promises).
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2', timeout: API_TIMEOUT_MS })
+  // The STREAMING ROUTE needs the same treatment, and for the same reason: on a
+  // dev server its first request pays the route's compilation (measured: 30 s on
+  // the first run after a code change, against 6.7 s on the next — the product
+  // did not change between the two). Warmed with a DIFFERENT query, aborted as
+  // soon as the route answers: the route gets compiled, the measured query gets
+  // no head start.
+  await page.evaluate(async ({ base, url }) => {
+    const controller = new AbortController()
+    try {
+      const res = await fetch(`${base}${url}`, { signal: controller.signal })
+      await res.body?.getReader().read()
+    } catch { /* aborted on purpose */ } finally { controller.abort() }
+  }, {
+    base: BASE,
+    url: `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(`${query}-warmup`)}` +
+      `&folder=INBOX&${SCOPE_PARAM}=${SCOPE_ALL}&${STREAM_PARAM}=1`,
+  })
 
   const started = Date.now()
   await page.goto(`${BASE}/mail?${SEARCH_PARAM}=${encodeURIComponent(query)}&${SCOPE_PARAM}=${SCOPE_ALL}`,
