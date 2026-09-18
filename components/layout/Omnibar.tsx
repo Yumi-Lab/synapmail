@@ -7,7 +7,6 @@ import { useTranslations } from 'next-intl'
 import { LayoutGrid, Menu, PenSquare, Search, Settings, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MAIL_PATH, openCompose } from '@/lib/compose'
-import { SIDEBAR } from './Sidebar'
 import {
   SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT, SEARCH_PARAM,
   buildSearchHref, readScope, type SearchScope,
@@ -30,12 +29,12 @@ export const OMNIBAR = {
    */
   sideReserve: 200,
   /**
-   * Gap left between the sidebar's round collapse toggle — which straddles the
-   * header's left edge, half of it overlapping the header — and the first action.
-   * Derived from the button's own size, so resizing the button re-inflates the
-   * inset instead of silently re-creating the overlap.
+   * Width at and above which the bar is a column of its own rather than a drawer —
+   * Tailwind's default `lg`, the same breakpoint `AppShell` folds the <aside> on
+   * (`hidden lg:flex`). The header's single menu button reads it to know whether a
+   * click folds the bar or opens the drawer.
    */
-  edgeClearance: SIDEBAR.edgeButtonSize / 2 + 8,
+  desktopQuery: '(min-width: 1024px)',
 } as const
 
 /** One motif for the three actions — monochrome icon, label on hover, no filled button. */
@@ -45,15 +44,24 @@ const ACTION = 'w-8 h-8 shrink-0 flex items-center justify-center rounded-lg ' +
 const ICON = 'w-[18px] h-[18px]'
 
 /**
- * Application header, full window width, above the sidebar and the content: global
- * search on the left, transverse actions on the right. On mobile it replaces the
- * former top bar and carries the drawer's hamburger.
+ * Application header, above the content column only — the bar owns the full height
+ * and the header starts at its right edge. Menu button then transverse actions on
+ * the left, global search centred. The menu button is the app's ONLY bar control:
+ * it folds the bar on the desktop and opens the drawer on mobile.
  *
  * The field is the app's ONLY search input: it writes the query into the mailbox
  * URL (`/mail?q=…&scope=…`), which the message list reads back. No component
  * keeps a second copy of the query, from any page.
  */
-function OmnibarInner({ onOpenDrawer }: { onOpenDrawer: () => void }) {
+type OmnibarProps = {
+  /** Folds the bar at `lg` and above, opens the drawer below it — `AppShell` picks. */
+  onMenu: () => void
+  menuLabel: string
+  /** Whether the thing the button controls (bar or drawer) is currently open. */
+  menuExpanded: boolean
+}
+
+function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
   const t = useTranslations('mail')
   const pathname = usePathname()
   const router = useRouter()
@@ -112,26 +120,21 @@ function OmnibarInner({ onOpenDrawer }: { onOpenDrawer: () => void }) {
   return (
     <header
       data-omnibar
-      className="relative shrink-0 flex items-center gap-2 border-b border-border bg-background
-        px-2 sm:px-3 lg:pl-[var(--synap-omnibar-inset)]"
-      style={{
-        height: OMNIBAR.height,
-        // Only at `lg`, where the round toggle is mounted: below it the drawer's
-        // hamburger owns that spot and the plain padding is the right one.
-        ['--synap-omnibar-inset' as string]: `${OMNIBAR.edgeClearance}px`,
-      }}
+      className="relative shrink-0 flex items-center gap-2 border-b border-border bg-background px-2 sm:px-3"
+      style={{ height: OMNIBAR.height }}
     >
-      <button
-        type="button"
-        onClick={onOpenDrawer}
-        title={t('openMenu')}
-        aria-label={t('openMenu')}
-        data-omnibar-menu
-        className={cn(ACTION, 'lg:hidden')}
-      >
-        <Menu className={ICON} />
-      </button>
       <div className="flex shrink-0 items-center gap-0.5">
+        <button
+          type="button"
+          onClick={onMenu}
+          title={menuLabel}
+          aria-label={menuLabel}
+          aria-expanded={menuExpanded}
+          data-omnibar-menu
+          className={ACTION}
+        >
+          <Menu className={ICON} />
+        </button>
         <Link href="/dashboard" title={t('dashboard')} aria-label={t('dashboard')} data-omnibar-action="dashboard" className={ACTION}>
           <LayoutGrid className={ICON} />
         </Link>
@@ -235,7 +238,7 @@ function OmnibarInner({ onOpenDrawer }: { onOpenDrawer: () => void }) {
  * `useSearchParams` impose une frontière Suspense (convention du dépôt) : la
  * barre est rendue derrière un repli de la bonne hauteur, jamais de saut.
  */
-export function Omnibar(props: { onOpenDrawer: () => void }) {
+export function Omnibar(props: OmnibarProps) {
   return (
     <Suspense fallback={<div className="shrink-0 border-b border-border bg-background" style={{ height: OMNIBAR.height }} />}>
       <OmnibarInner {...props} />

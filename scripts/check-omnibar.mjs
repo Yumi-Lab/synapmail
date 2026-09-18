@@ -32,24 +32,14 @@ const EXPECTED_HEIGHT = Number(OMNIBAR_SRC.match(/height:\s*(\d+)/)?.[1])
 const EXPECTED_FIELD_MAX_WIDTH = Number(OMNIBAR_SRC.match(/searchMaxWidth:\s*(\d+)/)?.[1])
 if (!EXPECTED_HEIGHT) { console.error('HARNESS: could not read OMNIBAR.height from the component'); process.exit(2) }
 if (!EXPECTED_FIELD_MAX_WIDTH) { console.error('HARNESS: could not read OMNIBAR.searchMaxWidth from the component'); process.exit(2) }
-// The round toggle straddles the header's left edge, so half of it lies over the
-// header. The gap the first action must keep from it is NOT a bench constant: it is
-// what the two shipped constants imply — the header's left inset minus the half of
-// the button that overlaps it. Re-sizing the button or the inset moves this number
-// in the same run, so the gate can never certify a clearance the code stopped giving.
-const SIDEBAR_SRC = readFileSync(new URL('../components/layout/Sidebar.tsx', import.meta.url), 'utf8')
-const EDGE_BUTTON_SIZE = Number(SIDEBAR_SRC.match(/edgeButtonSize:\s*(\d+)/)?.[1])
-const EDGE_CLEARANCE_TERM = Number(OMNIBAR_SRC.match(/edgeClearance:\s*SIDEBAR\.edgeButtonSize \/ 2 \+ (\d+)/)?.[1])
-if (!EDGE_BUTTON_SIZE) { console.error('HARNESS: could not read SIDEBAR.edgeButtonSize from the component'); process.exit(2) }
-if (!EDGE_CLEARANCE_TERM) { console.error('HARNESS: could not read OMNIBAR.edgeClearance from the component'); process.exit(2) }
-const EXPECTED_EDGE_GAP = EDGE_CLEARANCE_TERM
-
 const BAR = '[data-omnibar]'
 const SEARCH = '[data-omnibar-search]'
+// Lot H1: ONE menu button, inside the header, first of the left group. Above `lg` it
+// folds the bar, below it opens the drawer.
 const MENU = '[data-omnibar-menu]'
-// The round collapse button is rendered by AppShell OUTSIDE the header — checking it
-// is still outside is half of what lot O1b asks for.
-const EDGE_TOGGLE = '[data-sidebar-edge-toggle="bar"]'
+// The round button that used to straddle the bar's edge is gone: the gate asserts its
+// absence, so re-introducing it fails here instead of only at the human gate.
+const EDGE_TOGGLE = '[data-sidebar-edge-toggle]'
 const action = name => `[data-omnibar-action="${name}"]`
 // Navigations and the compose window settle well under this; the bar's own
 // transitions are colour-only (no layout animation to wait out).
@@ -94,6 +84,7 @@ const probeBar = sel => {
     windowWidth: document.documentElement.clientWidth,
     asideRight: ar && ar.height ? ar.right : null,
     field: box('[data-omnibar-search]'),
+    menu: box('[data-omnibar-menu]'),
     actions: ['dashboard', 'compose', 'settings'].map(n => box(`[data-omnibar-action="${n}"]`)),
     background: style.backgroundColor,
     horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -142,14 +133,16 @@ try {
     }
     if (Math.abs(bar.right - bar.windowWidth) > MAX_DRIFT_PX) failures.push(`${path}: header ends at x=${bar.right.toFixed(2)}, not at the window's right edge (${bar.windowWidth})`)
     // Actions on the LEFT, in order, all of them before the field.
+    if (!bar.menu) failures.push(`${path}: the menu button is not inside the header`)
     if (bar.actions.some(a => !a)) failures.push(`${path}: an action is missing from the header`)
-    else if (!bar.field) failures.push(`${path}: no search field in the header`)
+    else if (!bar.field || !bar.menu) failures.push(`${path}: no search field in the header`)
     else {
-      const xs = bar.actions.map(a => a.left)
-      if (xs.some((x, i) => i > 0 && x <= xs[i - 1])) failures.push(`${path}: the actions are not in order dashboard, compose, settings (x = ${xs.map(v => v.toFixed(0)).join(', ')})`)
+      // Lot H1 orders the left group: menu, dashboard, compose, settings.
+      const xs = [bar.menu, ...bar.actions].map(a => a.left)
+      if (xs.some((x, i) => i > 0 && x <= xs[i - 1])) failures.push(`${path}: the left group is not in order menu, dashboard, compose, settings (x = ${xs.map(v => v.toFixed(0)).join(', ')})`)
       if (bar.actions.at(-1).right > bar.field.left) failures.push(`${path}: the actions are not left of the search field (last action ends at ${bar.actions.at(-1).right.toFixed(2)}, field starts at ${bar.field.left.toFixed(2)})`)
       const offCentre = Math.abs(bar.field.centre - bar.centre)
-      console.log(`  actions x=${xs.map(v => v.toFixed(0)).join(',')} | field ${bar.field.left.toFixed(0)}..${bar.field.right.toFixed(0)} (w=${bar.field.width.toFixed(0)}), off-centre ${offCentre.toFixed(2)}px`)
+      console.log(`  menu+actions x=${xs.map(v => v.toFixed(0)).join(',')} | field ${bar.field.left.toFixed(0)}..${bar.field.right.toFixed(0)} (w=${bar.field.width.toFixed(0)}), off-centre ${offCentre.toFixed(2)}px`)
       if (offCentre > MAX_DRIFT_PX) failures.push(`${path}: the search field is ${offCentre.toFixed(2)}px off the header's centre`)
       if (bar.field.width > EXPECTED_FIELD_MAX_WIDTH + MAX_DRIFT_PX) failures.push(`${path}: the field is ${bar.field.width.toFixed(2)}px wide, above the ${EXPECTED_FIELD_MAX_WIDTH}px bound`)
     }
@@ -160,61 +153,69 @@ try {
   }
 
   // --- The header follows the bar's right edge in BOTH collapse states ---
-  // Measured on the SAME page, one state after the other: the two readings share
-  // everything but the collapse, so a mismatch can only come from the collapse.
+  // Driven by the header's own menu button (lot H1): a REAL click on the shipped
+  // control, measured on the SAME page one state after the other, so the two readings
+  // share everything but the collapse.
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
-  await page.waitForSelector(EDGE_TOGGLE, { timeout: 20000 })
+  await page.waitForSelector(MENU, { timeout: 20000 })
   await new Promise(r => setTimeout(r, SETTLE_MS))
+  const readCollapsed = () => page.evaluate(() => document.querySelector('[data-sidebar]')?.dataset.collapsed ?? null)
+  // The bar renders the SSR default (expanded) until its `/api/settings` SWR resolves,
+  // which on a cold dev server can take seconds. Clicking during that window measures
+  // an unsettled page — observed: the DOM read "false" while the database held "true",
+  // and the click PATCHed the value it was already at, folding nothing. Wait until the
+  // rendered state matches the persisted one before touching anything.
+  const settle = async () => {
+    for (let i = 0; i < 40; i++) {
+      const [dom, persisted] = await Promise.all([
+        readCollapsed(),
+        page.evaluate(async b => (await (await fetch(`${b}/api/settings`)).json())?.data?.sidebar_collapsed ?? null, BASE),
+      ])
+      if (dom != null && persisted != null && dom === String(persisted)) return { dom, persisted }
+      await new Promise(r => setTimeout(r, 250))
+    }
+    return null
+  }
+  const settled = await settle()
+  if (!settled) { console.error('HARNESS: the bar never caught up with the persisted collapse state — the page was unsettled, nothing measured'); process.exit(2) }
+  console.log(`bar settled on the persisted state: data-collapsed=${settled.dom}`)
   const edges = []
+  const collapseStates = []
   for (const pass of ['as loaded', 'after toggling']) {
     const bar = await page.evaluate(probeBar, BAR)
+    const collapsed = await readCollapsed()
     edges.push({ pass, left: bar?.left, asideRight: bar?.asideRight })
-    console.log(`collapse ${pass}: header.left=${bar?.left.toFixed(2)} aside.right=${bar?.asideRight?.toFixed(2) ?? 'n/a'}`)
+    collapseStates.push(collapsed)
+    console.log(`collapse ${pass}: data-collapsed=${collapsed} header.left=${bar?.left.toFixed(2)} aside.right=${bar?.asideRight?.toFixed(2) ?? 'n/a'}`)
     if (bar?.asideRight == null) { console.error('HARNESS: no sidebar measured — nothing to compare the header against'); process.exit(2) }
+    if (collapsed == null) { console.error('HARNESS: no [data-sidebar] to read the collapse state from'); process.exit(2) }
     if (Math.abs(bar.left - bar.asideRight) > MAX_DRIFT_PX) {
       failures.push(`collapse ${pass}: header starts at x=${bar.left.toFixed(2)}, sidebar ends at ${bar.asideRight.toFixed(2)}`)
     }
     if (pass === 'as loaded') {
-      await page.click(EDGE_TOGGLE)
+      await page.click(MENU)
       // The bar animates its width; wait past the transition so the reading is the settled state.
       await new Promise(r => setTimeout(r, SETTLE_MS))
     }
   }
-  // Same-run reference: if the toggle changed nothing, both readings are the same
-  // state and the pair proves nothing about the collapse.
+  // Same-run reference: if the click changed neither the flag nor the width, both
+  // readings are the same state and the pair proves nothing about the collapse.
+  if (collapseStates[0] === collapseStates[1]) {
+    failures.push(`clicking the header menu button left data-collapsed at "${collapseStates[0]}" — it does not fold the bar`)
+  }
   if (Math.abs(edges[0].asideRight - edges[1].asideRight) <= MAX_DRIFT_PX) {
-    console.error('HARNESS: the bar kept the same width across the toggle — the collapse was not exercised')
+    console.error('HARNESS: the bar kept the same width across the click — the collapse was not exercised')
     process.exit(2)
   }
+  // Put the persisted preference back the way the gate found it.
+  await page.click(MENU)
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  if (!(await settle())) { console.error('HARNESS: the bar never settled after restoring the collapse state'); process.exit(2) }
 
-  // --- The round toggle does not overlap the first action, in EITHER state ---
-  // Two overlapping hit areas is what the human gate caught on a9096c7 (2px overlap).
-  // Measured in both collapse states, because the button and the header both move.
-  for (const pass of ['after toggling', 'as loaded']) {
-    const gap = await page.evaluate((tog, act) => {
-      const t = document.querySelector(tog)?.getBoundingClientRect()
-      const a = document.querySelector(act)?.getBoundingClientRect()
-      if (!t || !a) return null
-      return { gap: a.left - t.right, toggle: [t.left, t.right], action: [a.left, a.right] }
-    }, EDGE_TOGGLE, action('dashboard'))
-    if (!gap) { console.error('HARNESS: could not measure the toggle or the first action'); process.exit(2) }
-    console.log(`edge clearance ${pass}: toggle ${gap.toggle.map(v => v.toFixed(0)).join('..')} | first action ${gap.action.map(v => v.toFixed(0)).join('..')} | gap ${gap.gap.toFixed(2)}px (expected >= ${EXPECTED_EDGE_GAP})`)
-    if (gap.gap < EXPECTED_EDGE_GAP - MAX_DRIFT_PX) {
-      failures.push(`${pass}: the collapse button and the first action are ${gap.gap.toFixed(2)}px apart, below the ${EXPECTED_EDGE_GAP}px the shipped constants imply`)
-    }
-    // Second reading is taken in the other state; this click is ALSO what puts the
-    // persisted collapse preference back the way the gate found it.
-    if (pass === 'after toggling') {
-      await page.click(EDGE_TOGGLE)
-      await new Promise(r => setTimeout(r, SETTLE_MS))
-    }
-  }
-
-  // The round toggle floats on the bar's edge — it is NOT one of the header's controls.
-  const toggleInHeader = await page.evaluate(
-    (bar, tog) => !!document.querySelector(bar)?.querySelector(tog), BAR, EDGE_TOGGLE)
-  console.log(`collapse button inside the header: ${toggleInHeader}`)
-  if (toggleInHeader) failures.push('the round collapse button is rendered inside the header')
+  // --- The round floating toggle is gone (lot H1 removes it, bar AND drawer) ---
+  const strayToggles = await page.evaluate(s2 => document.querySelectorAll(s2).length, EDGE_TOGGLE)
+  console.log(`floating ${EDGE_TOGGLE} elements in the DOM: ${strayToggles}`)
+  if (strayToggles) failures.push(`${strayToggles} floating collapse button(s) still in the DOM — lot H1 removes them`)
 
   // --- The dashboard row left the sidebar (lot O1 removes it from there) ---
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
@@ -316,6 +317,15 @@ try {
   })()
   console.log(`mobile: clicking the hamburger opens the drawer: ${drawerOpened}`)
   if (!drawerOpened) failures.push('mobile: the header hamburger does not open the drawer')
+  // Same button, the other effect — and the drawer carries no floating toggle of its
+  // own any more: it closes on the veil.
+  const drawerToggles = await page.evaluate(s2 => document.querySelectorAll(s2).length, EDGE_TOGGLE)
+  if (drawerToggles) failures.push(`mobile: ${drawerToggles} floating collapse button(s) in the open drawer`)
+  await page.evaluate(() => document.querySelector('[data-sidebar-drawer] > div')?.click())
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const drawerClosed = await page.evaluate(() => !document.querySelector('[data-sidebar-drawer]'))
+  console.log(`mobile: floating toggles in the drawer=${drawerToggles}, one click on the veil closes it: ${drawerClosed}`)
+  if (!drawerClosed) failures.push('mobile: one click on the veil does not close the drawer')
 } finally {
   await browser.close()
 }

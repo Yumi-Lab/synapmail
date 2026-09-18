@@ -17,24 +17,18 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 // is expected; anything a human could see is not. GOAL.md fixes this at 1 px.
 const MAX_DRIFT_PX = 1
 const VIEWPORT = { width: 1440, height: 900 }
-// The round toggle straddles the bar's right edge: its centre must sit on that edge.
-// Same tolerance as any other geometry here — the edge and the centre are both read
-// from getBoundingClientRect in the SAME run, so this is a relative check, not an
-// absolute constant calibrated on a vanished bench.
-const MAX_EDGE_OFFSET_PX = MAX_DRIFT_PX
-// The desktop toggle stays mounted (display:none) below `lg`, so the drawer check must
-// select ITS OWN button explicitly — a bare attribute selector matches the hidden
-// desktop one first and measures a 0x0 box (observed: 0.00px "off the edge", vacuous).
-const EDGE_TOGGLE = { bar: '[data-sidebar-edge-toggle="bar"]', drawer: '[data-sidebar-edge-toggle="drawer"]' }
+// Lot H1 removed the round button that used to straddle the bar's edge: the bar now
+// folds from the application header's menu button. The old marker must be absent.
+const EDGE_TOGGLE = '[data-sidebar-edge-toggle]'
 // Same trap for the drawer itself: the desktop <aside> stays in the DOM below `lg` with
 // a 0x0 box, so `[data-sidebar]` alone resolves to it and every mobile measurement taken
 // through it is vacuous (observed: "256px off the edge", and a drawer reported still open
 // after it had closed). The drawer is addressed through its own marker.
 const DRAWER = '[data-sidebar-drawer]'
-// The drawer's hamburger lives in the application header, not in <main>: selecting
-// "the first button of main" clicked whatever the page happened to render first and
-// reported a drawer that never opened (a harness failure, not a product one). It is
-// addressed through its own marker.
+// The application header's menu button — the app's ONLY bar control since lot H1:
+// above `lg` it folds the bar, below it opens the drawer. Selecting "the first button
+// of main" once clicked whatever the page rendered first and reported a drawer that
+// never opened (a harness failure, not a product one), so it is addressed by marker.
 const DRAWER_TRIGGER = '[data-omnibar-menu]'
 // Badge geometry thresholds, from the human gate of 2026-09-17 that rejected a badge
 // covering 37% of the bubble and 40% of the initial's text box: the badge may clip the
@@ -177,27 +171,18 @@ for (const [k, v] of Object.entries({ SYNAPMAIL_TEST_URL: BASE, SYNAPMAIL_TEST_E
 }
 
 /** Reads the geometry of every sidebar icon and row, keyed so both states match up. */
-const probe = sel => {
+const probe = strayToggle => {
   const bar = document.querySelector('[data-sidebar]')
   if (!bar) return null
   const rows = [...bar.querySelectorAll('[data-sidebar-row]')]
-  // The straddling toggle and the edge it straddles, read in the same frame: the
-  // button is outside [data-sidebar], so it is deliberately not one of the rows.
   const aside = bar.closest('aside')
-  const toggle = document.querySelector(sel)
   const asideRect = aside?.getBoundingClientRect()
-  const toggleRect = toggle?.getBoundingClientRect()
   return {
     collapsed: bar.dataset.collapsed,
     asideRight: asideRect ? asideRect.right : null,
-    toggleCenterX: toggleRect ? toggleRect.x + toggleRect.width / 2 : null,
-    toggleCenterY: toggleRect ? toggleRect.y + toggleRect.height / 2 : null,
-    headerRowCenterY: (() => {
-      const header = bar.querySelector('[data-sidebar-row="account"]')
-      if (!header) return null
-      const r = header.getBoundingClientRect()
-      return r.y + r.height / 2
-    })(),
+    // Lot H1 removed the floating round toggle: its absence is measured in the same
+    // frame as the geometry, in BOTH states, so a re-introduction fails here.
+    strayToggles: document.querySelectorAll(strayToggle).length,
     horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     rows: rows.map((row, i) => {
       const r = row.getBoundingClientRect()
@@ -607,9 +592,8 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
 /**
  * The bar's accent, as the browser actually paints it, next to the colour of the account
  * bubble heading the bar — read in the SAME pass so the comparison is an A/B, not a
- * constant. Surfaces measured: the active folder row's tint, the compose control's fill,
- * the edge toggle's shadow (it straddles the bar from outside and carries the accent as
- * its own custom properties) and the published `--synap-account` itself. Colours are
+ * constant. Surfaces measured: the active folder row's tint, the compose control's fill
+ * and the published `--synap-account` itself. Colours are
  * resolved through a canvas — the same technique probeCleanliness uses — because the
  * accent is a `color-mix()` whose serialisation no hand-rolled rgb parser reads.
  */
@@ -669,8 +653,6 @@ const probeAccountAccent = () => {
   add('active folder tint', activeRow, 'backgroundColor', show(barBg))
   const compose = bar.querySelector('[data-sidebar-row="compose"]')
   add('compose fill', compose, 'backgroundColor', show(barBg))
-  const edge = document.querySelector('[data-sidebar-edge-toggle="bar"]')
-  add('edge toggle shadow', edge, 'boxShadow', show(barBg))
 
   // The published property itself: read from the bar's root, painted alone.
   const published = getComputedStyle(bar).getPropertyValue('--synap-account').trim()
@@ -809,20 +791,20 @@ try {
   // Let the folder list settle so both states measure the same set of rows.
   await new Promise(r => setTimeout(r, 2500))
 
-  // The bar folds from the round button straddling its right edge — a REAL click on
+  // The bar folds from the application header's menu button (lot H1) — a REAL click on
   // the shipped control, not a programmatic state change.
   const toggle = async () => {
-    await page.click(EDGE_TOGGLE.bar)
+    await page.click(DRAWER_TRIGGER)
     await new Promise(r => setTimeout(r, SETTLE_MS))
   }
 
-  let before = await page.evaluate(probe, EDGE_TOGGLE.bar)
-  if (before.collapsed === 'true') { await toggle(); before = await page.evaluate(probe, EDGE_TOGGLE.bar) }
+  let before = await page.evaluate(probe, EDGE_TOGGLE)
+  if (before.collapsed === 'true') { await toggle(); before = await page.evaluate(probe, EDGE_TOGGLE) }
   if (before.collapsed !== 'false') { console.error('HARNESS: could not reach the expanded state'); process.exit(2) }
   const glyphsExpanded = await page.evaluate(probeFolderGlyphs)
 
   await toggle()
-  const after = await page.evaluate(probe, EDGE_TOGGLE.bar)
+  const after = await page.evaluate(probe, EDGE_TOGGLE)
   if (after.collapsed !== 'true') { console.error('HARNESS: could not reach the collapsed state'); process.exit(2) }
   const glyphsCollapsed = await page.evaluate(probeFolderGlyphs)
 
@@ -853,28 +835,12 @@ try {
     if (s.horizontalOverflow) failures.push(`horizontal scrollbar present while collapsed=${s.collapsed}`)
   }
 
-  // --- The round toggle straddles the bar's right edge, in BOTH states ---
+  // --- The round floating toggle is gone, in BOTH states (lot H1) ---
   for (const s of [before, after]) {
-    if (s.toggleCenterX == null || s.asideRight == null) {
-      console.error(`HARNESS: no [data-sidebar-edge-toggle] or no <aside> while collapsed=${s.collapsed} — nothing measured`)
-      process.exit(2)
-    }
-    const offset = Math.abs(s.toggleCenterX - s.asideRight)
-    console.log(`edge toggle (collapsed=${s.collapsed}): centre x=${s.toggleCenterX.toFixed(2)} vs bar right edge ${s.asideRight.toFixed(2)} → ${offset.toFixed(2)}px`)
-    if (offset > MAX_EDGE_OFFSET_PX) {
-      failures.push(`edge toggle sits ${offset.toFixed(2)}px off the bar's right edge while collapsed=${s.collapsed} (max ${MAX_EDGE_OFFSET_PX}px)`)
-    }
-    // Vertically centred on the header row — the single-line header the lot is about.
-    if (s.headerRowCenterY == null || s.toggleCenterY == null) {
-      console.error(`HARNESS: no header row to centre the toggle on while collapsed=${s.collapsed}`)
-      process.exit(2)
-    }
-    const vOffset = Math.abs(s.toggleCenterY - s.headerRowCenterY)
-    console.log(`  vertical: toggle centre y=${s.toggleCenterY.toFixed(2)} vs header row centre ${s.headerRowCenterY.toFixed(2)} → ${vOffset.toFixed(2)}px`)
-    if (vOffset > MAX_EDGE_OFFSET_PX) {
-      failures.push(`edge toggle sits ${vOffset.toFixed(2)}px off the header row's centre while collapsed=${s.collapsed} (max ${MAX_EDGE_OFFSET_PX}px)`)
-    }
+    console.log(`floating ${EDGE_TOGGLE} elements while collapsed=${s.collapsed}: ${s.strayToggles}`)
+    if (s.strayToggles) failures.push(`${s.strayToggles} floating collapse button(s) in the DOM while collapsed=${s.collapsed} — lot H1 removes them`)
   }
+
   // The two states must actually differ, otherwise the check above passes vacuously
   // on a button that never moved because the bar never folded.
   if (Math.abs(before.asideRight - after.asideRight) < 1) {
@@ -986,7 +952,7 @@ try {
     const bigCollapsed = await page.evaluate(probeFolderGlyphs)
     checkGlyphs(biggest.label, bigExpanded, bigCollapsed)
     // The fold must not drift on a list this long either: same contract, more rows.
-    const bigState = await page.evaluate(probe, EDGE_TOGGLE.bar)
+    const bigState = await page.evaluate(probe, EDGE_TOGGLE)
     if (bigState.horizontalOverflow) failures.push(`"${biggest.label}" (${biggest.custom} folders): horizontal scrollbar present while collapsed`)
     console.log(`"${biggest.label}": ${bigState.rows.length} rows measured collapsed, horizontal overflow ${bigState.horizontalOverflow}`)
   }
@@ -1323,27 +1289,16 @@ try {
   if (mobile.overflow > 0) failures.push(`mobile ${MOBILE_VIEWPORT.width}px: ${mobile.overflow}px of horizontal overflow`)
   if (mobile.widest > MOBILE_VIEWPORT.width) failures.push(`mobile ${MOBILE_VIEWPORT.width}px: an element of the bar reaches ${mobile.widest.toFixed(1)}px, past the viewport`)
 
-  // The drawer carries the same straddling button, and a REAL click on it closes the drawer.
-  const drawerToggle = await page.evaluate(({ sel, drawer }) => {
-    const root = document.querySelector(drawer)
-    const aside = root?.querySelector('aside')
-    const btn = root?.querySelector(sel)
-    if (!aside || !btn) return null
-    const a = aside.getBoundingClientRect(), b = btn.getBoundingClientRect()
-    return { offset: Math.abs(b.x + b.width / 2 - a.right), width: b.width }
-  }, { sel: EDGE_TOGGLE.drawer, drawer: DRAWER })
-  if (!drawerToggle) { console.error('HARNESS: the mobile drawer carries no edge toggle — nothing measured'); process.exit(2) }
-  console.log(`mobile ${MOBILE_VIEWPORT.width}px: drawer edge toggle ${drawerToggle.width.toFixed(2)}px wide, ${drawerToggle.offset.toFixed(2)}px off the drawer edge`)
-  // A hidden button measures 0x0 and would sit "0px off the edge" — guard the vacuous pass.
-  if (drawerToggle.width < 1) { console.error('HARNESS: the drawer edge toggle has no box (hidden?) — nothing measured'); process.exit(2) }
-  if (drawerToggle.offset > MAX_EDGE_OFFSET_PX) {
-    failures.push(`mobile: drawer edge toggle sits ${drawerToggle.offset.toFixed(2)}px off the drawer edge (max ${MAX_EDGE_OFFSET_PX}px)`)
-  }
-  await page.click(EDGE_TOGGLE.drawer)
+  // Lot H1 removed the drawer's own round button: it closes on ONE click on the veil.
+  const drawerStray = await page.evaluate(({ sel, drawer }) =>
+    document.querySelector(drawer)?.querySelectorAll(sel).length ?? null, { sel: EDGE_TOGGLE, drawer: DRAWER })
+  if (drawerStray == null) { console.error('HARNESS: the drawer is not in the DOM — nothing measured'); process.exit(2) }
+  if (drawerStray) failures.push(`mobile: ${drawerStray} floating collapse button(s) in the drawer — lot H1 removes them`)
+  await page.evaluate(drawer => document.querySelector(`${drawer} > div`)?.click(), DRAWER)
   await new Promise(r => setTimeout(r, SETTLE_MS))
   const drawerClosed = await page.evaluate(drawer => !document.querySelector(drawer), DRAWER)
-  console.log(`mobile ${MOBILE_VIEWPORT.width}px: click on the drawer edge toggle → drawer closed=${drawerClosed}`)
-  if (!drawerClosed) failures.push('mobile: clicking the drawer edge toggle did not close the drawer')
+  console.log(`mobile ${MOBILE_VIEWPORT.width}px: floating buttons in the drawer=${drawerStray}, one click on the veil → drawer closed=${drawerClosed}`)
+  if (!drawerClosed) failures.push('mobile: one click on the veil did not close the drawer')
 } finally {
   // Close the tab before the browser: an open tab keeps its /api/stream SSE
   // connection alive on the dev server, and orphaned tabs pile those up.
