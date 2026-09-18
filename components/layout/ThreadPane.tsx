@@ -7,6 +7,7 @@ import useSWR from 'swr'
 import type { Message } from '@/types/email'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { parseDate } from '@/lib/dates'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -27,7 +28,8 @@ const getAvatarColor = (str: string) => {
 }
 
 const formatDate = (iso: string) => {
-  const d = new Date(iso)
+  const d = parseDate(iso)
+  if (!d) return ''
   const now = new Date()
   const isToday = d.toDateString() === now.toDateString()
   if (isToday) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })

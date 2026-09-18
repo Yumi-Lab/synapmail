@@ -85,6 +85,8 @@
     "dashboard": "Tableau de bord",
     "search": "Rechercher",
     "searchAccounts": "Rechercher un compte…",
+    "searchMail": "Rechercher dans le courrier",
+    "openMenu": "Ouvrir le menu",
     "noAccountMatch": "Aucun compte correspondant",
     "unreadOtherAccounts": "{count} non lus sur les autres comptes",
     "grpToday": "Aujourd'hui",

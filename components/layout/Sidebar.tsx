@@ -7,7 +7,6 @@ import { useTranslations } from 'next-intl'
 import {
   Mail, Send, FileText, AlertTriangle, Trash2,
   Settings, PenSquare, Folder, Archive, ChevronDown, RefreshCw,
-  LayoutDashboard,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import useSWR from 'swr'
@@ -207,7 +206,10 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
 
   const totalUnread = accounts.reduce((sum, a) => sum + (a.unreadCount ?? 0), 0)
   const otherUnread = totalUnread - (activeAccount?.unreadCount ?? 0)
-  const filteredAccounts = accounts.filter(acc => {
+  // The list offers the OTHER accounts only: the active one already heads the bar,
+  // repeating it as a row would be a line that does nothing.
+  const otherAccounts = accounts.filter(acc => acc.id !== activeAccount?.id)
+  const filteredAccounts = otherAccounts.filter(acc => {
     const q = accountFilter.trim().toLowerCase()
     return !q || acc.email.toLowerCase().includes(q) || (acc.name ?? '').toLowerCase().includes(q)
   })
@@ -362,13 +364,13 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                 left: popoverPos.left,
                 width: SIDEBAR.expandedWidth,
                 // The popover is its own surface: republishing the variable here makes the
-                // badge's ring and the selected bubble's ring-offset take the colour of what
-                // is ACTUALLY behind them, instead of the bar's, with no second palette.
+                // badge's ring take the colour of what is ACTUALLY behind it, instead of
+                // the bar's, with no second palette.
                 ['--synap-surface' as string]: 'var(--popover)',
               }}
               data-account-popover
             >
-              {accounts.length > 8 && (
+              {otherAccounts.length > 8 && (
                 <div className="p-1.5 border-b border-border">
                   <input
                     autoFocus
@@ -387,24 +389,20 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                   <p className="px-3 py-4 text-xs text-muted-foreground text-center">{t('noAccountMatch')}</p>
                 )}
                 {filteredAccounts.map(acc => {
-                  const active = acc.id === activeAccount?.id
                   const unread = acc.unreadCount ?? 0
                   return (
                     <button
                       key={acc.id}
                       onClick={() => switchAccount(acc.id)}
-                      // Every row has the same box: a fixed bubble, one gap, then the text.
-                      // The active account is marked by the RING around its bubble, which is
-                      // a box-shadow and moves nothing — so all names and emails of the list
-                      // start at the exact same x, selected or not.
-                      className={cn(ROW, 'gap-2.5 px-3 rounded-none text-left', active ? ROW_ACTIVE : ROW_IDLE)}
+                      // Every row has the same box: a fixed bubble, one gap, then the text —
+                      // so all names and emails of the list start at the exact same x.
+                      className={cn(ROW, ROW_IDLE, 'gap-2.5 px-3 rounded-none text-left')}
                     >
                       <AccountAvatar
                         account={acc}
                         colorIndex={accounts.indexOf(acc)}
                         unread={unread}
                         size="md"
-                        selected={active}
                       />
                       <span className="flex-1 min-w-0 text-left">
                         <span className="block text-sm font-medium truncate leading-tight">{acc.name || acc.email}</span>
@@ -437,22 +435,6 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
           <RowBody icon={PenSquare} label={t('compose')} collapsed={collapsed} />
         </button>
       </div>
-
-      {/* Dashboard */}
-      <Link
-        href="/dashboard"
-        onClick={() => handleFolderClick()}
-        title={t('dashboard')}
-        data-sidebar-row="dashboard"
-        className={cn(ROW, pathname.startsWith('/dashboard') ? ROW_ACTIVE : ROW_IDLE)}
-      >
-        <RowBody
-          icon={LayoutDashboard}
-          iconClassName={pathname.startsWith('/dashboard') ? ACCENT.ink : undefined}
-          label={t('dashboard')}
-          collapsed={collapsed}
-        />
-      </Link>
 
       {/* Folders */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden scroll-thin mt-1" data-scroll-thin>

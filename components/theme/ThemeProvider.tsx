@@ -1,7 +1,9 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { usePathname } from 'next/navigation'
 import useSWR, { mutate as globalMutate } from 'swr'
+import { isPublicPath } from '@/lib/publicPaths'
 import {
   DARK_MEDIA_QUERY,
   DEFAULT_THEME,
@@ -42,8 +44,11 @@ export function ThemeProvider({
 
   // `user_settings.theme` fait autorité (multi-appareil) ; le cookie n'est qu'un
   // miroir local pour le SSR. On ne l'applique qu'une fois, sinon une préférence
-  // changée dans l'onglet serait écrasée à chaque revalidation SWR.
-  const { data: settings } = useSWR<{ data?: { theme?: string } }>('/api/settings', fetcher)
+  // changée dans l'onglet serait écrasée à chaque revalidation SWR. Sur une page
+  // publique (connexion, inscription…) il n'y a pas de session : on ne demande rien,
+  // le cookie suffit — sinon chaque chargement de /login logue un 401 en console.
+  const pathname = usePathname()
+  const { data: settings } = useSWR<{ data?: { theme?: string } }>(isPublicPath(pathname) ? null : '/api/settings', fetcher)
   const hydratedFromServer = useRef(false)
 
   useEffect(() => {
