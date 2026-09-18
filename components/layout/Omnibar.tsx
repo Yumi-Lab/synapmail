@@ -7,6 +7,7 @@ import { useTranslations } from 'next-intl'
 import { LayoutGrid, Menu, PenSquare, Search, Settings, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MAIL_PATH, openCompose } from '@/lib/compose'
+import { SIDEBAR } from './Sidebar'
 import {
   SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT, SEARCH_PARAM,
   buildSearchHref, readScope, type SearchScope,
@@ -28,6 +29,13 @@ export const OMNIBAR = {
    * mathematically centred field from ever running under either group.
    */
   sideReserve: 200,
+  /**
+   * Gap left between the sidebar's round collapse toggle — which straddles the
+   * header's left edge, half of it overlapping the header — and the first action.
+   * Derived from the button's own size, so resizing the button re-inflates the
+   * inset instead of silently re-creating the overlap.
+   */
+  edgeClearance: SIDEBAR.edgeButtonSize / 2 + 8,
 } as const
 
 /** One motif for the three actions — monochrome icon, label on hover, no filled button. */
@@ -104,8 +112,14 @@ function OmnibarInner({ onOpenDrawer }: { onOpenDrawer: () => void }) {
   return (
     <header
       data-omnibar
-      className="relative shrink-0 flex items-center gap-2 border-b border-border bg-background px-2 sm:px-3"
-      style={{ height: OMNIBAR.height }}
+      className="relative shrink-0 flex items-center gap-2 border-b border-border bg-background
+        px-2 sm:px-3 lg:pl-[var(--synap-omnibar-inset)]"
+      style={{
+        height: OMNIBAR.height,
+        // Only at `lg`, where the round toggle is mounted: below it the drawer's
+        // hamburger owns that spot and the plain padding is the right one.
+        ['--synap-omnibar-inset' as string]: `${OMNIBAR.edgeClearance}px`,
+      }}
     >
       <button
         type="button"
