@@ -68,11 +68,17 @@ export async function GET(req: Request) {
       const guard = { enabled: isMachineRequest(req) && account.prompt_guard }
       const accountId = account.id
       const encoder = new TextEncoder()
+      // Un seul signal d'abandon pour les DEUX façons dont une recherche s'arrête :
+      // la requête coupée (`req.signal`) et le flux abandonné par le client, qui
+      // n'est annoncé QUE par `cancel()`. Sans lui, quitter la recherche laissait
+      // les ouvriers IMAP ouvrir les 1 226 dossiers restants pour personne.
+      const sweep = new AbortController()
+      req.signal.addEventListener('abort', () => sweep.abort(), { once: true })
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
           try {
-            for await (const chunk of searchMessagesByFolder(config, ranked, terms, req.signal)) {
-              if (req.signal.aborted) break
+            for await (const chunk of searchMessagesByFolder(config, ranked, terms, sweep.signal)) {
+              if (sweep.signal.aborted) break
               const payload = guardApiPayload({
                 messages: chunk.messages
                   .slice()
@@ -88,11 +94,18 @@ export async function GET(req: Request) {
               controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`))
             }
           } catch (err) {
-            controller.enqueue(encoder.encode(`${JSON.stringify({ error: String(err) })}\n`))
+            // Un flux déjà abandonné n'a plus de destinataire : signaler l'erreur
+            // sur un contrôleur fermé lèverait une seconde panne, sans lecteur.
+            if (!sweep.signal.aborted) {
+              controller.enqueue(encoder.encode(`${JSON.stringify({ error: String(err) })}\n`))
+            }
           } finally {
             controller.close()
           }
         },
+        // Le client s'est détourné (requête changée, page quittée, bouton Arrêter) :
+        // les dossiers restants ne sont pas ouverts et les connexions IMAP se ferment.
+        cancel() { sweep.abort() },
       })
       return new Response(stream, {
         headers: {

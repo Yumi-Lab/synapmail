@@ -680,6 +680,13 @@ export async function* searchMessagesByFolder(
 
   const worker = async () => {
     const client = await createClient(account)
+    // Couper ENTRE deux dossiers ne suffit pas : un `SEARCH` sur un gros dossier
+    // dure des dizaines de secondes (mesuré 23 s sur un dossier de 163 783
+    // messages), pendant lesquelles la connexion resterait ouverte après le départ
+    // du client. Fermer la connexion interrompt la commande en cours, ce que
+    // `logout()` — qui attend poliment la réponse du serveur — ne fait pas.
+    const cut = () => { client.close() }
+    signal?.addEventListener('abort', cut, { once: true })
     try {
       for (let folder = queue.shift(); folder !== undefined; folder = queue.shift()) {
         if (signal?.aborted) return
@@ -689,12 +696,15 @@ export async function* searchMessagesByFolder(
           deliver({ ...outcome, folder, searched, folders: folders.length })
         } catch {
           // Un dossier illisible ne fait pas échouer la recherche entière ; il
-          // compte quand même comme couvert, sinon la progression n'arrive jamais à son terme.
+          // compte quand même comme couvert, sinon la progression n'arrive jamais à
+          // son terme. Une connexion coupée par l'abandon passe ici aussi : la
+          // boucle s'arrête au tour suivant, sur le test de `signal`.
           searched += 1
           deliver({ messages: [], total: 0, folder, searched, folders: folders.length })
         }
       }
     } finally {
+      signal?.removeEventListener('abort', cut)
       await client.logout().catch(() => {})
     }
   }
