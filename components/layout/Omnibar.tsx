@@ -21,6 +21,13 @@ export const OMNIBAR = {
   height: 44,
   /** The field is bounded: it never stretches from one edge of the window to the other. */
   searchMaxWidth: 640,
+  /**
+   * Space kept free on EACH side of the centred field, for the actions on the left
+   * and the scope toggle on the right. The field is centred on the header, so it can
+   * only be as wide as the header minus twice this reserve: that is what keeps a
+   * mathematically centred field from ever running under either group.
+   */
+  sideReserve: 200,
 } as const
 
 /** One motif for the three actions — monochrome icon, label on hover, no filled button. */
@@ -97,7 +104,7 @@ function OmnibarInner({ onOpenDrawer }: { onOpenDrawer: () => void }) {
   return (
     <header
       data-omnibar
-      className="shrink-0 flex items-center gap-2 border-b border-border bg-background px-2 sm:px-3"
+      className="relative shrink-0 flex items-center gap-2 border-b border-border bg-background px-2 sm:px-3"
       style={{ height: OMNIBAR.height }}
     >
       <button
@@ -110,10 +117,37 @@ function OmnibarInner({ onOpenDrawer }: { onOpenDrawer: () => void }) {
       >
         <Menu className={ICON} />
       </button>
+      <div className="flex shrink-0 items-center gap-0.5">
+        <Link href="/dashboard" title={t('dashboard')} aria-label={t('dashboard')} data-omnibar-action="dashboard" className={ACTION}>
+          <LayoutGrid className={ICON} />
+        </Link>
+        <button
+          type="button"
+          onClick={() => openCompose(pathname, router.push)}
+          title={t('compose')}
+          aria-label={t('compose')}
+          data-omnibar-action="compose"
+          className={ACTION}
+        >
+          <PenSquare className={ICON} />
+        </button>
+        <Link href="/settings" title={t('settings')} aria-label={t('settings')} data-omnibar-action="settings" className={ACTION}>
+          <Settings className={ICON} />
+        </Link>
+      </div>
 
+      {/* Centred on the header itself — not on what is left between the two groups,
+          which would drift with their width. Percentages resolve against the header. */}
       <div
-        className="relative flex flex-1 min-w-0 items-center"
-        style={{ maxWidth: OMNIBAR.searchMaxWidth }}
+        data-omnibar-search-field
+        className="relative flex flex-1 min-w-0 items-center
+          sm:absolute sm:left-1/2 sm:top-1/2 sm:flex-none sm:-translate-x-1/2 sm:-translate-y-1/2
+          sm:w-[var(--synap-omnibar-field-w)]"
+        style={{
+          maxWidth: OMNIBAR.searchMaxWidth,
+          ['--synap-omnibar-field-w' as string]:
+            `min(${OMNIBAR.searchMaxWidth}px, calc(100% - ${OMNIBAR.sideReserve * 2}px))`,
+        }}
       >
         <Search className="absolute left-2.5 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
         <input
@@ -157,7 +191,7 @@ function OmnibarInner({ onOpenDrawer }: { onOpenDrawer: () => void }) {
 
       {/* Étendue de la recherche — n'apparaît que pendant une recherche, une seule ligne, deux positions */}
       {query && (
-        <div className="hidden sm:flex shrink-0 items-center rounded-lg border border-border bg-muted/50 p-0.5 text-[11px]">
+        <div className="hidden sm:flex ml-auto shrink-0 items-center rounded-lg border border-border bg-muted/50 p-0.5 text-[11px]">
           {([SCOPE_FOLDER, SCOPE_ALL] as const).map(value => (
             <button
               key={value}
@@ -179,24 +213,6 @@ function OmnibarInner({ onOpenDrawer }: { onOpenDrawer: () => void }) {
         </div>
       )}
 
-      <div className="ml-auto flex items-center gap-0.5">
-        <Link href="/dashboard" title={t('dashboard')} aria-label={t('dashboard')} data-omnibar-action="dashboard" className={ACTION}>
-          <LayoutGrid className={ICON} />
-        </Link>
-        <button
-          type="button"
-          onClick={() => openCompose(pathname, router.push)}
-          title={t('compose')}
-          aria-label={t('compose')}
-          data-omnibar-action="compose"
-          className={ACTION}
-        >
-          <PenSquare className={ICON} />
-        </button>
-        <Link href="/settings" title={t('settings')} aria-label={t('settings')} data-omnibar-action="settings" className={ACTION}>
-          <Settings className={ICON} />
-        </Link>
-      </div>
     </header>
   )
 }

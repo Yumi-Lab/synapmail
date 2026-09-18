@@ -72,11 +72,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-muted/30">
-      {/* Application header, full width, above the bar and the content */}
-      <Omnibar onOpenDrawer={() => setSidebarOpen(true)} />
-
-      <div className="relative flex flex-1 min-h-0">
+    // A ROW: the bar owns the full height, the header starts at its right edge and
+    // follows the width animation on its own (no offset to keep in sync, no jump).
+    <div className="relative flex h-screen overflow-hidden bg-muted/30">
       {/* Desktop sidebar — width animated from the single geometry source */}
       <aside
         className="hidden lg:flex shrink-0 flex-col overflow-hidden border-r border-border transition-[width]"
@@ -117,12 +115,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      <main className="flex-1 overflow-hidden flex flex-col min-w-0">
-        {/* Update banner */}
-        <UpdateBanner />
+      {/* Content column: the header sits above the content only, never above the bar */}
+      <div className="flex flex-1 min-w-0 flex-col">
+        <Omnibar onOpenDrawer={() => setSidebarOpen(true)} />
 
-        {children}
-      </main>
+        <main className="flex-1 overflow-hidden flex flex-col min-w-0">
+          {/* Update banner */}
+          <UpdateBanner />
+
+          {children}
+        </main>
       </div>
     </div>
   )
