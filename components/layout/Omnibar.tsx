@@ -4,8 +4,9 @@ import Link from 'next/link'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useTranslations } from 'next-intl'
-import { LayoutGrid, Menu, PenSquare, Search, Settings, X } from 'lucide-react'
+import { LayoutGrid, Menu, PenSquare, Search, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { UserMenu } from './UserMenu'
 import { MAIL_PATH, openCompose } from '@/lib/compose'
 import {
   SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT, SEARCH_PARAM,
@@ -148,9 +149,6 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
         >
           <PenSquare className={ICON} />
         </button>
-        <Link href="/settings" title={t('settings')} aria-label={t('settings')} data-omnibar-action="settings" className={ACTION}>
-          <Settings className={ICON} />
-        </Link>
       </div>
 
       {/* Centred on the header itself — not on what is left between the two groups,
@@ -206,9 +204,12 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
         )}
       </div>
 
+      {/* Right-hand group: the scope toggle only while searching, then the signed-in
+          user. One group, so the field's side reserve has a single thing to clear. */}
+      <div data-omnibar-right className="ml-auto flex shrink-0 items-center gap-2">
       {/* Étendue de la recherche — n'apparaît que pendant une recherche, une seule ligne, deux positions */}
       {query && (
-        <div className="hidden sm:flex ml-auto shrink-0 items-center rounded-lg border border-border bg-muted/50 p-0.5 text-[11px]">
+        <div className="hidden sm:flex shrink-0 items-center rounded-lg border border-border bg-muted/50 p-0.5 text-[11px]">
           {([SCOPE_FOLDER, SCOPE_ALL] as const).map(value => (
             <button
               key={value}
@@ -230,6 +231,8 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
         </div>
       )}
 
+        <UserMenu />
+      </div>
     </header>
   )
 }

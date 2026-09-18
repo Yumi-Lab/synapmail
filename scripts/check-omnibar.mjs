@@ -41,6 +41,13 @@ const MENU = '[data-omnibar-menu]'
 // absence, so re-introducing it fails here instead of only at the human gate.
 const EDGE_TOGGLE = '[data-sidebar-edge-toggle]'
 const action = name => `[data-omnibar-action="${name}"]`
+// Lot H2: the signed-in user sits at the far right of the header, and the one door to
+// the settings is inside its menu — the left group's "settings" action is gone.
+const USER_TRIGGER = '[data-user-menu-trigger]'
+const USER_MENU = '[data-user-menu]'
+const userItem = name => `[data-user-menu-item="${name}"]`
+// Two letters, like an account bubble — the rule lives in AccountAvatar.twoLetters.
+const USER_INITIALS_LEN = 2
 // Navigations and the compose window settle well under this; the bar's own
 // transitions are colour-only (no layout animation to wait out).
 const SETTLE_MS = 600
@@ -85,7 +92,10 @@ const probeBar = sel => {
     asideRight: ar && ar.height ? ar.right : null,
     field: box('[data-omnibar-search]'),
     menu: box('[data-omnibar-menu]'),
-    actions: ['dashboard', 'compose', 'settings'].map(n => box(`[data-omnibar-action="${n}"]`)),
+    actions: ['dashboard', 'compose'].map(n => box(`[data-omnibar-action="${n}"]`)),
+    user: box('[data-user-menu-trigger]'),
+    userInitials: bar.querySelector('[data-user-menu-initials]')?.textContent?.trim() ?? null,
+    strayActions: [...bar.querySelectorAll('[data-omnibar-action]')].map(el => el.dataset.omnibarAction),
     background: style.backgroundColor,
     horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     // Decorative animation is forbidden by GOAL.md: the header's state is static.
@@ -139,7 +149,7 @@ try {
     else {
       // Lot H1 orders the left group: menu, dashboard, compose, settings.
       const xs = [bar.menu, ...bar.actions].map(a => a.left)
-      if (xs.some((x, i) => i > 0 && x <= xs[i - 1])) failures.push(`${path}: the left group is not in order menu, dashboard, compose, settings (x = ${xs.map(v => v.toFixed(0)).join(', ')})`)
+      if (xs.some((x, i) => i > 0 && x <= xs[i - 1])) failures.push(`${path}: the left group is not in order menu, dashboard, compose (x = ${xs.map(v => v.toFixed(0)).join(', ')})`)
       if (bar.actions.at(-1).right > bar.field.left) failures.push(`${path}: the actions are not left of the search field (last action ends at ${bar.actions.at(-1).right.toFixed(2)}, field starts at ${bar.field.left.toFixed(2)})`)
       const offCentre = Math.abs(bar.field.centre - bar.centre)
       console.log(`  menu+actions x=${xs.map(v => v.toFixed(0)).join(',')} | field ${bar.field.left.toFixed(0)}..${bar.field.right.toFixed(0)} (w=${bar.field.width.toFixed(0)}), off-centre ${offCentre.toFixed(2)}px`)
@@ -148,8 +158,17 @@ try {
     }
     if (bar.horizontalOverflow) failures.push(`${path}: horizontal scrollbar at ${VIEWPORT.width}px`)
     if (bar.animated) failures.push(`${path}: an element of the header is running an animation (state must be static)`)
-    const missing = await page.evaluate(sels => sels.filter(s => !document.querySelector(s)), [SEARCH, action('dashboard'), action('compose'), action('settings')])
+    const missing = await page.evaluate(sels => sels.filter(s => !document.querySelector(s)), [SEARCH, action('dashboard'), action('compose'), USER_TRIGGER])
     if (missing.length) failures.push(`${path}: missing from the header: ${missing.join(', ')}`)
+    // One door to the settings (lot H2): the left group no longer carries the action.
+    if (bar.strayActions.includes('settings')) failures.push(`${path}: the header still carries a "settings" action on the left`)
+    // The user bubble is the RIGHTMOST thing in the header, past the field, with two letters.
+    if (!bar.user) failures.push(`${path}: no user bubble in the header`)
+    else {
+      console.log(`  user "${bar.userInitials}" at x=${bar.user.left.toFixed(0)}..${bar.user.right.toFixed(0)} (header ends at ${bar.right.toFixed(0)})`)
+      if (bar.field && bar.user.left < bar.field.right) failures.push(`${path}: the user bubble (x=${bar.user.left.toFixed(2)}) is not right of the search field (${bar.field.right.toFixed(2)})`)
+      if ((bar.userInitials ?? '').length !== USER_INITIALS_LEN) failures.push(`${path}: the user bubble reads "${bar.userInitials}", expected ${USER_INITIALS_LEN} letters`)
+    }
   }
 
   // --- The header follows the bar's right edge in BOTH collapse states ---
@@ -226,6 +245,11 @@ try {
   console.log(`sidebar rows: ${sidebarRows.join(', ')}`)
   if (!sidebarRows.length) { console.error('HARNESS: no sidebar row measured'); process.exit(2) }
   if (sidebarRows.includes('dashboard')) failures.push('the sidebar still carries a "dashboard" row')
+  // Lot H2 empties the bar's footer: theme and settings moved into the user menu.
+  if (sidebarRows.includes('settings')) failures.push('the sidebar still carries a "settings" row')
+  const themeSlots = await page.evaluate(() => document.querySelectorAll('[data-sidebar] [data-sidebar-slot="theme-toggle"]').length)
+  console.log(`sidebar footer: theme-toggle slots=${themeSlots}`)
+  if (themeSlots) failures.push(`${themeSlots} theme-toggle slot(s) still in the sidebar — lot H2 moves the theme into the user menu`)
 
   // --- Cmd/Ctrl+K focuses the field, from anywhere on the page ---
   await page.evaluate(() => document.body.click())
@@ -263,11 +287,63 @@ try {
   console.log(`click dashboard -> ${url}`)
   if (!url.startsWith('/dashboard')) failures.push(`clicking the dashboard action landed on ${url}`)
 
-  await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}), page.click(action('settings'))])
+  // --- Lot H2: the user menu is the one door to the settings, the theme and the exit ---
+  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await page.waitForSelector(USER_TRIGGER, { timeout: 20000 })
+  await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  // Same-run reference: the menu must be CLOSED before the click, otherwise "it is open
+  // after the click" would pass on a menu that was never opened by anything.
+  const menuOpen = () => page.evaluate(s2 => !!document.querySelector(s2), USER_MENU)
+  const beforeOpen = await menuOpen()
+  if (beforeOpen) { console.error('HARNESS: the user menu was already open before the click — nothing measured'); process.exit(2) }
+  await page.click(USER_TRIGGER)
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const afterOpen = await menuOpen()
+  const entries = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-user-menu] [data-user-menu-item]')].map(el => el.dataset.userMenuItem))
+  const identity = await page.evaluate(s2 => {
+    const box = document.querySelector(s2)
+    return box ? box.textContent.trim().slice(0, 120) : null
+  }, USER_MENU)
+  console.log(`user menu: closed before click=${!beforeOpen}, open after click=${afterOpen}, entries=${entries.join(', ') || 'none'}`)
+  if (!afterOpen) failures.push('clicking the user bubble does not open the menu')
+  for (const want of ['settings', 'theme', 'signout']) {
+    if (!entries.includes(want)) failures.push(`the user menu has no "${want}" entry (found: ${entries.join(', ') || 'none'})`)
+  }
+  // The header of the menu carries the signed-in identity: the address is enough to
+  // prove it is the real user and not a placeholder.
+  if (!identity || !identity.includes('@')) failures.push(`the user menu shows no e-mail address (read: ${identity ?? 'nothing'})`)
+
+  // Light-dismiss: ONE click outside closes the menu AND reaches its target. Clicking a
+  // folder row must both close the menu and open that folder — a veil that swallowed the
+  // click would close the menu while leaving the folder untouched.
+  const folderBefore = new URL(page.url()).search
+  const folderTarget = await page.evaluate(() => {
+    const here = new URL(location.href).searchParams.get('folder')
+    const row = [...document.querySelectorAll('[data-sidebar] [data-sidebar-row]')]
+      .find(el => el.dataset.sidebarRow && el.dataset.sidebarRow !== here && el.getBoundingClientRect().height > 0)
+    if (!row) return null
+    const r = row.getBoundingClientRect()
+    return { key: row.dataset.sidebarRow, x: r.left + r.width / 2, y: r.top + r.height / 2 }
+  })
+  if (!folderTarget) { console.error('HARNESS: no other folder row to click through to — light-dismiss not measured'); process.exit(2) }
+  await page.mouse.click(folderTarget.x, folderTarget.y)
+  await new Promise(r => setTimeout(r, SETTLE_MS * 2))
+  const dismissed = !(await menuOpen())
+  const folderAfter = new URL(page.url()).search
+  console.log(`light-dismiss: one click on folder "${folderTarget.key}" -> menu closed=${dismissed}, url ${folderBefore || '(none)'} -> ${folderAfter || '(none)'}`)
+  if (!dismissed) failures.push('one click outside does not close the user menu')
+  if (folderAfter === folderBefore) failures.push(`the click that closed the menu did not reach the folder row "${folderTarget.key}" — the URL never moved off ${folderBefore || '(none)'}`)
+
+  // Settings entry: the ONLY remaining path to /settings from the header.
+  await page.click(USER_TRIGGER)
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}), page.click(userItem('settings'))])
   await new Promise(r => setTimeout(r, SETTLE_MS))
   url = new URL(page.url()).pathname
-  console.log(`click settings -> ${url}`)
-  if (!url.startsWith('/settings')) failures.push(`clicking the settings action landed on ${url}`)
+  console.log(`click user menu -> settings -> ${url}`)
+  if (!url.startsWith('/settings')) failures.push(`the user menu's settings entry landed on ${url}`)
 
   // Compose has two branches in lib/compose.ts: on /mail it dispatches the event,
   // elsewhere it navigates to /mail?compose=1. Both are clicked, from a FRESHLY
@@ -326,6 +402,27 @@ try {
   const drawerClosed = await page.evaluate(() => !document.querySelector('[data-sidebar-drawer]'))
   console.log(`mobile: floating toggles in the drawer=${drawerToggles}, one click on the veil closes it: ${drawerClosed}`)
   if (!drawerClosed) failures.push('mobile: one click on the veil does not close the drawer')
+
+  // --- Sign out, LAST: it invalidates the session every check above needs ---
+  await page.setViewport(VIEWPORT)
+  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await page.waitForSelector(USER_TRIGGER, { timeout: 20000 })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const pathBeforeSignOut = new URL(page.url()).pathname
+  if (pathBeforeSignOut.startsWith('/login')) { console.error('HARNESS: already signed out before clicking sign out — nothing measured'); process.exit(2) }
+  await page.click(USER_TRIGGER)
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}), page.click(userItem('signout'))])
+  await new Promise(r => setTimeout(r, SETTLE_MS * 2))
+  const afterSignOut = new URL(page.url()).pathname
+  console.log(`sign out: ${pathBeforeSignOut} -> ${afterSignOut}`)
+  if (!afterSignOut.startsWith('/login')) failures.push(`signing out landed on ${afterSignOut}, not the login page`)
+  // And the session really is gone: a fresh visit to the mailbox must not render it.
+  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const afterRevisit = new URL(page.url()).pathname
+  console.log(`after signing out, visiting /mail -> ${afterRevisit}`)
+  if (afterRevisit.startsWith('/mail')) failures.push('after signing out, /mail still renders — the session was not cleared')
 } finally {
   await browser.close()
 }
