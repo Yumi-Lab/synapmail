@@ -6,7 +6,8 @@ import { query } from './db'
 import { upsertContact } from './contacts'
 import { DEFAULT_FLAG_KEY, FLAG_BIT_KEYWORDS, FLAG_IMAP_FLAG, flagFromKeywords, keywordsForFlag } from './flags'
 import type { MailListFilter } from './flags'
-import { SEARCH_FIELDS, SEARCH_RESULT_LIMIT } from './search'
+import { SEARCH_FIELDS, SEARCH_RESULT_LIMIT, orderFoldersForSearch } from './search'
+import type { FolderRank } from './search'
 import type { Message, Folder, AuthResults } from '@/types/email'
 
 /**
@@ -605,6 +606,115 @@ const SEARCH_CONNECTIONS = 4
 
 /** Ce qu'une recherche rapporte : les messages RENDUS et le nombre de correspondances. */
 export type SearchOutcome = { messages: Message[]; total: number }
+
+/**
+ * Les dossiers d'un compte, DANS L'ORDRE où une recherche « tous les dossiers »
+ * doit les ouvrir, et sans les dossiers vides.
+ *
+ * Deux sources, un seul aller-retour chacune :
+ *  - `LIST` avec `statusQuery` (extension LIST-STATUS, annoncée par IONOS) donne
+ *    le nombre de messages de CHAQUE dossier en une commande — mesuré sur la plus
+ *    grosse boîte de test (101 dossiers) : 222 ms, contre 6 592 ms pour 101
+ *    `STATUS` envoyés l'un après l'autre. Un serveur sans LIST-STATUS renvoie
+ *    simplement des dossiers sans compte : ils restent dans la liste (seul un zéro
+ *    MESURÉ écarte un dossier), la recherche est alors seulement moins bien triée.
+ *  - le cache local (`messages_cache`) donne la date du message le plus récent
+ *    connu par dossier, ce qui fait remonter les dossiers vivants.
+ */
+export async function listFoldersRanked(account: AccountConfig): Promise<string[]> {
+  const client = await createClient(account)
+  let entries: FolderRank[]
+  try {
+    const list = await client.list({ statusQuery: { messages: true } })
+    entries = list
+      .filter(f => !f.flags?.has('\\Noselect'))
+      .map(f => ({
+        path: f.path,
+        specialUse: (f as unknown as Record<string, unknown>).specialUse as string | undefined ?? null,
+        messages: f.status?.messages ?? null,
+      }))
+  } finally {
+    await client.logout()
+  }
+
+  const freshness = new Map<string, string>()
+  try {
+    const rows = await query<{ folder: string; last_date: string | null }>(
+      `SELECT folder, MAX(date) AS last_date FROM messages_cache WHERE account_id = $1 GROUP BY folder`,
+      [account.id]
+    )
+    for (const r of rows) if (r.last_date) freshness.set(r.folder, new Date(r.last_date).toISOString())
+  } catch {
+    // Le cache n'est qu'un CLASSEMENT : son absence dégrade l'ordre, jamais le résultat.
+  }
+
+  return orderFoldersForSearch(entries.map(e => ({ ...e, lastKnownDate: freshness.get(e.path) ?? null })))
+}
+
+/** Ce qu'un dossier vient de rapporter, dès qu'il l'a rapporté. */
+export type SearchChunk = SearchOutcome & { folder: string; searched: number; folders: number }
+
+/**
+ * Cherche dossier par dossier et RESTITUE AU FIL DE L'EAU : la recherche « tous
+ * les dossiers » devient utile dès le premier dossier rendu, au lieu d'attendre
+ * la couverture complète (mesuré : ~30 s pour 101 dossiers, à ~300 ms l'un).
+ *
+ * `signal` coupe proprement : les dossiers restants ne sont pas ouverts et les
+ * connexions sont fermées par le `finally` de chaque ouvrier.
+ */
+export async function* searchMessagesByFolder(
+  account: AccountConfig,
+  folders: string[],
+  terms: string[],
+  signal?: AbortSignal
+): AsyncGenerator<SearchChunk> {
+  if (terms.length === 0 || folders.length === 0) return
+  const queue = [...folders]
+  // Un canal minimal : les ouvriers déposent, le générateur retire. Pas de
+  // bibliothèque pour trois lignes, et l'ordre de restitution est celui des
+  // RÉPONSES, qui est précisément ce qu'on veut afficher.
+  const ready: SearchChunk[] = []
+  let wake: (() => void) | null = null
+  const deliver = (chunk: SearchChunk) => { ready.push(chunk); wake?.(); wake = null }
+  let searched = 0
+
+  const worker = async () => {
+    const client = await createClient(account)
+    try {
+      for (let folder = queue.shift(); folder !== undefined; folder = queue.shift()) {
+        if (signal?.aborted) return
+        try {
+          const outcome = await searchOpenFolder(client, folder, terms)
+          searched += 1
+          deliver({ ...outcome, folder, searched, folders: folders.length })
+        } catch {
+          // Un dossier illisible ne fait pas échouer la recherche entière ; il
+          // compte quand même comme couvert, sinon la progression n'arrive jamais à son terme.
+          searched += 1
+          deliver({ messages: [], total: 0, folder, searched, folders: folders.length })
+        }
+      }
+    } finally {
+      await client.logout().catch(() => {})
+    }
+  }
+
+  const running = Array.from({ length: Math.min(SEARCH_CONNECTIONS, folders.length) }, worker)
+  const all = Promise.allSettled(running)
+  let done = false
+  all.then(() => { done = true; wake?.(); wake = null })
+
+  while (!done || ready.length > 0) {
+    if (ready.length === 0) { await new Promise<void>(resolve => { wake = resolve }); continue }
+    yield ready.shift() as SearchChunk
+  }
+  // Propage une panne qui aurait touché TOUS les ouvriers (identifiants refusés,
+  // serveur injoignable) : sans cela la recherche se terminerait « 0 résultat ».
+  const outcomes = await all
+  if (outcomes.length > 0 && outcomes.every(o => o.status === 'rejected')) {
+    throw (outcomes[0] as PromiseRejectedResult).reason
+  }
+}
 
 /**
  * Cherche dans PLUSIEURS dossiers en réutilisant les connexions : ouvrir une

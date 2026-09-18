@@ -165,3 +165,40 @@ export function orderFoldersForSearch(folders: FolderRank[]): string[] {
       a.path.localeCompare(b.path))
     .map(f => f.path)
 }
+
+/**
+ * Paramètre par lequel le client demande la restitution PROGRESSIVE : la réponse
+ * est alors une suite de lignes JSON (NDJSON), une par dossier couvert, au lieu
+ * d'un seul objet livré à la fin. Le contrat de l'objet final est identique, ce
+ * qui laisse la portée « ce dossier » et tout appel machine inchangés.
+ */
+export const STREAM_PARAM = 'stream'
+
+/** Une ligne de la réponse progressive : un dossier couvert, ce qu'il rapporte. */
+export type SearchStreamChunk<TMessage> = {
+  messages: TMessage[]
+  total: number
+  folder: string
+  /** Dossiers couverts jusqu'ici / dossiers à couvrir — « 312 sur 1 226 ». */
+  searched: number
+  folders: number
+}
+
+/**
+ * Découpe un flux NDJSON en objets, en gardant la ligne incomplète d'un morceau
+ * pour le suivant. Fonction PURE (elle ne lit aucun flux) : on lui passe le texte
+ * reçu et le reste précédent, elle rend les objets complets et le nouveau reste.
+ * Auto-contrôle : `scripts/check-search-order.mjs`.
+ */
+export function parseNdjsonChunk<T>(pending: string, received: string): { items: T[]; pending: string } {
+  const lines = (pending + received).split('\n')
+  // La dernière tranche n'est suivie d'aucun saut de ligne : elle peut être coupée.
+  const rest = lines.pop() ?? ''
+  const items: T[] = []
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    try { items.push(JSON.parse(trimmed) as T) } catch { /* ligne tronquée par une coupure : ignorée */ }
+  }
+  return { items, pending: rest }
+}

@@ -17,7 +17,7 @@ registerHooks({
     return next(spec, ctx)
   },
 })
-const { orderFoldersForSearch } = await import(new URL('../lib/search.ts', import.meta.url).href)
+const { orderFoldersForSearch, parseNdjsonChunk } = await import(new URL('../lib/search.ts', import.meta.url).href)
 
 let failed = 0
 const check = (label, actual, expected) => {
@@ -89,6 +89,30 @@ check('the input array is not mutated',
   ['b', 'a'])
 
 check('no folder at all yields no folder', orderFoldersForSearch([]), [])
+
+console.log('parseNdjsonChunk')
+
+check('a whole line yields its object and leaves nothing pending',
+  parseNdjsonChunk('', '{"folder":"INBOX","total":3}\n'),
+  { items: [{ folder: 'INBOX', total: 3 }], pending: '' })
+
+check('a truncated line is held back until its end arrives',
+  parseNdjsonChunk('', '{"folder":"INBOX"}\n{"fol'),
+  { items: [{ folder: 'INBOX' }], pending: '{"fol' })
+
+check('the held-back start is joined to the next chunk',
+  parseNdjsonChunk('{"fol', 'der":"Sent"}\n'),
+  { items: [{ folder: 'Sent' }], pending: '' })
+
+check('several lines in one chunk come out in order',
+  parseNdjsonChunk('', '{"n":1}\n{"n":2}\n{"n":3}\n').items,
+  [{ n: 1 }, { n: 2 }, { n: 3 }])
+
+check('blank lines are skipped, not turned into objects',
+  parseNdjsonChunk('', '\n\n{"n":1}\n').items, [{ n: 1 }])
+
+check('a line cut mid-stream is dropped rather than throwing',
+  parseNdjsonChunk('', '{"broken\n{"n":1}\n').items, [{ n: 1 }])
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1) }
 console.log('\ncheck-search-order: OK')
