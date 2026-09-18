@@ -72,6 +72,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   clair/sombre (`prefers-reduced-motion` respecté).
 
 ### Fixed
+- **Sous-dossiers d'un dossier spécial affichés comme des doublons** (`app/api/folders/route.ts`, nouveau
+  `lib/specialFolders.ts`) : la détection testait le mot « spam », « corbeille »… sur tout le CHEMIN, si bien que
+  « Spam/AMELI », « Spam/Crypto » apparaissaient tous sous le nom « Spam » et « Corbeille/CONVENTIONS » comme une seconde
+  « Corbeille ». Le drapeau SPECIAL-USE du serveur fait désormais foi ; à défaut, seul le NOM d'un dossier de premier niveau
+  (ou directement sous INBOX) est comparé. Auto-contrôle : `node --experimental-strip-types scripts/check-special-folders.mjs`.
 - **Les jetons de thème acceptent enfin l'opacité** (`tailwind.config.ts`) : les couleurs du thème étaient déclarées
   `hsl(var(--x))`, une forme qui ignore silencieusement le suffixe d'opacité de Tailwind — `bg-foreground/[0.06]`
   rendait donc un aplat opaque. Elles passent par `color-mix(in oklab, …)`, si bien que toute la famille `/<alpha>`

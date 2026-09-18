@@ -3,39 +3,9 @@ import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { listFolders } from '@/lib/imap'
+import { detectSpecials } from '@/lib/specialFolders'
 
 export const dynamic = 'force-dynamic'
-
-type SpecialType = 'inbox' | 'sent' | 'drafts' | 'spam' | 'trash' | null
-
-// RFC 6154 SPECIAL-USE attribute → special type mapping
-const SPECIAL_USE_MAP: Record<string, SpecialType> = {
-  '\\Inbox':   'inbox',
-  '\\Sent':    'sent',
-  '\\Drafts':  'drafts',
-  '\\Junk':    'spam',
-  '\\Trash':   'trash',
-  '\\Archive': null,
-  '\\Flagged': null,
-  '\\All':     null,
-}
-
-function detectSpecial(path: string, name: string, specialUse?: string): SpecialType {
-  // 1. Prefer RFC 6154 SPECIAL-USE flag — language-independent
-  if (specialUse && Object.prototype.hasOwnProperty.call(SPECIAL_USE_MAP, specialUse)) {
-    return SPECIAL_USE_MAP[specialUse]
-  }
-
-  // 2. Word-boundary regex on path/name — avoids false positives like "Sentiments"
-  const p = path.toLowerCase()
-  const n = name.toLowerCase()
-  if (p === 'inbox' || n === 'inbox') return 'inbox'
-  if (/\b(sent|envoy[eé]s?)\b/.test(p) || /\b(sent|envoy[eé]s?)\b/.test(n)) return 'sent'
-  if (/\b(drafts?|brouillons?)\b/.test(p) || /\b(drafts?|brouillons?)\b/.test(n)) return 'drafts'
-  if (/\b(junk|spam|pourriel|ind[eé]sirables?)\b/.test(p) || /\b(junk|spam|pourriel|ind[eé]sirables?)\b/.test(n)) return 'spam'
-  if (/\b(deleted|trash|corbeille|supprim[eé]s?)\b/.test(p) || /\b(deleted|trash|corbeille|supprim[eé]s?)\b/.test(n)) return 'trash'
-  return null
-}
 
 export async function GET(req: Request) {
   const authCtx = await authenticate(req)
@@ -96,12 +66,13 @@ export async function GET(req: Request) {
       return SYSTEM_KEYWORDS.some(kw => p.includes(kw) || n.includes(kw))
     }
 
+    const specials = detectSpecials(folders)
     const normalized = folders
       .filter(f => !isSystemFolder(f.path, f.name))
       .map(f => ({
         name: f.name,
         path: f.path,
-        special: detectSpecial(f.path, f.name, f.specialUse),
+        special: specials.get(f.path) ?? null,
       }))
 
     // Sort: special folders first (in order), then alphabetical
