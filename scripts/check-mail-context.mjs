@@ -21,6 +21,8 @@ import puppeteer from 'puppeteer-core'
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const VIEWPORT = { width: 1440, height: 900 }
 const SETTLE_MS = 400
+// Opening a message fetches its body over IMAP: orders of magnitude slower than a re-render.
+const OPEN_MS = 20000
 // Enough rows to right-click inside a 2-row selection AND outside it.
 const MIN_ROWS = 4
 
@@ -159,6 +161,26 @@ try {
   console.log(`one click outside: menu=${afterOutsideClick} (expected false) count=${countAfter}`)
   if (afterOutsideClick) fail('one click outside did not close the menu')
   if (countAfter === outside) fail(`the click that closed the menu was swallowed: selection still holds ${countAfter}`)
+
+  await clearSelection()
+
+  // --- 4b. A PLAIN click outside closes the menu, replaces the selection and opens ---
+  // The right-click of point 3 leaves a 1-row selection behind. A bare click on
+  // another row must behave like Finder: empty that selection and open the row,
+  // not add to it — otherwise the menu makes the list unopenable until Escape.
+  await rightClickRow(3)
+  const beforePlain = await readCount()
+  if (beforePlain !== 1) { console.error(`HARNESS: right-click left ${beforePlain} selected, expected 1`); process.exit(2) }
+  await clickRow(0)
+  const plainCount = await readCount()
+  const plainMenu = await menuOpen()
+  // Waited for, not polled: fetching the body is an IMAP round-trip, far longer
+  // than SETTLE_MS, so a bare `$()` here would report a working open as a failure.
+  const opened = await page.waitForSelector('[data-reading-archive]', { timeout: OPEN_MS }).then(() => true, () => false)
+  console.log(`plain click after right-click: menu=${plainMenu} (expected false) count=${plainCount} (expected 0) opened=${opened} (expected true)`)
+  if (plainMenu) fail('a plain click did not close the context menu')
+  if (plainCount > 1) fail(`a plain click accumulated instead of replacing: selection holds ${plainCount}, expected 0 or 1`)
+  if (!opened) fail('a plain click after a right-click did not open the message')
 
   await clearSelection()
 

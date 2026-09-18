@@ -552,9 +552,10 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
 
   /**
    * Clic sur une ligne, façon explorateur : Cmd/Ctrl bascule la ligne, Maj
-   * étend la plage depuis la dernière ligne cliquée, un clic simple ouvre —
-   * sauf si une sélection est déjà en cours, où il la fait basculer (le
-   * comportement d'origine, qui reste le chemin tactile).
+   * étend la plage depuis la dernière ligne cliquée, un clic simple VIDE la
+   * sélection et ouvre cette ligne — même quand une sélection est en cours
+   * (sinon un clic droit, qui sélectionne, rendrait la liste inouvrable).
+   * La case au survol de la bulle (`toggleUid`) reste le chemin qui accumule.
    */
   const handleRowClick = (thread: ThreadGroup, e: React.MouseEvent) => {
     const uid = thread.lastMessage.uid
@@ -567,15 +568,14 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       selectRangeTo(uid)
       return
     }
-    rangeAnchorUid.current = uid
+    // L'ancre est posée APRÈS l'ouverture : `handleSelectThread` vide la
+    // sélection, ce qui efface l'ancre — un Maj-clic ensuite doit partir d'ici.
     handleSelectThread(thread)
+    rangeAnchorUid.current = uid
   }
 
   const handleSelectThread = (thread: ThreadGroup) => {
-    if (checkedUids.size > 0) {
-      toggleChecked(thread.lastMessage.uid)
-      return
-    }
+    if (checkedUids.size > 0) clearSelection()
     setSelectedThreadKey(thread.key)
     thread.messages.forEach(msg => {
       if (!msg.isRead && !readUids.has(msg.uid)) {
