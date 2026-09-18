@@ -725,6 +725,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     return (
       <div
         key={thread.key}
+        data-mail-row={msg.uid}
         draggable={perms.canOrganize}
         onDragStart={e => handleDragStart(e, thread)}
         onDragEnd={handleDragEnd}

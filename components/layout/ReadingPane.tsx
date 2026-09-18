@@ -1005,6 +1005,7 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onDelete,
               variant="ghost"
               size="sm"
               className="h-8 w-8 p-0"
+              data-reading-archive
               title={t('archiveAction')}
               disabled={!can.archive}
               onClick={() => { run('archive'); onDelete?.() }}
