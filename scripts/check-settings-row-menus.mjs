@@ -197,6 +197,8 @@ let acceptNextConfirm = false
 let page
 /** Every row this run created, so the `finally` can remove each one. `{ table, id }`. */
 const seeded = []
+/** Set when the run dies on a harness error, so the exit can wait for the cleanup below. */
+let harnessError = null
 const db = new pg.Client({ connectionString: DB_URL })
 
 try {
@@ -358,8 +360,11 @@ try {
     check(stillThere, `${screen.key}: the row still exists — the bench destroyed nothing`)
   }
 } catch (e) {
+  // No process.exit() here: it ends the process at once, before a `finally` that has not
+  // started can run, which would leave every row seeded above in the database. The exit
+  // is deferred until after the cleanup.
   console.error(`HARNESS: ${e.stack}`)
-  process.exit(2)
+  harnessError = e
 } finally {
   // Every row this run created goes, whatever happened above. Straight in the database:
   // the page's DELETE path is intercepted on purpose, and the api-keys route only marks a
@@ -382,6 +387,9 @@ try {
   const leaked = left.filter(t => !t.endsWith('=0'))
   if (leaked.length) fail(`the bench left rows behind — ${leaked.join(' ')}`)
 }
+
+// Now that the cleanup has run, a harness error can end the run.
+if (harnessError) process.exit(2)
 
 console.log(`intercepted DELETE requests (none reached the server): ${JSON.stringify(blockedDeletes)}`)
 console.log(failures.length ? `check-settings-row-menus: ${failures.length} FAIL` : 'check-settings-row-menus: OK')
