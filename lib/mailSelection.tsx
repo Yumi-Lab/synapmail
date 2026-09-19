@@ -16,6 +16,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
 import { Archive, Flag, Forward, Mail, MoveRight, RefreshCw, Reply, ReplyAll, Trash2, MailX } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { groupByOrigin, sameOrigin, type MessageOrigin } from './mailOrigin'
 
 /** Couleur de drapeau (lot M2) — `null` retire le drapeau. */
 export type MailFlagValue = string | null
@@ -48,12 +49,17 @@ export type MailActionName = keyof MailActions
 
 /** Ce que la liste publie à chaque rendu. */
 export interface MailSelectionState {
+  /** Boîte et dossier AFFICHÉS — le contexte de la liste, pas l'origine des cibles. */
   accountId: string | null
   folder: string | null
-  /** uids sélectionnés (sélection explorateur). Vide = la cible est le message ouvert. */
-  selectedUids: string[]
-  /** uid du message ouvert dans le volet de lecture, s'il y en a un. */
-  openUid: string | null
+  /**
+   * Lignes sélectionnées, chacune avec SON origine : une recherche « tous les
+   * dossiers » en mêle plusieurs, et un uid ne désigne un message que dans son
+   * dossier. Vide = la cible est le message ouvert.
+   */
+  selected: MessageOrigin[]
+  /** Message ouvert dans le volet de lecture, avec son origine, s'il y en a un. */
+  open: MessageOrigin | null
   /** Permissions de partage du compte actif (voir lib/accountAccess.ts côté serveur). */
   canSend: boolean
   canDelete: boolean
@@ -68,8 +74,8 @@ export type MailCapabilities = Record<MailActionName, boolean>
 const EMPTY_STATE: MailSelectionState = {
   accountId: null,
   folder: null,
-  selectedUids: [],
-  openUid: null,
+  selected: [],
+  open: null,
   canSend: false,
   canDelete: false,
   canOrganize: false,
@@ -82,19 +88,39 @@ const EMPTY_STATE: MailSelectionState = {
  * sinon le message ouvert. Une barre d'outils affiche ce compte ; les capacités
  * en dérivent.
  */
+export function targetOrigins(state: MailSelectionState): MessageOrigin[] {
+  if (state.selected.length) return state.selected
+  return state.open ? [state.open] : []
+}
+
 export function targetCount(state: MailSelectionState): number {
-  return state.selectedUids.length || (state.openUid ? 1 : 0)
+  return targetOrigins(state).length
+}
+
+/**
+ * Les cibles regroupées par origine : UNE requête groupée par (compte, dossier).
+ * Toute action de masse passe par là — jamais par le dossier affiché.
+ */
+export function targetGroups(state: MailSelectionState) {
+  return groupByOrigin(targetOrigins(state))
 }
 
 export function deriveCapabilities(state: MailSelectionState): MailCapabilities {
   const n = targetCount(state)
   const organize = n > 0 && state.canOrganize
+  // Un transfert multiple relit les sources dans UN dossier d'UNE boîte
+  // (`lib/forward.ts`) : une sélection qui en mêle plusieurs n'a pas d'origine
+  // unique à annoncer, et la transférer joindrait les messages portant les
+  // mêmes uid dans le mauvais dossier. Le bouton se désactive — c'est la
+  // réponse honnête, et elle ne coûte aucune seconde liste de règles.
+  // ponytail: refus tant qu'un besoin mesuré n'impose pas un envoi par origine.
+  const oneOrigin = targetGroups(state).length <= 1
   return {
     refresh: !!state.accountId,
     // Répondre vise UN message : sur une sélection multiple, l'action n'a pas de sens.
     reply: n === 1 && state.canSend,
     replyAll: n === 1 && state.canSend,
-    forward: n > 0 && state.canSend,
+    forward: n > 0 && state.canSend && oneOrigin,
     archive: organize && state.hasArchive,
     remove: n > 0 && state.canDelete,
     spam: organize && state.hasSpam,
@@ -193,18 +219,22 @@ export function MailSelectionProvider({ children }: { children: React.ReactNode 
   return <MailSelectionContext.Provider value={value}>{children}</MailSelectionContext.Provider>
 }
 
+function sameOpen(a: MessageOrigin | null, b: MessageOrigin | null): boolean {
+  return a === b || (!!a && !!b && sameOrigin(a, b))
+}
+
 function sameState(a: MailSelectionState, b: MailSelectionState): boolean {
   return (
     a.accountId === b.accountId &&
     a.folder === b.folder &&
-    a.openUid === b.openUid &&
     a.canSend === b.canSend &&
     a.canDelete === b.canDelete &&
     a.canOrganize === b.canOrganize &&
     a.hasArchive === b.hasArchive &&
     a.hasSpam === b.hasSpam &&
-    a.selectedUids.length === b.selectedUids.length &&
-    a.selectedUids.every((uid, i) => uid === b.selectedUids[i])
+    sameOpen(a.open, b.open) &&
+    a.selected.length === b.selected.length &&
+    a.selected.every((origin, i) => sameOrigin(origin, b.selected[i]))
   )
 }
 

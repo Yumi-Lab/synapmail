@@ -8,6 +8,7 @@ import type { Message } from '@/types/email'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { parseDate } from '@/lib/dates'
+import { messageHref, originKey, originOfMessage } from '@/lib/mailOrigin'
 import { ThinScroll } from './ThinScroll'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -92,7 +93,7 @@ interface MessageCardProps {
 
 function MessageCard({ uid, accountId, folder, isExpanded, isLast, onToggle, onReply, onForward, onDelete, previewMsg }: MessageCardProps) {
   const swrKey = isExpanded
-    ? `/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`
+    ? messageHref({ accountId, folder, uid })
     : null
 
   const { data: fullMessage, isLoading } = useSWR<Message>(swrKey, fetcher)
@@ -100,7 +101,7 @@ function MessageCard({ uid, accountId, folder, isExpanded, isLast, onToggle, onR
   // Mark as read when expanded
   useEffect(() => {
     if (!isExpanded || !fullMessage || fullMessage.isRead) return
-    fetch(`/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`, {
+    fetch(messageHref({ accountId, folder, uid }), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ isRead: true }),
@@ -183,7 +184,7 @@ function MessageCard({ uid, accountId, folder, isExpanded, isLast, onToggle, onR
                 {fullMessage!.attachments!.map(att => (
                   <a
                     key={att.id}
-                    href={`/api/messages/${uid}/attachment/${att.id}?account=${accountId}&folder=${encodeURIComponent(folder)}`}
+                    href={messageHref({ accountId, folder, uid }, `/attachment/${encodeURIComponent(att.id)}`)}
                     download={att.filename}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-background hover:bg-muted/50 transition-colors text-xs"
                   >
@@ -296,12 +297,14 @@ export function ThreadPane({ threadMessages, subject, folder, accountId, onReply
 
       {/* Messages */}
       <ThinScroll className="flex-1" viewportClassName="p-4 space-y-3">
+        {/* Chaque carte lit SON message dans SON dossier : un fil peut mêler
+            réception et envoyés, où le même uid désigne deux messages. */}
         {threadMessages.map((msg, idx) => (
           <MessageCard
-            key={msg.uid}
+            key={originKey(originOfMessage(msg))}
             uid={msg.uid}
-            accountId={accountId}
-            folder={folder}
+            accountId={msg.accountId || accountId}
+            folder={msg.folder || folder}
             isExpanded={expandedUids.has(msg.uid)}
             isLast={idx === threadMessages.length - 1}
             onToggle={() => toggleCard(msg.uid)}

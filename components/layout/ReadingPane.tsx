@@ -14,6 +14,7 @@ import { isInlinePgpMessage, extractInlinePgpMessage } from '@/lib/pgp'
 import { PgpDecryptPrompt } from '@/components/mail/PgpDecryptPrompt'
 import type { EmailAccount } from '@/types/account'
 import { useMailSelection } from '@/lib/mailSelection'
+import { messageHref, originOfMessage } from '@/lib/mailOrigin'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { FlagPicker } from '@/components/mail/FlagPicker'
 import { ThinScroll } from './ThinScroll'
@@ -51,7 +52,7 @@ function AttachmentSection({
 
   const attUrl = useCallback(
     (id: string, inline = false) =>
-      `/api/messages/${uid}/attachment/${id}?account=${accountId}&folder=${encodeURIComponent(folder)}${inline ? '&inline=true' : ''}`,
+      messageHref({ accountId, folder, uid }, `/attachment/${encodeURIComponent(id)}`) + (inline ? '&inline=true' : ''),
     [uid, accountId, folder]
   )
 
@@ -815,9 +816,7 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
     }
   }, [flagMenu])
 
-  const swrKey = uid && accountId
-    ? `/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`
-    : null
+  const swrKey = uid && accountId ? messageHref({ accountId, folder, uid }) : null
 
   const { data: message, isLoading, error, mutate } = useSWR<Message>(swrKey, fetcher)
 
@@ -838,8 +837,10 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
     if (message) {
       setFlagKey(undefined)
       onMessageLoaded?.(message)
-      if (!message.isRead && accountId && perms.canOrganize) {
-        fetch(`/api/messages/${uid}?account=${accountId}&folder=${encodeURIComponent(folder)}`, {
+      // Marquer « lu » vise le message CHARGÉ, par son origine : c'est celle-là
+      // qui est juste, même si la liste a changé de dossier entre-temps.
+      if (!message.isRead && perms.canOrganize) {
+        fetch(messageHref(originOfMessage(message)), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ isRead: true }),
