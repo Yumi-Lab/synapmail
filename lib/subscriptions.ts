@@ -146,21 +146,29 @@ export function headerValue(fields: Map<string, string[]>, name: string): string
 export interface UnsubscribeUris {
   https: string[]
   mailto: string[]
+  /**
+   * Plain-http pages. KEPT so the sender still appears in the list — dropping
+   * them made a whole sender vanish, and a list an agent cannot see is worse
+   * than one it cannot automate. Never requested by the server: the boundary
+   * refuses `http` (`not-https`), so these only ever travel as a `manual` link
+   * for a human to open.
+   */
+  http: string[]
 }
 
 /**
  * Every URI of a `List-Unsubscribe` value. The field carries one or more URIs
  * between angle brackets, comma-separated (RFC 2369): `<https://…>, <mailto:…>`.
- * Anything that is neither https nor mailto is dropped here — including plain
- * http, which the network boundary would refuse anyway.
+ * Anything that is neither https, mailto nor http is dropped here.
  */
 export function parseUnsubscribeUris(value: string | undefined): UnsubscribeUris {
-  const uris: UnsubscribeUris = { https: [], mailto: [] }
+  const uris: UnsubscribeUris = { https: [], mailto: [], http: [] }
   if (!value) return uris
   for (const m of Array.from(value.matchAll(/<([^<>]+)>/g))) {
     const uri = m[1].trim()
     if (/^https:\/\//i.test(uri)) uris.https.push(uri)
     else if (/^mailto:/i.test(uri)) uris.mailto.push(uri)
+    else if (/^http:\/\//i.test(uri)) uris.http.push(uri)
   }
   return uris
 }
@@ -233,7 +241,7 @@ export function subscriptionId(accountId: string, key: string): string {
 export function parseSubscriptionHeaders(uid: string, raw: string): SubscriptionHeaders | null {
   const fields = unfoldHeaders(raw)
   const uris = parseUnsubscribeUris(headerValue(fields, 'list-unsubscribe'))
-  if (!uris.https.length && !uris.mailto.length) return null
+  if (!uris.https.length && !uris.mailto.length && !uris.http.length) return null
   return {
     uid,
     from: parseAddress(headerValue(fields, 'from')),
@@ -250,6 +258,11 @@ export function methodOf(h: Pick<SubscriptionHeaders, 'oneClick' | 'uris'>): Uns
   if (h.oneClick) return 'one-click'
   if (h.uris.mailto.length) return 'mailto'
   return 'link'
+}
+
+/** The page a `link` group offers a human, https preferred over plain http. */
+export function manualUrl(h: Pick<SubscriptionHeaders, 'uris'>): string | undefined {
+  return h.uris.https[0] ?? h.uris.http[0]
 }
 
 /**
@@ -689,7 +702,9 @@ export function planUnsubscribe(
         subject: mailtoSubject(h.uris.mailto[0]) ?? MAILTO_SUBJECT,
       }
     }
-    return { id, action: 'manual', method: 'link', url: h.uris.https[0] }
+    const page = manualUrl(h)
+    if (!page) return { id, action: 'failed', method: 'link', reason: 'no-target' }
+    return { id, action: 'manual', method: 'link', url: page }
   })
 }
 

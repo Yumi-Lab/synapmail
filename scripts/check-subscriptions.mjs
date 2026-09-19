@@ -37,6 +37,7 @@ import {
   isPrivateAddress,
   mailtoAddress,
   mailtoSubject,
+  manualUrl,
   methodOf,
   parseAddress,
   planUnsubscribe,
@@ -51,6 +52,8 @@ import {
 } from '../lib/subscriptions.ts'
 
 const ok = label => console.log(`  ok  ${label}`)
+/** Header separator, so a fixture never has to escape it inline. */
+const CRLF = '\r\n'
 const BREAK_BOUNDARY = process.argv.includes('--break-boundary')
 
 /** A resolver that answers from a table — no DNS, no network. */
@@ -127,20 +130,37 @@ ok('a message with no List-Unsubscribe is not listed')
 const parsed = parseSubscriptionHeaders('12', FOLDED)
 assert.equal(parsed.oneClick, true)
 assert.equal(methodOf(parsed), 'one-click')
-assert.equal(methodOf({ oneClick: false, uris: { https: [], mailto: ['mailto:x@y.z'] } }), 'mailto')
-assert.equal(methodOf({ oneClick: false, uris: { https: ['https://x/y'], mailto: [] } }), 'link')
+assert.equal(methodOf({ oneClick: false, uris: { https: [], mailto: ['mailto:x@y.z'], http: [] } }), 'mailto')
+assert.equal(methodOf({ oneClick: false, uris: { https: ['https://x/y'], mailto: [], http: [] } }), 'link')
 ok('the method is one-click, else mailto, else link')
+
+// A sender who only offers a plain-http page must STILL be listed: dropping it
+// made the whole sender disappear from the list an agent reads.
+const httpOnly = parseSubscriptionHeaders(
+  '99',
+  [
+    'From: Plain <news@plainhttp.example>',
+    'List-Unsubscribe: <http://plainhttp.example/u>',
+    'Subject: s',
+    'Date: Tue, 15 Sep 2026 09:00:00 +0200',
+  ].join(CRLF)
+)
+assert.ok(httpOnly, 'a plain-http only sender was dropped from the list')
+assert.equal(methodOf(httpOnly), 'link')
+assert.equal(manualUrl(httpOnly), 'http://plainhttp.example/u')
+assert.deepEqual(httpOnly.uris.https, [], 'a plain-http URI must never be treated as https')
+ok('a plain-http only sender is listed as link, never requested by the server')
 
 // ---------------------------------------------------------------------------
 console.log('grouping — List-Id first, sender as a fallback, stable id')
 
-const headerFor = (uid, { from, listId, date, subject, https, mailto, post }) =>
+const headerFor = (uid, { from, listId, date, subject, https, mailto, http, post }) =>
   parseSubscriptionHeaders(
     uid,
     [
       `From: ${from}`,
       ...(listId ? [`List-Id: ${listId}`] : []),
-      `List-Unsubscribe: ${[...(https ?? []).map(u => `<${u}>`), ...(mailto ?? []).map(u => `<${u}>`)].join(', ')}`,
+      `List-Unsubscribe: ${[...(https ?? []), ...(mailto ?? []), ...(http ?? [])].map(u => `<${u}>`).join(', ')}`,
       ...(post ? [`List-Unsubscribe-Post: ${post}`] : []),
       `Subject: ${subject}`,
       `Date: ${date}`,
