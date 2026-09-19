@@ -162,6 +162,7 @@
       "gray": "Gris"
     },
     "noFolders": "Aucun dossier",
+    "filterFolders": "Filtrer les dossiers",
     "messageList": "Liste des messages",
     "folderNew": "Nouveau dossier…",
     "folderNewChild": "Nouveau sous-dossier…",
