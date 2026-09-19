@@ -16,7 +16,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import pg from 'pg'
 import puppeteer from 'puppeteer-core'
 import {
-  ACCOUNT_PALETTE, HEX_LENGTH, MIN_CONTRAST, accountColor, contrastRatio, readableInk,
+  ACCOUNT_PALETTE, HEX_LENGTH, MIN_CONTRAST, accountColor, accountOrderBy, contrastRatio, readableInk,
 } from '../lib/accountColor.ts'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
@@ -240,28 +240,62 @@ try {
   const dated = await db.query(
     `SELECT a.id, a.created_at FROM email_accounts a
      JOIN users u ON u.id = a.user_id WHERE u.email = $1`, [EMAIL])
-  if (dated.rows.length < 3) { console.error('HARNESS: fewer than three owned mailboxes to order'); process.exit(2) }
+  if (dated.rows.length < 4 || accounts.length < 4) {
+    console.error('HARNESS: fewer than four owned mailboxes to order'); process.exit(2)
+  }
   for (const row of dated.rows) originalDates.set(row.id, row.created_at)
   await db.query(
     `UPDATE email_accounts SET created_at = (SELECT MIN(created_at) FROM email_accounts WHERE id = ANY($1))
      WHERE id = ANY($1)`, [[...originalDates.keys()]])
 
+  // The mailbox written here must be one NOTHING has written to yet in this run: PostgreSQL
+  // relocates a row when it is updated, so a mailbox already patched above sits at the end of
+  // the heap and updating it again would move nothing — the probe would pass whatever the
+  // ORDER BY says. `accounts[2]` is untouched at this point; it is reset right after.
+  const mover = accounts[2]
   const orderBefore = await readOrder()
-  touched.add(target.id)
-  await patch(target.id, CHOSEN)
+  touched.add(mover.id)
+  await patch(mover.id, CHOSEN)
   const orderAfter = await readOrder()
   check(orderBefore.map(a => a.id).join() === orderAfter.map(a => a.id).join(),
     `tied dates: the order of the mailboxes is unchanged by a save — ${orderAfter.length} ids identical`)
   const moved = orderBefore
     .map((a, i) => ({ a, auto: accountColor({ badgeColor: a.badgeColor }, i) }))
-    .filter(({ a }) => a.id !== target.id)
+    .filter(({ a }) => a.id !== mover.id)
     .filter(({ a, auto }) => {
       const i = orderAfter.findIndex(b => b.id === a.id)
       return i < 0 || accountColor({ badgeColor: orderAfter[i].badgeColor }, i) !== auto
     })
   check(moved.length === 0,
     `tied dates: every OTHER mailbox keeps its colour through a save — ${moved.length} repainted`)
-  await patch(target.id, null)
+  await patch(mover.id, null)
+
+  // The same question asked of the DATABASE, with its own reference arm: the product's clause
+  // against the one it replaced, over the same rows, in the same run. An update relocates a row
+  // in the heap, so an order that does not break ties reads back differently afterwards. This is
+  // what makes the check above discriminating: the API's 7-row plan can happen to preserve an
+  // arbitrary order, the SQL cannot be relied on to.
+  // Its own fresh mailbox, for the same reason the probe above needed one: a row already
+  // updated in this run sits at the end of the heap and updating it again moves nothing.
+  const sqlMover = accounts[3]
+  const idsBy = async clause => (await db.query(
+    `SELECT id FROM email_accounts WHERE user_id = (SELECT id FROM users WHERE email = $1) ${clause}`,
+    [EMAIL])).rows.map(r => r.id).join()
+  const UNTOTAL = 'ORDER BY is_default DESC, created_at ASC'
+  const productClause = accountOrderBy()
+  const totalBefore = await idsBy(productClause)
+  const untotalBefore = await idsBy(UNTOTAL)
+  await db.query(
+    `UPDATE email_accounts SET badge_color = $2 WHERE id = $1`, [sqlMover.id, CHOSEN])
+  const totalAfter = await idsBy(productClause)
+  const untotalAfter = await idsBy(UNTOTAL)
+  await db.query(`UPDATE email_accounts SET badge_color = NULL WHERE id = $1`, [sqlMover.id])
+  check(totalBefore === totalAfter,
+    `tied dates, in the database: the order the product uses survives an update — "${productClause}"`)
+  // Reference arm. If THIS passes too, the probe above proves nothing on this data set and the
+  // bench says so rather than reporting a green it has not earned.
+  check(untotalBefore !== untotalAfter,
+    `tied dates, in the database: the clause without a tie-break really does move — reference arm for the check above`)
 
   // WHEEL — a colour picked in the wheel and then abandoned by clicking elsewhere must be
   // SAVED (that is the natural gesture), and Escape must CANCEL it. Both are measured through
@@ -291,7 +325,10 @@ try {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, c)
     el.dispatchEvent(new Event('input', { bubbles: true }))
   }, colour)
-  const storedColor = async id => (await readOrder()).find(a => a.id === id)?.badgeColor ?? null
+  const storedColor = async id => {
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    return (await readOrder()).find(a => a.id === id)?.badgeColor ?? null
+  }
 
   touched.add(target.id)
   const awayWrites = await countWrites(target.id, async () => {

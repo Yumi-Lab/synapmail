@@ -68,3 +68,20 @@ export const accountColor = (account: ColorableAccount | null | undefined, rank:
   const chosen = account?.badgeColor
   return isBadgeColor(chosen) ? chosen : ACCOUNT_PALETTE[rank % ACCOUNT_PALETTE.length]
 }
+
+/**
+ * Total order of a user's mailboxes: the chosen default first, then the oldest, then the id
+ * as the tie-break. Without that last term the order is NOT total — mailboxes imported in one
+ * go share a `created_at`, and PostgreSQL then returns ties in physical order, which changes
+ * as soon as any row is updated. A mailbox's rank in this list decides its automatic colour,
+ * so an unstable order repaints every mailbox its owner never touched. Both queries that list
+ * mailboxes read this one clause, each passing the names it exposes: a UNION can only be
+ * ordered by its OUTPUT names, which are quoted camelCase in `app/api/accounts/route.ts`.
+ */
+export const accountOrderBy = (
+  cols: { isDefault: string; createdAt: string; id: string } = {
+    isDefault: 'is_default',
+    createdAt: 'created_at',
+    id: 'id',
+  }
+) => `ORDER BY ${cols.isDefault} DESC, ${cols.createdAt} ASC, ${cols.id} ASC`
