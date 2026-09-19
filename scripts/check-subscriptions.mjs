@@ -44,7 +44,10 @@ import {
   parseUnsubscribeUris,
   subscriptionId,
   unfoldHeaders,
+  unsubscribeGroups,
   unsubscribeOneClick,
+  UNSUBSCRIBE_CONCURRENCY,
+  UNSUBSCRIBE_TIMEOUT_MS,
 } from '../lib/subscriptions.ts'
 
 const ok = label => console.log(`  ok  ${label}`)
@@ -378,6 +381,82 @@ const plain = planUnsubscribe('acc-1', [headerFor('14', {
 })], [subscriptionId('acc-1', 'from:n@plain.example')])
 assert.equal(plain[0].subject, MAILTO_SUBJECT)
 ok(`a mailto with no subject parameter uses the single default ("${MAILTO_SUBJECT}")`)
+
+// ---------------------------------------------------------------------------
+console.log('unsubscribe batch — one command gives one answer, in time')
+
+// A full batch where EVERY group times out is the worst case. One at a time it
+// would take MAX_UNSUBSCRIBE_BATCH * UNSUBSCRIBE_TIMEOUT_MS; the agent's proxy
+// would cut at 60 s and the report would be lost while unsubscribes went on.
+// Requester that never answers, so nothing is sent and nothing is left.
+const stalling = () => new Promise(() => {})
+const BATCH = Array.from({ length: MAX_UNSUBSCRIBE_BATCH }, (_, i) =>
+  headerFor(String(1000 + i), {
+    from: `List ${i} <news@batch${i}.example>`,
+    date: 'Tue, 15 Sep 2026 09:00:00 +0200',
+    subject: 'batch',
+    https: [`https://batch${i}.example/u`],
+    post: 'List-Unsubscribe=One-Click',
+  })
+)
+const batchIds = groupSubscriptions('acc-batch', BATCH).map(s => s.id)
+assert.equal(batchIds.length, MAX_UNSUBSCRIBE_BATCH)
+
+const batchStarted = Date.now()
+const batchReports = await unsubscribeGroups({
+  imap: null,
+  smtp: null,
+  accountId: 'acc-batch',
+  from: 'me@example.com',
+  folder: 'INBOX',
+  ids: batchIds,
+  read: async () => BATCH,
+  resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+  request: stalling,
+})
+const batchMs = Date.now() - batchStarted
+
+// The ceiling is derived from the module's OWN constants, never a bare number:
+// ceil(batch / concurrency) rounds of one timeout, plus a margin for scheduling.
+const SCHEDULING_MARGIN_MS = 2000
+const ceilingMs =
+  Math.ceil(MAX_UNSUBSCRIBE_BATCH / UNSUBSCRIBE_CONCURRENCY) * UNSUBSCRIBE_TIMEOUT_MS + SCHEDULING_MARGIN_MS
+// Reference arm, same run: what the same batch costs ONE AT A TIME. The check
+// is not a bare constant — it is this measured serial cost being beaten.
+const serialMs = MAX_UNSUBSCRIBE_BATCH * UNSUBSCRIBE_TIMEOUT_MS
+assert.ok(
+  batchMs < ceilingMs,
+  `a fully timing-out batch of ${MAX_UNSUBSCRIBE_BATCH} took ${batchMs} ms, over the ${ceilingMs} ms ceiling`
+)
+assert.ok(batchMs < serialMs / 2, `no real parallelism: ${batchMs} ms vs ${serialMs} ms one at a time`)
+assert.equal(batchReports.length, MAX_UNSUBSCRIBE_BATCH)
+assert.ok(batchReports.every(r => r.outcome === 'failed' && r.reason === 'timeout'))
+ok(
+  `${MAX_UNSUBSCRIBE_BATCH} timing-out ids answered in ${batchMs} ms ` +
+    `(ceiling ${ceilingMs} ms, ${serialMs} ms one at a time, ${UNSUBSCRIBE_CONCURRENCY} at a time)`
+)
+
+// Order must follow the REQUEST, not the network: an agent reads the Nth report
+// as the Nth id it asked for.
+const delays = new Map(batchIds.map((id, i) => [id, (batchIds.length - i) * 2]))
+const ordered = await unsubscribeGroups({
+  imap: null,
+  smtp: null,
+  accountId: 'acc-batch',
+  from: 'me@example.com',
+  folder: 'INBOX',
+  ids: batchIds,
+  read: async () => BATCH,
+  resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+  // Answers in reverse order of the request, on purpose.
+  request: async ({ url }) => {
+    const id = batchIds[Number(url.hostname.replace(/\D/g, ''))]
+    await new Promise(r => setTimeout(r, delays.get(id) ?? 0))
+    return { status: 500 }
+  },
+})
+assert.deepEqual(ordered.map(r => r.id), batchIds, 'the report is not in the order of the request')
+ok('the report follows the order of the request, not the order the network answered in')
 
 // ---------------------------------------------------------------------------
 console.log('constants — one source, no copy in the routes')

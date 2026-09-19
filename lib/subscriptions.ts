@@ -31,8 +31,20 @@ export const RECENT_MESSAGES_SCANNED = 400
 /** Hard ceiling of ids accepted by one unsubscribe call. */
 export const MAX_UNSUBSCRIBE_BATCH = 50
 
-/** Deadline of the outgoing one-click request, milliseconds. */
-export const UNSUBSCRIBE_TIMEOUT_MS = 8000
+/**
+ * Deadline of ONE outgoing one-click request, milliseconds.
+ *
+ * Sized together with `UNSUBSCRIBE_CONCURRENCY` so a full batch of
+ * `MAX_UNSUBSCRIBE_BATCH` ids that all time out still answers well inside the
+ * 60 s most nginx proxies allow: ceil(50 / 8) * 3 s = 21 s. One command must
+ * give one answer — a 504 would leave unsubscribes running with nobody reading
+ * the report. Measured by the `unsubscribe batch` check of
+ * `scripts/check-subscriptions.mjs`, with a requester that never answers.
+ */
+export const UNSUBSCRIBE_TIMEOUT_MS = 3000
+
+/** How many groups are left at the same time. See `UNSUBSCRIBE_TIMEOUT_MS`. */
+export const UNSUBSCRIBE_CONCURRENCY = 8
 
 /** The exact body RFC 8058 requires for a one-click unsubscribe. */
 export const ONE_CLICK_BODY = 'List-Unsubscribe=One-Click'
@@ -424,6 +436,21 @@ const defaultRequester: HttpsRequester = ({ url, address, body, contentType, tim
   })
 
 /**
+ * The deadline of one call, held HERE and not only in the socket: the socket's
+ * own timeout belongs to `defaultRequester`, so a client that stops answering
+ * at another layer would otherwise hang this call — and with it the whole batch
+ * and the agent's request — forever. Rejects as `ETIMEDOUT`, the same code the
+ * socket uses, so both read as `timeout`.
+ */
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })), ms)
+  })
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer)) as Promise<T>
+}
+
+/**
  * The RFC 8058 one-click POST, through the boundary above. No redirect is ever
  * followed: a 3xx is an answer the sender has to make unambiguous, not an
  * invitation to call a second, unchecked URL.
@@ -438,13 +465,16 @@ export async function unsubscribeOneClick(
   let status: number
   try {
     status = (
-      await request({
-        url: decision.url,
-        address: decision.address,
-        body: ONE_CLICK_BODY,
-        contentType: ONE_CLICK_CONTENT_TYPE,
-        timeoutMs: UNSUBSCRIBE_TIMEOUT_MS,
-      })
+      await withDeadline(
+        request({
+          url: decision.url,
+          address: decision.address,
+          body: ONE_CLICK_BODY,
+          contentType: ONE_CLICK_CONTENT_TYPE,
+          timeoutMs: UNSUBSCRIBE_TIMEOUT_MS,
+        }),
+        UNSUBSCRIBE_TIMEOUT_MS
+      )
     ).status
   } catch (err) {
     const code = (err as { code?: string })?.code
@@ -598,6 +628,8 @@ export interface UnsubscribeRequest {
   /** Injected in the bench so no real list is ever left. */
   resolve?: AddressResolver
   request?: HttpsRequester
+  /** Injected in the bench so a batch is measurable without a mailbox. */
+  read?: (imap: AccountConfig, folder: string) => Promise<SubscriptionHeaders[]>
 }
 
 /** What must be DONE for one requested id, decided without any effect. */
@@ -667,46 +699,46 @@ export function planUnsubscribe(
  * later list says so and an agent does not start over.
  */
 export async function unsubscribeGroups(req: UnsubscribeRequest): Promise<UnsubscribeReport[]> {
-  const headers = await readSubscriptionHeaders(req.imap, req.folder)
-  const reports: UnsubscribeReport[] = []
-  for (const plan of planUnsubscribe(req.accountId, headers, req.ids)) {
-    if (plan.action === 'not_found') {
-      reports.push({ id: plan.id, outcome: 'not_found' })
-      continue
+  const headers = await (req.read ?? readSubscriptionHeaders)(req.imap, req.folder)
+  const plans = planUnsubscribe(req.accountId, headers, req.ids)
+  return mapBounded(plans, UNSUBSCRIBE_CONCURRENCY, plan => carryOut(plan, req))
+}
+
+/** One planned id, carried out. Isolated so the pool above stays a pool. */
+async function carryOut(plan: UnsubscribePlan, req: UnsubscribeRequest): Promise<UnsubscribeReport> {
+  if (plan.action === 'not_found') return { id: plan.id, outcome: 'not_found' }
+  if (plan.action === 'failed') return { id: plan.id, outcome: 'failed', method: plan.method, reason: plan.reason }
+  if (plan.action === 'manual') return { id: plan.id, outcome: 'manual', method: plan.method, url: plan.url }
+
+  if (plan.action === 'one-click') {
+    const result = await unsubscribeOneClick(plan.url, { resolve: req.resolve, request: req.request })
+    if (!result.ok) return { id: plan.id, outcome: 'failed', method: plan.method, reason: result.reason }
+  } else {
+    const { sendMail } = await import('./smtp')
+    try {
+      await sendMail(req.smtp, { from: req.from, to: [plan.address], subject: plan.subject, text: MAILTO_BODY })
+    } catch {
+      // An error text can carry the remote server's answer: only the kind is kept.
+      return { id: plan.id, outcome: 'failed', method: plan.method, reason: 'transport' }
     }
-    if (plan.action === 'failed') {
-      reports.push({ id: plan.id, outcome: 'failed', method: plan.method, reason: plan.reason })
-      continue
-    }
-    if (plan.action === 'manual') {
-      reports.push({ id: plan.id, outcome: 'manual', method: plan.method, url: plan.url })
-      continue
-    }
-    if (plan.action === 'one-click') {
-      const result = await unsubscribeOneClick(plan.url, { resolve: req.resolve, request: req.request })
-      if (!result.ok) {
-        reports.push({ id: plan.id, outcome: 'failed', method: plan.method, reason: result.reason })
-        continue
-      }
-    } else {
-      const { sendMail } = await import('./smtp')
-      try {
-        await sendMail(req.smtp, {
-          from: req.from,
-          to: [plan.address],
-          subject: plan.subject,
-          text: MAILTO_BODY,
-        })
-      } catch {
-        // An error text can carry the remote server's answer: only the kind is kept.
-        reports.push({ id: plan.id, outcome: 'failed', method: plan.method, reason: 'transport' })
-        continue
-      }
-    }
-    await recordUnsubscription(req.accountId, plan.key, plan.method)
-    reports.push({ id: plan.id, outcome: 'done', method: plan.method })
   }
-  return reports
+  await recordUnsubscription(req.accountId, plan.key, plan.method)
+  return { id: plan.id, outcome: 'done', method: plan.method }
+}
+
+/**
+ * Runs `work` over `items` with at most `limit` in flight, answering in the
+ * ORDER OF `items` — the report's Nth entry is the Nth requested id, whatever
+ * order the network answered in.
+ */
+async function mapBounded<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length)
+  let next = 0
+  const worker = async () => {
+    for (let i = next++; i < items.length; i = next++) out[i] = await work(items[i])
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return out
 }
 
 /** Remembers a completed unsubscribe, so a later list can say so. */
