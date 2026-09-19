@@ -482,30 +482,35 @@ try {
       }
       const visible = sel => [...document.querySelectorAll(sel)]
         .filter(el => el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0)
-      const scopes = visible('[data-omnibar-scope]')
-      // Le sélecteur de portée compte pour UNE cible : ses trois segments sont un
-      // seul contrôle segmenté, ils se TOUCHENT par construction (`p-0.5`, aucun
-      // écart entre segments). C'est le groupe entier qui doit garder ses distances
-      // avec les autres cibles du header — la même frontière que `check-omnibar.mjs`,
-      // dont la liste `HEADER_BOXES` n'inclut d'ailleurs pas les segments.
-      const group = scopes[0]?.parentElement?.getBoundingClientRect() ?? null
+      // Lot H3g : la portée est une PUCE dans le champ, menu fermé. Elle compte pour
+      // une cible, comme avant — mais ses distances se mesurent maintenant vis-à-vis
+      // du champ qui la CONTIENT : elle doit tenir dedans, pas s'en écarter.
+      const chip = visible('[data-omnibar-scope-trigger]')[0]?.getBoundingClientRect() ?? null
+      const field = document.querySelector('[data-omnibar-search]')?.getBoundingClientRect() ?? null
+      const scopes = chip ? [document.querySelector('[data-omnibar-scope-trigger]')] : []
+      const group = chip
       const others = visible('header [data-omnibar-menu], header [data-omnibar-action], header [data-mail-toolbar-more], header [data-omnibar-search], header [data-user-menu-trigger]')
         .map(el => el.getBoundingClientRect())
       const header = document.querySelector('header')?.getBoundingClientRect() ?? null
       return {
         overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
         scopes: scopes.length,
-        hasAccountsScope: scopes.some(el => el.dataset.omnibarScope === scopeAcc),
-        scopeRight: scopes.at(-1)?.getBoundingClientRect().right ?? null,
+        // Le menu est FERMÉ ici : « toutes les boîtes » n'est plus une cible visible,
+        // c'est une entrée du menu — l'arm G la mesure en l'ouvrant pour de vrai.
+        hasAccountsScope: !!scopeAcc,
+        scopeRight: chip?.right ?? null,
+        // La puce est DANS le champ : ses bords ne doivent pas en sortir.
+        chipInsideField: chip && field
+          ? chip.left >= field.left - 0.5 && chip.right <= field.right + 0.5
+          : null,
         headerRight: header?.right ?? null,
-        // Entre cibles VOISINES : le groupe de portée compté une fois.
-        worstGap: closest(group ? [...others, group] : others),
-        // Entre SEGMENTS du même contrôle : ils peuvent se toucher (0), jamais se
-        // recouvrir (négatif) — un segment sous un autre n'est plus cliquable.
-        worstSegmentGap: closest(scopes.map(el => el.getBoundingClientRect())),
+        // Entre cibles VOISINES du header. La puce de portée est EXCLUE : elle est
+        // posée DANS le champ, donc elle le chevauche par construction — c'est
+        // `chipInsideField` qui juge son placement, pas une distance au champ.
+        worstGap: closest(others),
       }
     }, SCOPE_ACC)
-    console.log(`  ${width}px: scope buttons=${shot.scopes} (all-mailboxes shown=${shot.hasAccountsScope}) ` +
+    console.log(`  ${width}px: scope chip=${shot.scopes} (inside field=${shot.chipInsideField}) ` +
       `overflow=${shot.overflow} closest gap=${shot.worstGap === null ? 'n/a' : `${shot.worstGap.toFixed(2)}px`}`)
     check(`no horizontal overflow at ${width}px`, shot.overflow === false, `scrollWidth vs clientWidth`)
     if (shot.scopes === 0) {
@@ -516,12 +521,12 @@ try {
       check(`the scope selector stays inside the header at ${width}px`,
         shot.scopeRight !== null && shot.headerRight !== null && shot.scopeRight <= shot.headerRight + 0.5,
         `selector ends at ${shot.scopeRight?.toFixed(0)}px, header at ${shot.headerRight?.toFixed(0)}px`)
-      check(`the scope selector keeps its distance from the other targets at ${width}px`,
+      check(`the header targets keep their distance at ${width}px`,
         shot.worstGap === null || shot.worstGap >= MIN_HIT_GAP_PX,
         `closest pair ${shot.worstGap?.toFixed(2)}px, floor ${MIN_HIT_GAP_PX}px`)
-      check(`no two scope segments overlap at ${width}px`,
-        shot.worstSegmentGap === null || shot.worstSegmentGap >= 0,
-        `closest segment pair ${shot.worstSegmentGap?.toFixed(2)}px (0 = adjacent, allowed)`)
+      // Lot H3g : la demande dit « la puce tient dans le champ sans débordement ».
+      check(`the scope chip sits entirely inside the search field at ${width}px`,
+        shot.chipInsideField === true, `chip inside field: ${shot.chipInsideField}`)
     }
   }
 
@@ -546,8 +551,28 @@ try {
   // On repart d'un chargement à FROID de la recherche, portée par défaut : c'est le
   // geste réel (on cherche, puis on élargit).
   await page.goto(`${BASE}/mail?${Q_PARAM}=${encodeURIComponent(term)}`, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector(`[data-omnibar-scope]`, { timeout: NAV_TIMEOUT_MS })
+  await page.waitForSelector(SCOPE_TRIGGER, { timeout: NAV_TIMEOUT_MS })
   await settle()
+  // Lot H3g : les portées vivent dans un menu. Ouvrir la puce d'un VRAI clic est
+  // le premier geste mesuré — sans lui, aucune portée n'est à l'écran à cliquer.
+  const openScopeMenu = async () => {
+    if (await page.$(SCOPE_MENU)) return true
+    const box = await page.evaluate(sel => {
+      const el = document.querySelector(sel)
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      const cx = Math.round(r.left + r.width / 2)
+      const cy = Math.round(r.top + r.height / 2)
+      const at = document.elementFromPoint(cx, cy)
+      return { cx, cy, hit: at === el || el.contains(at) ? 'self' : (at?.tagName.toLowerCase() ?? 'nothing') }
+    }, SCOPE_TRIGGER)
+    if (!box) return false
+    check('the scope chip is what a click at its centre would hit', box.hit === 'self', box.hit)
+    await page.mouse.click(box.cx, box.cy)
+    try { await page.waitForSelector(SCOPE_MENU, { timeout: 2000 }) } catch { return false }
+    return true
+  }
+  check('a real click on the chip opens the scope menu', await openScopeMenu(), 'menu present')
   const scopeState = () => page.evaluate(scopeParam => ({
     scope: new URLSearchParams(location.search).get(scopeParam),
     pressed: [...document.querySelectorAll('[data-omnibar-scope]')]
@@ -558,6 +583,8 @@ try {
   // DERNIER, sinon « ce dossier » serait « vérifié » alors qu'on y est déjà.
   const clickOrder = [...SCOPES.filter(v => v !== SCOPES[0]), SCOPES[0]]
   for (const value of clickOrder) {
+    // Choisir une portée FERME le menu : il faut le rouvrir avant la suivante.
+    if (!(await openScopeMenu())) { console.log(`  note the scope menu did not open before "${value}"`); continue }
     const target = await page.evaluate(v => {
       const el = document.querySelector(`[data-omnibar-scope="${v}"]`)
       if (!el) return null

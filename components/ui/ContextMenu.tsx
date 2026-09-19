@@ -100,7 +100,7 @@ export function ContextMenuSurface({
 }
 
 export function ContextMenuItem({
-  itemKey, icon, label, onClick, onClose, enabled, danger,
+  itemKey, icon, label, onClick, onClose, enabled, danger, ...rest
 }: {
   itemKey: string
   icon: React.ReactNode
@@ -109,13 +109,14 @@ export function ContextMenuItem({
   onClose: () => void
   enabled: boolean
   danger?: boolean
-}) {
+} & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       type="button"
       data-menu-item={itemKey}
       disabled={!enabled}
       onClick={() => { onClick(); onClose() }}
+      {...rest}
       className={cn(
         'w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-left transition-colors',
         'disabled:opacity-40 disabled:pointer-events-none',
@@ -154,8 +155,22 @@ export function ContextMenuSubmenu({
 
 export const ContextMenuSeparator = () => <div className="my-1 border-t border-border" />
 
-/** Écart entre le bas du bouton « … » et le haut du menu qu'il ouvre, en px. */
-const ROW_MENU_GAP = 4
+/** Écart entre le bas du bouton qui ouvre un menu et le haut de ce menu, en px. */
+export const MENU_ANCHOR_GAP = 4
+
+/**
+ * Déplace le focus d'une entrée à l'autre dans un menu ouvert, en bouclant. Exporté
+ * parce que DEUX déclencheurs l'utilisent (le « … » d'une ligne de réglages et la
+ * puce de portée de l'omnibar) : une seconde copie dériverait sur ce que « l'entrée
+ * suivante » veut dire quand une entrée est désactivée.
+ */
+export function focusMenuItem(list: HTMLElement | null, step: number): void {
+  const items = Array.from(list?.querySelectorAll<HTMLButtonElement>('[data-menu-item]:not([disabled])') ?? [])
+  if (items.length === 0) return
+  const at = items.indexOf(document.activeElement as HTMLButtonElement)
+  const next = at === -1 ? (step > 0 ? 0 : items.length - 1) : (at + step + items.length) % items.length
+  items[next].focus()
+}
 
 /**
  * Le bouton « … » d'une ligne de réglages, et le menu qu'il ouvre. C'est le MÊME menu
@@ -183,7 +198,7 @@ export function RowMenu({ label, itemsKey, children }: {
 
   const open = () => {
     const box = triggerRef.current?.getBoundingClientRect()
-    if (box) setAnchor({ x: box.right - MENU_MIN_WIDTH, y: box.bottom + ROW_MENU_GAP })
+    if (box) setAnchor({ x: box.right - MENU_MIN_WIDTH, y: box.bottom + MENU_ANCHOR_GAP })
   }
 
   // Fermer rend le focus au bouton : sans cela le focus retombe sur le corps de la
@@ -195,13 +210,7 @@ export function RowMenu({ label, itemsKey, children }: {
 
   // Ouvrir au clavier pose le focus sur la première entrée ; ouvrir à la souris ne le
   // fait pas (le pointeur choisit déjà), sinon la bulle de survol resterait plantée.
-  const focusItem = (step: number) => {
-    const items = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>('[data-menu-item]:not([disabled])') ?? [])
-    if (items.length === 0) return
-    const at = items.indexOf(document.activeElement as HTMLButtonElement)
-    const next = at === -1 ? (step > 0 ? 0 : items.length - 1) : (at + step + items.length) % items.length
-    items[next].focus()
-  }
+  const focusItem = (step: number) => focusMenuItem(listRef.current, step)
 
   return (
     <>
