@@ -26,12 +26,13 @@
  *   node scripts/check-api-docs.mjs --break=contract  (a Bearer route absent from the contract)
  *   node scripts/check-api-docs.mjs --break=session   (a session-only route inside the contract)
  *   node scripts/check-api-docs.mjs --break=ref       (a $ref that resolves to nothing)
+ *   node scripts/check-api-docs.mjs --break=servers  (the contract served with its disk servers)
  * The `--break` forms damage a COPY of one input and EXPECT the run to fail: a
  * battery that cannot fail proves nothing.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
-import { API_DOC_PATH, LLMS_TXT_PATH, OPENAPI_FILE, OPENAPI_PATH } from '../lib/apiDocs.ts'
+import { API_DOC_PATH, LLMS_TXT_PATH, OPENAPI_FILE, OPENAPI_PATH, withServedOrigin } from '../lib/apiDocs.ts'
 import { isPublicPath, PUBLIC_PATHS } from '../lib/publicPaths.ts'
 import { appOrigin } from '../lib/appOrigin.ts'
 import { fileURLToPath } from 'node:url'
@@ -438,12 +439,37 @@ check(publicPathOf(OPENAPI_PATH) === true, `${OPENAPI_PATH} itself is public`)
 check(publicPathOf(`${OPENAPI_PATH}-probe`) === false, `${OPENAPI_PATH}-probe is NOT public`)
 check(llms.includes(`https://example.test${OPENAPI_PATH}`), 'llms.txt links the contract at the calling origin')
 
-// A host written into the contract would send every agent to somebody else's
-// mailbox: the served address is relative, and the instance answers it.
+// A host written into the FILE would send every agent to somebody else's
+// mailbox. The file names none; the route puts this instance's own address in
+// as it serves, because several agent-tool importers need an absolute base URL.
 check(
   contract.servers?.every(server => !/^https?:\/\//i.test(server.url)),
-  'the contract names no instance host',
+  'the contract file on disk names no instance host',
   JSON.stringify(contract.servers),
+)
+
+const served = JSON.parse(
+  (BREAK === 'servers' ? contractText => contractText : withServedOrigin)(
+    readFileSync(join(ROOT, OPENAPI_FILE), 'utf8'),
+    'https://mail.example.test',
+  ),
+)
+check(
+  served.servers?.length === 1 && served.servers[0].url === 'https://mail.example.test',
+  'served, the contract names the address this instance answers on',
+  JSON.stringify(served.servers),
+)
+check(
+  JSON.parse(withServedOrigin(readFileSync(join(ROOT, OPENAPI_FILE), 'utf8'), '')).servers?.[0]?.url === '/',
+  'with no address known, the served contract keeps the relative fallback',
+)
+check(
+  JSON.stringify(Object.keys(served)) === JSON.stringify(Object.keys(contract)),
+  'serving the contract changes its servers entry and nothing else',
+)
+check(
+  source(join('app', 'openapi.json', 'route.ts')).includes('withServedOrigin('),
+  'the route serves the contract through that one helper, not a copy of it',
 )
 
 if (BREAK) {
