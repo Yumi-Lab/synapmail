@@ -39,6 +39,8 @@ const SIDEBAR_ACCOUNT = '[data-sidebar-row="account"]'
 const ACCOUNT_FILTER = '[data-account-filter]'
 const HIGHLIGHTED = '[data-account-highlight="true"]'
 const accountRow = id => `[data-sidebar-row="account:${id}"]`
+/** Le hamburger de l'omnibar : ce qui replie la barre sur un grand écran. */
+const MENU_BUTTON = '[data-omnibar-menu]'
 
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split('\n')) {
   const m = line.match(/^([A-Z_]+)=(.*)$/)
@@ -88,6 +90,12 @@ try {
     const r = el.getBoundingClientRect()
     return r.width > 0 && r.height > 0
   }, sel)
+  /**
+   * Lecture d'une propriété du champ qui rend `null` quand le champ N'EXISTE PAS :
+   * dans le contrôle négatif il a justement été retiré, et un banc qui JETTE ne
+   * mesure rien — un échec doit se compter, pas faire tomber le passage.
+   */
+  const filterProp = fn => page.$eval(ACCOUNT_FILTER, fn).catch(() => null)
   /** Les adresses des lignes actuellement rendues dans la liste dépliée. */
   const listedEmails = () => page.evaluate(() => [...document.querySelectorAll('[data-sidebar-row^="account:"]')]
     .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 })
@@ -109,13 +117,19 @@ try {
     // Le seuil d'AVANT le lot, réinjecté dans la page : le champ disparaît sous 8
     // autres boîtes, exactement comme Nicolas le vivait.
     await page.evaluateOnNewDocument(from => {
-      const hide = () => {
+      // Le champ est retiré tant que la barre a `from` AUTRES boîtes ou moins, et
+      // le retrait est REMESURÉ en continu : `evaluateOnNewDocument` s'exécute
+      // avant que `document.documentElement` n'existe, donc poser un observateur
+      // ici ne marche pas (mesuré : le contrôle négatif passait au vert).
+      setInterval(() => {
         const field = document.querySelector('[data-account-filter]')
         const rows = document.querySelectorAll('[data-sidebar-row^="account:"]').length
+        // `display: none` et non un RETRAIT du nœud : React possède cet arbre, et
+        // lui arracher un nœud fait tomber toute la barre (mesuré — le banc
+        // s'interrompait alors au lieu de compter ses échecs). Le style en ligne
+        // n'est pas géré par React : il survit aux rendus.
         if (field && rows <= from) field.closest('div').style.display = 'none'
-      }
-      new MutationObserver(hide).observe(document.documentElement, { childList: true, subtree: true })
-      document.addEventListener('DOMContentLoaded', hide)
+      }, 50)
     }, LEGACY_FILTER_FROM)
   }
 
@@ -126,14 +140,29 @@ try {
   }, BASE)
   if (accounts.length < 2) { console.error(`HARNESS: ${accounts.length} boîte(s) — il en faut 2`); process.exit(2) }
 
+  // La barre DÉPLIÉE est une PRÉCONDITION, pas une supposition : son état est gardé
+  // côté serveur (`user_settings.sidebar_collapsed`), donc un passage précédent
+  // peut l'avoir laissée repliée — et le banc mesurait alors l'absence du champ
+  // comme un échec du produit.
+  await page.evaluate(async base => {
+    await fetch(`${base}/api/settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sidebar_collapsed: false }),
+    })
+  }, BASE)
+
   await page.goto(`${BASE}/mail`, { waitUntil: 'domcontentloaded' })
   await hydrated(SIDEBAR_ACCOUNT)
 
-  const activeId = await page.$eval(SIDEBAR_ACCOUNT, el => {
-    const img = el.querySelector('[data-sidebar-icon]')
-    return img ? img.getAttribute('data-account-id') : null
-  }).catch(() => null)
-  const others = accounts.filter(a => a.id !== activeId)
+  // La boîte ACTIVE est lue là où l'application la garde — le réglage serveur —
+  // et non déduite du DOM : la bulle ne publie pas d'identifiant.
+  const activeId = () => page.evaluate(async base => {
+    const r = await fetch(`${base}/api/settings`)
+    return (await r.json()).data?.active_account_id ?? null
+  }, BASE)
+  const startId = await activeId()
+  const others = accounts.filter(a => a.id !== startId)
   const otherCount = others.length
   console.log(`contexte : ${accounts.length} boîte(s), dont ${otherCount} autre(s) ; seuil du champ = ${FILTER_FROM}`)
 
@@ -148,13 +177,17 @@ try {
     console.error(`HARNESS: le compte de test n'a que ${otherCount} autre(s) boîte(s), le seuil du lot est ${FILTER_FROM} — impossible de mesurer le champ`)
     process.exit(2)
   }
+  if (!fieldShown && !NEGATIVE) {
+    console.error('HARNESS: le champ est absent alors qu\'il devrait être là — rien de plus ne peut être mesuré')
+    process.exit(2)
+  }
 
   // 2. Le champ a le FOCUS sans qu'on ait cliqué dedans : on tape directement.
   const focused = await page.evaluate(sel => document.activeElement === document.querySelector(sel), ACCOUNT_FILTER)
   check('le champ a le focus à l\'ouverture (aucun clic dedans)', focused)
 
   // 3. Le bornage de la saisie est celui du module partagé.
-  const maxAttr = await page.$eval(ACCOUNT_FILTER, el => Number(el.getAttribute('maxlength')))
+  const maxAttr = await filterProp(el => Number(el.getAttribute('maxlength')))
   check(`saisie bornée à ${FILTER_MAX} (source unique)`, maxAttr === FILTER_MAX, `maxlength=${maxAttr}`)
 
   // 4. Expression régulière tapée au clavier, SANS cliquer dans le champ.
@@ -163,7 +196,7 @@ try {
   const anchor = `^${(target.name || target.email).slice(0, 2)}`
   await page.keyboard.type(anchor, { delay: 30 })
   await new Promise(r => setTimeout(r, 300))
-  const typed = await page.$eval(ACCOUNT_FILTER, el => el.value)
+  const typed = await filterProp(el => el.value)
   check('la frappe arrive dans le champ sans clic', typed === anchor, `valeur="${typed}"`)
   const shown = await listedEmails()
   check(`l'ancrage \`${anchor}\` retient la boîte visée`, shown.includes(target.id), `rendu=${JSON.stringify(shown)}`)
@@ -172,7 +205,10 @@ try {
   // 5. Une expression INVALIDE ne casse rien : retour au texte simple, sans erreur.
   const pageErrors = []
   page.on('pageerror', e => pageErrors.push(String(e)))
-  await page.keyboard.down('Meta'); await page.keyboard.press('KeyA'); await page.keyboard.up('Meta')
+  // Vider le champ par sa PROPRE sélection : `Cmd+A` dépend de la plateforme et,
+  // mesuré, ne sélectionnait rien ici — la frappe suivante s'ajoutait à la
+  // précédente et le banc mesurait « ^ninic( » au lieu de « nic( ».
+  await filterProp(el => el.setSelectionRange(0, el.value.length))
   const literal = (target.name || target.email).slice(0, 3)
   await page.keyboard.type(`${literal}(`, { delay: 30 })
   await new Promise(r => setTimeout(r, 300))
@@ -183,7 +219,7 @@ try {
   // 6. Échap VIDE le filtre avant de fermer la liste.
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, 200))
-  const afterEsc = await page.$eval(ACCOUNT_FILTER, el => el.value).catch(() => null)
+  const afterEsc = await filterProp(el => el.value)
   const listStillOpen = await visible(ACCOUNT_FILTER)
   check('Échap vide le filtre et laisse la liste ouverte', afterEsc === '' && listStillOpen,
     `valeur="${afterEsc}", liste ouverte=${listStillOpen}`)
@@ -197,27 +233,20 @@ try {
     `surbrillance=${highlighted}, attendu ${before[1]}`)
   await page.keyboard.press('Enter')
   await new Promise(r => setTimeout(r, 1500))
-  const nowActive = await page.$eval(SIDEBAR_ACCOUNT, el => {
-    const img = el.querySelector('[data-sidebar-icon]')
-    return img ? img.getAttribute('data-account-id') : null
-  }).catch(() => null)
+  const nowActive = await activeId()
   check('Entrée bascule sur la boîte en surbrillance', nowActive === before[1],
     `boîte active=${nowActive}, attendu ${before[1]}`)
 
-  // 8. Barre repliée : pas de champ, comportement d'avant.
-  const collapsed = await page.evaluate(() => {
-    const btn = [...document.querySelectorAll('button')].find(b => b.hasAttribute('data-sidebar-toggle'))
-    if (btn) { btn.click(); return true }
-    return false
-  })
-  if (collapsed) {
-    await new Promise(r => setTimeout(r, 500))
-    await realClick(SIDEBAR_ACCOUNT).catch(() => {})
-    await new Promise(r => setTimeout(r, 500))
-    check('barre repliée : aucun champ de filtre', !(await visible(ACCOUNT_FILTER)))
-  } else {
-    console.log('  --   barre repliée : bouton de repli introuvable, point non mesuré')
-  }
+  // 8. Barre repliée : pas de champ, comportement d'avant. Le repli passe par le
+  //    hamburger de l'omnibar — la MÊME commande que la main, pas un état forcé.
+  await realClick(MENU_BUTTON)
+  await new Promise(r => setTimeout(r, 900))
+  await realClick(SIDEBAR_ACCOUNT)
+  await new Promise(r => setTimeout(r, 700))
+  check('barre repliée : aucun champ de filtre', !(await visible(ACCOUNT_FILTER)))
+  // On rend la barre à l'état où on l'a trouvée : le banc ne laisse pas de trace.
+  await realClick(MENU_BUTTON)
+  await new Promise(r => setTimeout(r, 600))
 } finally {
   await browser.close()
 }

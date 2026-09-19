@@ -318,8 +318,14 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
    * Clavier du champ de filtre : ↑/↓ déplacent la surbrillance, Entrée bascule sur
    * la ligne en surbrillance (la première par défaut), Échap vide le filtre s'il est
    * rempli et ne ferme la liste que s'il est déjà vide — sinon une frappe de trop
-   * refermerait le panneau qu'on vient d'ouvrir. L'écouteur global de la liste voit
-   * le même Échap : l'événement est arrêté ici quand il a servi à vider le champ.
+   * refermerait le panneau qu'on vient d'ouvrir.
+   *
+   * L'Échap qui a servi à vider le champ est arrêté par `stopImmediatePropagation`,
+   * et non par le `stopPropagation` de React : le routeur d'applications hydrate le
+   * DOCUMENT entier, donc l'écouteur de React et celui qui referme la liste sont
+   * posés sur le MÊME nœud. Entre deux écouteurs du même nœud, seule la variante
+   * « immediate » arrête le second — mesuré : sans elle, la liste se refermait et
+   * le champ perdait le focus, ce qui rendait ↑/↓ inopérants juste après un Échap.
    */
   const onAccountFilterKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const last = filteredAccounts.length - 1
@@ -338,7 +344,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     }
     if (e.key === 'Escape' && accountFilter) {
       e.preventDefault()
-      e.stopPropagation()
+      e.nativeEvent.stopImmediatePropagation()
       setAccountFilter('')
     }
   }
