@@ -619,5 +619,22 @@
     "noResults": "没有找到结果",
     "showPassword": "显示密码",
     "hidePassword": "隐藏密码"
+  },
+  "omnibar": {
+    "keywords": {
+      "profile": "个人资料, 姓名, 密码, 账户, profile",
+      "appearance": "外观, 主题, 深色, 浅色, 系统, 语言, theme, dark, light, language",
+      "reading": "阅读, 阅读窗格, 预览, reading",
+      "notifications": "通知, 桌面, 提醒, notifications",
+      "composition": "撰写, 撰写邮件, 撤销发送, 延迟, compose",
+      "accounts": "账户, 邮箱, imap, smtp, 共享, 颜色, accounts",
+      "signatures": "签名, signature",
+      "templates": "模板, 片段, templates",
+      "contacts": "联系人, 通讯录, contacts",
+      "rules": "规则, 过滤器, sieve, 自动化, rules",
+      "ai": "人工智能, 智能助手, 助手, 模型, ai, copilot",
+      "pgp": "pgp, 加密, gpg, 密钥, 隐私",
+      "apiKeys": "api, 密钥, 令牌, token, bearer, mcp, 代理"
+    }
   }
 }

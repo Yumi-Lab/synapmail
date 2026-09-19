@@ -619,5 +619,22 @@
     "noResults": "Aucun résultat trouvé",
     "showPassword": "Afficher le mot de passe",
     "hidePassword": "Masquer le mot de passe"
+  },
+  "omnibar": {
+    "keywords": {
+      "profile": "profil, nom, mot de passe, compte, identite",
+      "appearance": "apparence, theme, sombre, clair, systeme, langue, affichage",
+      "reading": "lecture, volet de lecture, apercu",
+      "notifications": "notifications, bureau, alertes, son",
+      "composition": "composition, redaction, annuler envoi, delai",
+      "accounts": "comptes, boite, imap, smtp, ajouter un compte, partage, couleur",
+      "signatures": "signature, pied de message",
+      "templates": "modeles, gabarits, extraits",
+      "contacts": "contacts, carnet d adresses, personnes",
+      "rules": "regles, filtres, sieve, automatisation",
+      "ai": "ia, copilote, assistant, modele",
+      "pgp": "pgp, chiffrement, gpg, cle, confidentialite",
+      "apiKeys": "api, cle, jeton, token, bearer, mcp, agent, integration"
+    }
   }
 }
