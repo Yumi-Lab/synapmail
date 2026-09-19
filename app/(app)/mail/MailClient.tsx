@@ -14,7 +14,8 @@ import { MdnToast } from '@/components/mail/MdnToast'
 import { useEmailNotifications } from '@/hooks/useEmailNotifications'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { toast } from '@/components/ui/toast'
-import { useMailSelection } from '@/lib/mailSelection'
+import { useMailSelection, targetOrigins } from '@/lib/mailSelection'
+import { groupByOrigin, messageHref, originOfMessage, sameOrigin, type MessageOrigin } from '@/lib/mailOrigin'
 import { MAILBOX_CHANGED, STREAM_ACCOUNT_PARAM } from '@/lib/stream'
 import type { ForwardedMessages } from '@/lib/forward'
 import type { Message } from '@/types/email'
@@ -29,8 +30,13 @@ type ComposeKind = 'reply' | 'replyAll' | 'forward'
 
 export function MailClient() {
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('none')
-  const [selectedUid, setSelectedUid] = useState<string | null>(null)
-  const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
+  /**
+   * Message ouvert, par son ORIGINE (compte, dossier, uid) : ouvrir un résultat
+   * d'une recherche « tous les dossiers » doit le lire dans SON dossier, pas
+   * dans celui qui est à l'écran — c'est ce raccourci qui ouvrait un autre
+   * message, voire faisait tomber l'application.
+   */
+  const [selectedOrigin, setSelectedOrigin] = useState<MessageOrigin | null>(null)
   const [selectedThread, setSelectedThread] = useState<Message[] | null>(null)
   const [selectedThreadSubject, setSelectedThreadSubject] = useState<string>('')
   const [composeMode, setComposeMode] = useState<'compose' | 'reply' | 'replyAll' | 'forward' | null>(null)
@@ -131,8 +137,7 @@ export function MailClient() {
     const handler = (e: Event) => {
       const id = (e as CustomEvent<string>).detail
       setActiveAccountId(id)
-      setSelectedUid(null)
-      setSelectedAccount(null)
+      setSelectedOrigin(null)
       setSelectedThread(null)
       setSelectionMode('none')
       setCurrentMessage(null)
@@ -145,12 +150,12 @@ export function MailClient() {
   useEffect(() => {
     const handler = (e: Event) => {
       const { uid, accountId, folder: targetFolder } = (e as CustomEvent<{ uid: string; accountId: string; folder?: string }>).detail
-      // The item may live in another folder than the one on screen — navigate so
-      // ReadingPane fetches it from the right place.
+      // L'origine voyage entière : le volet lit le message dans SON dossier, sans
+      // que la liste ait à changer de dossier d'abord.
       if (targetFolder) {
         router.push(`/mail?folder=${encodeURIComponent(targetFolder)}`)
       }
-      handleSelect(uid, accountId)
+      handleSelect({ uid, accountId, folder: targetFolder ?? folder })
       setShowReadingPane(true)
     }
     window.addEventListener('synapmail:open-message', handler)
@@ -174,7 +179,7 @@ export function MailClient() {
   const resolvedActiveId = activeAccountId ?? accounts.find(a => a.isDefault)?.id ?? accounts[0]?.id
   const activeAccount = accounts.find(a => a.id === resolvedActiveId) ?? accounts[0]
   const accountEmail = activeAccount?.email ?? ''
-  const accountId = selectedAccount ?? resolvedActiveId ?? ''
+  const accountId = selectedOrigin?.accountId ?? resolvedActiveId ?? ''
   // Defense-in-depth only — the API routes are the real permission boundary.
   // Owned accounts don't carry `permissions` (POST /api/accounts doesn't return it), hence the permissive fallback.
   const permissions = activeAccount?.permissions ?? {
@@ -214,9 +219,8 @@ export function MailClient() {
 
   useEmailNotifications(folder, resolvedActiveId)
 
-  const handleSelect = useCallback((uid: string, accId: string) => {
-    setSelectedUid(uid)
-    setSelectedAccount(accId)
+  const handleSelect = useCallback((origin: MessageOrigin) => {
+    setSelectedOrigin(origin)
     setSelectedThread(null)
     setSelectionMode('single')
     setShowReadingPane(true)
@@ -225,8 +229,7 @@ export function MailClient() {
   const handleSelectThread = useCallback((messages: Message[], subject: string) => {
     setSelectedThread([...messages].reverse())
     setSelectedThreadSubject(subject)
-    setSelectedUid(null)
-    setSelectedAccount(null)
+    setSelectedOrigin(null)
     setSelectionMode('thread')
     setShowReadingPane(true)
   }, [])
@@ -247,8 +250,7 @@ export function MailClient() {
   }, [])
 
   const handleDelete = useCallback(() => {
-    setSelectedUid(null)
-    setSelectedAccount(null)
+    setSelectedOrigin(null)
     setSelectedThread(null)
     setSelectionMode('none')
     setShowReadingPane(false)
@@ -265,24 +267,23 @@ export function MailClient() {
     }
     const msg = selectedThread.find(m => m.uid === uid)
     if (msg) {
-      fetch(`/api/messages/${uid}?account=${msg.accountId}&folder=${encodeURIComponent(folder)}`, { method: 'DELETE' })
+      fetch(`/api/messages/${uid}?account=${msg.accountId}&folder=${encodeURIComponent(msg.folder || folder)}`, { method: 'DELETE' })
     }
   }, [selectedThread, folder, handleDelete])
 
   const handleBack = useCallback(() => {
     setShowReadingPane(false)
-    setSelectedUid(null)
-    setSelectedAccount(null)
+    setSelectedOrigin(null)
     setSelectedThread(null)
     setSelectionMode('none')
     setCurrentMessage(null)
   }, [])
 
   // Keyboard shortcut: delete current message
-  const handleKbDelete = useCallback(async (uid: string, accId: string) => {
-    await fetch(`/api/messages/${uid}?account=${accId}&folder=${encodeURIComponent(folder)}`, { method: 'DELETE' })
+  const handleKbDelete = useCallback(async (msg: Message) => {
+    await fetch(messageHref(originOfMessage(msg)), { method: 'DELETE' })
     handleDelete()
-  }, [folder, handleDelete])
+  }, [handleDelete])
 
   // Répondre / Répondre à tous / Transférer pour une barre d'outils hors du volet de
   // lecture (contexte `lib/mailSelection`). La cible est le message sélectionné, sinon
@@ -291,7 +292,7 @@ export function MailClient() {
   // La cible différée retient le message VISÉ, pas seulement le geste : sans lui, ouvrir
   // une autre ligne (ou un message poussé par une notification) pendant le chargement
   // ferait répondre au mauvais message, à l'insu de la personne.
-  const pendingCompose = useRef<{ kind: ComposeKind; uid: string } | null>(null)
+  const pendingCompose = useRef<{ kind: ComposeKind; origin: MessageOrigin } | null>(null)
   // Transfert d'une sélection MULTIPLE : chaque message part entier en pièce
   // jointe. Aucun message n'est ouvert pour ça — on n'a besoin que du compte
   // d'ORIGINE, du dossier et des uid cochés, que le serveur relit lui-même
@@ -306,17 +307,26 @@ export function MailClient() {
 
   useEffect(() => {
     const composeFromToolbar = (kind: ComposeKind) => () => {
-      if (kind === 'forward' && mailTarget.selectedUids.length > 1 && mailTarget.folder && mailTarget.accountId) {
-        setForwardedMessages({ accountId: mailTarget.accountId, folder: mailTarget.folder, uids: mailTarget.selectedUids })
+      const origins = targetOrigins(mailTarget)
+      if (kind === 'forward' && origins.length > 1) {
+        // Un transfert multiple relit les messages à la source, dans UN dossier :
+        // l'origine part avec la sélection, jamais le dossier affiché. Une
+        // sélection qui mêle des dossiers n'arrive pas ici (`deriveCapabilities`
+        // désactive alors le transfert), mais la garde reste : un seul groupe.
+        const groups = groupByOrigin(origins)
+        if (groups.length !== 1) return
+        setForwardedMessages(groups[0])
         setComposeReplyTo(null)
         setComposeMode('forward')
         return
       }
-      const uid = mailTarget.selectedUids[0] ?? mailTarget.openUid
-      if (!uid || !mailTarget.accountId) return
-      if (currentMessage?.uid === uid) return composeHandlers[kind](currentMessage)
-      pendingCompose.current = { kind, uid }
-      handleSelect(uid, mailTarget.accountId)
+      const origin = origins[0]
+      if (!origin) return
+      if (currentMessage && sameOrigin(originOfMessage(currentMessage), origin)) {
+        return composeHandlers[kind](currentMessage)
+      }
+      pendingCompose.current = { kind, origin }
+      handleSelect(origin)
     }
     registerMailActions({
       reply: composeFromToolbar('reply'),
@@ -331,7 +341,7 @@ export function MailClient() {
     const pending = pendingCompose.current
     if (pending) {
       pendingCompose.current = null
-      if (pending.uid === msg.uid) composeHandlers[pending.kind](msg)
+      if (sameOrigin(pending.origin, originOfMessage(msg))) composeHandlers[pending.kind](msg)
     }
     // Show MDN toast if requested and not already shown for this message
     if (
@@ -350,13 +360,13 @@ export function MailClient() {
     }
   }, [composeHandlers])
 
-  const handleKbMarkUnread = useCallback(async (uid: string, accId: string) => {
-    await fetch(`/api/messages/${uid}?account=${accId}&folder=${encodeURIComponent(folder)}`, {
+  const handleKbMarkUnread = useCallback(async (msg: Message) => {
+    await fetch(messageHref(originOfMessage(msg)), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ isRead: false }),
     })
-  }, [folder])
+  }, [])
 
   // Keyboard shortcuts
   useKeyboardShortcuts({
@@ -372,7 +382,7 @@ export function MailClient() {
     onCloseCompose: () => { setComposeMode(null); setComposeReplyTo(null); setForwardedMessages(null) },
   })
 
-  const listSelectedUid = selectionMode === 'single' ? selectedUid : null
+  const listSelectedOrigin = selectionMode === 'single' ? selectedOrigin : null
 
   const composeReplyToProp = composeReplyTo ? {
     uid: composeReplyTo.uid,
@@ -402,7 +412,7 @@ export function MailClient() {
       >
         <MessageList
           folder={folder}
-          selectedUid={listSelectedUid}
+          selectedOrigin={listSelectedOrigin}
           onSelect={handleSelect}
           onSelectThread={handleSelectThread}
           activeAccountId={resolvedActiveId}
@@ -440,9 +450,9 @@ export function MailClient() {
             />
           ) : (
             <ReadingPane
-              uid={selectedUid}
-              accountId={selectedAccount}
-              folder={folder}
+              uid={selectedOrigin?.uid ?? null}
+              accountId={selectedOrigin?.accountId ?? null}
+              folder={selectedOrigin?.folder ?? folder}
               activeAccountId={resolvedActiveId}
               onDelete={handleDelete}
               onReply={handleReply}

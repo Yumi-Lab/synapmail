@@ -8,6 +8,10 @@
  * change (another row clicked, a desktop notification, a thread opened) and the arriving
  * message would be answered in place of the one the person aimed at — silently.
  *
+ * The aimed-at message is identified by its ORIGIN (account, folder, uid), not by its uid
+ * alone: a search spanning folders shows several messages carrying the same uid, so a uid
+ * comparison would fire on the wrong one.
+ *
  * Exit 0 when the pending slot is addressed, 1 otherwise. Node built-ins only.
  */
 import assert from 'node:assert/strict'
@@ -20,14 +24,16 @@ const src = readFileSync(SOURCE, 'utf8')
 
 assert.ok(/const pendingCompose = useRef</.test(src), 'the deferred compose slot was not found — this guard is stale')
 
-/** The slot carries a uid alongside the kind. */
+/** The slot carries the target ORIGIN alongside the kind. */
 const declaration = src.slice(src.indexOf('const pendingCompose = useRef<'))
 const declared = declaration.slice(0, declaration.indexOf('\n'))
-assert.ok(/uid/.test(declared), `the pending slot must carry its target uid, got: ${declared.trim()}`)
+assert.ok(/origin: MessageOrigin/.test(declared),
+  `the pending slot must carry its target origin, got: ${declared.trim()}`)
 
-/** And the firing side compares that uid to the message that actually arrived. */
+/** And the firing side compares that ORIGIN to the message that actually arrived. */
 const loaded = src.slice(src.indexOf('const pending = pendingCompose.current'))
 const fire = loaded.slice(0, loaded.indexOf('// Show MDN toast'))
-assert.ok(/pending\.uid === msg\.uid/.test(fire), 'the arriving message must match the aimed-at uid before composing')
+assert.ok(/sameOrigin\(pending\.origin, originOfMessage\(msg\)\)/.test(fire),
+  'the arriving message must match the aimed-at origin (account, folder, uid) before composing')
 
 console.log('check-deferred-compose: OK')

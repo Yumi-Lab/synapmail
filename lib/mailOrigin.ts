@@ -76,3 +76,18 @@ export function groupByOrigin(origins: readonly MessageOrigin[]): OriginGroup[] 
   }
   return Array.from(groups.values())
 }
+
+/** L'origine d'un message reçu de l'API — il porte déjà les trois parties. */
+export function originOfMessage(msg: { uid: string; accountId: string; folder: string }): MessageOrigin {
+  return { accountId: msg.accountId, folder: msg.folder, uid: msg.uid }
+}
+
+/**
+ * L'adresse d'UN message côté API. Source unique : lire, marquer, supprimer et
+ * télécharger une pièce jointe passent tous par ici, donc aucun appelant ne peut
+ * oublier le dossier — l'oubli envoyait la requête sur le dossier AFFICHÉ.
+ */
+export function messageHref(origin: MessageOrigin, path = ''): string {
+  return `/api/messages/${encodeURIComponent(origin.uid)}${path}` +
+    `?account=${encodeURIComponent(origin.accountId)}&folder=${encodeURIComponent(origin.folder)}`
+}

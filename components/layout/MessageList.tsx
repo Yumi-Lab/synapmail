@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useLocale, useTranslations } from 'next-intl'
 import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag, Info } from 'lucide-react'
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
+import { MAIL_ORIGIN_ATTR, groupByOrigin, originKey, type MessageOrigin } from '@/lib/mailOrigin'
 import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } from '@/lib/flags'
 import { cn } from '@/lib/utils'
 import { formatRowDate } from '@/lib/dates'
@@ -116,8 +117,9 @@ const DEFAULT_PERMISSIONS: MailPermissions = {
 
 interface Props {
   folder: string
-  selectedUid: string | null
-  onSelect: (uid: string, accountId: string) => void
+  /** Message ouvert, avec SON origine : un uid seul désignerait plusieurs messages. */
+  selectedOrigin: MessageOrigin | null
+  onSelect: (origin: MessageOrigin) => void
   onSelectThread: (messages: Message[], subject: string) => void
   activeAccountId?: string | null
   /** Recherche en cours, portée par l'URL de la boîte et pilotée par la barre d'application. */
@@ -132,7 +134,7 @@ interface AppSettings {
   active_account_id: string | null
 }
 
-export function MessageList({ folder, selectedUid, onSelect, onSelectThread, activeAccountId, search = '', searchScope = SCOPE_FOLDER, permissions }: Props) {
+export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, activeAccountId, search = '', searchScope = SCOPE_FOLDER, permissions }: Props) {
   const perms = permissions ?? DEFAULT_PERMISSIONS
   const t = useTranslations('mail')
   const locale = useLocale()
@@ -163,7 +165,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   const compact = density === 'compact'
 
   // Bulk selection
-  const [checkedUids, setCheckedUids] = useState<Set<string>>(new Set())
+  const [checkedKeys, setCheckedKeys] = useState<Set<string>>(new Set())
 
   // Context menu
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
@@ -186,7 +188,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
 
   // Sélection façon explorateur : la dernière ligne cliquée est l'ancre d'une
   // plage Maj-clic. Une référence suffit — elle ne pilote aucun rendu.
-  const rangeAnchorUid = useRef<string | null>(null)
+  const rangeAnchorKey = useRef<string | null>(null)
 
   // Infinite scroll — sentinel + observer replace the "load more" button
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -204,8 +206,8 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       loadingLockRef.current = 0
       setReadUids(new Set())
       setSelectedThreadKey(null)
-      setCheckedUids(new Set())
-      rangeAnchorUid.current = null
+      setCheckedKeys(new Set())
+      rangeAnchorKey.current = null
     }
   }, [folder, activeAccountId])
 
@@ -441,79 +443,102 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     return out
   }, [threads, isSearchMode, timeBucket])
 
-  const allVisibleUids = useMemo(() => threads.map(t => t.lastMessage.uid), [threads])
-  const isAllChecked = allVisibleUids.length > 0 && allVisibleUids.every(uid => checkedUids.has(uid))
-  const isIndeterminate = !isAllChecked && allVisibleUids.some(uid => checkedUids.has(uid))
+  /**
+   * L'origine d'une ligne : SON compte et SON dossier, pas ceux de l'écran. Une
+   * recherche « tous les dossiers » rend des messages de plusieurs dossiers, et
+   * un uid ne désigne un message que dans le sien. Les champs manquants
+   * retombent sur le contexte affiché (hors recherche, ils sont identiques).
+   */
+  const originOf = useCallback((msg: Message): MessageOrigin => ({
+    accountId: msg.accountId || activeAccountId || '',
+    folder: msg.folder || folder,
+    uid: msg.uid,
+  }), [activeAccountId, folder])
+
+  const allVisibleKeys = useMemo(
+    () => threads.map(t => originKey(originOf(t.lastMessage))),
+    [threads, originOf]
+  )
+  const isAllChecked = allVisibleKeys.length > 0 && allVisibleKeys.every(key => checkedKeys.has(key))
+  const isIndeterminate = !isAllChecked && allVisibleKeys.some(key => checkedKeys.has(key))
 
   const toggleAll = () => {
-    setCheckedUids(isAllChecked ? new Set() : new Set(allVisibleUids))
+    setCheckedKeys(isAllChecked ? new Set() : new Set(allVisibleKeys))
   }
 
-  const toggleChecked = (uid: string) => {
-    setCheckedUids(prev => {
+  const toggleChecked = (key: string) => {
+    setCheckedKeys(prev => {
       const next = new Set(prev)
-      if (next.has(uid)) next.delete(uid)
-      else next.add(uid)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
   }
 
-  const toggleUid = (uid: string, e: React.MouseEvent) => {
+  const toggleRow = (key: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    rangeAnchorUid.current = uid
-    toggleChecked(uid)
+    rangeAnchorKey.current = key
+    toggleChecked(key)
   }
 
   /** Maj-clic : plage depuis l'ancre, dans l'ordre affiché. Sans ancre, la ligne seule. */
-  const selectRangeTo = (uid: string) => {
-    const anchor = rangeAnchorUid.current
-    const from = anchor ? allVisibleUids.indexOf(anchor) : -1
-    const to = allVisibleUids.indexOf(uid)
+  const selectRangeTo = (key: string) => {
+    const anchor = rangeAnchorKey.current
+    const from = anchor ? allVisibleKeys.indexOf(anchor) : -1
+    const to = allVisibleKeys.indexOf(key)
     if (to < 0) return
     if (from < 0) {
-      rangeAnchorUid.current = uid
-      setCheckedUids(new Set([uid]))
+      rangeAnchorKey.current = key
+      setCheckedKeys(new Set([key]))
       return
     }
     const [lo, hi] = from <= to ? [from, to] : [to, from]
-    setCheckedUids(new Set(allVisibleUids.slice(lo, hi + 1)))
+    setCheckedKeys(new Set(allVisibleKeys.slice(lo, hi + 1)))
   }
 
   const clearSelection = () => {
-    setCheckedUids(new Set())
-    rangeAnchorUid.current = null
+    setCheckedKeys(new Set())
+    rangeAnchorKey.current = null
   }
 
-  const checkedThreadUids = useMemo(() => {
-    const uids: string[] = []
+  /** Les origines cochées, fil par fil : un fil coché vise tous ses messages. */
+  const checkedOrigins = useMemo(() => {
+    const origins: MessageOrigin[] = []
     for (const thread of threads) {
-      if (checkedUids.has(thread.lastMessage.uid)) {
-        thread.messages.forEach(m => uids.push(m.uid))
+      if (checkedKeys.has(originKey(originOf(thread.lastMessage)))) {
+        thread.messages.forEach(m => origins.push(originOf(m)))
       }
     }
-    return uids
-  }, [threads, checkedUids])
+    return origins
+  }, [threads, checkedKeys, originOf])
 
-  const getAccountId = useCallback(() => {
-    for (const thread of threads) {
-      if (checkedUids.has(thread.lastMessage.uid)) {
-        return thread.lastMessage.accountId || activeAccountId || ''
-      }
-    }
-    return activeAccountId || ''
-  }, [threads, checkedUids, activeAccountId])
-
-  // Primitives groupées : elles prennent les uids VISÉS en argument. La barre
-  // d'actions de la liste leur passe la sélection cochée, le registre partagé
-  // leur passe la sélection OU le message ouvert — une seule requête écrite ici.
-  const markReadUids = async (uids: string[], read: boolean) => {
-    if (!uids.length) return
-    await fetch('/api/messages/bulk', {
-      method: 'PATCH',
+  /**
+   * Les primitives prennent les ORIGINES visées : elles groupent par (compte,
+   * dossier) et envoient UNE requête groupée par groupe, avec SON dossier. Le
+   * dossier AFFICHÉ n'entre plus dans aucune requête — c'est lui qui faisait
+   * partir les actions sur les mauvais messages quand un résultat venait d'un
+   * autre dossier. Le contrat de l'API groupée ne change pas.
+   */
+  const bulkByOrigin = (
+    origins: MessageOrigin[],
+    body: (group: { accountId: string; folder: string; uids: string[] }) => Record<string, unknown>,
+    method: 'PATCH' | 'DELETE' = 'PATCH',
+  ) => Promise.all(groupByOrigin(origins).map(group =>
+    fetch('/api/messages/bulk', {
+      method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uids, action: read ? 'read' : 'unread', accountId: getAccountId(), folder }),
+      body: JSON.stringify(body(group)),
     })
-    setAccumulated(prev => prev.map(m => uids.includes(m.uid) ? { ...m, isRead: read } : m))
+  ))
+
+  /** Les uid visés, tous dossiers confondus : ce que l'affichage doit retirer. */
+  const uidsOf = (origins: MessageOrigin[]) => new Set(origins.map(x => x.uid))
+
+  const markReadUids = async (origins: MessageOrigin[], read: boolean) => {
+    if (!origins.length) return
+    const uids = uidsOf(origins)
+    await bulkByOrigin(origins, g => ({ ...g, action: read ? 'read' : 'unread' }))
+    setAccumulated(prev => prev.map(m => uids.has(m.uid) ? { ...m, isRead: read } : m))
     setReadUids(prev => {
       const next = new Set(prev)
       uids.forEach(u => read ? next.add(u) : next.delete(u))
@@ -523,38 +548,29 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     mutate()
   }
 
-  const deleteUids = async (uids: string[]) => {
-    if (!uids.length) return
-    await fetch('/api/messages/bulk', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uids, accountId: getAccountId(), folder }),
-    })
-    setAccumulated(prev => prev.filter(m => !uids.includes(m.uid)))
+  const deleteUids = async (origins: MessageOrigin[]) => {
+    if (!origins.length) return
+    const uids = uidsOf(origins)
+    await bulkByOrigin(origins, g => g, 'DELETE')
+    setAccumulated(prev => prev.filter(m => !uids.has(m.uid)))
     clearSelection()
     mutate()
   }
 
-  const moveUids = async (uids: string[], destination: string) => {
-    if (!uids.length) return
-    await fetch('/api/messages/bulk', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uids, action: 'move', accountId: getAccountId(), folder, destination }),
-    })
-    setAccumulated(prev => prev.filter(m => !uids.includes(m.uid)))
+  const moveUids = async (origins: MessageOrigin[], destination: string) => {
+    if (!origins.length) return
+    const uids = uidsOf(origins)
+    await bulkByOrigin(origins, g => ({ ...g, action: 'move', destination }))
+    setAccumulated(prev => prev.filter(m => !uids.has(m.uid)))
     clearSelection()
     mutate()
   }
 
-  const setFlagUids = async (uids: string[], flag: string | null) => {
-    if (!uids.length) return
-    await fetch('/api/messages/bulk', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uids, action: 'flag', accountId: getAccountId(), folder, destination: undefined, flag }),
-    })
-    setAccumulated(prev => prev.map(m => uids.includes(m.uid) ? { ...m, flag, isStarred: flag !== null, isFlagged: flag !== null } : m))
+  const setFlagUids = async (origins: MessageOrigin[], flag: string | null) => {
+    if (!origins.length) return
+    const uids = uidsOf(origins)
+    await bulkByOrigin(origins, g => ({ ...g, action: 'flag', destination: undefined, flag }))
+    setAccumulated(prev => prev.map(m => uids.has(m.uid) ? { ...m, flag, isStarred: flag !== null, isFlagged: flag !== null } : m))
     mutate()
   }
 
@@ -563,26 +579,26 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
    * porte l'uid dans son chemin) ; les lignes disparaissent d'un coup, comme
    * pour un déplacement, et le popover de la barre se rafraîchit.
    */
-  const snoozeUids = async (uids: string[], until: Date) => {
-    if (!uids.length) return
-    const accountId = getAccountId()
-    const byUid = new Map(accumulated.map(m => [m.uid, m]))
-    await Promise.all(uids.map(uid => {
-      const msg = byUid.get(uid)
-      return fetch(`/api/messages/${uid}/snooze`, {
+  const snoozeUids = async (origins: MessageOrigin[], until: Date) => {
+    if (!origins.length) return
+    const uids = uidsOf(origins)
+    const byKey = new Map(accumulated.map(m => [originKey(originOf(m)), m]))
+    await Promise.all(origins.map(origin => {
+      const msg = byKey.get(originKey(origin))
+      return fetch(`/api/messages/${origin.uid}/snooze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           until: until.toISOString(),
-          folder,
-          accountId,
+          folder: origin.folder,
+          accountId: origin.accountId,
           subject: msg?.subject,
           fromAddress: msg?.from.address,
           fromName: msg?.from.name,
         }),
       })
     }))
-    setAccumulated(prev => prev.filter(m => !uids.includes(m.uid)))
+    setAccumulated(prev => prev.filter(m => !uids.has(m.uid)))
     clearSelection()
     mutate()
     window.dispatchEvent(new CustomEvent('synapmail:snooze-changed'))
@@ -604,16 +620,21 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       marqueeRef.current = null
     }
     const msg = thread.lastMessage
-    const accId = msg.accountId || activeAccountId || ''
-    const uidsToMove = checkedUids.has(msg.uid) ? checkedThreadUids : thread.messages.map(m => m.uid)
-    e.dataTransfer.setData('application/synapmail', JSON.stringify({
-      uids: uidsToMove,
-      accountId: accId,
-      folder,
-    }))
+    const dragged = checkedKeys.has(originKey(originOf(msg)))
+      ? checkedOrigins
+      : thread.messages.map(originOf)
+    const groups = groupByOrigin(dragged)
+    // Le dépôt (barre latérale) déplace UN groupe : `{ uids, accountId, folder }`.
+    // Une sélection qui mêle plusieurs dossiers n'a pas de dossier unique à
+    // annoncer — la glisser en déplacerait une partie avec le mauvais dossier.
+    // On refuse alors le geste plutôt que d'agir sur de mauvais messages.
+    // ponytail: refus, pas un second protocole. Le jour où le dépôt saura lire
+    // plusieurs groupes, il suffira de les lui passer ici.
+    if (groups.length !== 1) { e.preventDefault(); return }
+    e.dataTransfer.setData('application/synapmail', JSON.stringify(groups[0]))
     e.dataTransfer.effectAllowed = 'move'
     setDraggingUid(msg.uid)
-  }, [checkedUids, checkedThreadUids, activeAccountId, folder])
+  }, [checkedKeys, checkedOrigins, originOf])
 
   const handleDragEnd = useCallback(() => setDraggingUid(null), [])
 
@@ -637,17 +658,17 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     const state = marqueeRef.current
     if (!state) return
     const hit: string[] = []
-    document.querySelectorAll<HTMLElement>('[data-mail-row]').forEach(el => {
+    document.querySelectorAll<HTMLElement>(`[${MAIL_ORIGIN_ATTR}]`).forEach(el => {
       const r = el.getBoundingClientRect()
       if (r.bottom >= top && r.top <= bottom) {
-        const uid = el.getAttribute('data-mail-row')
-        if (uid) hit.push(uid)
+        const key = el.getAttribute(MAIL_ORIGIN_ATTR)
+        if (key) hit.push(key)
       }
     })
-    if (!state.additive) { setCheckedUids(new Set(hit)); return }
+    if (!state.additive) { setCheckedKeys(new Set(hit)); return }
     const next = new Set(state.before)
-    hit.forEach(uid => next.add(uid))
-    setCheckedUids(next)
+    hit.forEach(key => next.add(key))
+    setCheckedKeys(next)
   }, [])
 
   // Un rectangle relâché sur une ligne fait suivre un `click` : sans ce drapeau,
@@ -660,7 +681,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     marqueeRef.current = null
     if (state.drew) marqueeDrewRef.current = true
     setMarquee(null)
-    if (restore) setCheckedUids(new Set(state.before))
+    if (restore) setCheckedKeys(new Set(state.before))
   }, [])
 
   const beginMarquee = useCallback((e: React.MouseEvent) => {
@@ -682,13 +703,13 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       lastY: e.clientY,
       startScroll: box.scrollTop,
       additive: e.metaKey || e.ctrlKey || e.shiftKey,
-      before: new Set(checkedUids),
+      before: new Set(checkedKeys),
       drew: false,
       // Sur une ligne, le rectangle attend l'arbitrage du `dragstart` ; ailleurs,
       // il n'y a rien à arbitrer.
       armed: !target?.closest('[data-mail-row]'),
     }
-  }, [checkedUids])
+  }, [checkedKeys])
 
   /**
    * Le geste vit sur la FENÊTRE, pas sur le conteneur : le pointeur sort de la
@@ -763,28 +784,28 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
    * étend la plage depuis la dernière ligne cliquée, un clic simple VIDE la
    * sélection et ouvre cette ligne — même quand une sélection est en cours
    * (sinon un clic droit, qui sélectionne, rendrait la liste inouvrable).
-   * La case au survol de la bulle (`toggleUid`) reste le chemin qui accumule.
+   * La case au survol de la bulle (`toggleRow`) reste le chemin qui accumule.
    */
   const handleRowClick = (thread: ThreadGroup, e: React.MouseEvent) => {
     if (marqueeDrewRef.current) { marqueeDrewRef.current = false; return }
-    const uid = thread.lastMessage.uid
+    const key = originKey(originOf(thread.lastMessage))
     if (e.metaKey || e.ctrlKey) {
-      toggleChecked(uid)
-      rangeAnchorUid.current = uid
+      toggleChecked(key)
+      rangeAnchorKey.current = key
       return
     }
     if (e.shiftKey) {
-      selectRangeTo(uid)
+      selectRangeTo(key)
       return
     }
     // L'ancre est posée APRÈS l'ouverture : `handleSelectThread` vide la
     // sélection, ce qui efface l'ancre — un Maj-clic ensuite doit partir d'ici.
     handleSelectThread(thread)
-    rangeAnchorUid.current = uid
+    rangeAnchorKey.current = key
   }
 
   const handleSelectThread = (thread: ThreadGroup) => {
-    if (checkedUids.size > 0) clearSelection()
+    if (checkedKeys.size > 0) clearSelection()
     setSelectedThreadKey(thread.key)
     thread.messages.forEach(msg => {
       if (!msg.isRead && !readUids.has(msg.uid)) {
@@ -792,7 +813,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       }
     })
     if (thread.count === 1) {
-      onSelect(thread.lastMessage.uid, thread.lastMessage.accountId)
+      onSelect(originOf(thread.lastMessage))
     } else {
       onSelectThread(thread.messages, thread.subject)
     }
@@ -806,35 +827,35 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   const handleContextMenu = (e: React.MouseEvent, thread: ThreadGroup) => {
     e.preventDefault()
     const msg = thread.lastMessage
-    if (!checkedUids.has(msg.uid)) {
-      setCheckedUids(new Set(thread.messages.map(m => m.uid)))
-      rangeAnchorUid.current = msg.uid
+    const key = originKey(originOf(msg))
+    if (!checkedKeys.has(key)) {
+      setCheckedKeys(new Set([key]))
+      rangeAnchorKey.current = key
     }
     setContextMenu({
       x: e.clientX,
       y: e.clientY,
       isRead: msg.isRead || readUids.has(msg.uid),
       flag: msg.flag ?? (msg.isStarred ? DEFAULT_FLAG_KEY : null),
-      folderPath: folder,
+      // « Déplacer vers » retire le dossier d'ORIGINE de la ligne, pas celui de l'écran.
+      folderPath: originOf(msg).folder,
     })
   }
 
   const handleRefresh = () => { setPage(1); loadingLockRef.current = 0; setRefreshKey(k => k + 1); mutate() }
-  const hasSelection = checkedUids.size > 0
-
-  const selectedUids = useMemo(() => allVisibleUids.filter(uid => checkedUids.has(uid)), [allVisibleUids, checkedUids])
+  const hasSelection = checkedKeys.size > 0
 
   /**
    * Cible des actions partagées : la sélection si elle existe, sinon le message
    * OUVERT. Un seul endroit décide — les capacités du contexte suivent la même
    * règle (`targetCount`), donc un bouton actif a toujours quelque chose à viser.
    */
-  const targetUids = useMemo(
-    () => (checkedThreadUids.length ? checkedThreadUids : selectedUid ? [selectedUid] : []),
-    [checkedThreadUids, selectedUid]
+  const targetOrigins = useMemo(
+    () => (checkedOrigins.length ? checkedOrigins : selectedOrigin ? [selectedOrigin] : []),
+    [checkedOrigins, selectedOrigin]
   )
-  const targetUidsRef = useRef(targetUids)
-  targetUidsRef.current = targetUids
+  const targetOriginsRef = useRef(targetOrigins)
+  targetOriginsRef.current = targetOrigins
 
   // Les primitives de la liste changent d'identité à chaque rendu : une
   // référence les rend appelables sans ré-enregistrer tout le registre.
@@ -855,13 +876,13 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
 
   const moveTarget = useCallback((destination: string) => {
     if (!destination) return
-    moveUidsRef.current(targetUidsRef.current, destination)
+    moveUidsRef.current(targetOriginsRef.current, destination)
   }, [])
 
   const deleteTarget = useCallback(() => {
-    const uids = targetUidsRef.current
-    if (uids.length > 1 && !window.confirm(t('confirmDeleteSelection', { count: uids.length }))) return
-    deleteUidsRef.current(uids)
+    const origins = targetOriginsRef.current
+    if (origins.length > 1 && !window.confirm(t('confirmDeleteSelection', { count: origins.length }))) return
+    deleteUidsRef.current(origins)
   }, [t])
 
   // Publie ce qu'une barre d'outils doit connaître, et retire la publication en
@@ -870,8 +891,8 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     publish({
       accountId: activeAccountId ?? null,
       folder,
-      selectedUids,
-      openUid: selectedUid ?? null,
+      selected: checkedOrigins,
+      open: selectedOrigin,
       canSend: perms.canSend,
       canDelete: perms.canDelete,
       canOrganize: perms.canOrganize,
@@ -879,7 +900,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       hasSpam: !!spamPath,
     })
     return () => publish(null)
-  }, [publish, activeAccountId, folder, selectedUids, selectedUid, perms.canSend, perms.canDelete, perms.canOrganize, archivePath, spamPath])
+  }, [publish, activeAccountId, folder, checkedOrigins, selectedOrigin, perms.canSend, perms.canDelete, perms.canOrganize, archivePath, spamPath])
 
   useEffect(() => {
     register({
@@ -887,10 +908,10 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       archive: () => { if (archivePath) moveTarget(archivePath) },
       spam: () => { if (spamPath) moveTarget(spamPath) },
       remove: deleteTarget,
-      markRead: () => markReadUidsRef.current(targetUidsRef.current, true),
-      markUnread: () => markReadUidsRef.current(targetUidsRef.current, false),
-      setFlag: (flag) => setFlagUidsRef.current(targetUidsRef.current, flag),
-      snooze: (until) => snoozeUidsRef.current(targetUidsRef.current, until),
+      markRead: () => markReadUidsRef.current(targetOriginsRef.current, true),
+      markUnread: () => markReadUidsRef.current(targetOriginsRef.current, false),
+      setFlag: (flag) => setFlagUidsRef.current(targetOriginsRef.current, flag),
+      snooze: (until) => snoozeUidsRef.current(targetOriginsRef.current, until),
       moveTo: moveTarget,
     })
   }, [register, archivePath, spamPath, moveTarget, deleteTarget])
@@ -902,35 +923,38 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
       const el = e.target as HTMLElement | null
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
-        if (allVisibleUids.length === 0) return
+        if (allVisibleKeys.length === 0) return
         e.preventDefault()
-        setCheckedUids(new Set(allVisibleUids))
+        setCheckedKeys(new Set(allVisibleKeys))
         return
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return
-      if (e.key === 'Escape' && checkedUids.size > 0) { e.preventDefault(); clearSelection(); return }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && checkedUids.size > 0 && perms.canDelete) {
+      if (e.key === 'Escape' && checkedKeys.size > 0) { e.preventDefault(); clearSelection(); return }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && checkedKeys.size > 0 && perms.canDelete) {
         e.preventDefault()
         deleteTarget()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [allVisibleUids, checkedUids, perms.canDelete, deleteTarget]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allVisibleKeys, checkedKeys, perms.canDelete, deleteTarget]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const renderRow = (thread: ThreadGroup) => {
     const { lastMessage: msg, hasUnread, count } = thread
     const isRead = !hasUnread || readUids.has(msg.uid)
     const isSelected = selectedThreadKey === thread.key
-    const isChecked = checkedUids.has(msg.uid)
+    const rowOrigin = originOf(msg)
+    const rowKey = originKey(rowOrigin)
+    const isChecked = checkedKeys.has(rowKey)
     const isDragging = draggingUid === msg.uid
     const initial = (msg.from.name || msg.from.address)[0]?.toUpperCase() ?? '?'
     const avatarColor = isRead ? 'bg-muted text-muted-foreground' : cn(getAvatarColor(msg.from.address), 'text-white')
 
     return (
       <div
-        key={thread.key}
+        key={rowKey}
         data-mail-row={msg.uid}
+        {...{ [MAIL_ORIGIN_ATTR]: rowKey }}
         role="option"
         // Sélectionné = coché OU ouvert : ce que l'œil voit surligné est ce que
         // le lecteur d'écran annonce, et c'est ce que les actions visent.
@@ -954,7 +978,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
         {/* Avatar / Checkbox */}
         <div
           className={cn('relative shrink-0 group/avatar', compact ? 'w-7 h-7' : 'w-9 h-9')}
-          onClick={e => toggleUid(msg.uid, e)}
+          onClick={e => toggleRow(rowKey, e)}
         >
           {isChecked ? (
             <div className="w-full h-full rounded-full flex items-center justify-center bg-primary/10 text-primary">
@@ -1043,7 +1067,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   }
 
   return (
-    <div className="flex flex-col h-full bg-background border-r border-border" {...{ [MAIL_SELECTION_COUNT_ATTR]: selectedUids.length }}>
+    <div className="flex flex-col h-full bg-background border-r border-border" {...{ [MAIL_SELECTION_COUNT_ATTR]: checkedOrigins.length }}>
       {/*
         Toolbar. Ses trois états n'ont pas la même hauteur (à colonne étroite
         l'en-tête normal passe sur deux lignes). Si la barre de sélection
@@ -1068,7 +1092,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
                 : <CheckSquare className="w-4 h-4" />
             }
           </button>
-          <span className="text-xs text-primary font-medium mr-1">{checkedUids.size}</span>
+          <span className="text-xs text-primary font-medium mr-1">{checkedKeys.size}</span>
           <div className="flex-1" />
           <button onClick={clearSelection} className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors" title="Annuler la sélection">
             <X className="w-3.5 h-3.5" />
