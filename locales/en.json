@@ -171,7 +171,21 @@
     "folderConfirmDelete": "Delete “{name}” and its {count} messages?",
     "folderConfirmEmpty": "Permanently delete the {count} messages in “{name}”?",
     "folderHasChildren": "This folder contains subfolders. Delete them first.",
-    "folderActionFailed": "Couldn't apply that to the folder"
+    "folderActionFailed": "Couldn't apply that to the folder",
+    "ai": {
+      "errors": {
+        "server": "The assistant could not be reached.",
+        "unreachable": "No local model is listening at that address on this device.",
+        "cors": "A local model answered but your browser blocked it: allow the origin {origin}.",
+        "model": "The local model returned an error.",
+        "permission": "Your browser blocked access to apps running on this device."
+      },
+      "access": {
+        "prompt": "Your browser will ask permission to reach apps running on this device. Accept it to continue.",
+        "deniedStep1": "Click the icon at the left of the address bar, then open the site settings.",
+        "deniedStep2": "Allow access to the local network (apps on this device), then try again."
+      }
+    }
   },
   "compose": {
     "newMessage": "New message",
@@ -404,6 +418,10 @@
       "noRules": "No rules configured",
       "noRulesDesc": "Rules are automatically applied to new emails.",
       "templates": "Quick start, templates"
+    },
+    "ai": {
+      "stepProvider": "1. Provider",
+      "stepAccess": "2. Access"
     }
   },
   "admin": {

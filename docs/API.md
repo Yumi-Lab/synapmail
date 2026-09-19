@@ -683,6 +683,19 @@ Runs one AI transformation against arbitrary text, using the caller's configured
 ```
 **Response** `{ data: { result: string } }`, or `500 { error }` on an upstream AI provider failure.
 
+With the `local` provider — a model running on the CALLER's machine — the server never contacts a provider. It builds the prompt exactly as it would for a hosted one (system turn, prompt-injection guard and single-use delimiters included) and hands it back for the caller to run:
+
+```ts
+{ data: {
+  mode: 'local'
+  baseUrl: string   // loopback only: 127.0.0.1, localhost or [::1]
+  model: string
+  messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+} }
+```
+
+The caller POSTs `{ model, messages }` to `{baseUrl}/chat/completions` (OpenAI-compatible, served by Ollama on `/v1`, LM Studio, llama.cpp) and reads `choices[0].message.content`. A Bearer request gets this same response. `400` if the stored address is not a loopback address.
+
 ---
 
 ## Tracking, unsubscribe & realtime
