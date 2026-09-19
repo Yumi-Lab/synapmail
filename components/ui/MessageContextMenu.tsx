@@ -15,7 +15,7 @@ import {
   ContextMenuSurface, ContextMenuItem, ContextMenuSubmenu, ContextMenuSeparator, MENU_ICON,
 } from '@/components/ui/ContextMenu'
 import { flagByKey } from '@/lib/flags'
-import { useMailSelection } from '@/lib/mailSelection'
+import { movableFolders, useMailSelection } from '@/lib/mailSelection'
 import { snoozePresets } from '@/lib/snooze-presets'
 import { cn } from '@/lib/utils'
 import type { Folder } from '@/types/email'
@@ -37,7 +37,7 @@ interface Props {
 
 export function MessageContextMenu({ menu, folders, onClose }: Props) {
   const t = useTranslations('mail')
-  const { can, run } = useMailSelection()
+  const { can, run, state } = useMailSelection()
   const item = (
     key: string,
     icon: React.ReactNode,
@@ -54,7 +54,9 @@ export function MessageContextMenu({ menu, folders, onClose }: Props) {
 
   const ICON = MENU_ICON
   const separator = <ContextMenuSeparator />
-  const otherFolders = folders.filter(f => f.path !== menu.folderPath)
+  // La cible peut mêler plusieurs dossiers : ce n'est pas le dossier de la ligne
+  // cliquée qui décide, mais ce que la SÉLECTION quitterait (`movableFolders`).
+  const otherFolders = movableFolders(state, folders)
 
   return (
     <ContextMenuSurface anchor={menu} onClose={onClose} data-mail-context-menu>

@@ -12,7 +12,37 @@ export const SEARCH_PARAM = 'q'
 export const SCOPE_PARAM = 'scope'
 export const SCOPE_FOLDER = 'folder'
 export const SCOPE_ALL = 'all'
-export type SearchScope = typeof SCOPE_FOLDER | typeof SCOPE_ALL
+/** Toutes les boîtes ACCESSIBLES (propres + reçues en partage), tous dossiers. */
+export const SCOPE_ACCOUNTS = 'accounts'
+/**
+ * Les portées, dans l'ordre où le sélecteur les propose. Source unique : l'omnibar
+ * boucle dessus, l'URL en porte la valeur, la route et la liste la relisent.
+ */
+export const SEARCH_SCOPES = [SCOPE_FOLDER, SCOPE_ALL, SCOPE_ACCOUNTS] as const
+export type SearchScope = typeof SEARCH_SCOPES[number]
+
+/**
+ * Clé i18n (espace `mail`) du libellé d'une portée. Source unique : le sélecteur
+ * de l'omnibar ET l'infobulle du bandeau de résultats lisent CETTE table — elles
+ * ne peuvent donc pas nommer autrement la même portée.
+ */
+export const SCOPE_LABEL: Record<SearchScope, 'searchThisFolder' | 'searchAllFolders' | 'searchAllAccounts'> = {
+  [SCOPE_FOLDER]: 'searchThisFolder',
+  [SCOPE_ALL]: 'searchAllFolders',
+  [SCOPE_ACCOUNTS]: 'searchAllAccounts',
+}
+
+/**
+ * Boîtes balayées EN PARALLÈLE par la portée « toutes les boîtes ». Ce plafond
+ * s'ajoute à celui des dossiers par boîte (lot S2) : au pic, au plus
+ * ACCOUNT_CONCURRENCY × (dossiers en parallèle) connexions IMAP ouvertes.
+ * ponytail: mesuré le 20/09/2026 sur le compte de test (7 boîtes, 185 dossiers) —
+ * le balayage boîte par boîte EN SÉRIE coûte 50,7 s, la boîte la plus lente 22,0 s
+ * à elle seule. 3 suffit à ramener le total sous la boîte la plus lente + marge,
+ * sans ouvrir 7 sessions IMAP de front chez le même hébergeur. Monter ce nombre
+ * demande de re-mesurer le pic de connexions, pas seulement le temps total.
+ */
+export const ACCOUNT_CONCURRENCY = 3
 
 /** En deçà, IMAP renverrait la boîte entière : la recherche reste inactive. */
 export const MIN_QUERY_LENGTH = 2
@@ -52,7 +82,12 @@ export function isSearchQuery(q: string | null | undefined): boolean {
 }
 
 export function readScope(raw: string | null | undefined): SearchScope {
-  return raw === SCOPE_ALL ? SCOPE_ALL : SCOPE_FOLDER
+  return (SEARCH_SCOPES as readonly string[]).includes(raw ?? '') ? raw as SearchScope : SCOPE_FOLDER
+}
+
+/** Une portée qui sort du dossier affiché : la liste mêle alors des origines. */
+export function isWideScope(scope: SearchScope): boolean {
+  return scope === SCOPE_ALL || scope === SCOPE_ACCOUNTS
 }
 
 /**
@@ -64,7 +99,7 @@ export function buildSearchHref(current: string | URLSearchParams, q: string, sc
   const trimmed = q.trim()
   if (trimmed) params.set(SEARCH_PARAM, trimmed)
   else params.delete(SEARCH_PARAM)
-  if (trimmed && scope === SCOPE_ALL) params.set(SCOPE_PARAM, SCOPE_ALL)
+  if (trimmed && scope !== SCOPE_FOLDER) params.set(SCOPE_PARAM, scope)
   else params.delete(SCOPE_PARAM)
   const qs = params.toString()
   return qs ? `${MAIL_PATH}?${qs}` : MAIL_PATH
@@ -166,6 +201,119 @@ export function orderFoldersForSearch(folders: FolderRank[]): string[] {
     .map(f => f.path)
 }
 
+/** Un dossier PRIVILÉGIÉ : réception ou envoyés, les deux de la première passe. */
+function isPriorityFolder(f: FolderRank): boolean {
+  return PRIORITY_SPECIAL_USE.includes(f.specialUse as typeof PRIORITY_SPECIAL_USE[number])
+}
+
+/**
+ * Découpe les dossiers d'une boîte en DEUX passes, chacune déjà ordonnée par
+ * `orderFoldersForSearch` : la PREMIÈRE ne contient que la réception et les
+ * envoyés, la SECONDE tout le reste.
+ *
+ * Pourquoi deux passes : avec plusieurs boîtes, balayer une boîte ENTIÈRE avant
+ * d'attaquer la suivante fait attendre la réception de la 7ᵉ boîte derrière les
+ * 97 dossiers de la 4ᵉ. Mesuré le 20/09/2026 sur le compte de test (7 boîtes,
+ * 185 dossiers) : le balayage complet d'une boîte va de 2,0 s à 22,0 s, alors que
+ * son PREMIER résultat arrive en 1,6-2,7 s. Faire d'abord les deux dossiers
+ * utiles de CHAQUE boîte rend les résultats utiles en quelques secondes même
+ * avec 50 boîtes.
+ *
+ * Fonction PURE : auto-contrôle `scripts/check-search-accounts.mjs`.
+ */
+export function splitFolderPasses(folders: FolderRank[]): { first: string[]; rest: string[] } {
+  const priority = new Set(folders.filter(isPriorityFolder).map(f => f.path))
+  const ordered = orderFoldersForSearch(folders)
+  return {
+    first: ordered.filter(p => priority.has(p)),
+    rest: ordered.filter(p => !priority.has(p)),
+  }
+}
+
+/** Ce qu'une recherche « toutes les boîtes » sait d'une boîte avant de l'ouvrir. */
+export type AccountRank = { id: string; email?: string | null }
+
+/**
+ * Ordonne les boîtes d'une recherche « toutes les boîtes » : la boîte ACTIVE
+ * d'abord (celle que l'utilisateur regarde, donc celle dont il attend les
+ * résultats), puis l'ordre de la liste, inchangé. Les entrées sans identifiant
+ * sont écartées, les doublons aussi — une boîte balayée deux fois coûterait deux
+ * sessions IMAP pour les mêmes résultats.
+ *
+ * Fonction PURE : auto-contrôle `scripts/check-search-accounts.mjs`.
+ */
+export function orderAccountsForSearch(accounts: readonly AccountRank[], activeId?: string | null): string[] {
+  const ids: string[] = []
+  const seen = new Set<string>()
+  const push = (id: string | null | undefined) => {
+    if (!id || seen.has(id)) return
+    seen.add(id)
+    ids.push(id)
+  }
+  push(accounts.find(a => a.id === activeId)?.id)
+  for (const a of accounts) push(a.id)
+  return ids
+}
+
+/**
+ * Entrelace plusieurs générateurs en n'en laissant que `limit` OUVERTS à la fois,
+ * et rend chaque élément dès qu'il arrive — pas dans l'ordre des sources. Une
+ * source n'est CRÉÉE qu'au moment où une place se libère : une boîte dont le tour
+ * n'est pas venu n'ouvre aucune connexion IMAP.
+ *
+ * Une source qui échoue s'arrête SEULE, les autres continuent : c'est le filet de
+ * sécurité, pas le chemin normal — une boîte injoignable est censée rendre son
+ * propre élément d'erreur pour que le flux puisse la signaler.
+ *
+ * Fonction PURE au sens du banc : elle n'ouvre rien elle-même, elle ORDONNANCE ce
+ * qu'on lui donne. Auto-contrôle `scripts/check-search-accounts.mjs`.
+ */
+export async function* mergeGenerators<T>(
+  sources: readonly (() => AsyncGenerator<T>)[],
+  limit: number,
+): AsyncGenerator<T> {
+  // Sur une liste VIDE, un plancher à 1 démarrerait `sources[0]`, qui n'existe pas.
+  const width = sources.length === 0 ? 0 : Math.max(1, Math.min(limit, sources.length))
+  type Slot = { gen: AsyncGenerator<T>; pending: Promise<{ index: number; done: boolean; value?: T }> }
+  const active = new Map<number, Slot>()
+  let next = 0
+  const advance = (index: number, gen: AsyncGenerator<T>) => gen.next()
+    .then(r => ({ index, done: !!r.done, value: r.value as T | undefined }))
+    .catch(() => ({ index, done: true, value: undefined }))
+  const start = () => {
+    const index = next++
+    let gen: AsyncGenerator<T>
+    try { gen = sources[index]() } catch { return }
+    active.set(index, { gen, pending: advance(index, gen) })
+  }
+  while (next < width) start()
+  try {
+    while (active.size) {
+      // Course sur les sources OUVERTES : la première arrivée est rendue, puis sa
+      // promesse est remplacée. Sans ce remplacement, une source déjà rendue
+      // gagnerait toutes les courses suivantes.
+      const done = await Promise.race(Array.from(active.values(), slot => slot.pending))
+      const slot = active.get(done.index)
+      if (!slot) continue
+      if (done.done) {
+        active.delete(done.index)
+        if (next < sources.length) start()
+        continue
+      }
+      slot.pending = advance(done.index, slot.gen)
+      yield done.value as T
+    }
+  } finally {
+    // Abandon (`break`, `return`, erreur du consommateur) : chaque source encore
+    // ouverte est close, donc son `finally` — celui qui ferme la connexion IMAP —
+    // s'exécute. Sans attendre : une source peut être au milieu d'un `SEARCH` de
+    // plusieurs dizaines de secondes, et la réponse n'a pas à l'attendre pour se
+    // fermer (l'abandon est déjà signalé par ailleurs).
+    for (const slot of Array.from(active.values())) void slot.gen.return(undefined as never).catch(() => {})
+    active.clear()
+  }
+}
+
 /**
  * Paramètre par lequel le client demande la restitution PROGRESSIVE : la réponse
  * est alors une suite de lignes JSON (NDJSON), une par dossier couvert, au lieu
@@ -182,6 +330,13 @@ export type SearchStreamChunk<TMessage> = {
   /** Dossiers couverts jusqu'ici / dossiers à couvrir — « 312 sur 1 226 ». */
   searched: number
   folders: number
+  /**
+   * Portée « toutes les boîtes » : la boîte d'où vient ce morceau, et le nombre
+   * total de boîtes à balayer. Le bandeau en tire « 3 boîtes sur 8 ». Absents sur
+   * les portées à une seule boîte, qui n'ont rien à compter.
+   */
+  accountId?: string
+  accounts?: number
 }
 
 /**
@@ -209,13 +364,21 @@ export type SearchStreamState<TMessage> = {
   total: number
   searched: number
   folders: number
+  /**
+   * Boîtes ayant déjà rapporté (leurs identifiants, donc jamais deux fois la même)
+   * et boîtes à balayer : « 3 boîtes sur 8 ». Vides hors portée « toutes les boîtes ».
+   */
+  sweptIds: string[]
+  accounts: number
+  /** Boîtes injoignables signalées en fin de flux — jamais une panne silencieuse. */
+  unreachable: string[]
 }
 
 /** Un message rendu par la recherche, réduit à ce dont l'accumulation a besoin. */
 type StreamedMessage = { folder: string; uid: number | string; date: string }
 
 export const EMPTY_SEARCH_STREAM: SearchStreamState<never> = {
-  messages: [], total: 0, searched: 0, folders: 0,
+  messages: [], total: 0, searched: 0, folders: 0, sweptIds: [], accounts: 0, unreachable: [],
 }
 
 /**
@@ -232,12 +395,19 @@ export const EMPTY_SEARCH_STREAM: SearchStreamState<never> = {
  */
 export function accumulateSearchStream<TMessage extends StreamedMessage>(
   prev: SearchStreamState<TMessage>,
-  items: (Partial<SearchStreamChunk<TMessage>> & { error?: string })[]
+  items: (Partial<SearchStreamChunk<TMessage>> & { error?: string; unreachable?: string[] })[]
 ): SearchStreamState<TMessage> {
   const seen = new Set(prev.messages.map(m => `${m.folder}#${m.uid}`))
   const next = [...prev.messages]
-  let { total, searched, folders } = prev
+  // Une boîte est comptée à son PREMIER morceau, jamais à chaque dossier : le
+  // compteur dit combien de boîtes ont rapporté, pas combien de lignes sont arrivées.
+  const swept = new Set(prev.sweptIds)
+  const unreachable = [...prev.unreachable]
+  let { total, searched, folders, accounts } = prev
   for (const item of items) {
+    for (const email of item.unreachable ?? []) {
+      if (!unreachable.includes(email)) unreachable.push(email)
+    }
     if (item.error) continue
     for (const m of item.messages ?? []) {
       const key = `${m.folder}#${m.uid}`
@@ -248,7 +418,13 @@ export function accumulateSearchStream<TMessage extends StreamedMessage>(
     total += item.total ?? 0
     searched = Math.max(searched, item.searched ?? 0)
     folders = Math.max(folders, item.folders ?? 0)
+    accounts = Math.max(accounts, item.accounts ?? 0)
+    if (item.accountId) swept.add(item.accountId)
   }
   next.sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
-  return { messages: next.slice(0, SEARCH_RESULT_LIMIT), total, searched, folders }
+  return {
+    messages: next.slice(0, SEARCH_RESULT_LIMIT),
+    total, searched, folders, accounts, unreachable,
+    sweptIds: Array.from(swept),
+  }
 }

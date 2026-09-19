@@ -77,6 +77,26 @@ export function groupByOrigin(origins: readonly MessageOrigin[]): OriginGroup[] 
   return Array.from(groups.values())
 }
 
+/**
+ * Les groupes qu'un déplacement vers `destination` ferait VRAIMENT bouger.
+ *
+ * Un groupe déjà DANS la destination n'a rien à faire : le 20/09/2026, une
+ * sélection groupée sur « Réception » proposait « Réception » comme destination
+ * et y envoyait une requête de déplacement — du travail serveur pour un
+ * non-événement. Le dossier compare bien les deux côtés d'une MÊME boîte : deux
+ * boîtes ayant chacune « INBOX » restent deux groupes, et chacun est jugé sur
+ * SON dossier.
+ *
+ * Source unique : la liste s'en sert pour n'émettre QUE les requêtes utiles, les
+ * menus pour ne proposer une destination que si au moins un groupe la quitterait.
+ *
+ * Fonction PURE : son auto-contrôle est `scripts/check-mail-origin.mjs`.
+ */
+export function groupsToMove(origins: readonly MessageOrigin[], destination: string): OriginGroup[] {
+  if (!destination) return []
+  return groupByOrigin(origins).filter(group => group.folder !== destination)
+}
+
 /** L'origine d'un message reçu de l'API — il porte déjà les trois parties. */
 export function originOfMessage(msg: { uid: string; accountId: string; folder: string }): MessageOrigin {
   return { accountId: msg.accountId, folder: msg.folder, uid: msg.uid }

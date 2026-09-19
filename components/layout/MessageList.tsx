@@ -4,12 +4,12 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useLocale, useTranslations } from 'next-intl'
 import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag, Info } from 'lucide-react'
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
-import { MAIL_ORIGIN_ATTR, groupByOrigin, originKey, type MessageOrigin } from '@/lib/mailOrigin'
+import { MAIL_ORIGIN_ATTR, groupByOrigin, groupsToMove, originKey, type MessageOrigin } from '@/lib/mailOrigin'
 import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } from '@/lib/flags'
 import { cn } from '@/lib/utils'
 import { formatRowDate } from '@/lib/dates'
 import {
-  EMPTY_SEARCH_STREAM, SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, STREAM_PARAM,
+  EMPTY_SEARCH_STREAM, SCOPE_ACCOUNTS, SCOPE_FOLDER, SCOPE_LABEL, SCOPE_PARAM, SEARCH_PARAM, STREAM_PARAM, isWideScope,
   accumulateSearchStream, isSearchQuery, parseNdjsonChunk,
   type SearchField, type SearchScope, type SearchStreamChunk, type SearchStreamState,
 } from '@/lib/search'
@@ -19,6 +19,7 @@ import type { EmailAccount } from '@/types/account'
 import { MessageContextMenu, type ContextMenuState } from '@/components/ui/MessageContextMenu'
 import { IconTooltip } from '@/components/ui/IconTooltip'
 import { ThinScroll } from './ThinScroll'
+import { accountColor, accountInitials, readableInk, useAccountAccent } from './AccountAvatar'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
 
@@ -78,7 +79,7 @@ interface ThreadGroup {
   count: number
 }
 
-const groupIntoThreads = (messages: Message[]): ThreadGroup[] => {
+const groupIntoThreads = (messages: readonly Message[]): ThreadGroup[] => {
   const map = new Map<string, Message[]>()
   for (const msg of messages) {
     const key = normalizeSubject(msg.subject) || msg.uid
@@ -104,6 +105,17 @@ const groupIntoThreads = (messages: Message[]): ThreadGroup[] => {
 
 // ─── time bucketing (Direction B — grouped list) ──────────────────────────
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
+
+/**
+ * « Pas encore de résultats » doit être LE MÊME tableau d'un rendu à l'autre. Un
+ * `?? []` écrit dans le corps en fabrique un neuf à chaque rendu : `threads` puis
+ * `checkedOrigins` changeaient alors d'identité sans que rien ne bouge, l'effet
+ * qui PUBLIE l'état de la boîte se rejouait, son nettoyage publiait `null`, le
+ * fournisseur re-rendait la liste — et la boucle repartait. Mesuré le 20/09/2026 :
+ * 478 « Maximum update depth exceeded » sur `/mail?q=facture`, au point qu'un clic
+ * sur le sélecteur de portée n'obtenait plus sa navigation.
+ */
+const NO_MESSAGES: readonly Message[] = []
 
 type DensityMode = 'comfortable' | 'compact'
 
@@ -146,6 +158,11 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const [refreshKey, setRefreshKey] = useState(0)
   const [readUids, setReadUids] = useState<Set<string>>(new Set())
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
+
+  // Les boîtes de l'utilisateur, prises à la MÊME source que la barre latérale
+  // (mêmes clés SWR, donc aucune requête de plus) : la pastille d'un résultat doit
+  // porter exactement la couleur et les lettres que la barre lui donne déjà.
+  const { accounts } = useAccountAccent()
 
   const { data: settingsData } = useSWR<{ data: AppSettings }>('/api/settings', fetcher)
   const threadView = settingsData?.data?.thread_view ?? true
@@ -229,7 +246,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   // `total` = correspondances réelles côté serveur, `fields` = champs interrogés :
   // le bandeau les dit plutôt que de les retaper (source unique : lib/search.ts).
   // La portée « ce dossier » tient en une réponse : un seul dossier, rien à étaler.
-  const isStreamingScope = isSearchMode && searchScope === SCOPE_ALL
+  const isStreamingScope = isSearchMode && isWideScope(searchScope)
   // Le compte actif arrive APRÈS le premier rendu, et en DEUX temps : /api/accounts
   // donne la liste, /api/settings dit lequel est affiché. Tant que les réglages
   // manquent, le compte reçu n'est qu'un repli sur la boîte PAR DÉFAUT : chercher
@@ -261,14 +278,26 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const streamAbort = useRef<AbortController | null>(null)
   const stopStream = useCallback(() => { streamAbort.current?.abort() }, [])
 
+  // CE que le flux doit couvrir. Un effet ne s'exécute qu'APRÈS la peinture : entre
+  // le rendu où la recherche devient prête et celui où l'effet lève `streaming`, le
+  // bandeau affichait un « 0 résultat » SANS « Recherche… », donc présenté comme
+  // définitif (mesuré le 20/09/2026 : 52 ms de faux zéro au chargement à froid).
+  // Comparer la clé visée à celle que le flux a démarrée rend l'attente visible dès
+  // le PREMIER rendu, sans second drapeau à tenir en accord avec le premier.
+  const streamKey = isStreamingScope && searchReady
+    ? `${search}|${folder}|${searchScope}|${accountParam}`
+    : null
+  const [streamedKey, setStreamedKey] = useState<string | null>(null)
+
   useEffect(() => {
     if (!isStreamingScope || !searchReady) { setStreamed(EMPTY_SEARCH_STREAM); return }
     const controller = new AbortController()
     streamAbort.current = controller
     setStreamed(EMPTY_SEARCH_STREAM)
+    setStreamedKey(streamKey)
     setStreaming(true)
     const url = `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}` +
-      `&folder=${encodeURIComponent(folder)}&${SCOPE_PARAM}=${SCOPE_ALL}&${STREAM_PARAM}=1${accountParam}`
+      `&folder=${encodeURIComponent(folder)}&${SCOPE_PARAM}=${searchScope}&${STREAM_PARAM}=1${accountParam}`
     // Un flux lu JUSQU'AU BOUT n'a plus rien à abandonner : l'interrompre quand même
     // au démontage faisait conclure le navigateur à `net::ERR_ABORTED` sur une
     // réponse pourtant complète — trompeur dans les outils réseau, et indissociable
@@ -304,13 +333,13 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       }
     })()
     return () => { if (!complete) controller.abort() }
-  }, [isStreamingScope, searchReady, search, folder, accountParam])
+  }, [isStreamingScope, searchReady, search, folder, accountParam, searchScope, streamKey])
 
   // Tant que le compte n'est pas résolu, la recherche est EN COURS de démarrage :
   // le bandeau dit « Recherche… » plutôt que d'affirmer un résultat qu'il n'a pas.
   const isSearching = isSearchMode && !searchReady
     ? true
-    : (isStreamingScope ? streaming : isSearchingOne)
+    : (isStreamingScope ? (streaming || streamedKey !== streamKey) : isSearchingOne)
 
   // Folders — needed for the move menu, the context menu AND the row "Archive"
   // quick action, so it is fetched whenever an account is active. The key is
@@ -360,14 +389,36 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     }
   }, [data, page, refreshKey])
 
-  const searchMessages = isStreamingScope ? streamed.messages : (searchData?.messages ?? [])
+  const searchMessages = isStreamingScope ? streamed.messages : (searchData?.messages ?? NO_MESSAGES)
   const messages = isSearchMode ? searchMessages : accumulated
   const total = data?.total ?? 0
   // Le serveur peut avoir trouvé plus que ce qu'il rend (plafond SEARCH_RESULT_LIMIT) :
   // le bandeau annonce alors « X premiers sur N » au lieu de laisser croire à N = X.
   const searchTotal = isStreamingScope ? streamed.total : (searchData?.total ?? messages.length)
   const searchTruncated = searchTotal > messages.length
-  const showResultFolder = isSearchMode && searchScope === SCOPE_ALL
+  const showResultFolder = isSearchMode && isWideScope(searchScope)
+  // Portée « toutes les boîtes » : le dossier seul ne suffit plus, deux boîtes ont
+  // chacune une « Réception ». La bulle à deux lettres dit laquelle, sans grossir
+  // la ligne (elle remplace le seul dossier, elle ne s'y ajoute pas).
+  const showResultAccount = isSearchMode && searchScope === SCOPE_ACCOUNTS
+  // Ce que la pastille d'un résultat affiche, résolu UNE fois par boîte et non à
+  // chaque ligne : les lettres et la couleur viennent des mêmes fonctions que la
+  // bulle de la barre latérale (AccountAvatar), donc une boîte ne peut pas
+  // s'épeler ni se colorer autrement ici que là-bas. Le rang dans la liste EST la
+  // clé de la palette automatique — c'est ce même rang que la barre emploie.
+  const resultAccountBadges = useMemo(() => {
+    const byId = new Map<string, { letters: string; background: string; ink: string; email: string }>()
+    accounts.forEach((account, rank) => {
+      const background = accountColor(account, rank)
+      byId.set(account.id, {
+        letters: accountInitials(account),
+        background,
+        ink: readableInk(background),
+        email: account.email,
+      })
+    })
+    return byId
+  }, [accounts])
   const loadError = !isSearchMode && !!error && accumulated.length === 0
   const loading = isSearchMode ? (messages.length === 0 && isSearching) : (!data && !error)
 
@@ -523,7 +574,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     origins: MessageOrigin[],
     body: (group: { accountId: string; folder: string; uids: string[] }) => Record<string, unknown>,
     method: 'PATCH' | 'DELETE' = 'PATCH',
-  ) => Promise.all(groupByOrigin(origins).map(group =>
+    groups = groupByOrigin(origins),
+  ) => Promise.all(groups.map(group =>
     fetch('/api/messages/bulk', {
       method,
       headers: { 'Content-Type': 'application/json' },
@@ -557,10 +609,13 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     mutate()
   }
 
+  // Un groupe déjà dans la destination n'émet AUCUNE requête (`groupsToMove`), et
+  // ses lignes restent affichées : elles n'ont pas bougé.
   const moveUids = async (origins: MessageOrigin[], destination: string) => {
-    if (!origins.length) return
-    const uids = uidsOf(origins)
-    await bulkByOrigin(origins, g => ({ ...g, action: 'move', destination }))
+    const groups = groupsToMove(origins, destination)
+    if (!groups.length) return
+    const uids = new Set(groups.flatMap(g => g.uids))
+    await bulkByOrigin(origins, g => ({ ...g, action: 'move', destination }), 'PATCH', groups)
     setAccumulated(prev => prev.filter(m => !uids.has(m.uid)))
     clearSelection()
     mutate()
@@ -1017,8 +1072,25 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             {/* Portée « tous les dossiers » : un résultat ne dit rien s'il ne dit pas
                 d'où il vient. Discret, et seulement quand le dossier peut varier. */}
             {showResultFolder && msg.folder && (
-              <span className="shrink-0 max-w-[40%] truncate text-[11px] text-muted-foreground/70" data-result-folder>
-                {folderLabel(msg.folder)}
+              <span className="shrink-0 max-w-[40%] flex items-center gap-1 text-[11px] text-muted-foreground/70" data-result-folder>
+                {/* Portée « toutes les boîtes » : la pastille dit DE QUELLE boîte
+                    vient ce résultat. Un point coloré à deux lettres, pas une
+                    seconde bulle : la ligne garde exactement la même hauteur. */}
+                {showResultAccount && (() => {
+                  const badge = resultAccountBadges.get(msg.accountId)
+                  if (!badge) return null
+                  return (
+                    <span
+                      data-result-account={msg.accountId}
+                      title={badge.email}
+                      className="shrink-0 inline-flex h-[14px] items-center rounded-full px-1 text-[9px] font-semibold leading-none tracking-[0.02em]"
+                      style={{ backgroundColor: badge.background, color: badge.ink }}
+                    >
+                      {badge.letters}
+                    </span>
+                  )
+                })()}
+                <span className="truncate">{folderLabel(msg.folder)}</span>
               </span>
             )}
             <div className="flex items-center gap-1 shrink-0">
@@ -1078,7 +1150,13 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
         hauteur en dur ni mesure en JS. `invisible` retire aussi de l'ordre de
         tabulation ce qui n'est pas affiché.
       */}
-      <div className="grid shrink-0">
+      {/* Les deux bandeaux se superposent dans UNE piste de grille. Un élément de
+          grille garde `min-width:auto` : sans `minmax(0,1fr)`, celui qui dépasse
+          ÉLARGIT la piste au lieu de se tronquer, et le bandeau de recherche
+          poussait Arrêter et l'icône d'information hors de la colonne, sous le
+          volet de lecture (mesuré le 20/09/2026 : piste de 318 px pour un
+          contenu de 444 px, bouton à 130 px dehors). */}
+      <div className="grid grid-cols-[minmax(0,1fr)] shrink-0">
         <div className={cn('col-start-1 row-start-1 flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border bg-primary/5', !hasSelection && 'invisible')} aria-hidden={!hasSelection || undefined}>
           <button
             onClick={toggleAll}
@@ -1128,11 +1206,23 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
               court. Les champs cherchés et la portée — information secondaire —
               passent en infobulle sur l'icône de droite. */}
           <div className="flex items-center gap-2 min-w-0">
-            <p className="text-xs text-muted-foreground truncate" data-search-summary>
+            {/* `min-w-0` : un élément de flex garde `min-width:auto`, donc `truncate`
+                ne mordait JAMAIS — le texte poussait Arrêter et l'icône HORS de la
+                colonne (mesuré le 20/09/2026 à 1440 px : bouton à 130 px dehors,
+                sous le volet de lecture, donc plus cliquable). Les deux cibles
+                restent dans la colonne, c'est le texte qui cède. */}
+            <p className="min-w-0 text-xs text-muted-foreground truncate" data-search-summary>
               {t('searchCount', { count: searchTotal })}
               {searchTruncated && ` · ${t('searchShown', { shown: messages.length })}`}
               {isSearching && streamed.folders > 0 &&
                 ` · ${t('searchProgress', { searched: streamed.searched, folders: streamed.folders })}`}
+              {/* Portée « toutes les boîtes » : combien de BOÎTES ont rapporté, en plus
+                  des dossiers — « 3 boîtes sur 8 ». Les boîtes injoignables sont dites
+                  plutôt que tues : un total plus court a sinon l'air d'un vrai résultat. */}
+              {streamed.accounts > 0 &&
+                ` · ${t('searchAccountProgress', { swept: streamed.sweptIds.length, accounts: streamed.accounts })}`}
+              {streamed.unreachable.length > 0 &&
+                ` · ${t('searchUnreachable', { count: streamed.unreachable.length })}`}
               {isSearching && streamed.folders === 0 && ` · ${t('searching')}`}
             </p>
             {/* Gardé sur `streaming` et non sur `isSearching` : avant que le compte
@@ -1154,7 +1244,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
                 align="end"
                 label={t('searchDetails', {
                   fields: t('searchFieldsLabel'),
-                  scope: searchScope === SCOPE_ALL ? t('searchAllFolders') : t('searchThisFolder'),
+                  scope: t(SCOPE_LABEL[searchScope]),
                 })}
               >
                 <Info className="w-3.5 h-3.5" data-search-details />

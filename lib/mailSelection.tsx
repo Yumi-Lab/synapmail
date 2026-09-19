@@ -16,7 +16,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
 import { Archive, Flag, Forward, Mail, MoveRight, RefreshCw, Reply, ReplyAll, Trash2, MailX } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { groupByOrigin, sameOrigin, type MessageOrigin } from './mailOrigin'
+import { groupByOrigin, groupsToMove, sameOrigin, type MessageOrigin } from './mailOrigin'
 
 /** Couleur de drapeau (lot M2) — `null` retire le drapeau. */
 export type MailFlagValue = string | null
@@ -103,6 +103,21 @@ export function targetCount(state: MailSelectionState): number {
  */
 export function targetGroups(state: MailSelectionState) {
   return groupByOrigin(targetOrigins(state))
+}
+
+/**
+ * Les dossiers qu'un menu « Déplacer vers » a le droit de proposer : ceux qu'au
+ * moins un groupe visé QUITTERAIT. Proposer le dossier où toute la cible se
+ * trouve déjà promettait une action qui n'en est pas une (mesuré le 20/09/2026).
+ * Les deux menus (clic droit, barre d'outils) lisent CETTE fonction — pas deux
+ * filtres écrits séparément, dont l'un oubliait la boîte du groupe.
+ */
+export function movableFolders<T extends { path: string }>(
+  state: MailSelectionState,
+  folders: readonly T[],
+): T[] {
+  const origins = targetOrigins(state)
+  return folders.filter(folder => groupsToMove(origins, folder.path).length > 0)
 }
 
 export function deriveCapabilities(state: MailSelectionState): MailCapabilities {

@@ -9,7 +9,7 @@ import type { Folder } from '@/types/email'
 import { FlagPicker } from '@/components/mail/FlagPicker'
 import { IconTooltip, type TooltipAlign } from '@/components/ui/IconTooltip'
 import {
-  MAIL_TOOLBAR_GROUPS, useMailSelection,
+  MAIL_TOOLBAR_GROUPS, movableFolders, useMailSelection,
   type MailActionName, type MailToolbarItem,
 } from '@/lib/mailSelection'
 
@@ -168,7 +168,9 @@ function ToolbarButton({ item, openMenu, setOpenMenu, variant = 'bar', align = '
     open && item.action === 'moveTo' && state.accountId ? `/api/folders?account=${state.accountId}` : null,
     fetcher,
   )
-  const folders = foldersRes?.data ?? []
+  // Seuls les dossiers qu'au moins un groupe visé quitterait : proposer celui où
+  // la cible se trouve déjà promettait un déplacement qui n'aurait pas lieu.
+  const folders = movableFolders(state, foldersRes?.data ?? [])
 
   const isRow = variant === 'row'
   const button = (

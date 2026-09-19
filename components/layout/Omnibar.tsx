@@ -17,8 +17,8 @@ import { LOCALES, setLocale } from '@/lib/locales'
 import { OMNIBAR_SECTIONS, matchOmnibar, type OmnibarEntry, type OmnibarSection } from '@/lib/omnibarCommands'
 import { MAIL_PATH, openCompose } from '@/lib/compose'
 import {
-  SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT, SEARCH_PARAM,
-  buildSearchHref, readScope, type SearchScope,
+  SCOPE_ACCOUNTS, SCOPE_LABEL, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT,
+  SEARCH_PARAM, SEARCH_SCOPES, buildSearchHref, readScope, type SearchScope,
 } from '@/lib/search'
 
 /**
@@ -76,6 +76,7 @@ const SECTION_LABEL: Record<OmnibarSection, 'sectionAccounts' | 'sectionActions'
 
 /** L'icone d'un mode de theme, meme table que le selecteur de `ThemeToggle`. */
 const THEME_ICONS = { light: Sun, dark: Moon, system: Monitor } as const
+/** Une portée, son libellé : la seule table qui les relie (en/fr/zh). */
 function ThemeGlyph({ theme }: { theme: Theme }) {
   const Icon = THEME_ICONS[theme]
   return <Icon className={ICON} />
@@ -133,7 +134,14 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
     const href = buildSearchHref(searchParams.toString(), next, nextScope)
     // Depuis la boîte, remplacer l'entrée d'historique : la frappe ne doit pas
     // empiler une entrée par caractère. Depuis ailleurs, on y navigue vraiment.
-    if (pathname === MAIL_PATH) router.replace(href)
+    //
+    // `router.replace` refait RENDRE la route côté serveur alors que SEULS des
+    // paramètres d'URL changent : mesuré le 20/09/2026, 4,0 s entre le vrai clic
+    // sur une portée et l'URL mise à jour (plus de 12 s sur une machine chargée),
+    // pendant lesquelles le sélecteur paraissait mort. L'API native d'historique,
+    // que le routeur suit depuis Next 14.2, met `useSearchParams` à jour au rendu
+    // suivant sans aller-retour. Le CHEMIN ne change pas ici, seuls ses paramètres.
+    if (pathname === MAIL_PATH) window.history.replaceState(null, '', href)
     else router.push(href)
   }, [pathname, router, searchParams])
 
@@ -472,7 +480,11 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
       {/* Étendue de la recherche — n'apparaît que pendant une recherche, une seule ligne, deux positions */}
       {query && (
         <div className="hidden sm:flex shrink-0 items-center rounded-lg border border-border bg-muted/50 p-0.5 text-[11px]">
-          {([SCOPE_FOLDER, SCOPE_ALL] as const).map(value => (
+          {SEARCH_SCOPES
+            // « Toutes les boîtes » n'a de sens qu'avec plus d'une boîte : avec une
+            // seule, elle ferait doublon avec « Tous les dossiers ».
+            .filter(value => value !== SCOPE_ACCOUNTS || accounts.length > 1)
+            .map(value => (
             <button
               key={value}
               type="button"
@@ -487,7 +499,7 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
                 scope === value ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground',
               )}
             >
-              {t(value === SCOPE_ALL ? 'searchAllFolders' : 'searchThisFolder')}
+              {t(SCOPE_LABEL[value])}
             </button>
           ))}
         </div>
