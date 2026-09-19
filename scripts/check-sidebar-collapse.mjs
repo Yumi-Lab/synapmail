@@ -914,9 +914,6 @@ try {
   await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
   const signedInAs = smallest.label
   console.log(`accounts in this database: ${inventory.map(a => `${a.label}=${a.custom}`).join(', ')} — starting on "${signedInAs}" (${smallest.custom}), biggest is "${biggest.label}" (${biggest.custom})`)
-  // Let the folder list settle so both states measure the same set of rows.
-  await new Promise(r => setTimeout(r, 2500))
-
   // The bar folds from the application header's menu button (lot H1) — a REAL click on
   // the shipped control, not a programmatic state change.
   const toggle = async () => {
@@ -924,15 +921,40 @@ try {
     await new Promise(r => setTimeout(r, SETTLE_MS))
   }
 
+  /**
+   * Reads the folder tiles ONLY once the bar shows the number of them this mailbox is
+   * known to have. The list re-renders on its own (the accounts SWR refreshes on an
+   * interval, and a fold re-lays out 100 rows), so probing straight after a toggle can
+   * catch it mid-render: observed as "96 expanded vs 3 collapsed" and as a tile whose
+   * letters changed with the fold — both read as product failures while the product had
+   * not changed. A count that never arrives is a HARNESS failure, never a verdict.
+   */
+  const glyphsWhenSettled = async (expected, where) => {
+    await page.waitForFunction(
+      n => document.querySelectorAll('[data-sidebar] [data-folder-glyph]').length === n,
+      { timeout: 60000 }, expected,
+    ).catch(() => {})
+    const seen = await page.evaluate(() => document.querySelectorAll('[data-sidebar] [data-folder-glyph]').length)
+    if (seen !== expected) {
+      console.error(`HARNESS: ${where}: the bar shows ${seen} folder tiles, this mailbox has ${expected} — the list never settled, nothing measured`)
+      process.exit(2)
+    }
+    return page.evaluate(probeFolderGlyphs)
+  }
+
+  // Nothing is clicked until the folder list has finished arriving: a toggle fired while
+  // the bar is still mounting rows resolves against a layout that is about to change, and
+  // the bar can come back reporting the state it started from.
+  await glyphsWhenSettled(smallest.custom, `"${signedInAs}" before the first fold`)
   let before = await page.evaluate(probe, EDGE_TOGGLE)
   if (before.collapsed === 'true') { await toggle(); before = await page.evaluate(probe, EDGE_TOGGLE) }
   if (before.collapsed !== 'false') { console.error('HARNESS: could not reach the expanded state'); process.exit(2) }
-  const glyphsExpanded = await page.evaluate(probeFolderGlyphs)
+  const glyphsExpanded = await glyphsWhenSettled(smallest.custom, `"${signedInAs}" expanded`)
 
   await toggle()
   const after = await page.evaluate(probe, EDGE_TOGGLE)
   if (after.collapsed !== 'true') { console.error('HARNESS: could not reach the collapsed state'); process.exit(2) }
-  const glyphsCollapsed = await page.evaluate(probeFolderGlyphs)
+  const glyphsCollapsed = await glyphsWhenSettled(smallest.custom, `"${signedInAs}" collapsed`)
 
   const withIcon = s => s.rows.filter(r => r.iconX != null).length
   console.log(`rows measured: expanded=${before.rows.length} collapsed=${after.rows.length}`)
@@ -1064,18 +1086,9 @@ try {
     // The folder list is re-fetched over IMAP on the switch: wait for the count the
     // inventory promised rather than for a fixed delay, so a slow fetch is not read as a
     // product failure. A count that never arrives is a harness failure, not a verdict.
-    await page.waitForFunction(
-      n => document.querySelectorAll('[data-sidebar] [data-folder-glyph]').length === n,
-      { timeout: 60000 }, biggest.custom,
-    ).catch(() => {})
-    const arrived = await page.evaluate(() => document.querySelectorAll('[data-sidebar] [data-folder-glyph]').length)
-    if (arrived !== biggest.custom) {
-      console.error(`HARNESS: after switching to "${biggest.label}" the bar shows ${arrived} tiles, the API promised ${biggest.custom} — the list never settled, nothing measured`)
-      process.exit(2)
-    }
-    const bigExpanded = await page.evaluate(probeFolderGlyphs)
+    const bigExpanded = await glyphsWhenSettled(biggest.custom, `after switching to "${biggest.label}", expanded`)
     await toggle()
-    const bigCollapsed = await page.evaluate(probeFolderGlyphs)
+    const bigCollapsed = await glyphsWhenSettled(biggest.custom, `"${biggest.label}" collapsed`)
     checkGlyphs(biggest.label, bigExpanded, bigCollapsed)
     // The fold must not drift on a list this long either: same contract, more rows.
     const bigState = await page.evaluate(probe, EDGE_TOGGLE)
