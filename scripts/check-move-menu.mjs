@@ -28,6 +28,10 @@
  *  G. GEOMETRY AND THEMES — 1440 px and 390 px, light and dark: the menu is inside the
  *     window and its surface is opaque (a transparent popover over a mail list is
  *     unreadable whatever the theme).
+ *  H. HIERARCHY — a nested folder's row carries its parent trail underneath its own name
+ *     (two branches often both hold an "Archive": flat, the two rows were the same word).
+ *     REFERENCE: a ROOT folder's row carries no trail — without it, a trail printed on
+ *     every row would pass while designating no branch at all.
  *
  * READ ONLY: every non-GET request to /api/messages is captured and ABORTED, so no
  * message is moved, flagged or deleted, and no body is printed.
@@ -391,6 +395,33 @@ try {
     move ? `${move.method} ${new URL(move.url).pathname}` : `aucune parmi ${writes.length - writesBefore}`)
   check('F. la requête vise le PREMIER dossier affiché', move?.body?.destination === shown[0],
     `demandé ${JSON.stringify(move?.body?.destination)}, attendu ${JSON.stringify(shown[0])}`)
+
+  // ---------------------------------------------------------------- H
+  console.log('\nH. une ligne IMBRIQUÉE dit sa branche, une ligne de RACINE ne dit rien')
+  await openMenuOnRow()
+  await openMovePanel()
+  // Le séparateur vient du SERVEUR (`delimiter`), pas d'une constante du banc : IONOS
+  // sépare au point, d'autres à la barre. Les deux dossiers sont pris dans la liste RÉELLE,
+  // et la ligne de racine est la RÉFÉRENCE de la même exécution — sans elle, « il y a un
+  // second plan » serait aussi ce que donnerait un second plan posé sur TOUTES les lignes,
+  // qui ne désignerait plus aucune branche.
+  const trails = await page.$$eval(FOLDER, els => els.map(e => ({
+    path: e.getAttribute('data-menu-folder'),
+    lines: [...e.querySelectorAll('span')].map(s => s.textContent.trim()),
+  })))
+  const delimiter = await page.evaluate(async id =>
+    ((await (await fetch(`/api/folders?account=${id}`)).json()).data ?? [])
+      .map(f => f.delimiter).find(Boolean) ?? '/', richest.id)
+  const nested = trails.find(f => f.path.split(delimiter).length > 1)
+  const root = trails.find(f => f.path.split(delimiter).length === 1)
+  if (!nested || !root) harness(`need one nested and one root folder (delimiter ${JSON.stringify(delimiter)})`)
+  const expected = nested.path.split(delimiter).slice(0, -1).join(' / ')
+  check('H. la ligne imbriquée porte le chemin de son parent',
+    nested.lines.length === 2 && nested.lines[1] === expected,
+    `${JSON.stringify(nested.path)} -> ${JSON.stringify(nested.lines)}, attendu en second plan ${JSON.stringify(expected)}`)
+  check("H. RÉFÉRENCE : une ligne de RACINE n'en porte pas — sans cette arm, un second plan posé sur toutes les lignes passerait",
+    root.lines.length === 1,
+    `${JSON.stringify(root.path)} -> ${JSON.stringify(root.lines)}`)
 
   console.log(`\nwrites intercepted: ${writes.length} (aucune n'a atteint le serveur)`)
 } finally {
