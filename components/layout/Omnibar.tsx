@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { useSession } from 'next-auth/react'
 import { useTranslations } from 'next-intl'
 import { Check, ChevronDown, LayoutGrid, Languages, Menu, Monitor, Moon, PenSquare, Search, Sun, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -13,7 +14,7 @@ import { IconTooltip } from '@/components/ui/IconTooltip'
 import {
   ContextMenuSurface, ContextMenuItem, MENU_ANCHOR_GAP, MENU_ICON, MENU_MIN_WIDTH, focusMenuItem,
 } from '@/components/ui/ContextMenu'
-import { SETTINGS_NAV } from '@/components/settings/SettingsSidebar'
+import { ADMIN_NAV, SETTINGS_NAV } from '@/components/settings/SettingsSidebar'
 import { useTheme } from '@/components/theme/ThemeProvider'
 import { THEMES, type Theme } from '@/lib/theme'
 import { LOCALES, setLocale } from '@/lib/locales'
@@ -199,6 +200,11 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
   const tNav = useTranslations('settings.nav')
   const { setTheme } = useTheme()
   const { accounts, switchAccount } = useAccountAccent()
+  // Lot H3h : les entrées d'administration ne sont PROPOSÉES qu'à un administrateur.
+  // Le rôle se lit sur la session, comme `SettingsModal` le fait déjà — et ce n'est
+  // qu'un filtre d'affichage : les routes `/api/admin/*` vérifient le rôle elles-mêmes.
+  const { data: session } = useSession()
+  const isAdmin = (session?.user as { role?: string } | undefined)?.role === 'admin'
   const [panelIndex, setPanelIndex] = useState(-1)
   const [panelOpen, setPanelOpen] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -284,6 +290,18 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
       run: () => { void setLocale(code) },
     })),
     ...SETTINGS_NAV.map(({ href, key, icon: Icon }) => ({
+      id: `${ENTRY.settings}:${key}`,
+      section: 'settings' as const,
+      label: tNav(key),
+      hint: href,
+      keywords: tOmni(`keywords.${key}` as 'keywords.profile'),
+      icon: <Icon className={ICON} />,
+      run: () => router.push(href),
+    })),
+    // Lot H3h : mêmes lignes, même source unique (`ADMIN_NAV`, partagée avec la
+    // navigation des réglages), pour un administrateur SEULEMENT. « Nom et icône de
+    // l'onglet » mène à l'ancre de sa section, pas en haut d'une page qui ne la nomme pas.
+    ...(isAdmin ? ADMIN_NAV : []).map(({ href, key, icon: Icon }) => ({
       id: `${ENTRY.settings}:${key}`,
       section: 'settings' as const,
       label: tNav(key),
