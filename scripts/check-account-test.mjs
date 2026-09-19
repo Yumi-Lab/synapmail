@@ -21,6 +21,7 @@ import {
   classifyTestFailure,
   decideTestPassword,
   hasSubmittedPassword,
+  resolveTestPassword,
 } from '../lib/accountTest.ts'
 
 const ok = label => console.log(`  ok  ${label}`)
@@ -31,17 +32,21 @@ const loaderFor = (account, asked = []) => Object.assign(
   { asked }
 )
 
-const OWNED = { isOwner: true, oauthProvider: null, hasStoredPassword: true }
+/** The mailbox as SAVED: the only place its saved password is ever allowed to travel. */
+const SAVED = { imapHost: 'imap.example.com', smtpHost: 'smtp.example.com', username: 'me@example.com' }
+const OWNED = { isOwner: true, oauthProvider: null, hasStoredPassword: true, ...SAVED }
+/** A request whose form still points at the saved server — the ordinary case. */
+const atSavedServer = extra => ({ accountId: 'acc-1', ...SAVED, ...extra })
 
 console.log('decideTestPassword — which password leaves the server')
 
 // The bug itself: editing with the field left alone must test the SAVED password.
 assert.equal(
-  await decideTestPassword({ accountId: 'acc-1', password: '' }, loaderFor(OWNED)),
+  await decideTestPassword(atSavedServer({ password: '' }), loaderFor(OWNED)),
   TEST_DECISION.STORED
 )
 assert.equal(
-  await decideTestPassword({ accountId: 'acc-1', password: undefined }, loaderFor(OWNED)),
+  await decideTestPassword(atSavedServer({ password: undefined }), loaderFor(OWNED)),
   TEST_DECISION.STORED
 )
 ok('editing, field left empty: the SAVED password is tested, not the empty field')
@@ -49,7 +54,7 @@ ok('editing, field left empty: the SAVED password is tested, not the empty field
 // A field of spaces is a field the user did not fill. Sending it would be one more
 // failed login at the provider, for nothing.
 assert.equal(
-  await decideTestPassword({ accountId: 'acc-1', password: '   ' }, loaderFor(OWNED)),
+  await decideTestPassword(atSavedServer({ password: '   ' }), loaderFor(OWNED)),
   TEST_DECISION.STORED
 )
 assert.equal(hasSubmittedPassword('   '), false)
@@ -58,7 +63,7 @@ ok('a field holding only spaces counts as empty, not as a password to try')
 
 // Changing password: what was typed wins, so it can be checked before saving.
 assert.equal(
-  await decideTestPassword({ accountId: 'acc-1', password: 'brand-new' }, loaderFor(OWNED)),
+  await decideTestPassword(atSavedServer({ password: 'brand-new' }), loaderFor(OWNED)),
   TEST_DECISION.SUBMITTED
 )
 ok('editing, field filled: the TYPED password is tested, so a change can be checked first')
@@ -66,12 +71,12 @@ ok('editing, field filled: the TYPED password is tested, so a change can be chec
 // A guest of a shared mailbox never tests credentials that are not theirs, and gets the
 // same answer as for a mailbox that does not exist.
 assert.equal(
-  await decideTestPassword({ accountId: 'acc-1', password: '' },
+  await decideTestPassword(atSavedServer({ password: '' }),
     loaderFor({ ...OWNED, isOwner: false })),
   TEST_DECISION.DENIED
 )
 assert.equal(
-  await decideTestPassword({ accountId: 'ghost', password: '' }, loaderFor(null)),
+  await decideTestPassword(atSavedServer({ accountId: 'ghost', password: '' }), loaderFor(null)),
   TEST_DECISION.DENIED
 )
 ok('a guest, and an unknown mailbox, get the same refusal — existence is not revealed')
@@ -79,7 +84,7 @@ ok('a guest, and an unknown mailbox, get the same refusal — existence is not r
 // A guest with a password of their own must not get it tried against someone else's
 // mailbox either: the refusal comes before the field is ever read.
 assert.equal(
-  await decideTestPassword({ accountId: 'acc-1', password: 'guest-typed' },
+  await decideTestPassword(atSavedServer({ password: 'guest-typed' }),
     loaderFor({ ...OWNED, isOwner: false })),
   TEST_DECISION.DENIED
 )
@@ -87,7 +92,7 @@ ok('a guest is refused even when they type a password — the refusal comes firs
 
 // Token mailboxes have no password to try; saying so beats a red error.
 assert.equal(
-  await decideTestPassword({ accountId: 'acc-1', password: '' },
+  await decideTestPassword(atSavedServer({ password: '' }),
     loaderFor({ ...OWNED, oauthProvider: 'microsoft', hasStoredPassword: false })),
   TEST_DECISION.OAUTH
 )
@@ -103,7 +108,7 @@ ok('creating an account behaves exactly as before')
 
 // A mailbox row with no stored password and no token has nothing to try.
 assert.equal(
-  await decideTestPassword({ accountId: 'acc-1', password: '' },
+  await decideTestPassword(atSavedServer({ password: '' }),
     loaderFor({ ...OWNED, hasStoredPassword: false })),
   TEST_DECISION.MISSING
 )
@@ -112,7 +117,7 @@ ok('a mailbox with neither a saved password nor a token reports nothing to try')
 // The decision never carries the secret: it names a source, and the route fetches it.
 const returned = new Set()
 for (const password of ['', 'brand-new']) {
-  returned.add(await decideTestPassword({ accountId: 'acc-1', password }, loaderFor(OWNED)))
+  returned.add(await decideTestPassword(atSavedServer({ password }), loaderFor(OWNED)))
 }
 assert.deepEqual([...returned].sort(), [TEST_DECISION.STORED, TEST_DECISION.SUBMITTED].sort())
 for (const value of returned) {
@@ -123,7 +128,7 @@ ok('the decision returns a SOURCE, never a password')
 
 // The loader is asked for exactly the mailbox the request named, never another.
 const asked = []
-await decideTestPassword({ accountId: 'acc-42', password: '' }, loaderFor(OWNED, asked))
+await decideTestPassword(atSavedServer({ accountId: 'acc-42', password: '' }), loaderFor(OWNED, asked))
 assert.deepEqual(asked, ['acc-42'])
 ok('the mailbox loaded is the one the request names')
 
@@ -132,6 +137,81 @@ const askedAtCreation = []
 await decideTestPassword({ password: 'x' }, loaderFor(OWNED, askedAtCreation))
 assert.deepEqual(askedAtCreation, [])
 ok('creating an account loads no mailbox')
+
+console.log('the SAVED password only ever travels to the SAVED server')
+
+// The hole this section closes: with a mailbox id and an empty field, the route decrypted
+// the saved password and logged in to whatever host the REQUEST BODY named. Anyone holding
+// a session (stolen cookie, unlocked desk, injected script) could point the test at their
+// own server and read every mailbox password in clear, inside the LOGIN command.
+for (const [label, form] of [
+  ['the IMAP host', { imapHost: 'attacker.example.net' }],
+  ['the SMTP host', { smtpHost: 'attacker.example.net' }],
+  ['the username', { username: 'someone-else@example.com' }],
+]) {
+  const loader = loaderFor(OWNED)
+  let storedRead = 0
+  const { decision, password } = await resolveTestPassword(
+    atSavedServer({ password: '', ...form }),
+    loader,
+    async () => { storedRead += 1; return 'the-saved-secret' }
+  )
+  assert.equal(decision, TEST_DECISION.PASSWORD_REQUIRED, label)
+  assert.equal(password, null, label)
+  assert.equal(storedRead, 0, `${label}: the saved password must not even be read`)
+  ok(`${label} changed with an empty field: the password is REQUIRED, and never read`)
+}
+
+// Same host written differently is the same host: refusing here would read as a bug and
+// push people to retype their password for nothing.
+assert.equal(
+  await decideTestPassword(
+    atSavedServer({ password: '', imapHost: '  IMAP.Example.COM ', username: ' ME@example.com' }),
+    loaderFor(OWNED)
+  ),
+  TEST_DECISION.STORED
+)
+ok('a different case or stray spaces is the same server: the saved password still applies')
+
+// A port or a TLS box is what people come here to fix, and neither changes WHO receives
+// the secret.
+assert.equal(
+  await decideTestPassword(
+    atSavedServer({ password: '', imapPort: 143, imapSecure: false, smtpPort: 465 }),
+    loaderFor(OWNED)
+  ),
+  TEST_DECISION.STORED
+)
+ok('a corrected port or TLS box still tests with the saved password: the host is unchanged')
+
+// A password the person just typed is THEIRS to send wherever they like: that is how a
+// mailbox gets moved to a new server.
+assert.equal(
+  await decideTestPassword(
+    atSavedServer({ password: 'typed-by-me', imapHost: 'imap.newhost.example' }),
+    loaderFor(OWNED)
+  ),
+  TEST_DECISION.SUBMITTED
+)
+ok('a TYPED password can still be tested against a new host: it is the person\'s own')
+
+// Negative control: were the rule not wired at all, the run above would be green anyway.
+// The unchanged form MUST reach the saved password, or this whole section proves nothing.
+let readAtSavedServer = 0
+const atRest = await resolveTestPassword(
+  atSavedServer({ password: '' }),
+  loaderFor(OWNED),
+  async () => { readAtSavedServer += 1; return 'the-saved-secret' }
+)
+assert.equal(atRest.decision, TEST_DECISION.STORED)
+assert.equal(atRest.password, 'the-saved-secret')
+assert.equal(readAtSavedServer, 1)
+ok('negative control: the unchanged form DOES reach the saved password (the rule is not a blanket refusal)')
+
+// And the refusal must be a decision of its own, never mistaken for the two older ones.
+assert.notEqual(TEST_DECISION.PASSWORD_REQUIRED, TEST_DECISION.MISSING)
+assert.notEqual(TEST_DECISION.PASSWORD_REQUIRED, TEST_DECISION.DENIED)
+ok('"password required" is its own answer, distinct from "nothing to try" and "not yours"')
 
 console.log('classifyTestFailure — the cause, not the raw server line')
 

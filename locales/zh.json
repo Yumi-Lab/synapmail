@@ -342,7 +342,8 @@
       "testFailure": {
         "credentials": "服务器拒绝了这些凭据",
         "unreachable": "无法连接到服务器",
-        "other": "服务器拒绝了连接"
+        "other": "服务器拒绝了连接",
+        "password_required": "您更改了服务器或用户名：请输入密码以测试这些新设置。"
       }
     },
     "profile": {

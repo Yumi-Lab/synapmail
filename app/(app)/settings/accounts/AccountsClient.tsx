@@ -194,6 +194,10 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
         setTestResult({ tested: data.tested, imap: null, smtp: null })
       } else if (data.imap && data.smtp) {
         setTestResult(data)
+      } else if (data.error === TEST_DECISION.PASSWORD_REQUIRED) {
+        // Le formulaire vise un autre serveur : rien n'a été tenté, et le mot de passe
+        // enregistré n'a pas bougé. Le dire en une phrase, pas avec le code nu.
+        setError(t(`testFailure.${TEST_DECISION.PASSWORD_REQUIRED}`))
       } else {
         setError(data.error ?? t('testError'))
       }

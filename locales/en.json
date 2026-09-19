@@ -342,7 +342,8 @@
       "testFailure": {
         "credentials": "the server refused these credentials",
         "unreachable": "the server could not be reached",
-        "other": "the server refused the connection"
+        "other": "the server refused the connection",
+        "password_required": "You changed the server or the username: type the password to test these new settings."
       }
     },
     "profile": {

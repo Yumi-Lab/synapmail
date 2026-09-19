@@ -342,7 +342,8 @@
       "testFailure": {
         "credentials": "le serveur a refusé ces identifiants",
         "unreachable": "le serveur est injoignable",
-        "other": "le serveur a refusé la connexion"
+        "other": "le serveur a refusé la connexion",
+        "password_required": "Vous avez changé le serveur ou l'identifiant : saisissez le mot de passe pour tester ces nouveaux réglages."
       }
     },
     "profile": {

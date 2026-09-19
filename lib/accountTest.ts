@@ -25,6 +25,13 @@ export const TEST_DECISION = {
   DENIED: 'denied',
   /** Refus : aucun mot de passe à essayer (création sans mot de passe saisi). */
   MISSING: 'missing',
+  /**
+   * Refus : le formulaire vise un AUTRE serveur (ou un autre identifiant) que celui
+   * enregistré, et personne n'a tapé de mot de passe. Le mot de passe enregistré ne part
+   * que vers les hôtes enregistrés : sinon une session volée suffirait à le faire lire en
+   * clair par un serveur choisi par l'attaquant, dans la commande LOGIN.
+   */
+  PASSWORD_REQUIRED: 'password_required',
 } as const
 
 export type TestDecision = (typeof TEST_DECISION)[keyof typeof TEST_DECISION]
@@ -34,6 +41,10 @@ export interface TestableAccount {
   isOwner: boolean
   oauthProvider: string | null
   hasStoredPassword: boolean
+  /** Les réglages ENREGISTRÉS : les seules destinations du mot de passe enregistré. */
+  imapHost: string | null
+  smtpHost: string | null
+  username: string | null
 }
 
 export interface TestRequest {
@@ -41,6 +52,10 @@ export interface TestRequest {
   accountId?: string | null
   /** Ce que contient le champ. Vide en édition veut dire « inchangé ». */
   password?: string | null
+  /** Ce que vise le FORMULAIRE. Comparé à l'enregistré avant d'envoyer un secret. */
+  imapHost?: string | null
+  smtpHost?: string | null
+  username?: string | null
 }
 
 /**
@@ -50,11 +65,35 @@ export interface TestRequest {
 export type AccountLoader = (accountId: string) => Promise<TestableAccount | null>
 
 /**
+ * Va chercher le mot de passe ENREGISTRÉ, en clair. N'est appelé qu'après une décision
+ * `STORED` : toute autre décision doit le laisser tranquille, et l'auto-contrôle le mesure.
+ */
+export type StoredPasswordLoader = () => Promise<string>
+
+/**
  * Un mot de passe fait de blancs n'est pas un mot de passe : c'est un champ vide qu'on
  * enverrait quand même à l'hébergeur, donc un échec d'authentification de plus.
  */
 export const hasSubmittedPassword = (password?: string | null): boolean =>
   typeof password === 'string' && password.trim().length > 0
+
+/**
+ * Un nom d'hôte et un identifiant se comparent sans tenir compte de la casse ni des blancs
+ * de bord : `IMAP.Example.com ` et `imap.example.com` sont le même serveur, et refuser le
+ * test pour une majuscule ferait passer la règle pour un bug.
+ */
+const sameSetting = (a?: string | null, b?: string | null): boolean =>
+  (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase()
+
+/**
+ * Le formulaire vise-t-il EXACTEMENT le serveur enregistré ? Le port et l'option TLS
+ * restent libres : on corrige un port et on réessaie sans avoir à retaper son mot de passe,
+ * et un port ne change pas à qui le secret est confié. L'hôte et l'identifiant, si.
+ */
+export const targetsSavedServer = (req: TestRequest, account: TestableAccount): boolean =>
+  sameSetting(req.imapHost, account.imapHost) &&
+  sameSetting(req.smtpHost, account.smtpHost) &&
+  sameSetting(req.username, account.username)
 
 export async function decideTestPassword(
   req: TestRequest,
@@ -74,7 +113,32 @@ export async function decideTestPassword(
   // l'essayer avant d'enregistrer.
   if (submitted) return TEST_DECISION.SUBMITTED
   if (account.oauthProvider) return TEST_DECISION.OAUTH
-  return account.hasStoredPassword ? TEST_DECISION.STORED : TEST_DECISION.MISSING
+  if (!account.hasStoredPassword) return TEST_DECISION.MISSING
+
+  // Le mot de passe enregistré ne va QUE là où il est déjà connu. Le formulaire vient du
+  // navigateur : sans cette règle, une session volée demanderait le test vers un serveur
+  // pirate et le lirait en clair dans la commande LOGIN, pour chaque boîte.
+  return targetsSavedServer(req, account)
+    ? TEST_DECISION.STORED
+    : TEST_DECISION.PASSWORD_REQUIRED
+}
+
+/**
+ * L'étape serveur entière : décider, PUIS n'aller chercher le secret que si la décision le
+ * demande. Le mot de passe enregistré n'est déchiffré que sur un `STORED` ; tout autre
+ * verdict laisse le chargeur au repos, et l'auto-contrôle le vérifie.
+ */
+export async function resolveTestPassword(
+  req: TestRequest,
+  loadAccount: AccountLoader,
+  loadStoredPassword: StoredPasswordLoader
+): Promise<{ decision: TestDecision; password: string | null }> {
+  const decision = await decideTestPassword(req, loadAccount)
+  if (decision === TEST_DECISION.STORED) {
+    return { decision, password: await loadStoredPassword() }
+  }
+  if (decision === TEST_DECISION.SUBMITTED) return { decision, password: req.password ?? null }
+  return { decision, password: null }
 }
 
 /** Les deux échecs courants, traduits en une CAUSE au lieu de l'erreur brute du serveur. */
