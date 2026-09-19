@@ -17,11 +17,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `mail.ai.actions.*`, que les deux écrans relisent au lieu d'en garder chacun sa copie. Les noms de marque
   (Claude, OpenAI, Ollama) restent littéraux.
 
-- **API des abonnements** (`lib/subscriptions.ts`, `GET /api/subscriptions`, `POST /api/subscriptions/unsubscribe`) :
-  la liste des lettres d'information d'une boîte, regroupées par liste (`List-Id`, sinon adresse de
-  l'expéditeur), lue sur les EN-TÊTES seulement des 400 messages les plus récents — aucun corps de message
-  n'est lu ni journalisé. Chaque groupe porte un identifiant opaque et stable, le nombre de messages, la
-  méthode disponible (`one-click` RFC 8058, `mailto`, sinon `link`) et la date d'un désabonnement déjà fait.
+- **API des abonnements** (`lib/subscriptions.ts`, `GET /api/subscriptions`,
+  `POST /api/subscriptions/unsubscribe`, `GET /api/subscriptions/unsubscribed`) : la liste des lettres
+  d'information d'une boîte, regroupées par liste (`List-Id`, sinon adresse de l'expéditeur), lue sur les
+  EN-TÊTES seulement des 400 messages les plus récents — aucun corps de message n'est lu ni journalisé.
+  Chaque groupe porte un identifiant opaque et stable, le nombre de messages, la méthode disponible
+  (`one-click` RFC 8058, `mailto`, sinon `link`) et la date d'un désabonnement déjà fait.
+  Chaque groupe porte aussi son `folder` et la liste de ses `uids` : un agent qui vient de se désabonner
+  les passe tels quels à `PATCH`/`DELETE /api/messages/bulk` pour ranger les anciens messages, sans
+  relire la boîte ni deviner quoi que ce soit. `count` est exactement le nombre de ces `uids` — un seul
+  nombre, une seule liste, jamais deux vérités — et un uid n'appartient qu'à un seul groupe. Un dossier
+  sans son uid ne veut rien dire : les deux voyagent ensemble.
+  Nettoyer une boîte tient donc en trois appels : lister, se désabonner, ranger. Il n'y a pas de route de
+  nettoyage — celle qui range existait déjà.
+  `GET /api/subscriptions/unsubscribed` est l'HISTORIQUE, et il SURVIT au nettoyage : il se lit dans la
+  base, pas dans le dossier. Une fois les messages rangés le groupe disparaît de la liste, mais son
+  entrée reste ici, ce qui évite qu'un agent recommence un désabonnement déjà fait. Avec `account`, cette
+  boîte-là (même règle d'accès que la liste) ; sans lui, toutes les boîtes que l'appelant peut lire, et
+  rien d'autre.
   Le désabonnement prend des IDENTIFIANTS, jamais une URL ni une adresse : le serveur relit l'en-tête du
   message le plus récent du groupe et décide seul. Un lien https sans RFC 8058 n'est JAMAIS appelé
   automatiquement (la page peut poser une question ou compter la visite comme une confirmation) : il revient
@@ -32,6 +45,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   pliés (`lib/imap.ts` n'en lit que la première ligne et perd l'URI de la ligne suivante — signalé, pas
   corrigé ici : ce fichier appartient à une autre lane). L'ancienne `POST /api/unsubscribe` reste en place
   pour le bandeau du volet de lecture. Aucune interface dans ce lot.
+  Mesuré sur le staging, en lecture seule, sur deux boîtes RÉELLES : 19 groupes sur 266 messages en
+  640 ms, et 19 groupes sur 79 messages en 537 ms, fenêtre de 400 en-têtes. Ce qui n'est PAS mesuré :
+  aucun vrai désabonnement n'a été envoyé. La frontière de sortie, elle, est éprouvée contre un vrai
+  serveur https (redirection non suivie, adresse privée refusée, http refusé) ; qu'un vrai serveur de
+  liste accepte le POST reste à voir sur une vraie lettre.
 
 ### Fixed
 - **Le titre, le sous-titre et le badge de Réglages → IA parlent la langue du visiteur**
