@@ -177,7 +177,13 @@
         "server": "L'assistant n'a pas pu être joint.",
         "unreachable": "Aucun modèle local n'écoute à cette adresse sur cet appareil.",
         "cors": "Un modèle local a répondu mais votre navigateur l'a bloqué : autorisez l'origine {origin}.",
-        "model": "Le modèle local a renvoyé une erreur."
+        "model": "Le modèle local a renvoyé une erreur.",
+        "permission": "Votre navigateur a bloqué l'accès aux applications de cet appareil."
+      },
+      "access": {
+        "prompt": "Votre navigateur va demander l'autorisation d'accéder aux applications de cet appareil. Acceptez-la pour continuer.",
+        "deniedStep1": "Cliquez sur l'icône à gauche de la barre d'adresse, puis ouvrez les réglages du site.",
+        "deniedStep2": "Autorisez l'accès au réseau local (les applications de cet appareil), puis réessayez."
       }
     }
   },
@@ -412,6 +418,10 @@
       "noRules": "Aucune règle configurée",
       "noRulesDesc": "Les règles s'appliquent automatiquement aux nouveaux emails.",
       "templates": "Démarrage rapide, modèles"
+    },
+    "ai": {
+      "stepProvider": "1. Fournisseur",
+      "stepAccess": "2. Accès"
     }
   },
   "admin": {

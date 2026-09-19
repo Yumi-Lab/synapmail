@@ -18,6 +18,14 @@
  *    design on every call, and a NEGATIVE CONTROL proves the check would see a
  *    guard that went missing rather than passing on a coincidence.
  *
+ * 3. How a failed call to this device is CLASSIFIED. A browser reports a
+ *    refused permission, a refused origin (CORS) and an empty address in the
+ *    very same way, so the permission is read first and the address probed
+ *    second. The three permission states are simulated here, plus a browser
+ *    that knows no such permission and one with no Permissions API at all:
+ *    none of them may throw, and a refused permission must never be reported
+ *    as "nothing is listening".
+ *
  * Negative control — proves the check can see the defect it exists for:
  *   node --experimental-strip-types scripts/check-ai-local.mjs --break=<case>
  * where <case> is one of the BREAKAGES below.
@@ -43,10 +51,14 @@ const {
   isLoopbackUrl, buildMessages, LOCAL_DEFAULT_BASE_URL, LOCAL_DETECT_PORTS, LOOPBACK_HOSTS,
 } = await import('../lib/ai.ts')
 const { PROMPT_GUARD_NOTICE } = await import('../lib/promptGuard.ts')
+const {
+  classifyLocalFailure, localAccessState, LOCAL_NETWORK_PERMISSIONS,
+} = await import('../lib/aiClient.ts')
 
 const BREAKAGES = {
   'guard-dropped-locally': 'the local path is built without the mailbox guard',
   'remote-address-accepted': 'a remote address is treated as loopback',
+  'permission-read-as-empty': 'a refused permission is reported as nothing listening',
 }
 const BREAK = process.argv.find(a => a.startsWith('--break='))?.slice('--break='.length) ?? null
 if (BREAK && !BREAKAGES[BREAK]) {
@@ -130,6 +142,78 @@ check(a[1].content !== b[1].content, 'two local calls never share a delimiter to
 const off = buildMessages('summarize', MAIL, { promptGuard: false }, SYSTEM)
 check(off.length === 2 && off[0].content === SYSTEM, 'guard off: the operator prompt is returned untouched')
 check(!/<<<UNTRUSTED_EMAIL/.test(off[1].content), 'guard off: content is not fenced')
+
+
+// ── 3. how a failed call to this device is classified ──────────────────────
+// The browser is simulated: `permissions.query` answers only for the names the
+// simulated browser claims to know, and `fetch` decides whether anything is
+// listening. No network, no browser, no model.
+const LISTENING = Symbol('listening')
+const SILENT = Symbol('silent')
+
+function simulateBrowser({ known, state, address }) {
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: known === null ? {} : {
+      permissions: {
+        query: async ({ name }) => {
+          if (!known.includes(name)) throw new TypeError(`unknown permission: ${name}`)
+          return { state }
+        },
+      },
+    },
+  })
+  // The probe is the only fetch classifyLocalFailure makes.
+  globalThis.fetch = async () => {
+    if (address === SILENT) throw new TypeError('Failed to fetch')
+    return { ok: true }
+  }
+}
+
+/** The defect the negative control injects: skip the permission, probe only. */
+const classify = async (url) => BREAK === 'permission-read-as-empty'
+  ? (await (async () => { try { await globalThis.fetch(url); return true } catch { return false } })() ? 'cors' : 'unreachable')
+  : classifyLocalFailure(url)
+
+const LOCAL_URL = LOCAL_DEFAULT_BASE_URL
+
+for (const name of LOCAL_NETWORK_PERMISSIONS) {
+  simulateBrowser({ known: [name], state: 'denied', address: LISTENING })
+  check(await localAccessState() === 'denied', `permission name read by this browser: ${name}`)
+  check(
+    await classify(LOCAL_URL) === 'permission',
+    `refused permission is reported as such, not as an empty address (${name})`
+  )
+}
+
+// A refused permission also blocks the probe, so the address looks silent: the
+// classification must still name the permission, which is the real cause.
+simulateBrowser({ known: [...LOCAL_NETWORK_PERMISSIONS], state: 'denied', address: SILENT })
+check(
+  await classify(LOCAL_URL) === 'permission',
+  'a refused permission wins over a silent probe'
+)
+
+simulateBrowser({ known: [...LOCAL_NETWORK_PERMISSIONS], state: 'granted', address: LISTENING })
+check(await localAccessState() === 'granted', 'a granted permission is read as granted')
+check(await classify(LOCAL_URL) === 'cors', 'permission granted and something answers: blamed on CORS')
+
+simulateBrowser({ known: [...LOCAL_NETWORK_PERMISSIONS], state: 'granted', address: SILENT })
+check(await classify(LOCAL_URL) === 'unreachable', 'permission granted and nothing answers: blamed on the address')
+
+simulateBrowser({ known: [...LOCAL_NETWORK_PERMISSIONS], state: 'prompt', address: LISTENING })
+check(await localAccessState() === 'prompt', 'a pending permission is read as prompt')
+check(await classify(LOCAL_URL) !== 'permission', 'a pending permission is not reported as refused')
+
+// A browser that knows none of these names, and one with no Permissions API at
+// all: neither may throw, and neither may invent a refusal.
+simulateBrowser({ known: [], state: 'denied', address: SILENT })
+check(await localAccessState() === 'unknown', 'a browser that knows no such permission answers unknown')
+check(await classify(LOCAL_URL) === 'unreachable', 'unknown permission: the address is still probed')
+
+simulateBrowser({ known: null, state: 'denied', address: LISTENING })
+check(await localAccessState() === 'unknown', 'a browser with no Permissions API answers unknown')
+check(await classify(LOCAL_URL) === 'cors', 'no Permissions API: the address is still probed')
 
 // ── verdict ─────────────────────────────────────────────────────────────────
 if (BREAK) {

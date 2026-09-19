@@ -2,11 +2,14 @@
 
 import { useState, useEffect } from 'react'
 import useSWR, { mutate } from 'swr'
+import { useTranslations } from 'next-intl'
 import {
   Bot, CheckCircle2, AlertCircle, Loader2, Zap,
   ChevronDown, ChevronUp, Clock, Wand2, MessageSquareDiff,
   Languages, FileText, Globe, Lock, ScanSearch,
+  Sparkles, Brain, Server, Settings2, Laptop,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/PasswordInput'
@@ -15,7 +18,11 @@ import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
 import {
   AIProvider, LOCAL_PROVIDER, LOCAL_DEFAULT_BASE_URL, LOCAL_DETECT_PORTS, isLoopbackUrl,
 } from '@/lib/ai'
-import { AIClientError, callLocalModel, listLocalModels } from '@/lib/aiClient'
+import {
+  AIClientError, callLocalModel, listLocalModels, localAccessState,
+  type LocalAccessState,
+} from '@/lib/aiClient'
+import { LocalAccessNotice } from '@/components/ai/LocalAccessNotice'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -37,7 +44,7 @@ interface AISettingsData {
 const PROVIDERS: {
   id: Provider
   label: string
-  emoji: string
+  icon: LucideIcon
   tagline: string
   keyLabel?: string
   keyPlaceholder?: string
@@ -50,7 +57,7 @@ const PROVIDERS: {
   {
     id: 'claude',
     label: 'Claude',
-    emoji: '🤖',
+    icon: Sparkles,
     tagline: 'API avec clé (appel depuis le serveur)',
     keyLabel: 'Clé API Anthropic',
     keyPlaceholder: 'sk-ant-...',
@@ -61,7 +68,7 @@ const PROVIDERS: {
   {
     id: 'openai',
     label: 'OpenAI',
-    emoji: '🧠',
+    icon: Brain,
     tagline: 'API avec clé (appel depuis le serveur)',
     keyLabel: 'Clé API OpenAI',
     keyPlaceholder: 'sk-...',
@@ -72,7 +79,7 @@ const PROVIDERS: {
   {
     id: 'ollama',
     label: 'Ollama',
-    emoji: '🦙',
+    icon: Server,
     tagline: 'Ollama joignable depuis le serveur',
     urlLabel: 'URL Ollama',
     defaultModel: 'llama3',
@@ -82,7 +89,7 @@ const PROVIDERS: {
   {
     id: 'custom',
     label: 'Compatible OpenAI',
-    emoji: '⚙️',
+    icon: Settings2,
     tagline: 'API avec clé (appel depuis le serveur)',
     keyLabel: 'Clé API (si requise)',
     keyPlaceholder: 'sk-...',
@@ -93,7 +100,7 @@ const PROVIDERS: {
   {
     id: LOCAL_PROVIDER,
     label: 'Local, sur cet appareil',
-    emoji: '🖥️',
+    icon: Laptop,
     tagline: 'Appel depuis le navigateur, rien ne sort de votre poste',
     urlLabel: 'Adresse locale',
     defaultModel: '',
@@ -105,6 +112,7 @@ const PROVIDERS: {
 /** What each browser-side failure means, in one place (mirrors AIClientError.kind). */
 const LOCAL_FAILURE_LABEL: Record<AIClientError['kind'], string> = {
   server: "Adresse refusée : seule une adresse de boucle locale est acceptée ici.",
+  permission: "Votre navigateur a bloqué l'accès aux applications de cet appareil.",
   unreachable: "Rien n'écoute à cette adresse sur cet appareil.",
   cors: "Un modèle a répondu mais votre navigateur a bloqué la réponse (CORS).",
   model: 'Le modèle local a renvoyé une erreur.',
@@ -117,6 +125,8 @@ const LOCAL_FAILURE_LABEL: Record<AIClientError['kind'], string> = {
  */
 function LocalHelp({ kind }: { kind: AIClientError['kind'] }) {
   const origin = typeof window === 'undefined' ? '' : window.location.origin
+  // A refused permission has its own box: the model is not the cause here.
+  if (kind === 'permission') return <LocalAccessNotice state="denied" />
   const steps = kind === 'cors'
     ? [
         `macOS : launchctl setenv OLLAMA_ORIGINS "${origin}" puis relancer Ollama.`,
@@ -158,6 +168,7 @@ const COMING_SOON = [
 ]
 
 export function AISettingsClient() {
+  const t = useTranslations('settings.ai')
   const { data } = useSWR<{ data: AISettingsData }>('/api/ai/settings', fetcher)
   const settings = data?.data
 
@@ -179,8 +190,10 @@ export function AISettingsClient() {
   const [detecting, setDetecting] = useState(false)
   const [detectResult, setDetectResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [detectedModels, setDetectedModels] = useState<string[]>([])
-  /** Shown only when the BROWSER could not reach the local model — see lib/aiClient.ts. */
+  /** Shown only when the BROWSER could not reach the local model, see lib/aiClient.ts. */
   const [localHelp, setLocalHelp] = useState<AIClientError['kind'] | null>(null)
+  /** Whether the browser lets this page reach apps on this device (read before calling). */
+  const [accessState, setAccessState] = useState<LocalAccessState>('unknown')
 
   const isLocal = provider === LOCAL_PROVIDER
   const localUrlValid = !isLocal || isLoopbackUrl(baseUrl)
@@ -196,6 +209,15 @@ export function AISettingsClient() {
     setFeatureImprove(settings.featureImprove)
     setFeatureTranslate(settings.featureTranslate)
   }, [settings])
+
+  // The permission is read as soon as the local provider is picked, so the
+  // "the browser will ask" line shows BEFORE the first call rather than after.
+  useEffect(() => {
+    if (!isLocal) { setAccessState('unknown'); return }
+    let alive = true
+    localAccessState().then(state => { if (alive) setAccessState(state) })
+    return () => { alive = false }
+  }, [isLocal])
 
   const selected = PROVIDERS.find(p => p.id === provider)!
 
@@ -227,6 +249,13 @@ export function AISettingsClient() {
       } catch {
         // Next port.
       }
+    }
+    const state = await localAccessState()
+    setAccessState(state)
+    if (state === 'denied') {
+      setDetectResult({ ok: false, msg: LOCAL_FAILURE_LABEL.permission })
+      setLocalHelp('permission')
+      return
     }
     setDetectResult({ ok: false, msg: 'Aucun modèle local trouvé sur cet appareil.' })
     setLocalHelp('unreachable')
@@ -301,9 +330,11 @@ export function AISettingsClient() {
           mode: LOCAL_PROVIDER, baseUrl, model,
           messages: [{ role: 'user', content: 'Réponds simplement : bonjour.' }],
         })
+        setAccessState(await localAccessState())
         setTestResult({ ok: true, msg: text.slice(0, 150) })
       } catch (e: unknown) {
         const kind = e instanceof AIClientError ? e.kind : 'server'
+        setAccessState(await localAccessState())
         setLocalHelp(kind)
         setTestResult({ ok: false, msg: LOCAL_FAILURE_LABEL[kind] })
       } finally {
@@ -365,9 +396,9 @@ export function AISettingsClient() {
 
       <div className="space-y-6">
 
-      {/* Step 1 — Provider */}
+      {/* Step 1: provider */}
       <div>
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">1 — Fournisseur</p>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">{t('stepProvider')}</p>
         <div className="grid grid-cols-2 gap-2">
           {PROVIDERS.map(p => (
             <button
@@ -381,7 +412,7 @@ export function AISettingsClient() {
                   : 'border-border hover:bg-muted/50'
               )}
             >
-              <span className="text-xl shrink-0">{p.emoji}</span>
+              <p.icon className="w-4 h-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0">
                 <p className="text-sm font-semibold leading-tight">{p.label}</p>
                 <p className="text-[11px] text-muted-foreground leading-tight mt-0.5 truncate">{p.tagline}</p>
@@ -392,9 +423,9 @@ export function AISettingsClient() {
         </div>
       </div>
 
-      {/* Step 2 — Credentials */}
+      {/* Step 2: credentials */}
       <div>
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">2 — Accès</p>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">{t('stepAccess')}</p>
         <div className="space-y-3 rounded-xl border border-border p-4 bg-muted/20">
 
           {selected.keyLabel && (
@@ -528,7 +559,10 @@ export function AISettingsClient() {
         )}
       </div>
 
-      {/* Local model — what to do when the browser could not reach it */}
+      {/* The browser is about to ask for access to this device: say so before the call. */}
+      {isLocal && accessState === 'prompt' && <LocalAccessNotice state="prompt" />}
+
+      {/* Local model: what to do when the browser could not reach it */}
       {localHelp && <LocalHelp kind={localHelp} />}
 
       {/* Test result */}
@@ -542,7 +576,7 @@ export function AISettingsClient() {
           {testResult.ok
             ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
             : <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />}
-          <span className="break-all">{testResult.ok ? `✅ Connexion OK — Réponse : "${testResult.msg}"` : testResult.msg}</span>
+          <span className="break-all">{testResult.ok ? `Connexion OK. Réponse : "${testResult.msg}"` : testResult.msg}</span>
         </div>
       )}
 
