@@ -1,12 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
-import { openCompose } from '@/lib/compose'
+import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import {
   Mail, Send, FileText, AlertTriangle, Trash2,
-  PenSquare, Folder, Archive, ChevronDown, RefreshCw, Share2,
+  Folder, Archive, ChevronDown, RefreshCw, Share2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import useSWR from 'swr'
@@ -80,14 +79,32 @@ const ROW_DRAG = cn(ACCENT.tintStrong, 'text-foreground')
 const ICON_COL = 'shrink-0 flex items-center justify-center w-[var(--synap-icon-col)]'
 // Collapsible half of a row: folds to zero width, clipped by its own overflow.
 const ROW_LABEL = 'flex-1 min-w-0 flex items-center gap-2 pr-3 text-sm whitespace-nowrap overflow-hidden transition-opacity'
-// Header row only: the straddling toggle reaches half its width inside the bar,
-// so the account name/email needs more right padding than an ordinary row.
-const HEADER_LABEL_PAD = 'pr-8'
-// Gutter reserved at the right of a SHARED account's row for its one mark. Kept as a
-// pair — the column the mark occupies, and the padding the row adds so the mark never
-// lands on the name or the email.
-const SHARED_MARK_COL = 'w-7'
-const SHARED_MARK_PAD = 'pr-7'
+// Right-hand controls of an account row, in pixels — the ONE source both the chevron
+// and the share mark are laid out from. The chevron sits INSIDE the row (last child of
+// its label) while the mark is an absolute sibling, because a link cannot nest in a
+// button: two different flows, so their boxes are only disjoint if they are derived
+// from the same numbers rather than hand-tuned apart.
+const ACCOUNT_ROW_RIGHT = {
+  /** Clearance every row keeps between its content and the bar's right edge. */
+  edge: 12,
+  /** Box of the fold chevron — present only when there are several accounts. */
+  chevron: 28,
+  /** Box of the share mark — present only on a shared account's row. */
+  mark: 28,
+  /** Clearance kept between the two boxes, and between the mark and the text. */
+  gap: 8,
+} as const
+
+/** Right offset of the share mark: past the edge, and past the chevron when there is one. */
+function markRight(withChevron: boolean) {
+  const { edge, chevron, gap } = ACCOUNT_ROW_RIGHT
+  return edge + (withChevron ? chevron + gap : 0)
+}
+
+// Room the text of a shared row gives up so it truncates before the mark instead of
+// running under it. Same value with or without a chevron: the chevron is in flow, so
+// it already pushes the text, and only the absolute mark has to be reserved for.
+const SHARED_TEXT_INSET = ACCOUNT_ROW_RIGHT.mark + ACCOUNT_ROW_RIGHT.gap
 
 /**
  * The ONLY sign that an inbox is shared: one monochrome glyph, in a fixed column
@@ -95,7 +112,13 @@ const SHARED_MARK_PAD = 'pr-7'
  * shared account start at the exact same x as any other account's. Clicking it
  * goes to where a share is removed, without switching the active account.
  */
-function SharedMark({ account, label, className }: { account: EmailAccount; label: string; className?: string }) {
+function SharedMark({ account, label, withChevron = false, hidden = false }: {
+  account: EmailAccount
+  label: string
+  /** The row also carries a fold chevron: the mark steps one column left of it. */
+  withChevron?: boolean
+  hidden?: boolean
+}) {
   if (!account.isShared) return null
   return (
     <Link
@@ -103,10 +126,11 @@ function SharedMark({ account, label, className }: { account: EmailAccount; labe
       title={label}
       aria-label={label}
       data-account-shared-mark
+      style={{ right: markRight(withChevron), width: ACCOUNT_ROW_RIGHT.mark }}
       className={cn(
-        'absolute right-0 top-0 h-full flex items-center justify-center',
-        SHARED_MARK_COL, 'text-muted-foreground hover:text-foreground transition-colors',
-        className,
+        'absolute top-0 h-full flex items-center justify-center',
+        'text-muted-foreground hover:text-foreground transition-colors',
+        hidden && 'hidden',
       )}
     >
       <Share2 className="w-3.5 h-3.5" />
@@ -153,7 +177,6 @@ function RowBody({
 export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const t = useTranslations('mail')
   const pathname = usePathname()
-  const router = useRouter()
   const [currentFolder, setCurrentFolder] = useState('INBOX')
   const [accountOpen, setAccountOpen] = useState(false)
   const [accountFilter, setAccountFilter] = useState('')
@@ -337,8 +360,11 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
               />
             </span>
             <span
-              className={cn(ROW_LABEL, HEADER_LABEL_PAD, activeAccount.isShared && SHARED_MARK_PAD, collapsed && 'opacity-0')}
-              style={{ transitionDuration: `${SIDEBAR.transitionMs}ms` }}
+              className={cn(ROW_LABEL, collapsed && 'opacity-0')}
+              style={{
+                transitionDuration: `${SIDEBAR.transitionMs}ms`,
+                paddingRight: ACCOUNT_ROW_RIGHT.edge + (activeAccount.isShared ? SHARED_TEXT_INSET : 0),
+              }}
               aria-hidden={collapsed}
             >
               <span className="flex-1 min-w-0 text-left">
@@ -350,16 +376,22 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                 )}
               </span>
               {hasMultipleAccounts && (
-                <ChevronDown className={cn('w-3.5 h-3.5 text-muted-foreground transition-transform shrink-0', accountOpen && 'rotate-180')} />
+                <span
+                  className="shrink-0 flex items-center justify-center"
+                  style={{ width: ACCOUNT_ROW_RIGHT.chevron }}
+                  data-account-chevron
+                >
+                  <ChevronDown className={cn('w-3.5 h-3.5 text-muted-foreground transition-transform', accountOpen && 'rotate-180')} />
+                </span>
               )}
             </span>
           </button>
           <SharedMark
             account={activeAccount}
             label={t('sharedBy', { name: activeAccount.ownerName ?? activeAccount.email })}
-            // Left of the chevron, and gone when the bar is folded: a collapsed bar
-            // shows the bubble alone, nothing may be painted beside it.
-            className={cn(hasMultipleAccounts ? 'right-6' : 'right-1', collapsed && 'hidden')}
+            withChevron={hasMultipleAccounts}
+            // A collapsed bar shows the bubble alone: nothing may be painted beside it.
+            hidden={collapsed}
           />
           {accountOpen && popoverPos && (
             <div
@@ -410,7 +442,8 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                         onClick={() => switchAccount(acc.id)}
                         // Every row has the same box: a fixed bubble, one gap, then the text —
                         // so all names and emails of the list start at the exact same x.
-                        className={cn(ROW, ROW_IDLE, 'gap-2.5 px-3 rounded-none text-left', acc.isShared && SHARED_MARK_PAD)}
+                        className={cn(ROW, ROW_IDLE, 'gap-2.5 px-3 rounded-none text-left')}
+                        style={acc.isShared ? { paddingRight: SHARED_TEXT_INSET } : undefined}
                       >
                         <AccountAvatar
                           account={acc}
@@ -434,18 +467,6 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
           )}
         </div>
       )}
-
-      {/* Compose */}
-      <div className="py-2">
-        <button
-          onClick={() => openCompose(pathname, router.push)}
-          title={t('compose')}
-          data-sidebar-row="compose"
-          className={cn(ROW, 'font-medium', ACCENT.solid, ACCENT.solidHover)}
-        >
-          <RowBody icon={PenSquare} label={t('compose')} collapsed={collapsed} />
-        </button>
-      </div>
 
       {/* Folders */}
       <ThinScroll className="flex-1 mt-1" viewportClassName="overscroll-contain">

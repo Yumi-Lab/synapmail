@@ -60,7 +60,6 @@ export const accentVars = (colorIndex: number): Record<string, string> => {
  */
 export const ACCENT = {
   solid: 'bg-[color:var(--synap-account)] text-white',
-  solidHover: 'hover:bg-[color:var(--synap-account-deep)]',
   tint: 'bg-[color:var(--synap-account-tint)]',
   tintStrong: 'bg-[color:var(--synap-account-tint-strong)]',
   ink: 'text-[color:var(--synap-account)] dark:text-[color:var(--synap-account-lift)]',
