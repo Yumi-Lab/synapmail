@@ -90,27 +90,31 @@ try {
 
   await land('/mail')
 
-  // Le compte MESURÉ est celui que la barre affiche : le banc le lit de l'API de
-  // l'application, il ne le devine pas à partir d'un nom écrit en dur.
+  // Le compte MESURÉ est une boîte POSSÉDÉE qui donne « supprimer », choisie sur les
+  // droits que l'API annonce — pas la boîte active. La section 8 déplace la boîte active
+  // vers une boîte PARTAGÉE sans « supprimer » : si elle meurt avant de la remettre, hériter
+  // de cette préférence fait mesurer le cycle de vie complet sur une boîte qui n'a pas le
+  // droit de supprimer, et le banc rapporte 8 échecs PRODUIT pour un état laissé par le banc
+  // (vécu). Lire les droits au lieu de la préférence rend ce choix indépendant du passé.
   const active = await page.evaluate(async base => {
-    const settings = (await (await fetch(`${base}/api/settings`)).json()).data ?? {}
     const accounts = (await (await fetch(`${base}/api/accounts`)).json()).data ?? []
-    const acc = accounts.find(a => a.id === settings.active_account_id) ?? accounts[0]
+    const acc = accounts.find(a => !a.isShared && a.permissions?.canDelete && a.permissions?.canOrganize)
     return acc ? { id: acc.id, label: acc.name || acc.email } : null
   }, BASE)
-  if (!active) { console.error('HARNESS: the accounts API returned nothing — no mailbox to measure'); process.exit(2) }
+  if (!active) { console.error('HARNESS: no owned mailbox granting delete+organize — nothing to measure'); process.exit(2) }
   accountId = active.id
   console.log(`mesuré sur « ${active.label} » (${accountId})`)
 
-  // `sidebar_collapsed` est une préférence SERVEUR : elle survit d'une exécution à l'autre,
-  // et une barre repliée n'affiche pas le champ de saisie du nom. Le banc épingle donc
-  // l'état déplié au lieu d'hériter de ce que la session précédente a laissé.
-  await page.evaluate(async base => {
+  // `sidebar_collapsed` et `active_account_id` sont des préférences SERVEUR : elles
+  // survivent d'une exécution à l'autre. Le banc les ÉPINGLE toutes deux au lieu d'hériter
+  // de ce que la session précédente a laissé — une barre repliée n'affiche pas le champ de
+  // saisie, et une boîte active héritée n'est pas forcément celle qu'on mesure.
+  await page.evaluate(async ({ base, id }) => {
     await fetch(`${base}/api/settings`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sidebar_collapsed: false }),
+      body: JSON.stringify({ sidebar_collapsed: false, active_account_id: id }),
     })
-  }, BASE)
+  }, { base: BASE, id: accountId })
   await land('/mail')
 
   /** Appelle l'API de l'application depuis la page (mêmes cookies de session). */
@@ -287,14 +291,24 @@ try {
         body: JSON.stringify({ active_account_id: id, sidebar_collapsed: false }),
       })
     }, { base: BASE, id: shared.id })
+    // La cible du refus est un dossier que le banc CRÉE dans la boîte partagée (le partage
+    // donne « organiser », pas « supprimer »), jamais un dossier RÉEL de l'utilisateur :
+    // si la vérification de permission régressait un jour, le DELETE ci-dessous partirait
+    // pour de bon — il ne doit alors emporter qu'un dossier de test. Le banc se rabat sur
+    // un dossier existant seulement s'il ne peut rien créer, et le dit.
+    // La création précède le chargement de la page : une ligne créée APRÈS le rendu n'est
+    // pas dans la barre, et le clic droit vise alors un sélecteur qui ne résout rien.
+    const madeHere = await jsonPost('/api/folders', { accountId: shared.id, name: `${PREFIX}-partage` })
+    if (madeHere.status !== 200) {
+      console.log(`permissions : création refusée sur « ${shared.email} » (${madeHere.status}) — cible repliée sur un dossier existant`)
+    }
     await land('/mail')
 
     const sharedFolders = await page.evaluate(async ({ base, id }) =>
       (await (await fetch(`${base}/api/folders?account=${id}`)).json()).data ?? [], { base: BASE, id: shared.id })
-    // Les dossiers du préfixe sont EXCLUS : ce sont ceux du banc, en cours de nettoyage,
-    // et une cible qui disparaît sous la mesure rendrait un 404 ambigu (« refusé » ou
-    // « plus là »). La cible est donc un dossier ORDINAIRE et RÉEL de la boîte partagée.
-    const ordinary = sharedFolders.find(f => !f.special && !f.path.startsWith(PREFIX))
+    const ordinary = madeHere.status === 200
+      ? sharedFolders.find(f => f.path === madeHere.body?.data?.path)
+      : sharedFolders.find(f => !f.special && !f.path.startsWith(PREFIX))
     if (!ordinary) {
       console.log(`permissions : « ${shared.email} » ne montre aucun dossier ordinaire — arm non mesuré`)
     } else {
@@ -317,30 +331,43 @@ try {
         `supprimer sans la permission : attendu 404 (accès non révélé), reçu ${forbidden.status}`)
       console.log(`permissions : mesuré sur « ${shared.email} » (partage sans « supprimer »), dossier « ${ordinary.path} »`)
     }
-    // La boîte active est une préférence SERVEUR : la laisser sur la boîte partagée
-    // ferait démarrer la prochaine exécution ailleurs, et le nettoyage viserait alors
-    // une autre boîte que celle où le banc a créé ses dossiers.
+  }
+} finally {
+  // La boîte active est une préférence SERVEUR : la section 8 l'a déplacée sur la boîte
+  // partagée. La remise en place vit ICI et non à la fin de la section, pour qu'un échec
+  // en cours de route ne laisse pas la préférence sur une boîte sans droit de suppression
+  // — l'exécution suivante mesurerait alors le mauvais compte (vécu : 8 échecs imputés au
+  // produit, tous causés par cet état laissé par le banc).
+  if (page && accountId) {
     await page.evaluate(async ({ base, id }) => {
       await fetch(`${base}/api/settings`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active_account_id: id }),
       })
-    }, { base: BASE, id: accountId })
+    }, { base: BASE, id: accountId }).catch(() => {})
   }
-} finally {
   // Filet de sécurité : ce que le banc a créé ne reste JAMAIS derrière lui, même
   // sur un échec en cours de route. Aucun chemin hors préfixe n'est touché.
   if (page && accountId) {
-    const leftovers = await page.evaluate(async ({ base, id, prefix }) => {
-      const list = (await (await fetch(`${base}/api/folders?account=${id}`)).json()).data ?? []
-      const mine = list.filter(f => f.path.startsWith(prefix)).map(f => f.path).sort((a, b) => b.length - a.length)
+    // Le balayage passe sur TOUTES les boîtes accessibles, pas seulement l'active : la
+    // section 8 crée dans une boîte PARTAGÉE, et une boîte partagée apparaît DEUX fois
+    // dans la liste (la ligne possédée et la ligne partagée) — un nettoyage limité à la
+    // boîte active laissait ses dossiers derrière lui (observé : « Tests-lane » survivant
+    // sur deux comptes après une exécution pourtant verte).
+    const leftovers = await page.evaluate(async ({ base, prefix }) => {
+      const accounts = (await (await fetch(`${base}/api/accounts`)).json()).data ?? []
       const done = []
-      for (const path of mine) {
-        const res = await fetch(`${base}/api/folders?account=${id}&path=${encodeURIComponent(path)}`, { method: 'DELETE' })
-        done.push(`${path}:${res.status}`)
+      for (const acc of accounts) {
+        const list = (await (await fetch(`${base}/api/folders?account=${acc.id}`)).json()).data ?? []
+        // Du plus profond au moins profond : un parent ne se supprime pas avant ses enfants.
+        const mine = list.filter(f => f.path.startsWith(prefix)).map(f => f.path).sort((a, b) => b.length - a.length)
+        for (const path of mine) {
+          const res = await fetch(`${base}/api/folders?account=${acc.id}&path=${encodeURIComponent(path)}`, { method: 'DELETE' })
+          done.push(`${acc.email}/${path}:${res.status}`)
+        }
       }
       return done
-    }, { base: BASE, id: accountId, prefix: PREFIX }).catch(() => [])
+    }, { base: BASE, prefix: PREFIX }).catch(() => [])
     if (leftovers.length) console.log(`nettoyage : ${leftovers.join(', ')}`)
   }
   await browser.close()
