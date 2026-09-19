@@ -17,8 +17,8 @@ import { LOCALES, setLocale } from '@/lib/locales'
 import { OMNIBAR_SECTIONS, matchOmnibar, type OmnibarEntry, type OmnibarSection } from '@/lib/omnibarCommands'
 import { MAIL_PATH, openCompose } from '@/lib/compose'
 import {
-  SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT, SEARCH_PARAM,
-  buildSearchHref, readScope, type SearchScope,
+  SCOPE_ACCOUNTS, SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT,
+  SEARCH_PARAM, SEARCH_SCOPES, buildSearchHref, readScope, type SearchScope,
 } from '@/lib/search'
 
 /**
@@ -76,6 +76,13 @@ const SECTION_LABEL: Record<OmnibarSection, 'sectionAccounts' | 'sectionActions'
 
 /** L'icone d'un mode de theme, meme table que le selecteur de `ThemeToggle`. */
 const THEME_ICONS = { light: Sun, dark: Moon, system: Monitor } as const
+/** Une portée, son libellé : la seule table qui les relie (en/fr/zh). */
+const SCOPE_LABEL: Record<SearchScope, 'searchThisFolder' | 'searchAllFolders' | 'searchAllAccounts'> = {
+  [SCOPE_FOLDER]: 'searchThisFolder',
+  [SCOPE_ALL]: 'searchAllFolders',
+  [SCOPE_ACCOUNTS]: 'searchAllAccounts',
+}
+
 function ThemeGlyph({ theme }: { theme: Theme }) {
   const Icon = THEME_ICONS[theme]
   return <Icon className={ICON} />
@@ -472,7 +479,11 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
       {/* Étendue de la recherche — n'apparaît que pendant une recherche, une seule ligne, deux positions */}
       {query && (
         <div className="hidden sm:flex shrink-0 items-center rounded-lg border border-border bg-muted/50 p-0.5 text-[11px]">
-          {([SCOPE_FOLDER, SCOPE_ALL] as const).map(value => (
+          {SEARCH_SCOPES
+            // « Toutes les boîtes » n'a de sens qu'avec plus d'une boîte : avec une
+            // seule, elle ferait doublon avec « Tous les dossiers ».
+            .filter(value => value !== SCOPE_ACCOUNTS || accounts.length > 1)
+            .map(value => (
             <button
               key={value}
               type="button"
@@ -487,7 +498,7 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
                 scope === value ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground',
               )}
             >
-              {t(value === SCOPE_ALL ? 'searchAllFolders' : 'searchThisFolder')}
+              {t(SCOPE_LABEL[value])}
             </button>
           ))}
         </div>

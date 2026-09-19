@@ -9,7 +9,7 @@ import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } f
 import { cn } from '@/lib/utils'
 import { formatRowDate } from '@/lib/dates'
 import {
-  EMPTY_SEARCH_STREAM, SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, STREAM_PARAM,
+  EMPTY_SEARCH_STREAM, SCOPE_ACCOUNTS, SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, STREAM_PARAM, isWideScope,
   accumulateSearchStream, isSearchQuery, parseNdjsonChunk,
   type SearchField, type SearchScope, type SearchStreamChunk, type SearchStreamState,
 } from '@/lib/search'
@@ -19,6 +19,7 @@ import type { EmailAccount } from '@/types/account'
 import { MessageContextMenu, type ContextMenuState } from '@/components/ui/MessageContextMenu'
 import { IconTooltip } from '@/components/ui/IconTooltip'
 import { ThinScroll } from './ThinScroll'
+import { accountColor, accountInitials, readableInk, useAccountAccent } from './AccountAvatar'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
 
@@ -147,6 +148,11 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const [readUids, setReadUids] = useState<Set<string>>(new Set())
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
 
+  // Les boîtes de l'utilisateur, prises à la MÊME source que la barre latérale
+  // (mêmes clés SWR, donc aucune requête de plus) : la pastille d'un résultat doit
+  // porter exactement la couleur et les lettres que la barre lui donne déjà.
+  const { accounts } = useAccountAccent()
+
   const { data: settingsData } = useSWR<{ data: AppSettings }>('/api/settings', fetcher)
   const threadView = settingsData?.data?.thread_view ?? true
   const perPage = settingsData?.data?.messages_per_page ?? 30
@@ -229,7 +235,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   // `total` = correspondances réelles côté serveur, `fields` = champs interrogés :
   // le bandeau les dit plutôt que de les retaper (source unique : lib/search.ts).
   // La portée « ce dossier » tient en une réponse : un seul dossier, rien à étaler.
-  const isStreamingScope = isSearchMode && searchScope === SCOPE_ALL
+  const isStreamingScope = isSearchMode && isWideScope(searchScope)
   // Le compte actif arrive APRÈS le premier rendu, et en DEUX temps : /api/accounts
   // donne la liste, /api/settings dit lequel est affiché. Tant que les réglages
   // manquent, le compte reçu n'est qu'un repli sur la boîte PAR DÉFAUT : chercher
@@ -268,7 +274,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     setStreamed(EMPTY_SEARCH_STREAM)
     setStreaming(true)
     const url = `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}` +
-      `&folder=${encodeURIComponent(folder)}&${SCOPE_PARAM}=${SCOPE_ALL}&${STREAM_PARAM}=1${accountParam}`
+      `&folder=${encodeURIComponent(folder)}&${SCOPE_PARAM}=${searchScope}&${STREAM_PARAM}=1${accountParam}`
     // Un flux lu JUSQU'AU BOUT n'a plus rien à abandonner : l'interrompre quand même
     // au démontage faisait conclure le navigateur à `net::ERR_ABORTED` sur une
     // réponse pourtant complète — trompeur dans les outils réseau, et indissociable
@@ -367,7 +373,29 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   // le bandeau annonce alors « X premiers sur N » au lieu de laisser croire à N = X.
   const searchTotal = isStreamingScope ? streamed.total : (searchData?.total ?? messages.length)
   const searchTruncated = searchTotal > messages.length
-  const showResultFolder = isSearchMode && searchScope === SCOPE_ALL
+  const showResultFolder = isSearchMode && isWideScope(searchScope)
+  // Portée « toutes les boîtes » : le dossier seul ne suffit plus, deux boîtes ont
+  // chacune une « Réception ». La bulle à deux lettres dit laquelle, sans grossir
+  // la ligne (elle remplace le seul dossier, elle ne s'y ajoute pas).
+  const showResultAccount = isSearchMode && searchScope === SCOPE_ACCOUNTS
+  // Ce que la pastille d'un résultat affiche, résolu UNE fois par boîte et non à
+  // chaque ligne : les lettres et la couleur viennent des mêmes fonctions que la
+  // bulle de la barre latérale (AccountAvatar), donc une boîte ne peut pas
+  // s'épeler ni se colorer autrement ici que là-bas. Le rang dans la liste EST la
+  // clé de la palette automatique — c'est ce même rang que la barre emploie.
+  const resultAccountBadges = useMemo(() => {
+    const byId = new Map<string, { letters: string; background: string; ink: string; email: string }>()
+    accounts.forEach((account, rank) => {
+      const background = accountColor(account, rank)
+      byId.set(account.id, {
+        letters: accountInitials(account),
+        background,
+        ink: readableInk(background),
+        email: account.email,
+      })
+    })
+    return byId
+  }, [accounts])
   const loadError = !isSearchMode && !!error && accumulated.length === 0
   const loading = isSearchMode ? (messages.length === 0 && isSearching) : (!data && !error)
 
@@ -1017,8 +1045,25 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             {/* Portée « tous les dossiers » : un résultat ne dit rien s'il ne dit pas
                 d'où il vient. Discret, et seulement quand le dossier peut varier. */}
             {showResultFolder && msg.folder && (
-              <span className="shrink-0 max-w-[40%] truncate text-[11px] text-muted-foreground/70" data-result-folder>
-                {folderLabel(msg.folder)}
+              <span className="shrink-0 max-w-[40%] flex items-center gap-1 text-[11px] text-muted-foreground/70" data-result-folder>
+                {/* Portée « toutes les boîtes » : la pastille dit DE QUELLE boîte
+                    vient ce résultat. Un point coloré à deux lettres, pas une
+                    seconde bulle : la ligne garde exactement la même hauteur. */}
+                {showResultAccount && (() => {
+                  const badge = resultAccountBadges.get(msg.accountId)
+                  if (!badge) return null
+                  return (
+                    <span
+                      data-result-account={msg.accountId}
+                      title={badge.email}
+                      className="shrink-0 inline-flex h-[14px] items-center rounded-full px-1 text-[9px] font-semibold leading-none tracking-[0.02em]"
+                      style={{ backgroundColor: badge.background, color: badge.ink }}
+                    >
+                      {badge.letters}
+                    </span>
+                  )
+                })()}
+                <span className="truncate">{folderLabel(msg.folder)}</span>
               </span>
             )}
             <div className="flex items-center gap-1 shrink-0">
