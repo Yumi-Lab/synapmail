@@ -14,6 +14,7 @@ import useSWR, { mutate as globalMutate } from 'swr'
 import type { Message, Folder, ReadReceipt } from '@/types/email'
 import type { EmailAccount } from '@/types/account'
 import { MessageContextMenu, type ContextMenuState } from '@/components/ui/MessageContextMenu'
+import { ThinScroll } from './ThinScroll'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
 
@@ -181,7 +182,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   const rangeAnchorUid = useRef<string | null>(null)
 
   // Infinite scroll — sentinel + observer replace the "load more" button
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const loadingLockRef = useRef(0) // last page auto-requested — prevents re-firing while in flight
 
@@ -1009,9 +1010,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
               </button>
             ))}
           </div>
-          <button onClick={handleRefresh} disabled={isValidating} className="ml-auto w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-            <RefreshCw className={cn('w-3.5 h-3.5', isValidating && 'animate-spin')} />
-          </button>
+          <div className="ml-auto" />
           <ScheduledPopover />
           <SnoozePopover activeAccountId={activeAccountId} />
         </div>
@@ -1040,13 +1039,16 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
           du texte au passage — la sélection de texte naît au `mousedown`, qu'aucun
           `preventDefault()` posé au `mousemove` ne peut plus annuler. La liste n'a
           pas de texte à copier ; ailleurs (volet de lecture) rien ne change. */}
-      <div
-        ref={scrollRef}
-        className="relative flex-1 overflow-y-auto select-none"
-        role="listbox"
-        aria-multiselectable
-        aria-label={t('messageList')}
-        onMouseDown={beginMarquee}
+      <ThinScroll
+        className="flex-1"
+        viewportClassName="relative select-none"
+        viewportRef={scrollRef}
+        viewportProps={{
+          role: 'listbox',
+          'aria-multiselectable': true,
+          'aria-label': t('messageList'),
+          onMouseDown: beginMarquee,
+        }}
       >
         {marquee && (
           <div
@@ -1136,7 +1138,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
             </div>
           )
         )}
-      </div>
+      </ThinScroll>
 
       {/* Context menu */}
       {contextMenu && (

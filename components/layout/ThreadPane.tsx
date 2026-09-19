@@ -8,6 +8,7 @@ import type { Message } from '@/types/email'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { parseDate } from '@/lib/dates'
+import { ThinScroll } from './ThinScroll'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -294,7 +295,7 @@ export function ThreadPane({ threadMessages, subject, folder, accountId, onReply
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-3">
+      <ThinScroll className="flex-1" viewportClassName="p-4 space-y-3">
         {threadMessages.map((msg, idx) => (
           <MessageCard
             key={msg.uid}
@@ -310,7 +311,7 @@ export function ThreadPane({ threadMessages, subject, folder, accountId, onReply
             previewMsg={msg}
           />
         ))}
-      </div>
+      </ThinScroll>
     </div>
   )
 }
