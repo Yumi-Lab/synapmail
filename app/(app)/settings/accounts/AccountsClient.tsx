@@ -271,6 +271,7 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
                     <span className="text-xs bg-violet-500/10 text-violet-600 dark:text-violet-400 px-2 py-0.5 rounded-full font-medium">{t('setDefault')}</span>
                   )}
                   <AccountColorPicker
+                    accountId={account.id}
                     value={account.badgeColor ?? null}
                     rank={rankOf(account)}
                     onPreview={colour => patchAccount(account, { badgeColor: colour })}
