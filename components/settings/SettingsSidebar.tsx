@@ -8,6 +8,7 @@ import {
   Mail, FileSignature, ArrowLeft, ShieldCheck, Users, Filter, LayoutTemplate, Bot, KeyRound, Terminal,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAppName } from '@/components/providers'
 
 /** Where an account's sharing is managed — the one place the bar's shared mark points to. */
 export const ACCOUNTS_SETTINGS_HREF = '/settings/accounts'
@@ -38,6 +39,7 @@ export const SETTINGS_NAV = [
 export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname()
   const t = useTranslations('settings.nav')
+  const appName = useAppName()
 
   const linkClass = (active: boolean) =>
     cn(
@@ -85,7 +87,7 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
 
       {/* Footer */}
       <div className="border-t border-border px-4 pb-4 pt-2">
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/50">Synapmail</p>
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{appName}</p>
       </div>
     </aside>
   )

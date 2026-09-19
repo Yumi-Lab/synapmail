@@ -1,5 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import { faviconUrl } from '@/lib/branding'
+import { readBranding } from '@/lib/brandingStore'
 import { Providers } from '@/components/providers'
 import { NextIntlClientProvider } from 'next-intl'
 import { getLocale, getMessages } from 'next-intl/server'
@@ -11,22 +13,38 @@ import {
   toTheme,
 } from '@/lib/theme'
 
-export const metadata: Metadata = {
-  title: 'Synapmail',
-  description: 'Self-hosted AI-powered email client',
-  icons: {
-    icon: [
-      { url: '/favicon.ico', type: 'image/x-icon', sizes: 'any' },
-      { url: '/brand/png/synapmail-favicon@64.png', type: 'image/png', sizes: '64x64' },
-    ],
-    apple: { url: '/brand/png/synapmail-icone@512.png', sizes: '512x512' },
-  },
+/** Les icônes livrées dans `public/`, servies tant que l'instance n'en a pas choisi une autre. */
+const BUNDLED_ICONS = {
+  icon: [
+    { url: '/favicon.ico', type: 'image/x-icon', sizes: 'any' },
+    { url: '/brand/png/synapmail-favicon@64.png', type: 'image/png', sizes: '64x64' },
+  ],
+  apple: { url: '/brand/png/synapmail-icone@512.png', sizes: '512x512' },
+} as const satisfies Metadata['icons']
+
+/**
+ * Le titre de l'onglet et son icône viennent du réglage d'instance quand il en
+ * existe un, sinon de ce qui est livré : une instance qui n'a rien réglé ne
+ * change pas d'aspect à la mise à jour. Les icônes PWA / apple-touch ne sont
+ * PAS concernées par ce réglage (hors périmètre) : `apple` reste le fichier livré.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const { appName, faviconVersion } = await readBranding()
+  return {
+    title: appName,
+    description: 'Self-hosted AI-powered email client',
+    icons:
+      faviconVersion === null
+        ? BUNDLED_ICONS
+        : { icon: [{ url: faviconUrl(faviconVersion) }], apple: BUNDLED_ICONS.apple },
+  }
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const locale = await getLocale()
   const messages = await getMessages()
   const theme = toTheme(cookies().get(THEME_COOKIE)?.value)
+  const { appName } = await readBranding()
   // `light`/`dark` sont résolus ici même (aucun flash) ; `system` dépend du client,
   // d'où le script bloquant ci-dessous, qui vaut `null` pour les deux autres cas.
   const initScript = themeInitScript(theme)
@@ -40,7 +58,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="font-sans antialiased">
         {initScript !== null && <script dangerouslySetInnerHTML={{ __html: initScript }} />}
         <NextIntlClientProvider messages={messages}>
-          <Providers initialTheme={theme}>{children}</Providers>
+          <Providers initialTheme={theme} appName={appName}>{children}</Providers>
         </NextIntlClientProvider>
       </body>
     </html>
