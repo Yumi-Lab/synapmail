@@ -71,7 +71,7 @@
     "forwardInvalid": "Cette demande de transfert est invalide.",
     "forwardTooMany": "Vous pouvez transférer au plus {count} messages à la fois.",
     "forwardTooLarge": "Ces messages dépassent la limite de {count} Mo de pièces jointes.",
-    "forwardMissing": "{count} des messages sélectionnés ne sont plus dans ce dossier. Rien n’a été envoyé.",
+    "forwardMissing": "{count, plural, one {# des messages sélectionnés n’est plus dans ce dossier} other {# des messages sélectionnés ne sont plus dans ce dossier}}. Rien n’a été envoyé.",
     "forwardOriginDenied": "La boîte d’où viennent ces messages n’est plus accessible.",
     "delete": "Supprimer",
     "archive2": "Archiver",

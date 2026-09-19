@@ -12,6 +12,10 @@
  *   node --experimental-strip-types scripts/check-forward-decision.mjs
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { IntlMessageFormat } from 'intl-messageformat'
 import {
   FORWARD_ERROR,
   FORWARD_MAX_MESSAGES,
@@ -87,5 +91,49 @@ assert.equal(denied.ok, false)
 assert.equal(denied.status, 404)
 assert.equal(denied.code, FORWARD_ERROR.originDenied)
 ok('an origin the user cannot read: 404, nothing is sent')
+
+console.log('refusal labels — one code, one sentence per locale, singular included')
+
+// Le serveur ne renvoie qu'un CODE : la phrase vient des fichiers de traduction.
+// On les rend donc pour de vrai (même moteur que next-intl) au lieu de les lire
+// à l'œil — un pluriel mal écrit lève ici, et `1 … ne sont plus` ne passe plus.
+const LOCALES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'locales')
+const MESSAGE_OF_CODE = {
+  [FORWARD_ERROR.invalid]: 'forwardInvalid',
+  [FORWARD_ERROR.tooMany]: 'forwardTooMany',
+  [FORWARD_ERROR.tooLarge]: 'forwardTooLarge',
+  [FORWARD_ERROR.missing]: 'forwardMissing',
+  [FORWARD_ERROR.originDenied]: 'forwardOriginDenied',
+}
+
+// Un code ajouté sans phrase se verrait ici, pas en production.
+assert.deepEqual(
+  Object.keys(MESSAGE_OF_CODE).sort(),
+  Object.values(FORWARD_ERROR).sort(),
+  'every refusal code must have a translated sentence',
+)
+
+for (const locale of ['en', 'fr', 'zh']) {
+  const labels = JSON.parse(readFileSync(join(LOCALES_DIR, `${locale}.json`), 'utf8')).mail
+  for (const key of Object.values(MESSAGE_OF_CODE)) {
+    for (const count of [1, 3]) {
+      const rendered = new IntlMessageFormat(labels[key], locale).format({ count })
+      assert.equal(typeof rendered, 'string', `${locale}.${key} must render to a string`)
+      assert.ok(rendered.trim() !== '', `${locale}.${key} must not render empty`)
+      assert.ok(!/[{}#]/.test(rendered), `${locale}.${key} left an unresolved placeholder: ${rendered}`)
+    }
+  }
+  // `forwardMissing` est le seul dont le verbe s'accorde : un message manquant
+  // se lit au singulier, trois au pluriel, et les deux phrases diffèrent.
+  const missing = labels.forwardMissing
+  const one = new IntlMessageFormat(missing, locale).format({ count: 1 })
+  const many = new IntlMessageFormat(missing, locale).format({ count: 3 })
+  assert.ok(one.includes('1'), `${locale}: the singular must name its count`)
+  assert.ok(many.includes('3'), `${locale}: the plural must name its count`)
+  if (locale !== 'zh') {
+    assert.notEqual(one, many, `${locale}: singular and plural must not be the same sentence`)
+  }
+  ok(`${locale}: 5 refusals render, singular "${one}"`)
+}
 
 console.log('check-forward-decision: OK')

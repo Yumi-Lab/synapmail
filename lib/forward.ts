@@ -18,7 +18,7 @@ export const FORWARD_MAX_MESSAGES = 25
 /**
  * Plafond de la somme des sources relues, mesuré AVANT de charger le moindre
  * octet en mémoire. 25 Mio est la limite de pièce jointe la plus répandue chez
- * les serveurs SMTP (IONAS/IONOS, Gmail, Outlook) : au-delà, l'envoi serait de
+ * les serveurs SMTP (IONOS, Gmail, Outlook) : au-delà, l'envoi serait de
  * toute façon refusé après avoir fait gonfler le processus.
  */
 export const FORWARD_MAX_TOTAL_BYTES = 25 * 1024 * 1024

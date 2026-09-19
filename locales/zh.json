@@ -71,7 +71,7 @@
     "forwardInvalid": "此转发请求无效。",
     "forwardTooMany": "一次最多可转发 {count} 封邮件。",
     "forwardTooLarge": "这些邮件超过 {count} MB 的附件上限。",
-    "forwardMissing": "所选邮件中有 {count} 封已不在此文件夹中，未发送任何内容。",
+    "forwardMissing": "{count, plural, other {所选邮件中有 # 封已不在此文件夹中}}，未发送任何内容。",
     "forwardOriginDenied": "这些邮件所属的邮箱已无法访问。",
     "delete": "删除",
     "archive2": "归档",
