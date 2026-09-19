@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/PasswordInput'
 import { cn } from '@/lib/utils'
+import { BrandingSection } from '@/components/admin/BrandingSection'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -71,6 +72,8 @@ export default function AdminUsersPage() {
 
   return (
     <div className="p-8 max-w-3xl">
+      <BrandingSection />
+
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Gestion des utilisateurs</h1>
         <Button size="sm" onClick={() => { setShowForm(f => !f); setError(null) }} className="gap-1.5">

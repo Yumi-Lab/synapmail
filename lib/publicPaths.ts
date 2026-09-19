@@ -4,7 +4,9 @@
  * one of these pages: the browser logs every 401 as a console error.
  */
 export const PUBLIC_PATHS = [
-  '/login', '/register', '/invite', '/api/auth', '/api/register', '/api/invites', '/api/oauth', '/_next', '/favicon',
+  // `/api/branding` : l'icône de l'instance est lue par la page de connexion, donc avant toute session.
+  '/login', '/register', '/invite', '/api/auth', '/api/register', '/api/invites', '/api/oauth',
+  '/api/branding', '/_next', '/favicon',
 ] as const
 
 export const isPublicPath = (pathname: string): boolean => PUBLIC_PATHS.some(p => pathname.startsWith(p))

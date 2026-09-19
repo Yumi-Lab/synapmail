@@ -420,6 +420,25 @@
       "actions": "Actions",
       "delete": "Supprimer",
       "confirmDelete": "Êtes-vous sûr de vouloir supprimer cet utilisateur ?"
+    },
+    "branding": {
+      "title": "Identité",
+      "description": "Le nom et l'icône que cette instance affiche dans l'onglet du navigateur, pour tout le monde.",
+      "nameLabel": "Nom",
+      "iconLabel": "Icône de l'onglet",
+      "iconHint": "PNG, ICO, JPEG ou WebP, 256 Kio au plus.",
+      "choose": "Choisir un fichier",
+      "save": "Enregistrer",
+      "saving": "Enregistrement",
+      "saved": "Enregistré",
+      "resetName": "Rétablir le nom par défaut",
+      "resetIcon": "Rétablir l'icône par défaut",
+      "preview": "Aperçu",
+      "errors": {
+        "branding_too_large": "Ce fichier dépasse 256 Kio.",
+        "branding_bad_type": "Ce fichier n'est pas une image PNG, ICO, JPEG ou WebP.",
+        "branding_bad_name": "Saisissez un nom de 1 à 60 caractères."
+      }
     }
   },
   "contacts": {
