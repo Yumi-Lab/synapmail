@@ -28,11 +28,11 @@ interface Props {
 
 type AIAction = 'summarize' | 'reply' | 'translate_fr' | 'translate_en'
 
-function ComingSoonBadge() {
+function ComingSoonBadge({ label }: { label: string }) {
   return (
     <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 text-[9px] font-semibold border border-amber-500/30">
       <Clock className="w-2 h-2" />
-      Bientôt
+      {label}
     </span>
   )
 }
@@ -94,7 +94,7 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
       <div className="flex items-center gap-1 px-4 py-1.5 bg-violet-500/5">
         <Bot className="w-3.5 h-3.5 text-violet-500 shrink-0 mr-1" />
 
-        {/* TL;DR */}
+        {/* Summarize */}
         {settings.featureSummarize && (
           <button
             type="button"
@@ -110,7 +110,7 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
               ? <Loader2 className="w-3 h-3 animate-spin" />
               : <FileText className="w-3 h-3" />
             }
-            TL;DR
+            {t('actions.summarize')}
           </button>
         )}
 
@@ -130,7 +130,7 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
               ? <Loader2 className="w-3 h-3 animate-spin" />
               : <MessageSquareDiff className="w-3 h-3" />
             }
-            Répondre avec l&apos;IA
+            {t('actions.reply')}
           </button>
         )}
 
@@ -151,7 +151,7 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
                 ? <Loader2 className="w-3 h-3 animate-spin" />
                 : <Languages className="w-3 h-3" />
               }
-              Traduire
+              {t('actions.translate')}
             </button>
             {showTranslatePicker && (
               <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-lg shadow-lg py-1 min-w-[130px]">
@@ -160,14 +160,14 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
                   onClick={() => callAction('translate_fr')}
                   className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors"
                 >
-                  🇫🇷 En français
+                  {t('translateToFr')}
                 </button>
                 <button
                   type="button"
                   onClick={() => callAction('translate_en')}
                   className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors"
                 >
-                  🇬🇧 In English
+                  {t('translateToEn')}
                 </button>
               </div>
             )}
@@ -179,22 +179,22 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
           type="button"
           disabled
           className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-muted-foreground/40 cursor-not-allowed"
-          title="Bientôt disponible"
+          title={t('soonTitle')}
         >
           <Sparkles className="w-3 h-3" />
-          Tâches
-          <ComingSoonBadge />
+          {t('tasks')}
+          <ComingSoonBadge label={t('soonBadge')} />
         </button>
 
         <button
           type="button"
           disabled
           className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-muted-foreground/40 cursor-not-allowed"
-          title="Bientôt disponible"
+          title={t('soonTitle')}
         >
           <Sparkles className="w-3 h-3" />
-          Priorité
-          <ComingSoonBadge />
+          {t('priority')}
+          <ComingSoonBadge label={t('soonBadge')} />
         </button>
       </div>
 
@@ -233,8 +233,8 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
             <div className="pr-6">
               <p className="text-xs font-semibold text-violet-600 dark:text-violet-400 mb-1.5 flex items-center gap-1.5">
                 <Bot className="w-3 h-3" />
-                {result.action === 'summarize' && 'Résumé'}
-                {(result.action === 'translate_fr' || result.action === 'translate_en') && 'Traduction'}
+                {result.action === 'summarize' && t('resultSummary')}
+                {(result.action === 'translate_fr' || result.action === 'translate_en') && t('resultTranslation')}
               </p>
               <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap max-h-[30vh] sm:max-h-[45vh] overflow-y-auto break-words">{result.text}</p>
             </div>
@@ -244,7 +244,7 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
             <div className="pr-6">
               <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 mb-1.5 flex items-center gap-1.5">
                 <MessageSquareDiff className="w-3 h-3" />
-                Brouillon IA, ouvert dans la composition
+                {t('resultReply')}
               </p>
               <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-3">{result.text}</p>
             </div>
