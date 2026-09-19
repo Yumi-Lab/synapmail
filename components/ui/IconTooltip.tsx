@@ -48,8 +48,10 @@ export function IconTooltip({ label, shortcut, align = 'center', children }: {
           // survolé, jamais sur l'état de repos (sinon la bulle survivrait au départ).
           'invisible opacity-0 transition-[opacity,visibility] duration-100 delay-0',
           'group-hover:visible group-hover:opacity-100 group-hover:delay-[var(--synap-tip-delay)]',
-          'group-focus-within:visible group-focus-within:opacity-100',
-          'group-focus-within:delay-[var(--synap-tip-delay)]',
+          // `:focus-visible`, jamais `focus-within` : un clic souris laisse le focus sur
+          // le bouton, et la bulle resterait plantée après le départ du pointeur.
+          'group-has-[:focus-visible]:visible group-has-[:focus-visible]:opacity-100',
+          'group-has-[:focus-visible]:delay-[var(--synap-tip-delay)]',
           ALIGN[align],
         )}
       >

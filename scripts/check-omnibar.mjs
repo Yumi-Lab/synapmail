@@ -524,12 +524,30 @@ page.setDefaultNavigationTimeout(120000)
     await new Promise(r => setTimeout(r, SETTLE_MS))
   }
 
-  // Focus clavier : même bulle, sans souris.
-  await page.evaluate(sel => document.querySelector(sel)?.focus(), MENU)
+  // Un CLIC souris ne doit RIEN laisser derrière lui : le bouton garde le focus, mais
+  // la bulle ne s'affiche qu'au focus CLAVIER. Sans cette assertion, la bulle restait
+  // plantée sur l'écran jusqu'au clic suivant (défaut relevé au gate humain du lot H3c).
+  const CLICKED = `[data-mail-action="${leadAction}"]`
+  await page.click(CLICKED)
+  await page.mouse.move(0, 0)
+  await new Promise(r => setTimeout(r, TOOLTIP_SETTLE_MS))
+  const afterClick = await tipVisible()
+  const keptFocus = await page.evaluate(sel => document.activeElement === document.querySelector(sel), CLICKED)
+  console.log(`after clicking "${leadAction}" and moving the mouse away -> ${afterClick.length} tooltip(s) (button still focused: ${keptFocus})`)
+  // Sans focus résiduel le test passerait à vide : il ne prouverait rien.
+  if (!keptFocus) { console.error('HARNESS: the clicked button did not keep the focus — nothing measured'); process.exit(2) }
+  if (afterClick.length) failures.push(`${afterClick.length} tooltip(s) still showing after a mouse click: ${afterClick.map(t => t.text).join(' | ')}`)
+
+  // Focus clavier : la même bulle revient, sans souris. Vraie touche Tab (et non un
+  // `.focus()` programmatique) — c'est le geste qui bascule le navigateur en modalité
+  // clavier, donc le seul qui mesure `:focus-visible`.
+  await page.click(SEARCH)
+  await page.keyboard.down('Shift'); await page.keyboard.press('Tab'); await page.keyboard.up('Shift')
   await new Promise(r => setTimeout(r, TOOLTIP_SETTLE_MS))
   const focusTips = await tipVisible()
-  console.log(`keyboard focus on the menu button -> ${focusTips.length} tooltip(s): ${focusTips.map(t => t.text).join(' | ') || 'none'}`)
-  if (focusTips.length !== 1) failures.push(`focusing the menu button with the keyboard showed ${focusTips.length} tooltip(s), expected exactly 1`)
+  const focusedLabel = await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.tagName)
+  console.log(`Shift+Tab out of the search field -> focus on "${focusedLabel}", ${focusTips.length} tooltip(s): ${focusTips.map(t => t.text).join(' | ') || 'none'}`)
+  if (focusTips.length !== 1) failures.push(`keyboard focus on "${focusedLabel}" showed ${focusTips.length} tooltip(s), expected exactly 1`)
   await page.evaluate(() => document.activeElement?.blur())
 
   // 0 selected: only refresh is live — a button without a capability is greyed, never hidden.
