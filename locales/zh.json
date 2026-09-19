@@ -331,7 +331,19 @@
       "rowMenu": "{name} 的操作",
       "deleteAccount": "删除账户…",
       "deleteConfirm": "从本邮箱客户端删除账户“{email}”？邮件仍保存在您的服务商处，仅移除此处的访问权限。",
-      "share": "共享"
+      "share": "共享",
+      "passwordUnchanged": "（不变）",
+      "passwordUnchangedHelp": "留空即保留已保存的密码。",
+      "tested": {
+        "stored": "已使用已保存的密码进行测试。",
+        "submitted": "已使用您刚输入的新密码进行测试。",
+        "oauth": "此处无需测试：该邮箱使用令牌登录，而非密码。"
+      },
+      "testFailure": {
+        "credentials": "服务器拒绝了这些凭据",
+        "unreachable": "无法连接到服务器",
+        "other": "服务器拒绝了连接"
+      }
     },
     "profile": {
       "title": "个人资料",

@@ -331,7 +331,19 @@
       "rowMenu": "Actions pour {name}",
       "deleteAccount": "Supprimer le compte…",
       "deleteConfirm": "Supprimer le compte « {email} » de ce webmail ? Les mails restent chez votre hébergeur, seul l’accès depuis ici est retiré.",
-      "share": "Partager"
+      "share": "Partager",
+      "passwordUnchanged": "(inchangé)",
+      "passwordUnchangedHelp": "Laisser vide pour ne pas changer le mot de passe enregistré.",
+      "tested": {
+        "stored": "Testé avec le mot de passe enregistré.",
+        "submitted": "Testé avec le nouveau mot de passe que vous avez saisi.",
+        "oauth": "Rien à tester ici : cette boîte se connecte par jeton, pas par mot de passe."
+      },
+      "testFailure": {
+        "credentials": "le serveur a refusé ces identifiants",
+        "unreachable": "le serveur est injoignable",
+        "other": "le serveur a refusé la connexion"
+      }
     },
     "profile": {
       "title": "Profil",
