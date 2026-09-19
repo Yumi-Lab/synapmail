@@ -17,6 +17,9 @@ export const ACCOUNT_PALETTE = ['#2563eb', '#7c3aed', '#047857', '#b45309', '#e1
 /** What the API accepts as a chosen colour, and what the hex field validates against. */
 export const BADGE_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
 
+/** Length of a `#RRGGBB` colour — what the hex field is allowed to hold, and nothing more. */
+export const HEX_LENGTH = 7
+
 export const isBadgeColor = (value: unknown): value is string =>
   typeof value === 'string' && BADGE_COLOR_PATTERN.test(value)
 

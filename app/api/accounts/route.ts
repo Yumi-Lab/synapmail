@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
+import { accountOrderBy } from '@/lib/accounts'
 import { encrypt } from '@/lib/encrypt'
 
 export const dynamic = 'force-dynamic'
@@ -63,7 +64,7 @@ export async function GET(req: Request) {
        WHERE sh.invitee_user_id = $1 AND sh.status = 'active'
          AND (sh.expires_at IS NULL OR sh.expires_at > NOW())
 
-       ORDER BY "isDefault" DESC, "createdAt" ASC`,
+       ${accountOrderBy({ isDefault: '"isDefault"', createdAt: '"createdAt"', id: 'id' })}`,
       [authCtx.id]
     )
 

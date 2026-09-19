@@ -42,12 +42,29 @@ export async function getAccountById(id: string, userId: string): Promise<DbEmai
   return accounts[0] ?? null
 }
 
+/**
+ * Total order of a user's mailboxes: the chosen default first, then the oldest, then the id
+ * as the tie-break. Without that last term the order is NOT total — mailboxes imported in one
+ * go share a `created_at`, and PostgreSQL then returns ties in physical order, which changes
+ * as soon as any row is updated. A mailbox's rank in this list decides its automatic colour,
+ * so an unstable order repaints every mailbox its owner never touched. Both queries that list
+ * mailboxes read this one clause, each passing the names it exposes: a UNION can only be
+ * ordered by its OUTPUT names, which are quoted camelCase in `app/api/accounts/route.ts`.
+ */
+export const accountOrderBy = (
+  cols: { isDefault: string; createdAt: string; id: string } = {
+    isDefault: 'is_default',
+    createdAt: 'created_at',
+    id: 'id',
+  }
+) => `ORDER BY ${cols.isDefault} DESC, ${cols.createdAt} ASC, ${cols.id} ASC`
+
 export async function listAccounts(userId: string): Promise<Omit<DbEmailAccount, 'password_encrypted'>[]> {
   return query(
     `SELECT id, user_id, name, email, imap_host, imap_port, imap_secure,
             smtp_host, smtp_port, smtp_secure, username,
             is_default, color, prompt_guard, oauth_provider, created_at
-     FROM email_accounts WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC`,
+     FROM email_accounts WHERE user_id = $1 ${accountOrderBy()}`,
     [userId]
   )
 }

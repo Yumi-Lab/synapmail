@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { Check, Palette } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { ACCOUNT_PALETTE, BADGE_COLOR_PATTERN, accountColor, readableInk } from '@/lib/accountColor'
+import { ACCOUNT_PALETTE, BADGE_COLOR_PATTERN, HEX_LENGTH, accountColor, readableInk } from '@/lib/accountColor'
 
 interface Props {
   /** Colour currently stored for the mailbox — `null` means automatic. */
@@ -30,19 +30,50 @@ export function AccountColorPicker({ value, rank, onPreview, onCommit }: Props) 
   const [open, setOpen] = useState(false)
   const [hex, setHex] = useState('')
   const rootRef = useRef<HTMLDivElement>(null)
+  // The colour shown but not yet written — what the wheel is currently previewing. Held in a
+  // ref, not in state: the close handlers below are registered once per opening and must read
+  // the LATEST preview, not the one that existed when they were registered.
+  const previewRef = useRef<string | null>(null)
 
   const effective = accountColor({ badgeColor: value }, rank)
+
+  const preview = (next: string | null) => {
+    previewRef.current = next
+    onPreview(next)
+  }
+
+  const commit = (next: string | null) => {
+    previewRef.current = null
+    onPreview(next)
+    onCommit(next)
+    setHex(next ?? '')
+  }
 
   useEffect(() => {
     if (!open) return
     setHex(value ?? '')
+    // Closing by clicking away SAVES the colour being previewed: choosing in the wheel then
+    // clicking elsewhere is the natural gesture, and it used to lose the choice because the
+    // save hung off `onBlur`, which the browser never fires when the field is unmounted.
+    // Escape does the opposite — it CANCELS, putting the stored colour back on screen.
+    const settle = () => {
+      const pending = previewRef.current
+      previewRef.current = null
+      if (pending !== null && pending !== value) commit(pending)
+      setOpen(false)
+    }
+    const cancel = () => {
+      if (previewRef.current !== null) preview(value)
+      previewRef.current = null
+      setOpen(false)
+    }
     // Light-dismiss: one click outside closes AND reaches whatever it landed on, because
     // nothing covers the page — the listener is on the document, there is no backdrop.
     const onDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+      if (!rootRef.current?.contains(e.target as Node)) settle()
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') cancel()
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
@@ -50,13 +81,9 @@ export function AccountColorPicker({ value, rank, onPreview, onCommit }: Props) 
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open, value])
+  }, [open, value]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const choose = (next: string | null) => {
-    onPreview(next)
-    onCommit(next)
-    setHex(next ?? '')
-  }
+  const choose = (next: string | null) => commit(next)
 
   // The field accepts a colour as the user finishes typing it; anything else is simply
   // not committed, so the mailbox keeps the colour it had rather than losing it to a typo.
@@ -72,7 +99,14 @@ export function AccountColorPicker({ value, rank, onPreview, onCommit }: Props) 
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        onClick={() => setOpen(o => !o)}
+        onClick={() => {
+          if (open) {
+            const pending = previewRef.current
+            previewRef.current = null
+            if (pending !== null && pending !== value) commit(pending)
+          }
+          setOpen(o => !o)
+        }}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={t('color')}
@@ -110,8 +144,8 @@ export function AccountColorPicker({ value, rank, onPreview, onCommit }: Props) 
             <input
               type="color"
               value={effective}
-              onChange={e => onPreview(e.target.value)}
-              onBlur={e => choose(e.target.value)}
+              onInput={e => preview((e.target as HTMLInputElement).value)}
+              onChange={e => commit(e.target.value)}
               data-account-color-wheel
               className="h-8 w-8 shrink-0 cursor-pointer rounded-lg border border-border bg-transparent p-0"
             />
@@ -122,6 +156,9 @@ export function AccountColorPicker({ value, rank, onPreview, onCommit }: Props) 
               onKeyDown={e => e.key === 'Enter' && commitHex()}
               placeholder={t('colorAuto')}
               aria-label={t('colorHex')}
+              aria-invalid={invalid}
+              // `#RRGGBB` and nothing longer: the field cannot hold a second colour.
+              maxLength={HEX_LENGTH}
               spellCheck={false}
               data-account-color-hex
               className={cn(
