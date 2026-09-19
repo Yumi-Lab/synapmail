@@ -158,6 +158,28 @@ check('the same uid in two folders is not a duplicate',
     .messages.length,
   2)
 
+// Portée « toutes les boîtes » : deux boîtes ont chacune un dossier INBOX, et
+// leurs uid se recouvrent librement. Dédoublonner sur dossier+uid faisait alors
+// DISPARAÎTRE un résultat sur deux sans rien dire — c'est la même confusion que
+// le lot S4a a corrigée côté ouverture (voir `lib/mailOrigin.ts`).
+const fromAccount = (accountId, folder, uids) => ({
+  accountId, folder, total: uids.length, searched: 1, folders: 1, accounts: 2,
+  messages: uids.map(uid => ({ accountId, folder, uid, date: new Date(2026, 0, uid).toISOString() })),
+})
+
+check('the same uid in the same folder of TWO mailboxes is not a duplicate',
+  accumulateSearchStream(EMPTY_SEARCH_STREAM, [
+    fromAccount('acc-a', 'INBOX', [3231]),
+    fromAccount('acc-b', 'INBOX', [3231]),
+  ]).messages.map(m => m.accountId),
+  ['acc-a', 'acc-b'])
+
+check('the same message of the SAME mailbox is still kept once',
+  accumulateSearchStream(
+    accumulateSearchStream(EMPTY_SEARCH_STREAM, [fromAccount('acc-a', 'INBOX', [3231])]),
+    [fromAccount('acc-a', 'INBOX', [3231])]).messages.length,
+  1)
+
 check('a chunk carrying an error contributes nothing',
   accumulateSearchStream(EMPTY_SEARCH_STREAM, [{ folder: 'Broken', error: 'nope' }]),
   EMPTY_SEARCH_STREAM)

@@ -32,17 +32,38 @@ le choix de fond qu'il engage, sont chiffrés dans [RECHERCHE-CORPS.md](RECHERCH
 
 ## Où l'on cherche : la portée
 
-Deux portées, écrites dans l'URL (`scope=folder` par défaut, `scope=all`) :
+Trois portées, écrites dans l'URL (`SEARCH_SCOPES` : `scope=folder` par défaut, `scope=all`,
+`scope=accounts`) :
 
 - **ce dossier** — un `SELECT` + un `SEARCH` sur le dossier ouvert ;
-- **tous les dossiers** — les dossiers sont parcourus **dans l'ordre de leur utilité** (boîte de
-  réception, envoyés, puis les autres par date du dernier message connu du cache), et les résultats
-  sont **diffusés au fil de l'eau** (NDJSON) : les premières lignes s'affichent pendant que la
-  recherche continue. La bannière avance (« 5 dossiers sur 23 ») et un bouton **Arrêter** interrompt
-  le flux ; la liste déjà reçue reste à l'écran.
+- **tous les dossiers** — les dossiers de la boîte courante sont parcourus **dans l'ordre de leur
+  utilité** (boîte de réception, envoyés, puis les autres par date du dernier message connu du
+  cache), et les résultats sont **diffusés au fil de l'eau** (NDJSON) : les premières lignes
+  s'affichent pendant que la recherche continue. La bannière avance (« 5 dossiers sur 23 ») et un
+  bouton **Arrêter** interrompt le flux ; la liste déjà reçue reste à l'écran ;
+- **toutes les boîtes** — le même flux, étendu à **toutes les boîtes accessibles** : les siennes,
+  plus celles reçues en partage actif et non expiré. Quelles boîtes exactement, c'est la règle
+  d'accès du produit qui le dit, et elle n'est écrite qu'à UN endroit
+  (`ACTIVE_SHARE_SQL` / `listAccessibleAccounts` dans `lib/accountAccess.ts`, gardés par
+  `scripts/check-share-rule.mjs`) : une boîte qu'on ne peut pas ouvrir ne peut pas être cherchée.
+  La boîte active passe en premier, puis `ACCOUNT_CONCURRENCY` boîtes au plus sont ouvertes de
+  front, chacune en deux passes (réception + envoyés d'abord). Une boîte injoignable n'arrête pas
+  les autres : elle est signalée en fin de flux.
 
 Changer de requête, ou quitter la page, annule proprement le flux en cours (`AbortController` côté
 navigateur, fermeture des connexions IMAP côté serveur).
+
+## L'identité d'un résultat
+
+Un `uid` n'est unique que DANS un dossier d'une boîte : deux messages sans rapport peuvent porter
+l'uid 3231 dans « Réception » et dans « Objets envoyés ». Dès que la portée sort du dossier affiché
+(`isWideScope`), la liste mêle des origines — un résultat ne se désigne donc jamais par son uid seul.
+
+Tout le parcours (ouvrir, cocher, agir, glisser, transférer) transporte le **triplet**
+`{ accountId, folder, uid }` (`MessageOrigin` dans `lib/mailOrigin.ts`, source unique), et les
+requêtes se construisent à partir de lui. C'est ce qui fait qu'un résultat trouvé dans « Objets
+envoyés » s'OUVRE dans « Objets envoyés », et qu'une suppression porte sur le message affiché et non
+sur son homonyme du dossier courant.
 
 ## Les plafonds, et pourquoi ils sont là
 
@@ -57,6 +78,8 @@ navigateur, fermeture des connexions IMAP côté serveur).
 
 ## Ce que la recherche ne dit pas
 
-Elle ne cherche pas dans les pièces jointes, ni dans le corps (voir plus haut), et un dossier que le
-serveur refuse d'ouvrir est sauté sans faire échouer la recherche. Les mesures de cette page ont été
+Elle ne cherche pas dans les pièces jointes, ni dans le corps (voir plus haut) ; un dossier que le
+serveur refuse d'ouvrir est sauté sans faire échouer la recherche, et une boîte injoignable l'est
+aussi. Le plafond de 200 résultats vaut **par dossier interrogé** : en portée large, la liste en
+garde les 200 plus récents tous dossiers confondus, et `total` compte toutes les correspondances. Les mesures de cette page ont été
 prises sur **IONOS** : un autre serveur peut répondre autrement, et rien ici ne permet de l'extrapoler.

@@ -1,5 +1,30 @@
 import { query } from './db'
+import { accountOrderBy } from './accountColor'
 import type { DbEmailAccount } from './accounts'
+
+/**
+ * « Ce partage n'a pas expiré » — source unique de la clause de date.
+ *
+ * Elle vaut pour un partage ACTIF (accès à une boîte) comme pour une invitation
+ * EN ATTENTE (lien d'acceptation) : deux états différents, une seule notion de
+ * péremption. L'alias est fixe (`sh`) pour que ce soit une CONSTANTE et non un
+ * gabarit à interpoler ; les appelants nomment l'alias `sh`.
+ */
+export const SHARE_NOT_EXPIRED_SQL = '(sh.expires_at IS NULL OR sh.expires_at > NOW())'
+
+/**
+ * « Ce partage donne accès MAINTENANT » — source unique de la règle d'accès.
+ *
+ * Elle s'écrivait en QUATRE exemplaires (ici, la liste des comptes, la recherche
+ * « Toutes les boîtes », `lib/subscriptions.ts`) : quatre endroits à corriger le
+ * jour où un partage gagne un état ou une date, et celui qu'on oublie ouvre une
+ * boîte qu'on croyait fermée. `scripts/check-share-rule.mjs` refuse toute copie.
+ *
+ * Une invitation en ATTENTE n'est PAS un accès : elle ne passe pas par ici (voir
+ * `app/api/invites/[token]/route.ts`, qui teste son propre état et réutilise la
+ * seule clause de date).
+ */
+export const ACTIVE_SHARE_SQL = `sh.status = 'active' AND ${SHARE_NOT_EXPIRED_SQL}`
 
 export type AccountPermission = 'send' | 'delete' | 'organize' | 'manageRules' | 'manageSignatures'
 
@@ -38,15 +63,14 @@ export async function getAccessibleAccount(
   const rows = await query<Row>(
     `SELECT a.*,
             (a.user_id = $2) AS is_owner,
-            s.can_send, s.can_delete, s.can_organize, s.can_manage_rules, s.can_manage_signatures
+            sh.can_send, sh.can_delete, sh.can_organize, sh.can_manage_rules, sh.can_manage_signatures
      FROM email_accounts a
-     LEFT JOIN account_shares s
-       ON s.account_id = a.id
-      AND s.invitee_user_id = $2
-      AND s.status = 'active'
-      AND (s.expires_at IS NULL OR s.expires_at > NOW())
+     LEFT JOIN account_shares sh
+       ON sh.account_id = a.id
+      AND sh.invitee_user_id = $2
+      AND ${ACTIVE_SHARE_SQL}
      WHERE a.id = $1
-       AND (a.user_id = $2 OR s.id IS NOT NULL)
+       AND (a.user_id = $2 OR sh.id IS NOT NULL)
      LIMIT 1`,
     [accountId, userId]
   )
@@ -63,4 +87,25 @@ export async function getAccessibleAccount(
       }
   if (!required.every((p) => permissions[p])) return null
   return { ...r, isOwner: r.is_owner, permissions }
+}
+
+/**
+ * Toutes les boîtes que cette personne peut RÉELLEMENT lire : les siennes, plus
+ * celles reçues en partage actif et non expiré. Même règle que
+ * `getAccessibleAccount(id, user, [])`, posée pour l'ENSEMBLE en une requête au
+ * lieu d'une par boîte — ce dont ont besoin la recherche « Toutes les boîtes » et
+ * l'historique des désabonnements, qui n'ont aucun identifiant à vérifier.
+ *
+ * Aucun identifiant venu du client n'entre ici : la liste vient de la base.
+ */
+export async function listAccessibleAccounts(userId: string): Promise<DbEmailAccount[]> {
+  return query<DbEmailAccount>(
+    `SELECT a.* FROM email_accounts a WHERE a.user_id = $1
+     UNION
+     SELECT a.* FROM email_accounts a
+       JOIN account_shares sh ON sh.account_id = a.id
+      WHERE sh.invitee_user_id = $1 AND ${ACTIVE_SHARE_SQL}
+     ${accountOrderBy({ isDefault: 'is_default', createdAt: 'created_at', id: 'id' })}`,
+    [userId]
+  )
 }

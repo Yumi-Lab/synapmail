@@ -7,6 +7,7 @@
  * garde une copie qui pourrait diverger.
  */
 import { MAIL_PATH } from './compose'
+import { originKey } from './mailOrigin'
 
 export const SEARCH_PARAM = 'q'
 export const SCOPE_PARAM = 'scope'
@@ -374,8 +375,26 @@ export type SearchStreamState<TMessage> = {
   unreachable: string[]
 }
 
-/** Un message rendu par la recherche, réduit à ce dont l'accumulation a besoin. */
-type StreamedMessage = { folder: string; uid: number | string; date: string }
+/**
+ * Un message rendu par la recherche, réduit à ce dont l'accumulation a besoin :
+ * son ORIGINE complète (sans la boîte, deux messages sans rapport se confondent)
+ * et sa date, qui donne l'ordre.
+ */
+type StreamedMessage = { accountId?: string; folder: string; uid: number | string; date: string }
+
+/**
+ * La clé de dédoublonnage d'un résultat — l'ORIGINE, pas l'uid.
+ *
+ * `originKey` est la source unique de cette identité (`lib/mailOrigin.ts`) : un
+ * uid n'est unique que dans un dossier d'une boîte, et la portée « toutes les
+ * boîtes » mêle des boîtes qui ont toutes un « INBOX ». Sans la boîte dans la
+ * clé, deux messages sans rapport se confondaient et l'un des deux disparaissait
+ * de la liste sans rien dire. Une portée à une seule boîte n'annonce pas de
+ * `accountId` : la clé retombe alors sur dossier+uid, ce qu'elle valait avant.
+ */
+function streamKey(m: StreamedMessage): string {
+  return originKey({ accountId: m.accountId ?? '', folder: m.folder, uid: String(m.uid) })
+}
 
 export const EMPTY_SEARCH_STREAM: SearchStreamState<never> = {
   messages: [], total: 0, searched: 0, folders: 0, sweptIds: [], accounts: 0, unreachable: [],
@@ -397,7 +416,7 @@ export function accumulateSearchStream<TMessage extends StreamedMessage>(
   prev: SearchStreamState<TMessage>,
   items: (Partial<SearchStreamChunk<TMessage>> & { error?: string; unreachable?: string[] })[]
 ): SearchStreamState<TMessage> {
-  const seen = new Set(prev.messages.map(m => `${m.folder}#${m.uid}`))
+  const seen = new Set(prev.messages.map(streamKey))
   const next = [...prev.messages]
   // Une boîte est comptée à son PREMIER morceau, jamais à chaque dossier : le
   // compteur dit combien de boîtes ont rapporté, pas combien de lignes sont arrivées.
@@ -410,7 +429,7 @@ export function accumulateSearchStream<TMessage extends StreamedMessage>(
     }
     if (item.error) continue
     for (const m of item.messages ?? []) {
-      const key = `${m.folder}#${m.uid}`
+      const key = streamKey(m)
       if (seen.has(key)) continue
       seen.add(key)
       next.push(m)
