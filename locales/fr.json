@@ -263,6 +263,22 @@
       "saved": "Enregistré",
       "unsaved": "Modifications non enregistrées"
     },
+    "rowActions": {
+      "menu": "Actions pour {name}",
+      "edit": "Modifier",
+      "apiKeyRevoke": "Révoquer cette clé…",
+      "apiKeyRevokeConfirm": "Révoquer la clé « {name} » ? Toute application qui l’utilise perd l’accès immédiatement, et une clé révoquée ne se récupère pas.",
+      "contactDelete": "Supprimer ce contact…",
+      "contactDeleteConfirm": "Supprimer le contact « {name} » de ce webmail ? Il sera de nouveau proposé au prochain échange de messages.",
+      "signatureDelete": "Supprimer cette signature…",
+      "signatureDeleteConfirm": "Supprimer la signature « {name} » ? Les messages déjà envoyés la gardent, mais elle ne se récupère pas ici.",
+      "templateDelete": "Supprimer ce modèle…",
+      "templateDeleteConfirm": "Supprimer le modèle « {name} » ? Il ne se récupère pas.",
+      "pgpKeyDelete": "Supprimer cette clé…",
+      "pgpKeyDeleteConfirm": "Supprimer la clé publique de {name} ? Vous ne pourrez plus lui écrire de message chiffré tant que vous ne l’aurez pas réimportée.",
+      "ruleDelete": "Supprimer cette règle…",
+      "ruleDeleteConfirm": "Supprimer la règle « {name} » ? Les messages qu’elle a déjà triés restent où ils sont, mais la règle ne se récupère pas."
+    },
     "accounts": {
       "title": "Comptes email",
       "add": "Ajouter un compte",
@@ -314,7 +330,7 @@
           "canManageSignatures": "Gérer les signatures"
         },
         "rowMenu": "Actions pour {name}",
-        "revokeLabel": "Retirer l’accès...",
+        "revokeLabel": "Retirer l’accès…",
         "revokeNamed": "Retirer l’accès de {email} à cette boîte ? Il le perd immédiatement ; vous pourrez l’inviter à nouveau."
       },
       "receivedShares": {
@@ -323,13 +339,26 @@
         "sharedBy": "Partagée par {name}",
         "leaveFailed": "Le retrait du partage a échoué",
         "rowMenu": "Actions pour {name}",
-        "leaveLabel": "Quitter ce partage...",
+        "leaveLabel": "Quitter ce partage…",
         "leaveNamed": "Quitter la boîte « {email} » partagée par {owner} ? Vous en perdez l’accès ; le propriétaire pourra la repartager."
       },
       "rowMenu": "Actions pour {name}",
-      "deleteAccount": "Supprimer le compte...",
+      "deleteAccount": "Supprimer le compte…",
       "deleteConfirm": "Supprimer le compte « {email} » de ce webmail ? Les mails restent chez votre hébergeur, seul l’accès depuis ici est retiré.",
-      "share": "Partager"
+      "share": "Partager",
+      "passwordUnchanged": "(inchangé)",
+      "passwordUnchangedHelp": "Laisser vide pour ne pas changer le mot de passe enregistré.",
+      "tested": {
+        "stored": "Testé avec le mot de passe enregistré.",
+        "submitted": "Testé avec le nouveau mot de passe que vous avez saisi.",
+        "oauth": "Rien à tester ici : cette boîte se connecte par jeton, pas par mot de passe."
+      },
+      "testFailure": {
+        "credentials": "le serveur a refusé ces identifiants",
+        "unreachable": "le serveur est injoignable",
+        "other": "le serveur a refusé la connexion",
+        "password_required": "Vous avez changé le serveur ou l'identifiant : saisissez le mot de passe pour tester ces nouveaux réglages."
+      }
     },
     "profile": {
       "title": "Profil",
@@ -644,8 +673,6 @@
       "uploadFile": "Ou choisir un fichier .asc",
       "invalidKey": "Bloc de clé publique PGP invalide",
       "empty": "Aucune clé de contact importée",
-      "delete": "Supprimer",
-      "deleteConfirm": "Supprimer cette clé de contact ?",
       "add": "Ajouter"
     },
     "compose": {

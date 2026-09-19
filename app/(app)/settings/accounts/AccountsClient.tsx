@@ -6,6 +6,7 @@ import useSWR from 'swr'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/PasswordInput'
+import { TEST_DECISION, hasSubmittedPassword } from '@/lib/accountTest'
 import { Label } from '@/components/ui/label'
 import { Plus, Pencil, Trash2, Wifi, Mail, Share2 } from 'lucide-react'
 import { RowMenu, ContextMenuItem, ContextMenuSeparator, MENU_ICON } from '@/components/ui/ContextMenu'
@@ -62,7 +63,11 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
   const [testing, setTesting] = useState(false)
   const [error, setError] = useState(initialError ? decodeURIComponent(initialError) : '')
   const [success, setSuccess] = useState('')
-  const [testResult, setTestResult] = useState<{ imap: { ok: boolean; error: string }; smtp: { ok: boolean; error: string } } | null>(null)
+  const [testResult, setTestResult] = useState<{
+    tested: string
+    imap: { ok: boolean; error: string } | null
+    smtp: { ok: boolean; error: string } | null
+  } | null>(null)
   const [expandedShareId, setExpandedShareId] = useState<string | null>(null)
   const [leavingId, setLeavingId] = useState<string | null>(null)
 
@@ -171,14 +176,28 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // L'identifiant du compte, et le mot de passe SEULEMENT s'il a été tapé. Le champ
+          // part vide (le mot de passe enregistré ne quitte pas le serveur) : l'envoyer tel
+          // quel faisait échouer le test, ou expédiait à l'hébergeur ce qu'un gestionnaire de
+          // mots de passe y avait glissé. Vide veut dire « inchangé », donc « teste celui que
+          // tu as ». Les hôtes et ports viennent du FORMULAIRE : on corrige un port et on
+          // essaie sans enregistrer.
+          accountId: editId,
           imapHost: editForm.imapHost, imapPort: parseInt(editForm.imapPort), imapSecure: editForm.imapSecure,
           smtpHost: editForm.smtpHost, smtpPort: parseInt(editForm.smtpPort), smtpSecure: editForm.smtpSecure,
-          username: editForm.username, password: editForm.password,
+          username: editForm.username,
+          ...(hasSubmittedPassword(editForm.password) ? { password: editForm.password } : {}),
         }),
       })
       const data = await res.json()
-      if (data.imap && data.smtp) {
+      if (data.tested === TEST_DECISION.OAUTH) {
+        setTestResult({ tested: data.tested, imap: null, smtp: null })
+      } else if (data.imap && data.smtp) {
         setTestResult(data)
+      } else if (data.error === TEST_DECISION.PASSWORD_REQUIRED) {
+        // Le formulaire vise un autre serveur : rien n'a été tenté, et le mot de passe
+        // enregistré n'a pas bougé. Le dire en une phrase, pas avec le code nu.
+        setError(t(`testFailure.${TEST_DECISION.PASSWORD_REQUIRED}`))
       } else {
         setError(data.error ?? t('testError'))
       }
@@ -417,18 +436,36 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
               <Input value={ef.username} onChange={set('username')} required />
             </div>
             <div className="space-y-1.5"><Label>{t('password')}</Label>
-              <PasswordInput value={ef.password} onChange={set('password')} placeholder="(inchangé)" />
+              {/* `new-password` : sans cela le gestionnaire du navigateur remplit ce champ tout
+                  seul, souvent avec le mot de passe du WEBMAIL, et le test l'expédie à
+                  l'hébergeur qui compte une authentification ratée de plus. */}
+              <PasswordInput
+                value={ef.password}
+                onChange={set('password')}
+                autoComplete="new-password"
+                placeholder={t('passwordUnchanged')}
+              />
+              <p className="text-xs text-muted-foreground">{t('passwordUnchangedHelp')}</p>
             </div>
           </div>
 
           {testResult && (
             <div className="rounded-lg border border-border p-3 space-y-1.5 text-sm">
-              {(['imap', 'smtp'] as const).map(proto => (
-                <div key={proto} className={`flex items-center gap-2 ${testResult[proto].ok ? 'text-green-600' : 'text-destructive'}`}>
-                  <span>{testResult[proto].ok ? '✓' : '✗'} {proto.toUpperCase()}</span>
-                  {!testResult[proto].ok && <span className="text-xs opacity-75">{testResult[proto].error}</span>}
-                </div>
-              ))}
+              {/* Dire LEQUEL a été essayé : sans cela un test vert ne prouve rien pour qui
+                  vient justement de taper un nouveau mot de passe. */}
+              <p className="text-xs text-muted-foreground">{t(`tested.${testResult.tested}`)}</p>
+              {(['imap', 'smtp'] as const).map(proto => {
+                const r = testResult[proto]
+                if (!r) return null
+                return (
+                  <div key={proto} className={`flex items-center gap-2 ${r.ok ? 'text-green-600' : 'text-destructive'}`}>
+                    <span>{r.ok ? '✓' : '✗'} {proto.toUpperCase()}</span>
+                    {/* La CAUSE, pas l'erreur brute du serveur : « 535 Invalid login » ne dit
+                        pas à qui le lit ce qu'il doit corriger. */}
+                    {!r.ok && <span className="text-xs opacity-75">{t(`testFailure.${r.error}`)}</span>}
+                  </div>
+                )
+              })}
             </div>
           )}
 

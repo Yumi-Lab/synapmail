@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronRight, MoreHorizontal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { IconTooltip } from '@/components/ui/IconTooltip'
@@ -74,7 +75,14 @@ export function ContextMenuSurface({
     }
   }, [onClose, ignoreRef])
 
-  return (
+  // Rendu dans un PORTAIL sur `document.body`. Sans cela, `position: fixed` ne se cale
+  // PAS sur la fenêtre dès qu'un ancêtre porte `transform`, `filter`, `backdrop-filter`,
+  // `will-change` ou `contain` : ces propriétes font de l'ancêtre le bloc conteneur, et
+  // les coordonnées calculées pour la fenêtre s'ajoutent alors à son décalage. Mesuré :
+  // la carte des réglages porte `backdrop-blur-sm`, et le menu s'ouvrait 237 px à droite
+  // et 469 px sous la fenêtre. Le portail sort la surface de tous ces blocs d'un coup,
+  // pour les sept écrans de réglages comme pour le clic droit du courrier.
+  const surface = (
     <div
       ref={ref}
       className="fixed z-[100] bg-popover border border-border rounded-lg shadow-xl py-1"
@@ -84,6 +92,11 @@ export function ContextMenuSurface({
       {children}
     </div>
   )
+
+  // Le rendu serveur n'a pas de `document` ; la surface n'y paraît jamais, puisqu'elle
+  // n'existe qu'après une interaction.
+  if (typeof document === 'undefined') return null
+  return createPortal(surface, document.body)
 }
 
 export function ContextMenuItem({

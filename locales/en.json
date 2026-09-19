@@ -263,6 +263,22 @@
       "saved": "Saved",
       "unsaved": "Unsaved changes"
     },
+    "rowActions": {
+      "menu": "Actions for {name}",
+      "edit": "Edit",
+      "apiKeyRevoke": "Revoke this key…",
+      "apiKeyRevokeConfirm": "Revoke the key \"{name}\"? Any application using it loses access immediately, and a revoked key cannot be restored.",
+      "contactDelete": "Delete this contact…",
+      "contactDeleteConfirm": "Delete the contact \"{name}\" from this webmail? It will be suggested again the next time you exchange messages.",
+      "signatureDelete": "Delete this signature…",
+      "signatureDeleteConfirm": "Delete the signature \"{name}\"? Messages already sent keep it, but it cannot be restored here.",
+      "templateDelete": "Delete this template…",
+      "templateDeleteConfirm": "Delete the template \"{name}\"? It cannot be restored.",
+      "pgpKeyDelete": "Delete this key…",
+      "pgpKeyDeleteConfirm": "Delete {name}'s public key? You will no longer be able to encrypt messages to them until you import it again.",
+      "ruleDelete": "Delete this rule…",
+      "ruleDeleteConfirm": "Delete the rule \"{name}\"? Messages it already sorted stay where they are, but the rule cannot be restored."
+    },
     "accounts": {
       "title": "Email accounts",
       "add": "Add account",
@@ -314,7 +330,7 @@
           "canManageSignatures": "Manage signatures"
         },
         "rowMenu": "Actions for {name}",
-        "revokeLabel": "Remove access...",
+        "revokeLabel": "Remove access…",
         "revokeNamed": "Remove {email}’s access to this mailbox? They lose it immediately; you can invite them again later."
       },
       "receivedShares": {
@@ -323,13 +339,26 @@
         "sharedBy": "Shared by {name}",
         "leaveFailed": "Failed to remove the share",
         "rowMenu": "Actions for {name}",
-        "leaveLabel": "Leave this share...",
+        "leaveLabel": "Leave this share…",
         "leaveNamed": "Leave the mailbox \"{email}\" shared by {owner}? You lose access to it; the owner can share it again."
       },
       "rowMenu": "Actions for {name}",
-      "deleteAccount": "Delete account...",
+      "deleteAccount": "Delete account…",
       "deleteConfirm": "Delete the account \"{email}\" from this webmail? Your messages stay with your provider, only the access from here is removed.",
-      "share": "Share"
+      "share": "Share",
+      "passwordUnchanged": "(unchanged)",
+      "passwordUnchangedHelp": "Leave empty to keep the saved password.",
+      "tested": {
+        "stored": "Tested with the saved password.",
+        "submitted": "Tested with the new password you typed.",
+        "oauth": "Nothing to test here: this mailbox signs in with a token, not a password."
+      },
+      "testFailure": {
+        "credentials": "the server refused these credentials",
+        "unreachable": "the server could not be reached",
+        "other": "the server refused the connection",
+        "password_required": "You changed the server or the username: type the password to test these new settings."
+      }
     },
     "profile": {
       "title": "Profile",
@@ -644,8 +673,6 @@
       "uploadFile": "Or choose a .asc file",
       "invalidKey": "Invalid PGP public key block",
       "empty": "No contact keys imported",
-      "delete": "Delete",
-      "deleteConfirm": "Delete this contact key?",
       "add": "Add"
     },
     "compose": {

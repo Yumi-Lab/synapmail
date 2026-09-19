@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/PasswordInput'
 import { Label } from '@/components/ui/label'
 import { SettingsPage, SettingsHeader, SettingsSection } from '@/components/settings/primitives'
+import { RowMenu, ContextMenuItem, MENU_ICON } from '@/components/ui/ContextMenu'
 import {
   generateKeypair, readPublicKeyInfo, unlockPrivateKey,
   saveIdentity, getStoredIdentity, clearStoredIdentity,
@@ -36,6 +37,7 @@ function formatFingerprint(fp: string) {
 
 export default function PgpPage() {
   const t = useTranslations('pgp')
+  const tRow = useTranslations('settings.rowActions')
 
   const { data: profileData } = useSWR<{ data: { name: string; email: string } }>('/api/profile', fetcher)
   const { mutate: mutateMe } = useSWR<{ data: PgpIdentity | null }>('/api/pgp/me', fetcher)
@@ -196,9 +198,9 @@ export default function PgpPage() {
     }
   }
 
-  const handleDeleteContact = async (id: string) => {
-    if (!confirm(t('contactKeys.deleteConfirm'))) return
-    await fetch(`/api/pgp/contacts/${id}`, { method: 'DELETE' })
+  const handleDeleteContact = async (contact: PgpContactKey) => {
+    if (!confirm(tRow('pgpKeyDeleteConfirm', { name: contact.name || contact.email }))) return
+    await fetch(`/api/pgp/contacts/${contact.id}`, { method: 'DELETE' })
     await mutateContacts()
   }
 
@@ -289,12 +291,16 @@ export default function PgpPage() {
                     <p className="text-xs text-muted-foreground truncate">{c.email}</p>
                     <p className="text-xs font-mono text-muted-foreground truncate">{formatFingerprint(c.fingerprint)}</p>
                   </div>
-                  <button
-                    onClick={() => handleDeleteContact(c.id)}
-                    className="w-7 h-7 shrink-0 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="shrink-0">
+                    <RowMenu label={tRow('menu', { name: c.name || c.email })} itemsKey={c.id}>
+                      {close => (
+                        <ContextMenuItem
+                          itemKey="delete" icon={<Trash2 className={MENU_ICON} />} label={tRow('pgpKeyDelete')}
+                          onClick={() => handleDeleteContact(c)} onClose={close} enabled danger
+                        />
+                      )}
+                    </RowMenu>
+                  </div>
                 </div>
               ))}
             </div>
