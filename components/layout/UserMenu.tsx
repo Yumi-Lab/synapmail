@@ -8,6 +8,7 @@ import useSWR from 'swr'
 import { LogOut, Settings } from 'lucide-react'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { twoLetters } from './AccountAvatar'
+import { IconTooltip } from '@/components/ui/IconTooltip'
 import { cn } from '@/lib/utils'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -75,13 +76,11 @@ export function UserMenu() {
 
   const label = user?.name || user?.email || ''
 
-  return (
-    <div ref={boxRef} className="relative shrink-0">
-      <button
+  const trigger = (
+    <button
         ref={triggerRef}
         type="button"
         onClick={() => setOpen(o => !o)}
-        title={label || t('userMenu')}
         aria-label={label || t('userMenu')}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -98,6 +97,12 @@ export function UserMenu() {
           {user ? userInitials(user) : ''}
         </span>
       </button>
+  )
+
+  return (
+    <div ref={boxRef} className="relative shrink-0">
+      {/* Menu ouvert : pas de bulle, elle se poserait par-dessus la liste. */}
+      {open ? trigger : <IconTooltip label={label || t('userMenu')} align="end">{trigger}</IconTooltip>}
 
       {open && (
         <div

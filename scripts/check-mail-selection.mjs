@@ -36,6 +36,9 @@ if (!COUNT_ATTR) { console.error('HARNESS: could not read MAIL_SELECTION_COUNT_A
 
 const LIST = `[${COUNT_ATTR}]`
 const ROW = '[data-mail-row]'
+// Preuve que le volet de lecture a rendu un message. Archiver / supprimer /
+// répondre ont migré dans la head bar : le drapeau est ce qui reste au volet.
+const PANE_ACTION = '[data-reading-flag]'
 
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split('\n')) {
   const m = line.match(/^([A-Z_]+)=(.*)$/)
@@ -64,6 +67,17 @@ try {
   }, { base: BASE, email: EMAIL, password: PASSWORD })
   if (!loggedIn) { console.error('HARNESS: credentials login failed'); process.exit(2) }
 
+  // Le compte et le dossier réellement affichés se lisent sur les requêtes de la
+  // liste : aucune constante de banc à tenir à jour, aucune boîte devinée.
+  const listRequests = []
+  page.on('request', req => {
+    const u = new URL(req.url())
+    if (!u.pathname.startsWith('/api/messages')) return
+    const account = u.searchParams.get('account')
+    const folder = u.searchParams.get('folder')
+    if (account && folder) listRequests.push({ account, folder })
+  })
+
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
   await page.waitForSelector(ROW, { timeout: 30000 })
   await new Promise(r => setTimeout(r, SETTLE_MS))
@@ -89,6 +103,27 @@ try {
     console.log(`${label}: count=${got} (expected ${want})`)
     if (got !== want) failures.push(`${label}: selection holds ${got} messages, expected ${want}`)
   }
+
+  // --- La géométrie de la liste ne dépend PAS de la sélection ---
+  // Sans cela, l'en-tête de liste (deux lignes à colonne étroite) est remplacé par
+  // la barre de sélection, plus courte : toutes les lignes remontent dès la
+  // première cochée, et un rectangle ne coupe plus les lignes visées sous le
+  // pointeur. La référence est le haut de la MÊME ligne dans le MÊME passage,
+  // avant puis après la première sélection — jamais une hauteur en dur.
+  const rowTop = index => page.evaluate((sel, i) => {
+    const el = document.querySelectorAll(sel)[i]
+    return el ? el.getBoundingClientRect().top : null
+  }, ROW, index)
+  const PROBE_ROW = 1
+  const topBefore = await rowTop(PROBE_ROW)
+  if (topBefore === null) { console.error(`HARNESS: row ${PROBE_ROW} is missing before the geometry probe`); process.exit(2) }
+  await clickRow(0, ACCEL)
+  const topAfter = await rowTop(PROBE_ROW)
+  if (topAfter === null) { console.error(`HARNESS: row ${PROBE_ROW} vanished during the geometry probe`); process.exit(2) }
+  console.log(`row ${PROBE_ROW} top: before=${topBefore} after first selection=${topAfter} (expected identical)`)
+  if (Math.abs(topAfter - topBefore) > 0.5) failures.push(`the list shifts by ${(topAfter - topBefore).toFixed(1)}px when the first row is selected: the rectangle can no longer cut the rows under the pointer`)
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
 
   // --- Cmd/Ctrl-click twice → exactly two selected ---
   await clickRow(0, ACCEL)
@@ -127,39 +162,248 @@ try {
   await new Promise(r => setTimeout(r, SETTLE_MS))
   check('Escape after select-all', await readCount(), 0)
 
+  // --- Rectangle de sélection à la souris (lot M3c) ---
+  // Vrai geste souris : mousedown au milieu d'une ligne, déplacement VERTICAL,
+  // mouseup. Les lignes sont `draggable` : ce que ce banc mesure, c'est que
+  // l'arbitrage de direction annule bien le glisser natif et trace un rectangle.
+  const rowBox = async index => {
+    const handle = (await page.$$(ROW))[index]
+    if (!handle) { console.error(`HARNESS: row ${index} vanished`); process.exit(2) }
+    return handle.boundingBox()
+  }
+  // Le point de départ évite la bulle (qui porte la case à cocher) : on part du
+  // texte, comme un humain qui commence son rectangle sur une ligne.
+  const AVATAR_INSET = 80
+  const startOf = box => ({ x: box.x + AVATAR_INSET, y: box.y + box.height / 2 })
+
+  const rowsBefore = await page.$$eval(ROW, els => els.length)
+  const b0 = await rowBox(0)
+  const b1 = await rowBox(1)
+  const rowHeight = b1.y - b0.y
+  if (!(rowHeight > 0)) { console.error(`HARNESS: could not measure a row height (got ${rowHeight})`); process.exit(2) }
+  // Cible : couper EXACTEMENT les trois premières lignes. La distance vient de
+  // la hauteur mesurée dans CE passage, pas d'une constante.
+  const CUT_ROWS = 3
+  const from = startOf(b0)
+  const toY = b0.y + rowHeight * (CUT_ROWS - 1) + b0.height / 2
+
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  // Plusieurs pas : un seul saut ne produit pas de `dragstart` à arbitrer.
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(from.x, from.y + ((toY - from.y) * i) / 8)
+    await new Promise(r => setTimeout(r, 20))
+  }
+  const marqueeDuring = await page.$('[data-mail-marquee]').then(Boolean)
+  const countDuring = await readCount()
+  await page.mouse.up()
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const marqueeAfter = await page.$('[data-mail-marquee]').then(Boolean)
+  const countAfter = await readCount()
+  console.log(`vertical drag over ${CUT_ROWS} rows: marquee during=${marqueeDuring} after=${marqueeAfter} count during=${countDuring} after=${countAfter} (expected true/false/${CUT_ROWS}/${CUT_ROWS})`)
+  if (!marqueeDuring) failures.push('vertical drag: no marquee rectangle was drawn during the gesture')
+  if (marqueeAfter) failures.push('vertical drag: the marquee rectangle survived the mouseup')
+  if (countAfter !== CUT_ROWS) failures.push(`vertical drag: selection holds ${countAfter} messages, expected the ${CUT_ROWS} crossed rows`)
+  // Le rectangle ne doit pas non plus avoir OUVERT la ligne de départ. Ce contrôle
+  // passe AVANT tout clic simple : une fois un message ouvert, le volet le reste,
+  // et la présence du volet ne dirait plus rien de ce geste-ci.
+  const openedByMarquee = await page.$(PANE_ACTION).then(Boolean)
+  console.log(`vertical drag opened a message: ${openedByMarquee} (expected false)`)
+  if (openedByMarquee) failures.push('vertical drag opened the message instead of only selecting')
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // --- Le rectangle coupe EXACTEMENT les lignes qu'il traverse, la première comprise ---
+  // Le rectangle attendu n'est pas un nombre en dur : il se déduit des rectangles
+  // des lignes DANS CE PASSAGE, comparés à la bande balayée par le pointeur. La
+  // ligne où l'on a APPUYÉ doit en faire partie — c'est ce qu'un décalage de
+  // l'en-tête faisait rater. La sélection obtenue est relue sur `aria-selected`,
+  // que le composant publie depuis son propre état.
+  const DRAG_PX = 200
+  const PRESS_ROW = 1
+  // La référence se mesure AVANT le geste : c'est la géométrie que l'humain voit
+  // quand il appuie. La lire pendant le geste la rendrait complice d'un décalage
+  // de l'en-tête (les lignes auraient déjà bougé), et le contrôle ne mesurerait
+  // plus rien.
+  const bp = await rowBox(PRESS_ROW)
+  const pressFrom = startOf(bp)
+  const band = { top: pressFrom.y, bottom: pressFrom.y + DRAG_PX }
+  const expectedCut = await page.evaluate((sel, top, bottom) => {
+    const hit = []
+    for (const el of document.querySelectorAll(sel)) {
+      const r = el.getBoundingClientRect()
+      if (r.bottom >= top && r.top <= bottom) hit.push(el.getAttribute('data-mail-row'))
+    }
+    return hit
+  }, ROW, band.top, band.bottom)
+  const pressedUid = await page.evaluate((sel, i) => document.querySelectorAll(sel)[i]?.getAttribute('data-mail-row'), ROW, PRESS_ROW)
+  if (expectedCut.length < 2) { console.error(`HARNESS: a ${DRAG_PX}px band only cuts ${expectedCut.length} row(s), too few to conclude`); process.exit(2) }
+
+  await page.mouse.move(pressFrom.x, pressFrom.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(pressFrom.x, pressFrom.y + (DRAG_PX * i) / 8)
+    await new Promise(r => setTimeout(r, 20))
+  }
+  await page.mouse.up()
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const gotCut = await page.evaluate(sel =>
+    [...document.querySelectorAll(sel)].filter(el => el.getAttribute('aria-selected') === 'true').map(el => el.getAttribute('data-mail-row')),
+    ROW)
+  console.log(`marquee from the middle of row ${PRESS_ROW} over ${DRAG_PX}px: cuts [${expectedCut}] selected [${gotCut}]`)
+  if (!gotCut.includes(pressedUid)) failures.push(`the row the gesture started on (index ${PRESS_ROW}, uid ${pressedUid}) is NOT selected: the list geometry shifted under the pointer`)
+  if (gotCut.join(',') !== expectedCut.join(',')) failures.push(`the marquee selected [${gotCut}] but the band it swept cuts [${expectedCut}]`)
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // --- Un rectangle parti d'un en-tête de date ne surligne AUCUN texte ---
+  // La sélection de texte du navigateur naît au `mousedown` : un
+  // `preventDefault()` posé au `mousemove` arrive trop tard. Mesure directe :
+  // `getSelection()` doit rester vide pendant ET après le geste.
+  const dateHeader = await page.$('[data-mail-date-header]')
+  if (!dateHeader) { console.error('HARNESS: no date header in the list to start the gesture from'); process.exit(2) }
+  const hBox = await dateHeader.boundingBox()
+  const hStart = { x: hBox.x + hBox.width / 2, y: hBox.y + hBox.height / 2 }
+  await page.mouse.move(hStart.x, hStart.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(hStart.x, hStart.y + (170 * i) / 8)
+    await new Promise(r => setTimeout(r, 20))
+  }
+  const textDuring = await page.evaluate(() => String(document.getSelection() ?? '').length)
+  await page.mouse.up()
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const textAfter = await page.evaluate(() => String(document.getSelection() ?? '').length)
+  console.log(`gesture from a date header: text selected during=${textDuring} after=${textAfter} (expected 0/0)`)
+  if (textDuring !== 0) failures.push(`a marquee started on a date header highlighted ${textDuring} characters of text during the gesture`)
+  if (textAfter !== 0) failures.push(`a marquee started on a date header left ${textAfter} characters of text highlighted`)
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // --- Échap PENDANT le geste rétablit la sélection d'avant ---
+  await clickRow(0, ACCEL)
+  const beforeEsc = await readCount()
+  if (beforeEsc !== 1) { console.error(`HARNESS: could not seed a 1-row selection (got ${beforeEsc})`); process.exit(2) }
+  const b2 = await rowBox(2)
+  const escFrom = startOf(b2)
+  await page.mouse.move(escFrom.x, escFrom.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 6; i++) {
+    await page.mouse.move(escFrom.x, escFrom.y + (rowHeight * 2 * i) / 6)
+    await new Promise(r => setTimeout(r, 20))
+  }
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const countAfterEsc = await readCount()
+  const marqueeAfterEsc = await page.$('[data-mail-marquee]').then(Boolean)
+  await page.mouse.up()
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  console.log(`Escape during the gesture: count=${countAfterEsc} marquee=${marqueeAfterEsc} (expected ${beforeEsc}/false)`)
+  if (countAfterEsc !== beforeEsc) failures.push(`Escape during the gesture: selection holds ${countAfterEsc}, expected the ${beforeEsc} selected before it started`)
+  if (marqueeAfterEsc) failures.push('Escape during the gesture: the marquee rectangle is still drawn')
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // --- Un glisser HORIZONTAL reste le glisser-déposer natif ---
+  // Mesure directe : on écoute `dragstart` sur la ligne et on lit
+  // `defaultPrevented`. Annulé = le rectangle a pris la main (défaut) ; non
+  // annulé = le navigateur peut porter le message vers un dossier.
+  // `defaultPrevented` se lit APRÈS propagation : React pose ses gestionnaires
+  // sur la racine, donc un écouteur en phase de CAPTURE le lirait toujours faux
+  // et ce contrôle ne mesurerait rien. L'événement est donc gardé et relu au
+  // tour de boucle suivant, quand tout le monde a parlé.
+  await page.evaluate(() => {
+    window.__dragProbe = null
+    document.addEventListener('dragstart', e => {
+      setTimeout(() => { window.__dragProbe = { prevented: e.defaultPrevented } }, 0)
+    }, true)
+  })
+  const b3 = await rowBox(0)
+  const hFrom = startOf(b3)
+  await page.mouse.move(hFrom.x, hFrom.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(hFrom.x - (200 * i) / 8, hFrom.y)
+    await new Promise(r => setTimeout(r, 20))
+  }
+  const marqueeOnHorizontal = await page.$('[data-mail-marquee]').then(Boolean)
+  await page.mouse.up()
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const dragProbe = await page.evaluate(() => window.__dragProbe)
+  console.log(`horizontal drag: marquee=${marqueeOnHorizontal} dragstart=${JSON.stringify(dragProbe)} (expected false / not prevented)`)
+  if (marqueeOnHorizontal) failures.push('horizontal drag drew a marquee instead of leaving the native drag alone')
+  if (!dragProbe) failures.push('horizontal drag: no dragstart fired — the native drag-to-folder path is gone')
+  else if (dragProbe.prevented) failures.push('horizontal drag: dragstart was cancelled, drag-to-folder can no longer start')
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const rowsAfter = await page.$$eval(ROW, els => els.length)
+  console.log(`rows: before=${rowsBefore} after=${rowsAfter} (nothing moved or deleted)`)
+  if (rowsAfter < rowsBefore) failures.push(`the marquee checks lost rows: ${rowsBefore} before, ${rowsAfter} after`)
+
   // --- A plain click REPLACES the selection and opens that row ---
   // Explorer/Finder rule: only Cmd/Ctrl, Shift and the hover checkbox accumulate.
   // A bare click on the row body empties a multi-selection and opens the row —
   // without this, the right-click of lot M3 (which selects) leaves the list
   // unopenable until Escape.
-  await clickRow(0, ACCEL)
-  await clickRow(2, ACCEL)
+  // La liste est servie depuis le cache local : certaines lignes portent un uid
+  // qui n'est plus dans la boîte IMAP (le serveur répond alors 404) et n'ouvrent
+  // rien — c'est une donnée périmée du banc, pas le produit mesuré ici. On
+  // demande donc au serveur QUELLE ligne s'ouvre vraiment, et on clique
+  // celle-là : l'assertion « un clic simple ouvre » garde tout son sens, elle
+  // porte juste sur un message qui existe.
+  // La route d'un message exige le compte ET le dossier. Plutôt que de les
+  // deviner, on relit ceux que la liste elle-même vient d'employer : le banc
+  // interroge exactement la boîte qui est affichée.
+  const listQuery = listRequests.at(-1)
+  if (!listQuery) { console.error('HARNESS: never saw the list fetch its own messages'); process.exit(2) }
+  const openableIndex = await page.evaluate(async ({ account, folder }) => {
+    const rows = [...document.querySelectorAll('[data-mail-row]')]
+    for (let i = 0; i < Math.min(rows.length, 8); i++) {
+      const uid = rows[i].getAttribute('data-mail-row')
+      const res = await fetch(`/api/messages/${uid}?account=${encodeURIComponent(account)}&folder=${encodeURIComponent(folder)}`)
+      if (res.ok) return i
+    }
+    return -1
+  }, listQuery)
+  if (openableIndex < 0) { console.error('HARNESS: no row in the first 8 still exists server-side (stale local cache)'); process.exit(2) }
+  console.log(`row chosen for the open check: ${openableIndex} (first one the server still serves)`)
+  // Les deux lignes accumulées doivent être AUTRES que celle qu'on ouvrira.
+  const [selA, selB] = [0, 1, 2, 3].filter(i => i !== openableIndex)
+
+  await clickRow(selA, ACCEL)
+  await clickRow(selB, ACCEL)
   const beforePlain = await readCount()
   if (beforePlain !== 2) { console.error(`HARNESS: could not build a 2-row selection (got ${beforePlain})`); process.exit(2) }
-  await clickRow(1)
+  await clickRow(openableIndex)
   const afterPlain = await readCount()
   console.log(`plain click on a 3rd row after a 2-row selection: count=${afterPlain} (expected 0)`)
   if (afterPlain > 1) failures.push(`plain click accumulated instead of replacing: selection holds ${afterPlain}, expected 0 or 1`)
   // Opened = the reading pane rendered its toolbar for that message. Waited for,
   // not polled: fetching the body is an IMAP round-trip, far longer than SETTLE_MS.
-  const openedAfterPlain = await page.waitForSelector('[data-reading-archive]', { timeout: OPEN_MS }).then(() => true, () => false)
+  const openedAfterPlain = await page.waitForSelector(PANE_ACTION, { timeout: OPEN_MS }).then(() => true, () => false)
   console.log(`plain click opened the message: ${openedAfterPlain} (expected true)`)
   if (!openedAfterPlain) failures.push('plain click on a selected list did not open the message')
 
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
 
-  // --- The reading pane's Archive button carries an action ---
-  // Opening a message and reading the button's own disabled state is what tells
-  // a wired button from the dead one shipped before this lot. No click: archiving
-  // would move a real message out of a real mailbox.
-  await clickRow(0)
-  await page.waitForSelector('[data-reading-archive]', { timeout: 20000 })
-  const archive = await page.$eval('[data-reading-archive]', el => ({
+  // --- Le volet de lecture rend bien ses actions sur un message ouvert ---
+  // Archiver / supprimer / répondre ont migré dans la head bar : ce qui reste au
+  // volet est le drapeau. On ouvre et on lit SON état désactivé — un bouton
+  // inerte se distingue ainsi d'un bouton câblé, sans rien poser sur un vrai
+  // message (poser un drapeau écrirait dans une boîte réelle).
+  await clickRow(openableIndex)
+  await page.waitForSelector(PANE_ACTION, { timeout: OPEN_MS })
+  const paneAction = await page.$eval(PANE_ACTION, el => ({
     disabled: el.disabled === true || el.getAttribute('aria-disabled') === 'true',
   }))
-  console.log(`reading-pane archive: disabled=${archive.disabled}`)
-  if (archive.disabled) failures.push('reading pane: the Archive button is still inert with a message open')
+  console.log(`reading-pane flag button: disabled=${paneAction.disabled} (expected false)`)
+  if (paneAction.disabled) failures.push('reading pane: the flag button is inert with a message open')
 } finally {
   await browser.close()
 }

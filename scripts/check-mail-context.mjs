@@ -34,6 +34,9 @@ if (!COUNT_ATTR) { console.error('HARNESS: could not read MAIL_SELECTION_COUNT_A
 
 const LIST = `[${COUNT_ATTR}]`
 const ROW = '[data-mail-row]'
+// Preuve que le volet de lecture a rendu un message. Archiver / supprimer /
+// répondre ont migré dans la head bar : le drapeau est ce qui reste au volet.
+const PANE_ACTION = '[data-reading-flag]'
 const MENU = '[data-mail-context-menu]'
 
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split('\n')) {
@@ -176,7 +179,7 @@ try {
   const plainMenu = await menuOpen()
   // Waited for, not polled: fetching the body is an IMAP round-trip, far longer
   // than SETTLE_MS, so a bare `$()` here would report a working open as a failure.
-  const opened = await page.waitForSelector('[data-reading-archive]', { timeout: OPEN_MS }).then(() => true, () => false)
+  const opened = await page.waitForSelector(PANE_ACTION, { timeout: OPEN_MS }).then(() => true, () => false)
   console.log(`plain click after right-click: menu=${plainMenu} (expected false) count=${plainCount} (expected 0) opened=${opened} (expected true)`)
   if (plainMenu) fail('a plain click did not close the context menu')
   if (plainCount > 1) fail(`a plain click accumulated instead of replacing: selection holds ${plainCount}, expected 0 or 1`)

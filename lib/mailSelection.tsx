@@ -117,23 +117,28 @@ export interface MailToolbarItem {
   /** Clé i18n, sous l'espace `mail`. */
   labelKey: string
   Icon: LucideIcon
+  /**
+   * Touche qui déclenche la même action au clavier (`hooks/useKeyboardShortcuts.ts`),
+   * affichée dans l'infobulle du bouton. Absente = l'action n'a pas de raccourci.
+   */
+  shortcut?: string
 }
 
 export const MAIL_TOOLBAR_GROUPS: readonly (readonly MailToolbarItem[])[] = [
   [{ action: 'refresh', labelKey: 'refresh', Icon: RefreshCw }],
   [
     { action: 'archive', labelKey: 'archiveAction', Icon: Archive },
-    { action: 'remove', labelKey: 'delete', Icon: Trash2 },
+    { action: 'remove', labelKey: 'delete', Icon: Trash2, shortcut: '⌦' },
     { action: 'spam', labelKey: 'spam', Icon: MailX },
   ],
   [
-    { action: 'reply', labelKey: 'reply', Icon: Reply },
-    { action: 'replyAll', labelKey: 'replyAll', Icon: ReplyAll },
-    { action: 'forward', labelKey: 'forward', Icon: Forward },
+    { action: 'reply', labelKey: 'reply', Icon: Reply, shortcut: 'R' },
+    { action: 'replyAll', labelKey: 'replyAll', Icon: ReplyAll, shortcut: 'A' },
+    { action: 'forward', labelKey: 'forward', Icon: Forward, shortcut: 'F' },
   ],
   [
     { action: 'setFlag', labelKey: 'flag', Icon: Flag },
-    { action: 'markUnread', labelKey: 'markUnread', Icon: Mail },
+    { action: 'markUnread', labelKey: 'markUnread', Icon: Mail, shortcut: 'U' },
     { action: 'moveTo', labelKey: 'move', Icon: MoveRight },
   ],
 ] as const
