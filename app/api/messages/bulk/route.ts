@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
+import { toImapConfig } from '@/lib/accounts'
 import { markReadBulk, deleteMessagesBulk, moveMessagesBulk, setFlagBulk } from '@/lib/imap'
 import { flagByKey } from '@/lib/flags'
 
@@ -11,21 +12,6 @@ type AccountRow = {
   username: string; password_encrypted: string;
   oauth_provider: string | null; oauth_access_token: string | null;
   oauth_refresh_token: string | null; oauth_expires_at: number | null;
-}
-
-function accountConfig(a: AccountRow) {
-  return {
-    id: a.id,
-    imapHost: a.imap_host,
-    imapPort: a.imap_port,
-    imapSecure: a.imap_secure,
-    username: a.username,
-    passwordEncrypted: a.password_encrypted,
-    oauthProvider: a.oauth_provider,
-    oauthAccessToken: a.oauth_access_token,
-    oauthRefreshToken: a.oauth_refresh_token,
-    oauthExpiresAt: a.oauth_expires_at,
-  }
 }
 
 // PATCH — mark read/unread or move
@@ -52,7 +38,7 @@ export async function PATCH(req: Request) {
     const account = await getAccessibleAccount(accountId, authCtx.id, ['organize'])
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
-    const config = accountConfig(account)
+    const config = toImapConfig(account)
 
     if (action === 'read') {
       await markReadBulk(config, folder, uids, true)
@@ -95,7 +81,7 @@ export async function DELETE(req: Request) {
     const account = await getAccessibleAccount(accountId, authCtx.id, ['delete'])
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
-    await deleteMessagesBulk(accountConfig(account), folder, uids)
+    await deleteMessagesBulk(toImapConfig(account), folder, uids)
     return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

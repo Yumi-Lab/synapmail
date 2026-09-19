@@ -83,3 +83,29 @@ export async function promptGuardApplies(userId: string, accountId?: string | nu
 
 export const encryptPassword = encrypt
 export const decryptPassword = decrypt
+
+/**
+ * Ligne `email_accounts` → configuration IMAP. La conversion était recopiée dans chaque
+ * route qui ouvre une connexion ; une colonne renommée y aurait survécu en silence.
+ * Elle accepte tout ce qui porte ces colonnes (ligne complète ou `SELECT` partiel).
+ */
+export type ImapAccountRow = Pick<
+  DbEmailAccount,
+  'id' | 'imap_host' | 'imap_port' | 'imap_secure' | 'username' | 'password_encrypted'
+  | 'oauth_provider' | 'oauth_access_token' | 'oauth_refresh_token' | 'oauth_expires_at'
+>
+
+export function toImapConfig(a: ImapAccountRow) {
+  return {
+    id: a.id,
+    imapHost: a.imap_host,
+    imapPort: a.imap_port,
+    imapSecure: a.imap_secure,
+    username: a.username,
+    passwordEncrypted: a.password_encrypted,
+    oauthProvider: a.oauth_provider,
+    oauthAccessToken: a.oauth_access_token,
+    oauthRefreshToken: a.oauth_refresh_token,
+    oauthExpiresAt: a.oauth_expires_at,
+  }
+}
