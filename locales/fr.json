@@ -184,7 +184,22 @@
         "prompt": "Votre navigateur va demander l'autorisation d'accéder aux applications de cet appareil. Acceptez-la pour continuer.",
         "deniedStep1": "Cliquez sur l'icône à gauche de la barre d'adresse, puis ouvrez les réglages du site.",
         "deniedStep2": "Autorisez l'accès au réseau local (les applications de cet appareil), puis réessayez."
-      }
+      },
+      "actions": {
+        "summarize": "Résumer",
+        "reply": "Répondre avec l'IA",
+        "improve": "Améliorer / Ton",
+        "translate": "Traduire"
+      },
+      "translateToFr": "En français",
+      "translateToEn": "En anglais",
+      "tasks": "Tâches",
+      "priority": "Priorité",
+      "soonBadge": "Bientôt",
+      "soonTitle": "Bientôt disponible",
+      "resultSummary": "Résumé",
+      "resultTranslation": "Traduction",
+      "resultReply": "Brouillon IA, ouvert dans la composition"
     }
   },
   "compose": {
@@ -484,6 +499,43 @@
         "copied": "Copié",
         "originRefused": "L'adresse de cette page ne peut pas être autorisée par une commande.",
         "loopbackOnly": "La détection ne regarde que cet ordinateur (ports 11434, 1234, 8080) : le réseau local n’est pas balayé."
+      },
+      "detect": "Détecter automatiquement",
+      "detecting": "Détection",
+      "detectError": "Erreur lors de la détection",
+      "model": "Modèle",
+      "saveAndTest": "Enregistrer et tester",
+      "saving": "Enregistrement",
+      "testing": "Test",
+      "saved": "Enregistré",
+      "failed": "Erreur",
+      "advanced": "Paramètres avancés",
+      "systemPrompt": "Prompt système",
+      "systemPromptPlaceholder": "Par exemple : tu es un assistant email professionnel. Réponds toujours de manière concise.",
+      "features": "Fonctionnalités",
+      "soonTitle": "Prochainement",
+      "soonBadge": "Bientôt",
+      "keySaved": "(clé déjà enregistrée)",
+      "getKey": "Obtenir une clé",
+      "keyLabel": {
+        "anthropic": "Clé API Anthropic",
+        "openai": "Clé API OpenAI",
+        "optional": "Clé API (si requise)"
+      },
+      "urlLabel": {
+        "ollama": "URL Ollama",
+        "server": "URL du serveur"
+      },
+      "modelHint": {
+        "custom": "Nom du modèle accepté par votre endpoint"
+      },
+      "soon": {
+        "inlineCompletion": "Complétion inline",
+        "priorityScore": "Score de priorité automatique",
+        "taskExtraction": "Extraction des tâches",
+        "mailboxChat": "Chat avec la boîte mail",
+        "smartRules": "Règles IA intelligentes",
+        "personas": "Personas par compte"
       }
     }
   },

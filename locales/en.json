@@ -184,7 +184,22 @@
         "prompt": "Your browser will ask permission to reach apps running on this device. Accept it to continue.",
         "deniedStep1": "Click the icon at the left of the address bar, then open the site settings.",
         "deniedStep2": "Allow access to the local network (apps on this device), then try again."
-      }
+      },
+      "actions": {
+        "summarize": "Summarize",
+        "reply": "Reply with AI",
+        "improve": "Improve / Tone",
+        "translate": "Translate"
+      },
+      "translateToFr": "In French",
+      "translateToEn": "In English",
+      "tasks": "Tasks",
+      "priority": "Priority",
+      "soonBadge": "Soon",
+      "soonTitle": "Coming soon",
+      "resultSummary": "Summary",
+      "resultTranslation": "Translation",
+      "resultReply": "AI draft, opened in the composer"
     }
   },
   "compose": {
@@ -484,6 +499,43 @@
         "copied": "Copied",
         "originRefused": "This page address cannot be allowed by a command.",
         "loopbackOnly": "Detection only looks at this computer (ports 11434, 1234, 8080): the local network is not scanned."
+      },
+      "detect": "Detect automatically",
+      "detecting": "Detecting",
+      "detectError": "Detection failed",
+      "model": "Model",
+      "saveAndTest": "Save and test",
+      "saving": "Saving",
+      "testing": "Testing",
+      "saved": "Saved",
+      "failed": "Failed",
+      "advanced": "Advanced settings",
+      "systemPrompt": "System prompt",
+      "systemPromptPlaceholder": "For example: you are a professional email assistant. Always answer concisely.",
+      "features": "Features",
+      "soonTitle": "Coming soon",
+      "soonBadge": "Soon",
+      "keySaved": "(key already saved)",
+      "getKey": "Get a key",
+      "keyLabel": {
+        "anthropic": "Anthropic API key",
+        "openai": "OpenAI API key",
+        "optional": "API key (if required)"
+      },
+      "urlLabel": {
+        "ollama": "Ollama URL",
+        "server": "Server URL"
+      },
+      "modelHint": {
+        "custom": "A model name your endpoint accepts"
+      },
+      "soon": {
+        "inlineCompletion": "Inline completion",
+        "priorityScore": "Automatic priority score",
+        "taskExtraction": "Task extraction",
+        "mailboxChat": "Chat with the mailbox",
+        "smartRules": "Smart AI rules",
+        "personas": "Personas per account"
       }
     }
   },
