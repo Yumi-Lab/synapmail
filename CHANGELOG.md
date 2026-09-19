@@ -5,6 +5,51 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — fork Yumi-Lab (branche `yumi`) — recherche — 2026-09-19
+
+### Changed
+- **La recherche cherche dans les bons champs** (`lib/search.ts`, `lib/imap.ts`) : expéditeur,
+  **destinataires**, **copie** et objet (`SEARCH_FIELDS`, source unique lue par le serveur et par
+  l'interface). Mesuré sur une vraie boîte IONOS : « bruno@3d-expert.fr » passe de **7 à 70 résultats**,
+  à durée égale (1,2 s). Le corps reste hors du `OR` — mesuré à 0 résultat sur IONOS, où l'y ajouter
+  annulait en plus tout le `OR`.
+- **Une requête à plusieurs mots est un ET de ses mots**, dans n'importe quel ordre (« 3d cpi » =
+  « cpi 3d ») ; une expression entre guillemets reste une sous-chaîne exacte ; casse et espaces
+  multiples ignorés. Fonction pure `parseQuery()` + `scripts/check-search-parse.mjs`.
+- **Plafond de résultats dit à voix haute** : `SEARCH_RESULT_LIMIT` (une seule source) passe de 50 à
+  **200**, et la bannière annonce « 2 406 résultats · 200 affichés » au lieu de tronquer en silence.
+- **« Tous les dossiers » devient utilisable** : les résultats sont **diffusés dossier par dossier**
+  (NDJSON), les dossiers sont visités par ordre d'utilité (réception, envoyés, puis par date du dernier
+  message connu), la bannière avance (« 5 dossiers sur 23 ») et un bouton **Arrêter** interrompt le flux
+  sans perdre les lignes déjà reçues. Premières lignes mesurées à **1,4-3,1 s** (staging, boîte réelle)
+  là où la version précédente demandait 30 à 50 s avant d'afficher quoi que ce soit.
+- **Bannière sur une seule ligne** : les champs cherchés et la portée passent en infobulle
+  (`components/ui/IconTooltip.tsx`, plus d'attribut `title` natif) ; la phrase « le corps n'est pas
+  cherché » n'apparaît que sur 0 résultat.
+- `mail.searchProgress` passe en pluriel ICU (en/fr) : la bannière affichait « 1 dossiers sur 23 ».
+
+### Fixed
+- **Un filtre sans correspondance ne détruit plus le cache d'un dossier** (`lib/imap.ts`) : `listMessages`
+  confondait la taille de la VUE paginée et la taille du DOSSIER. Ouvrir un filtre (« Non lus », « Suivis »)
+  qui ne correspondait à rien faisait croire au dossier qu'il était vide : tout son `messages_cache` était
+  supprimé et son compteur de non-lus réécrit à 0 — depuis une simple requête de lecture. Garde :
+  `scripts/check-list-total.mjs`.
+- **Un même rôle de dossier spécial n'est plus revendiqué deux fois** (`lib/specialFolders.ts`) : sur un
+  serveur qui ne déclare pas ses drapeaux, une boîte contenant `Trash` **et** `Deleted Items` (ou `Sent`
+  et `Envoyés`) affichait deux corbeilles ; et un sous-dossier nommé `Clients/Inbox` était promu boîte de
+  réception. Le test de profondeur tranche désormais avant tout test de nom, et le premier dossier à
+  prendre un rôle est le seul à le porter.
+- **Une réponse différée vise le message sur lequel elle a été déclenchée** (`app/(app)/mail/MailClient.tsx`) :
+  une action Répondre / Transférer lancée sur un message pas encore chargé ne retenait que le geste, pas sa
+  cible — si le message ouvert changeait entre-temps (autre ligne cliquée, notification de bureau), la
+  réponse partait sur le mauvais message, sans rien signaler. Garde : `scripts/check-deferred-compose.mjs`.
+
+### Added
+- `docs/SEARCH.md` : ce que la recherche cherche, comment elle découpe une requête, ses portées, ses
+  plafonds, et ce que les mesures ne permettent pas d'extrapoler.
+
+---
+
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — 2026-09-17
 
 ### Changed
