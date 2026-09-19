@@ -421,7 +421,30 @@
     },
     "ai": {
       "stepProvider": "1. Fournisseur",
-      "stepAccess": "2. Accès"
+      "stepAccess": "2. Accès",
+      "tagline": {
+        "serverKey": "API avec clé (appel depuis le serveur)",
+        "ollamaServer": "Ollama joignable depuis le serveur",
+        "local": "Appel depuis le navigateur, rien ne sort de votre poste"
+      },
+      "provider": {
+        "local": "Local, sur cet appareil"
+      },
+      "detectOllamaMissing": "Ollama non trouvé DEPUIS LE SERVEUR. S'il tourne sur votre ordinateur, choisissez « Local, sur cet appareil » : l'appel partira du navigateur.",
+      "testOk": "Connexion OK. Réponse : « {answer} »",
+      "local": {
+        "urlLabel": "Adresse locale",
+        "modelHint": "Ollama, LM Studio ou llama.cpp démarré sur votre ordinateur",
+        "remoteRefused": "Adresse distante : pour une adresse distante, choisissez l'API avec clé.",
+        "detectFound": "{label} trouvé sur {url}",
+        "startModel": "Démarrer le modèle sur cet ordinateur (ollama serve, LM Studio, llama.cpp).",
+        "checkAddress": "Vérifier l'adresse : {url} pour Ollama.",
+        "remoteNeedsKey": "Le modèle doit tourner sur CE poste : une adresse distante demande une API avec clé.",
+        "corsMac": "macOS : launchctl setenv OLLAMA_ORIGINS \"{origin}\" puis relancer Ollama.",
+        "corsLinux": "Linux : ajouter Environment=\"OLLAMA_ORIGINS={origin}\" au service, puis le recharger.",
+        "corsLmStudio": "LM Studio : activer CORS dans le serveur local, avec l'origine {origin}.",
+        "corsSafari": "Safari bloque cet appel : utilisez Chrome, Edge ou Firefox."
+      }
     }
   },
   "admin": {

@@ -421,7 +421,30 @@
     },
     "ai": {
       "stepProvider": "1. 提供方",
-      "stepAccess": "2. 访问"
+      "stepAccess": "2. 访问",
+      "tagline": {
+        "serverKey": "带密钥的 API（由服务器调用）",
+        "ollamaServer": "服务器可访问的 Ollama",
+        "local": "由浏览器调用，数据不离开本机"
+      },
+      "provider": {
+        "local": "本地，在此设备上"
+      },
+      "detectOllamaMissing": "未从服务器找到 Ollama。如果它运行在你的电脑上，请选择「本地，在此设备上」：调用将从浏览器发出。",
+      "testOk": "连接正常。回复：「{answer}」",
+      "local": {
+        "urlLabel": "本地地址",
+        "modelHint": "在你的电脑上运行的 Ollama、LM Studio 或 llama.cpp",
+        "remoteRefused": "远程地址：如需远程地址，请选择带密钥的 API。",
+        "detectFound": "在 {url} 找到 {label}",
+        "startModel": "在这台电脑上启动模型（ollama serve、LM Studio、llama.cpp）。",
+        "checkAddress": "检查地址：Ollama 为 {url}。",
+        "remoteNeedsKey": "模型必须运行在这台电脑上：远程地址需要带密钥的 API。",
+        "corsMac": "macOS：运行 launchctl setenv OLLAMA_ORIGINS \"{origin}\"，然后重启 Ollama。",
+        "corsLinux": "Linux：在服务中添加 Environment=\"OLLAMA_ORIGINS={origin}\"，然后重新加载。",
+        "corsLmStudio": "LM Studio：在本地服务器中启用 CORS，来源为 {origin}。",
+        "corsSafari": "Safari 会拦截此调用：请使用 Chrome、Edge 或 Firefox。"
+      }
     }
   },
   "admin": {
