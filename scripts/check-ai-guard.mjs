@@ -173,8 +173,13 @@ check(wrapUntrusted('x').token !== wrapUntrusted('x').token, 'two wraps never sh
 // route. Read the route's own source to confirm it wires the same flag into
 // both the prompt body and the model call.
 const route = readFileSync(new URL('../app/api/ai/action/route.ts', import.meta.url), 'utf8')
-check(/untrustedBlock\(\s*htmlToText\(content\)\s*,\s*\{\s*enabled:\s*options\.promptGuard\s*\}\s*\)/.test(route),
-  'route: mail content goes through untrustedBlock with the mailbox flag')
+// The prompt builder is shared by the server path and the browser path, so it
+// lives in lib/ai.ts; that is where the fencing must be read.
+const aiLib = readFileSync(new URL('../lib/ai.ts', import.meta.url), 'utf8')
+check(/untrustedBlock\(\s*htmlToText\(content\)\s*,\s*\{\s*enabled:\s*options\.promptGuard\s*\}\s*\)/.test(aiLib),
+  'builder: mail content goes through untrustedBlock with the mailbox flag')
+check(/buildMessages\(\s*\n?\s*action,/.test(route),
+  'route: the prompt is built by the shared builder, not rebuilt inline')
 check(/callAI\([^)]*\{\s*promptGuard\s*\}\s*\)/.test(route),
   'route: the mailbox flag is passed to callAI')
 check(/promptGuardApplies\(session\.user\.id, accountId\)/.test(route),
