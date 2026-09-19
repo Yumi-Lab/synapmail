@@ -12,7 +12,26 @@ export const SEARCH_PARAM = 'q'
 export const SCOPE_PARAM = 'scope'
 export const SCOPE_FOLDER = 'folder'
 export const SCOPE_ALL = 'all'
-export type SearchScope = typeof SCOPE_FOLDER | typeof SCOPE_ALL
+/** Toutes les boîtes ACCESSIBLES (propres + reçues en partage), tous dossiers. */
+export const SCOPE_ACCOUNTS = 'accounts'
+/**
+ * Les portées, dans l'ordre où le sélecteur les propose. Source unique : l'omnibar
+ * boucle dessus, l'URL en porte la valeur, la route et la liste la relisent.
+ */
+export const SEARCH_SCOPES = [SCOPE_FOLDER, SCOPE_ALL, SCOPE_ACCOUNTS] as const
+export type SearchScope = typeof SEARCH_SCOPES[number]
+
+/**
+ * Boîtes balayées EN PARALLÈLE par la portée « toutes les boîtes ». Ce plafond
+ * s'ajoute à celui des dossiers par boîte (lot S2) : au pic, au plus
+ * ACCOUNT_CONCURRENCY × (dossiers en parallèle) connexions IMAP ouvertes.
+ * ponytail: mesuré le 20/09/2026 sur le compte de test (7 boîtes, 185 dossiers) —
+ * le balayage boîte par boîte EN SÉRIE coûte 50,7 s, la boîte la plus lente 22,0 s
+ * à elle seule. 3 suffit à ramener le total sous la boîte la plus lente + marge,
+ * sans ouvrir 7 sessions IMAP de front chez le même hébergeur. Monter ce nombre
+ * demande de re-mesurer le pic de connexions, pas seulement le temps total.
+ */
+export const ACCOUNT_CONCURRENCY = 3
 
 /** En deçà, IMAP renverrait la boîte entière : la recherche reste inactive. */
 export const MIN_QUERY_LENGTH = 2
@@ -52,7 +71,12 @@ export function isSearchQuery(q: string | null | undefined): boolean {
 }
 
 export function readScope(raw: string | null | undefined): SearchScope {
-  return raw === SCOPE_ALL ? SCOPE_ALL : SCOPE_FOLDER
+  return (SEARCH_SCOPES as readonly string[]).includes(raw ?? '') ? raw as SearchScope : SCOPE_FOLDER
+}
+
+/** Une portée qui sort du dossier affiché : la liste mêle alors des origines. */
+export function isWideScope(scope: SearchScope): boolean {
+  return scope === SCOPE_ALL || scope === SCOPE_ACCOUNTS
 }
 
 /**
@@ -64,7 +88,7 @@ export function buildSearchHref(current: string | URLSearchParams, q: string, sc
   const trimmed = q.trim()
   if (trimmed) params.set(SEARCH_PARAM, trimmed)
   else params.delete(SEARCH_PARAM)
-  if (trimmed && scope === SCOPE_ALL) params.set(SCOPE_PARAM, SCOPE_ALL)
+  if (trimmed && scope !== SCOPE_FOLDER) params.set(SCOPE_PARAM, scope)
   else params.delete(SCOPE_PARAM)
   const qs = params.toString()
   return qs ? `${MAIL_PATH}?${qs}` : MAIL_PATH
@@ -164,6 +188,97 @@ export function orderFoldersForSearch(folders: FolderRank[]): string[] {
       (b.messages ?? 0) - (a.messages ?? 0) ||
       a.path.localeCompare(b.path))
     .map(f => f.path)
+}
+
+/** Un dossier PRIVILÉGIÉ : réception ou envoyés, les deux de la première passe. */
+function isPriorityFolder(f: FolderRank): boolean {
+  return PRIORITY_SPECIAL_USE.includes(f.specialUse as typeof PRIORITY_SPECIAL_USE[number])
+}
+
+/**
+ * Découpe les dossiers d'une boîte en DEUX passes, chacune déjà ordonnée par
+ * `orderFoldersForSearch` : la PREMIÈRE ne contient que la réception et les
+ * envoyés, la SECONDE tout le reste.
+ *
+ * Pourquoi deux passes : avec plusieurs boîtes, balayer une boîte ENTIÈRE avant
+ * d'attaquer la suivante fait attendre la réception de la 7ᵉ boîte derrière les
+ * 97 dossiers de la 4ᵉ. Mesuré le 20/09/2026 sur le compte de test (7 boîtes,
+ * 185 dossiers) : le balayage complet d'une boîte va de 2,0 s à 22,0 s, alors que
+ * son PREMIER résultat arrive en 1,6-2,7 s. Faire d'abord les deux dossiers
+ * utiles de CHAQUE boîte rend les résultats utiles en quelques secondes même
+ * avec 50 boîtes.
+ *
+ * Fonction PURE : auto-contrôle `scripts/check-search-accounts.mjs`.
+ */
+export function splitFolderPasses(folders: FolderRank[]): { first: string[]; rest: string[] } {
+  const priority = new Set(folders.filter(isPriorityFolder).map(f => f.path))
+  const ordered = orderFoldersForSearch(folders)
+  return {
+    first: ordered.filter(p => priority.has(p)),
+    rest: ordered.filter(p => !priority.has(p)),
+  }
+}
+
+/** Ce qu'une recherche « toutes les boîtes » sait d'une boîte avant de l'ouvrir. */
+export type AccountRank = { id: string; email?: string | null }
+
+/**
+ * Ordonne les boîtes d'une recherche « toutes les boîtes » : la boîte ACTIVE
+ * d'abord (celle que l'utilisateur regarde, donc celle dont il attend les
+ * résultats), puis l'ordre de la liste, inchangé. Les entrées sans identifiant
+ * sont écartées, les doublons aussi — une boîte balayée deux fois coûterait deux
+ * sessions IMAP pour les mêmes résultats.
+ *
+ * Fonction PURE : auto-contrôle `scripts/check-search-accounts.mjs`.
+ */
+export function orderAccountsForSearch(accounts: readonly AccountRank[], activeId?: string | null): string[] {
+  const ids: string[] = []
+  const seen = new Set<string>()
+  const push = (id: string | null | undefined) => {
+    if (!id || seen.has(id)) return
+    seen.add(id)
+    ids.push(id)
+  }
+  push(accounts.find(a => a.id === activeId)?.id)
+  for (const a of accounts) push(a.id)
+  return ids
+}
+
+/**
+ * Lance `run` sur chaque élément avec au plus `limit` exécutions EN COURS, et
+ * rend les résultats dans l'ordre d'ARRIVÉE (pas celui des entrées) : une boîte
+ * lente ne retient pas l'affichage de celles qui ont déjà répondu. Un `run` qui
+ * échoue rend son erreur au lieu de casser le balayage — une boîte injoignable
+ * n'arrête pas les autres.
+ *
+ * Générateur PUR au sens du banc : il n'ouvre rien lui-même, il ORDONNANCE ce
+ * qu'on lui donne. Auto-contrôle `scripts/check-search-accounts.mjs`.
+ */
+export async function* mapWithConcurrency<TItem, TResult>(
+  items: readonly TItem[],
+  limit: number,
+  run: (item: TItem, index: number) => Promise<TResult>,
+): AsyncGenerator<{ item: TItem; index: number; value?: TResult; error?: unknown }> {
+  // `Math.max(1, …)` sur une liste VIDE démarrerait une tâche sur `items[0]`,
+  // qui n'existe pas : le plancher ne s'applique qu'à une liste non vide.
+  const width = items.length === 0 ? 0 : Math.max(1, Math.min(limit, items.length))
+  let next = 0
+  const settle = (index: number) => run(items[index], index)
+    .then(value => ({ item: items[index], index, value }))
+    .catch(error => ({ item: items[index], index, error }))
+  type Slot = ReturnType<typeof settle>
+  const running = new Map<number, Slot>()
+  const start = () => { const i = next++; running.set(i, settle(i)) }
+  while (next < width) start()
+  while (running.size) {
+    // `Promise.race` sur les tâches EN COURS : la première arrivée est rendue,
+    // puis sa place est reprise par la suivante. Sans le retrait explicite, une
+    // tâche déjà rendue gagnerait toutes les courses suivantes.
+    const done = await Promise.race(Array.from(running.values()))
+    running.delete(done.index)
+    yield done
+    if (next < items.length) start()
+  }
 }
 
 /**
