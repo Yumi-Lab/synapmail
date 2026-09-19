@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { COMPOSE_EVENT, COMPOSE_QUERY, MAIL_PATH } from '@/lib/compose'
 import { SCOPE_PARAM, SEARCH_PARAM, focusSearch, readScope } from '@/lib/search'
+import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, mailboxSwitchHref } from './mailboxUrl'
 import { ArrowLeft } from 'lucide-react'
 import useSWR from 'swr'
 import { MessageList } from '@/components/layout/MessageList'
@@ -62,7 +63,7 @@ export function MailClient() {
 
   const searchParams = useSearchParams()
   const router = useRouter()
-  const folder = searchParams.get('folder') ?? 'INBOX'
+  const folder = searchParams.get(FOLDER_PARAM) ?? DEFAULT_FOLDER
   // La recherche vit dans l'URL : la barre d'application l'écrit, la liste la lit.
   const search = searchParams.get(SEARCH_PARAM) ?? ''
   const searchScope = readScope(searchParams.get(SCOPE_PARAM))
@@ -136,14 +137,28 @@ export function MailClient() {
   useEffect(() => {
     const handler = (e: Event) => {
       const id = (e as CustomEvent<string>).detail
+      // La nouvelle boîte s'ouvre sur SA réception : le dossier de l'ancienne
+      // n'existe souvent pas chez elle, et la liste partait le chercher pour
+      // rien. L'URL est lue au moment de l'événement (elle est la source), pas
+      // capturée à l'inscription de l'écouteur.
+      const href = mailboxSwitchHref(window.location.search)
+      // Même idiome que le sélecteur de portée de la barre : seuls des
+      // PARAMÈTRES changent, et `router.replace` refait alors rendre la route
+      // côté serveur (mesuré le 20/09/2026 dans ce dépôt : 4,0 s avant que
+      // l'URL ne bouge). L'API d'historique, que le routeur suit depuis
+      // Next 14.2, met `useSearchParams` à jour au rendu suivant — et ce rendu
+      // a lieu, puisque le compte actif change juste après.
+      if (href !== `${window.location.pathname}${window.location.search}`) {
+        window.history.replaceState(null, '', href)
+      }
       setActiveAccountId(id)
       setSelectedOrigin(null)
       setSelectedThread(null)
       setSelectionMode('none')
       setCurrentMessage(null)
     }
-    window.addEventListener('synapmail:account-change', handler)
-    return () => window.removeEventListener('synapmail:account-change', handler)
+    window.addEventListener(ACCOUNT_CHANGE_EVENT, handler)
+    return () => window.removeEventListener(ACCOUNT_CHANGE_EVENT, handler)
   }, [])
 
   // Listen for notification click / "à traiter" click → open specific message
@@ -153,7 +168,7 @@ export function MailClient() {
       // L'origine voyage entière : le volet lit le message dans SON dossier, sans
       // que la liste ait à changer de dossier d'abord.
       if (targetFolder) {
-        router.push(`/mail?folder=${encodeURIComponent(targetFolder)}`)
+        router.push(`${MAIL_PATH}?${FOLDER_PARAM}=${encodeURIComponent(targetFolder)}`)
       }
       handleSelect({ uid, accountId, folder: targetFolder ?? folder })
       setShowReadingPane(true)

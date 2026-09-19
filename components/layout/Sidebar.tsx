@@ -17,6 +17,8 @@ import { ThinScroll } from './ThinScroll'
 import { ACCOUNTS_SETTINGS_HREF } from '@/components/settings/SettingsSidebar'
 import { FolderContextMenu, type FolderMenuState } from './FolderContextMenu'
 import { accountDelimiter, isDescendant, sanitizeFolderName, type FolderAction } from '@/lib/folderActions'
+import { MAIL_PATH } from '@/lib/compose'
+import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, mailboxSwitchHref } from '@/app/(app)/mail/mailboxUrl'
 import type { EmailAccount } from '@/types/account'
 
 /**
@@ -211,12 +213,26 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const [naming, setNaming] = useState<{ action: 'create' | 'createChild' | 'rename'; parent: string; path: string; value: string } | null>(null)
   const [folderError, setFolderError] = useState<string | null>(null)
 
+  // La surbrillance suit l'URL, qui est la source du dossier affiché.
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search)
-      setCurrentFolder(params.get('folder') ?? 'INBOX')
-    }
+    const params = new URLSearchParams(window.location.search)
+    setCurrentFolder(params.get(FOLDER_PARAM) ?? DEFAULT_FOLDER)
   }, [pathname])
+
+  // Un changement de boîte ramène l'URL sur la réception SANS changer de chemin :
+  // `pathname` ne bouge pas, donc l'effet ci-dessus ne rejoue pas et la barre
+  // serait restée allumée sur le dossier de l'ANCIENNE boîte. Le dossier est
+  // relu de la MÊME fonction que celle qui écrit l'URL, et non de l'URL
+  // elle-même : les deux écouteurs de l'événement sont appelés dans un ordre que
+  // rien ne garantit, et lire l'URL trop tôt rendrait l'ancien dossier.
+  useEffect(() => {
+    const onAccountChange = () => {
+      const next = new URL(mailboxSwitchHref(window.location.search), window.location.origin)
+      setCurrentFolder(next.searchParams.get(FOLDER_PARAM) ?? DEFAULT_FOLDER)
+    }
+    window.addEventListener(ACCOUNT_CHANGE_EVENT, onAccountChange)
+    return () => window.removeEventListener(ACCOUNT_CHANGE_EVENT, onAccountChange)
+  }, [])
 
   // Close the account dropdown on outside click / Escape
   useEffect(() => {
@@ -473,7 +489,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     return (
       <Link
         key={folder.path}
-        href={`/mail?folder=${encodeURIComponent(folder.path)}`}
+        href={`${MAIL_PATH}?${FOLDER_PARAM}=${encodeURIComponent(folder.path)}`}
         onClick={() => handleFolderClick(folder.path)}
         onDragOver={e => handleDragOver(e, folder.path)}
         onDragLeave={handleDragLeave}
