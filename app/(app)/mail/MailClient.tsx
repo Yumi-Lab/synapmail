@@ -63,10 +63,31 @@ export function MailClient() {
 
   const searchParams = useSearchParams()
   const router = useRouter()
-  const folder = searchParams.get(FOLDER_PARAM) ?? DEFAULT_FOLDER
+  /**
+   * Un changement de boîte réécrit l'URL dans le même geste, mais le routeur ne
+   * la relit qu'au rendu SUIVANT : pendant ce rendu-là, le compte est déjà le
+   * nouveau et `searchParams` porte encore le dossier de l'ancien — la liste
+   * partait alors chercher ce dossier DANS LA NOUVELLE BOÎTE (mesuré le
+   * 20/09/2026 : 2 requêtes par changement). On lit donc les paramètres à
+   * travers la MÊME fonction qui écrit l'URL, le temps que celle-ci suive :
+   * les deux ne peuvent pas diverger, puisqu'il n'y en a qu'une.
+   */
+  const [switching, setSwitching] = useState(false)
+  /** Les paramètres tels qu'ils seront, une fois l'URL rattrapée. */
+  const switchedParams = useMemo(
+    () => new URLSearchParams(mailboxSwitchHref(searchParams.toString()).split('?')[1] ?? ''),
+    [searchParams],
+  )
+  const caughtUp = switchedParams.toString() === searchParams.toString()
+  const effectiveParams = switching && !caughtUp ? switchedParams : searchParams
+  // L'attente prend fin quand l'URL porte ce que le changement a écrit — mesuré
+  // sur l'URL elle-même, jamais sur une minuterie.
+  useEffect(() => { if (switching && caughtUp) setSwitching(false) }, [switching, caughtUp])
+
+  const folder = effectiveParams.get(FOLDER_PARAM) ?? DEFAULT_FOLDER
   // La recherche vit dans l'URL : la barre d'application l'écrit, la liste la lit.
-  const search = searchParams.get(SEARCH_PARAM) ?? ''
-  const searchScope = readScope(searchParams.get(SCOPE_PARAM))
+  const search = effectiveParams.get(SEARCH_PARAM) ?? ''
+  const searchScope = readScope(effectiveParams.get(SCOPE_PARAM))
 
   const { data: settingsData } = useSWR<{ data: { active_account_id: string | null; list_width: number; reading_pane: boolean; notifications: boolean } }>('/api/settings', fetcher)
   const didInitFromSettings = useRef(false)
@@ -151,6 +172,9 @@ export function MailClient() {
       if (href !== `${window.location.pathname}${window.location.search}`) {
         window.history.replaceState(null, '', href)
       }
+      // Posé dans le MÊME lot que le compte : la liste ne voit jamais un rendu où
+      // le compte a changé mais pas le dossier.
+      setSwitching(true)
       setActiveAccountId(id)
       setSelectedOrigin(null)
       setSelectedThread(null)
