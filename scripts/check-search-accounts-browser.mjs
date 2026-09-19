@@ -21,6 +21,16 @@
  *     sidebar and the settings call the current account) does not change.
  *  E. GEOMETRY at 1100 px and 390 px — no horizontal overflow, and the scope
  *     selector either fits without overlapping its neighbours or folds away.
+ *  G. THE SCOPE SELECTOR IS CLICKABLE — from a cold `/mail?q=…`, a REAL mouse
+ *     click on each of the three scopes updates the URL, presses that segment and
+ *     fires one search for it. A JS `.click()` would pass even when the selector
+ *     is buried under another element, so this arm only ever uses the mouse.
+ *     Negative control: a mouse click on bare header background changes nothing.
+ *
+ * Arm B also measures the banner's GEOMETRY: the Stop button and the details icon
+ * must stay entirely INSIDE the list column and be what `elementFromPoint` returns
+ * at their centre — a button pushed under the reading pane by a long progress text
+ * cannot be pressed, and Stop is the most important button of a long sweep.
  *
  * READ ONLY on mail: every mutating request to /api/messages is captured and
  * ABORTED, so no message is created, moved, flagged or deleted, and no body is
@@ -85,11 +95,25 @@ const SCOPE_P = constOf(SEARCH_SRC, 'SCOPE_PARAM')
 const SCOPE_ACC = constOf(SEARCH_SRC, 'SCOPE_ACCOUNTS')
 const ORIGIN_SRC = readFileSync(new URL('../lib/mailOrigin.ts', import.meta.url), 'utf8')
 const ORIGIN_ATTR = ORIGIN_SRC.match(/MAIL_ORIGIN_ATTR = '([^']+)'/)?.[1]
+// L'attribut que la LISTE pose sur son propre conteneur : il sert ici à trouver le
+// rectangle de la colonne, plutôt que d'y recopier une largeur (elle est réglable).
+const SELECTION_SRC = readFileSync(new URL('../lib/mailSelection.tsx', import.meta.url), 'utf8')
+const COLUMN_ATTR = SELECTION_SRC.match(/MAIL_SELECTION_COUNT_ATTR = '([^']+)'/)?.[1]
+// Les portées DANS L'ORDRE du sélecteur : `SEARCH_SCOPES` nomme des constantes, on
+// résout chacune par sa valeur. La première est la portée PAR DÉFAUT, celle que
+// `buildSearchHref` efface de l'URL.
+const SCOPES = (SEARCH_SRC.match(/export const SEARCH_SCOPES = \[([^\]]+)\]/)?.[1] ?? '')
+  .split(',').map(x => x.trim()).filter(Boolean)
+  .map(name => constOf(SEARCH_SRC, name))
 // Le libellé « Arrêter » vient de la locale livrée, pas d'une chaîne recopiée.
 const FR = JSON.parse(readFileSync(new URL('../locales/fr.json', import.meta.url), 'utf8'))
 const STOP_LABEL = FR.mail?.searchStop
-for (const [k, v] of Object.entries({ Q_PARAM, SCOPE_P, SCOPE_ACC, ORIGIN_ATTR, STOP_LABEL })) {
+for (const [k, v] of Object.entries({ Q_PARAM, SCOPE_P, SCOPE_ACC, ORIGIN_ATTR, COLUMN_ATTR, STOP_LABEL })) {
   if (!v) { console.error(`HARNESS: could not read ${k} from the shipped modules`); process.exit(2) }
+}
+if (SCOPES.length < 2 || SCOPES.some(v => !v)) {
+  console.error(`HARNESS: could not read SEARCH_SCOPES from lib/search.ts (got ${JSON.stringify(SCOPES)})`)
+  process.exit(2)
 }
 const ROW = `[${ORIGIN_ATTR}]`
 
@@ -183,6 +207,43 @@ try {
     }
   })
 
+  /**
+   * Géométrie du bandeau de recherche : la colonne de liste, le bouton Arrêter et
+   * l'icône de détails, avec ce qu'un clic à leur centre ATTEINDRAIT réellement
+   * (`elementFromPoint`). `self` = la cible elle-même ; toute autre valeur nomme
+   * l'élément qui la recouvre. La colonne est trouvée par le conteneur de la
+   * liste, pas par une largeur recopiée : elle est redimensionnable.
+   */
+  const bannerGeometry = () => page.evaluate(([stopLabel, columnAttr]) => {
+    const p = document.querySelector('[data-search-summary]')
+    if (!p) return null
+    const box = p.parentElement
+    const column = p.closest(`[${columnAttr}]`)
+    if (!column) return null
+    const stop = [...box.querySelectorAll('button')].find(b => (b.textContent ?? '').trim() === stopLabel) ?? null
+    const info = box.querySelector('[data-search-details]')
+    const rect = el => {
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      return {
+        left: Math.round(r.left), right: Math.round(r.right),
+        cx: Math.round(r.left + r.width / 2), cy: Math.round(r.top + r.height / 2),
+      }
+    }
+    const hit = el => {
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+      if (!at) return 'nothing'
+      return at === el || el.contains(at) || at.contains(el) ? 'self' : (at.tagName.toLowerCase() + '.' + String(at.className).split(' ').slice(0, 2).join('.'))
+    }
+    return {
+      text: p.textContent.trim(),
+      column: rect(column), stop: rect(stop), info: rect(info),
+      stopHit: hit(stop), infoHit: hit(info),
+    }
+  }, [STOP_LABEL, COLUMN_ATTR])
+
   // ────────────────────────── A. LE CHEMIN À FROID ──────────────────────────
   console.log('A. the cold URL streams every mailbox')
   searchRequests.length = 0
@@ -251,10 +312,33 @@ try {
   await new Promise(r => setTimeout(r, GROWTH_WINDOW_MS))
   const running = await snap()
   const grewWhileRunning = running.rows - before.rows
-  await page.evaluate(label => {
-    const b = [...document.querySelectorAll('button')].find(x => (x.textContent ?? '').trim() === label)
-    b?.click()
-  }, STOP_LABEL)
+
+  // GÉOMÉTRIE DU BANDEAU, pendant que le flux court — c'est le seul moment où
+  // Arrêter existe et où la progression est la plus longue. Le bouton et l'icône
+  // doivent tenir DANS la colonne de liste et être ce que `elementFromPoint`
+  // renvoie en leur centre : poussés sous le volet de lecture par un texte trop
+  // long, ils ne sont plus cliquables (mesuré le 20/09/2026 : Arrêter à 130 px
+  // hors de la colonne). C'est le TEXTE qui doit céder, pas les cibles.
+  const banner = await bannerGeometry()
+  if (!banner) harness('the banner geometry could not be read while the stream was running')
+  console.log(`  banner "${banner.text}"`)
+  console.log(`  column ${banner.column.left}→${banner.column.right}px | ` +
+    `Stop ${banner.stop ? `${banner.stop.left}→${banner.stop.right}px, elementFromPoint=${banner.stopHit}` : '(absent)'} | ` +
+    `details ${banner.info ? `${banner.info.left}→${banner.info.right}px, elementFromPoint=${banner.infoHit}` : '(absent)'}`)
+  check('the Stop button stays inside the list column',
+    !!banner.stop && banner.stop.left >= banner.column.left - 0.5 && banner.stop.right <= banner.column.right + 0.5,
+    banner.stop ? `${banner.stop.right}px vs column edge ${banner.column.right}px` : 'no Stop button')
+  check('the details icon stays inside the list column',
+    !!banner.info && banner.info.left >= banner.column.left - 0.5 && banner.info.right <= banner.column.right + 0.5,
+    banner.info ? `${banner.info.right}px vs column edge ${banner.column.right}px` : 'no details icon')
+  check('the Stop button is what a click at its centre would hit', banner.stopHit === 'self', banner.stopHit)
+  check('the details icon is what a click at its centre would hit', banner.infoHit === 'self', banner.infoHit)
+
+  // VRAI clic souris, jamais `.click()` en JavaScript : un bouton recouvert par un
+  // autre élément accepte l'appel JS et refuse le vrai clic — c'est précisément le
+  // défaut que ce banc doit voir.
+  if (banner.stop) await page.mouse.click(banner.stop.cx, banner.stop.cy)
+  else harness('no Stop button to click — the stop arm has no subject')
   await settle()
   const justAfter = await snap()
   await new Promise(r => setTimeout(r, GROWTH_WINDOW_MS))
@@ -262,8 +346,8 @@ try {
   const grewAfterStop = later.rows - justAfter.rows
   console.log(`  rows ${before.rows} → ${running.rows} while running (+${grewWhileRunning} in ${GROWTH_WINDOW_MS} ms), ` +
     `${justAfter.rows} → ${later.rows} after Stop (+${grewAfterStop})`)
-  check('the Stop button disappears once pressed', justAfter.stop === false, `stop=${justAfter.stop}`)
-  check('no further result arrives after Stop', grewAfterStop === 0,
+  check('the Stop button disappears once pressed by a real mouse click', justAfter.stop === false, `stop=${justAfter.stop}`)
+  check('no further result arrives after a real mouse click on Stop', grewAfterStop === 0,
     `+${grewAfterStop} row(s) after Stop, against +${grewWhileRunning} over the same window while running (same-run reference)`)
 
   // ──────── C. UNE BOÎTE EN PANNE N'ARRÊTE PAS LES AUTRES ────────
@@ -428,6 +512,129 @@ try {
         shot.worstSegmentGap === null || shot.worstSegmentGap >= 0,
         `closest segment pair ${shot.worstSegmentGap?.toFixed(2)}px (0 = adjacent, allowed)`)
     }
+  }
+
+  // ──────── G. LE SÉLECTEUR DE PORTÉE RÉPOND AU VRAI CLIC SOURIS ────────
+  // Le reste du banc n'entre dans une portée que par l'URL : il ne dirait donc RIEN
+  // d'un sélecteur qui ne réagit plus au clic — le défaut relevé par le gate du
+  // 20/09/2026, où l'URL restait sur `?q=…` douze secondes après le clic.
+  console.log('\nG. a real mouse click on each scope changes the scope')
+  await page.setViewport(VIEWPORT)
+  const SCOPE_CLICK_TIMEOUT_MS = 12000
+  // Ce bras mesure le PASSAGE de portée, pas sa VITESSE — le budget du premier
+  // résultat est mesuré par le bras A, sur le chemin à froid. Une portée large
+  // repart ici d'un balayage neuf : 8,0 s pour ses 200 premières lignes sur ce
+  // compte (mesuré le 20/09/2026, serveur chaud), plus lent sur une machine
+  // chargée. Deux fois le budget du bras A laisse cette marge sans jamais
+  // laisser passer une portée qui ne s'applique PAS.
+  const SCOPE_OUTCOME_BUDGET_MS = FIRST_RESULT_BUDGET_MS * 2
+  // Les portées lues dans `SEARCH_SCOPES` — la liste ORDONNÉE que le sélecteur
+  // parcourt lui-même, pas un ratissage des constantes `SCOPE_*` (qui ramasserait
+  // `SCOPE_PARAM`, un nom de paramètre d'URL et non une portée). En ajouter une
+  // là-bas l'ajoute ici, sans seconde liste à tenir à jour.
+  // On repart d'un chargement à FROID de la recherche, portée par défaut : c'est le
+  // geste réel (on cherche, puis on élargit).
+  await page.goto(`${BASE}/mail?${Q_PARAM}=${encodeURIComponent(term)}`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector(`[data-omnibar-scope]`, { timeout: NAV_TIMEOUT_MS })
+  await settle()
+  const scopeState = () => page.evaluate(scopeParam => ({
+    scope: new URLSearchParams(location.search).get(scopeParam),
+    pressed: [...document.querySelectorAll('[data-omnibar-scope]')]
+      .filter(el => el.getAttribute('aria-pressed') === 'true')
+      .map(el => el.dataset.omnibarScope),
+  }), SCOPE_P)
+  // L'ordre du geste : élargir d'abord, puis revenir au dossier — revenir en
+  // DERNIER, sinon « ce dossier » serait « vérifié » alors qu'on y est déjà.
+  const clickOrder = [...SCOPES.filter(v => v !== SCOPES[0]), SCOPES[0]]
+  for (const value of clickOrder) {
+    const target = await page.evaluate(v => {
+      const el = document.querySelector(`[data-omnibar-scope="${v}"]`)
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      const cx = Math.round(r.left + r.width / 2)
+      const cy = Math.round(r.top + r.height / 2)
+      const at = document.elementFromPoint(cx, cy)
+      return { cx, cy, hit: at === el || el.contains(at) ? 'self' : (at?.tagName.toLowerCase() ?? 'nothing') }
+    }, value)
+    if (!target) { console.log(`  note scope "${value}" is not offered (single mailbox, or folded away) — nothing to click`)
+      continue }
+    check(`the "${value}" segment is what a click at its centre would hit`, target.hit === 'self', target.hit)
+    searchRequests.length = 0
+    const t = Date.now()
+    await page.mouse.click(target.cx, target.cy)
+    // La portée par défaut ne porte PAS le paramètre (buildSearchHref l'efface).
+    const wanted = value === SCOPES[0] ? null : value
+    let got = null
+    while (Date.now() - t < SCOPE_CLICK_TIMEOUT_MS) {
+      got = await scopeState()
+      if (got.scope === wanted && got.pressed.length === 1 && got.pressed[0] === value) break
+      await new Promise(r => setTimeout(r, 100))
+    }
+    const waited = Date.now() - t
+    check(`a real mouse click on "${value}" puts it in the URL`, got?.scope === wanted,
+      `${SCOPE_P}=${got?.scope ?? '(absent)'} after ${waited} ms, wanted ${wanted ?? '(absent)'}`)
+    check(`a real mouse click on "${value}" presses that segment alone`,
+      got?.pressed.length === 1 && got.pressed[0] === value,
+      `pressed: ${got?.pressed.join(', ') || 'none'}`)
+    // La navigation ne suffit pas : la LISTE doit effectivement passer dans cette
+    // portée. Mesuré sur le rendu, pas sur le réseau — une clé déjà chargée est
+    // servie par le cache SWR sans requête, et compter les requêtes déclarerait
+    // alors en panne un retour de portée qui marche (mesuré le 20/09/2026 sur
+    // « ce dossier », rejoint après la chauffe de l'arm A).
+    // Signature observable d'une portée LARGE : chaque résultat dit d'où il vient.
+    // On attend les PREMIÈRES lignes de la nouvelle portée, PAS la fin du balayage :
+    // une portée large court ~27 s sur ce compte (34 dossiers), et exiger un bandeau
+    // au repos ferait échouer ce contrôle sur la DURÉE du balayage, pas sur ce qu'il
+    // mesure — le passage de portée (mesuré le 20/09/2026 : « all » toujours en
+    // cours à 12 s, donc 0 ligne, alors que l'URL et le segment étaient déjà bons).
+    const wide = value !== SCOPES[0]
+    let shown = null
+    const outcomeDeadline = Date.now() + SCOPE_OUTCOME_BUDGET_MS
+    while (Date.now() < outcomeDeadline) {
+      shown = await page.evaluate(() => ({
+        rows: document.querySelectorAll('[data-mail-row]').length,
+        origins: document.querySelectorAll('[data-result-folder]').length,
+      }))
+      if (shown.rows > 0 && (wide ? shown.origins === shown.rows : shown.origins === 0)) break
+      await new Promise(r => setTimeout(r, 100))
+    }
+    check(`the list switches to the "${value}" scope`,
+      !!shown && shown.rows > 0 && (wide ? shown.origins === shown.rows : shown.origins === 0),
+      `${shown?.rows ?? 0} row(s), ${shown?.origins ?? 0} carrying their origin (wide scope expects one per row, ` +
+      `the default scope expects none)`)
+    // Le réseau reste RAPPORTÉ, sans être un critère : il distingue une requête
+    // neuve d'une réponse servie par le cache, ce qu'un lecteur à froid veut savoir.
+    const fired = searchRequests.filter(r => {
+      const got = new URL(r.url).searchParams.get(SCOPE_P)
+      return wide ? got === value : (got === null || got === value)
+    })
+    console.log(`  note "${value}": ${fired.length} new search request(s)` +
+      `${fired.length === 0 ? ' — served from the SWR cache, key already fetched this run' : ''}`)
+  }
+  // CONTRÔLE NÉGATIF : un vrai clic sur le fond du header, hors de toute cible, ne
+  // doit RIEN changer — sans lui, un banc qui « voit » un changement partout
+  // passerait aussi sur un produit qui change de portée au moindre clic.
+  const beforeControl = await scopeState()
+  const bare = await page.evaluate(() => {
+    const header = document.querySelector('header')
+    const r = header.getBoundingClientRect()
+    // Un point du header qui n'appartient à aucun bouton ni champ.
+    for (let x = Math.round(r.left) + 2; x < Math.round(r.right) - 2; x += 4) {
+      const y = Math.round(r.top + r.height / 2)
+      const at = document.elementFromPoint(x, y)
+      if (at && at.tagName === 'HEADER') return { x, y }
+    }
+    return null
+  })
+  if (!bare) console.log('  note no bare header point found — negative control skipped')
+  else {
+    await page.mouse.click(bare.x, bare.y)
+    await settle()
+    const afterControl = await scopeState()
+    check('a real mouse click on bare header background changes no scope',
+      afterControl.scope === beforeControl.scope &&
+      afterControl.pressed.join(',') === beforeControl.pressed.join(','),
+      `${beforeControl.scope ?? '(absent)'}/${beforeControl.pressed.join(',')} → ${afterControl.scope ?? '(absent)'}/${afterControl.pressed.join(',')}`)
   }
 
   console.log('\nF. read-only guarantee, and where a write WOULD have gone')
