@@ -43,6 +43,21 @@ const BUBBLE_LETTERS = 2
 // as the collapse contract (MAX_DRIFT_PX) — one pixel is where sub-pixel text layout lands,
 // anything above it is a real indent difference between two rows.
 const MAX_TEXT_X_SPREAD_PX = MAX_DRIFT_PX
+
+/**
+ * Lot A14. The unfolded account list is the bar's own surface, so it may not round its
+ * corners like the card it replaces: 0 px is the target and 1 px the tolerance for a
+ * sub-pixel resolved value, calibrated against the bar's own root (radius 0) in the same
+ * run — the card this lot removes measured 12 px (`rounded-xl`).
+ */
+const MAX_LIST_RADIUS_PX = 1
+/**
+ * Fraction of an unread badge's own box that must survive every clipping ancestor.
+ * 1 = nothing may be cropped, which is the whole point of the lot ("ça vient couper le
+ * badge du premier compte"); the card it replaces cropped the first row's badge to ~50 %.
+ * No calibration bench: the criterion is geometric, not a measured threshold.
+ */
+const MIN_BADGE_VISIBLE = 1
 // Lot H3b — the sentence that must NOT be rendered any more, and the destination of the
 // glyph that replaces it. Both are read from the shipped sources (`locales/fr.json`,
 // `components/settings/SettingsSidebar.tsx`) so this check follows the product instead of
@@ -187,7 +202,7 @@ for (const [k, v] of Object.entries({ SYNAPMAIL_TEST_URL: BASE, SYNAPMAIL_TEST_E
 const probe = strayToggle => {
   const bar = document.querySelector('[data-sidebar]')
   if (!bar) return null
-  const rows = [...bar.querySelectorAll('[data-sidebar-row]')]
+  const rows = [...bar.querySelectorAll('[data-sidebar-row]')].filter(r => !r.closest('[data-account-list]'))
   const aside = bar.closest('aside')
   const asideRect = aside?.getBoundingClientRect()
   return {
@@ -280,7 +295,7 @@ const probeBubbles = () => {
  * even if the ink were centred inside it, and the check this backs would pass vacuously.
  */
 const probeAccountList = () => {
-  const popover = document.querySelector('[data-account-popover]')
+  const popover = document.querySelector('[data-account-list-open="true"]')
   if (!popover) return null
   const inkLeft = node => {
     const range = document.createRange()
@@ -331,6 +346,53 @@ const probeAccountList = () => {
     // Any lucide check, however it is classed, plus the raw glyph as a second net.
     checkGlyphs: popover.querySelectorAll('svg.lucide-check, [class*="lucide-check"]').length,
     checkChars: ((popover.textContent ?? '').match(/[✓✔]/g) ?? []).length,
+  }
+}
+
+/**
+ * Lot A14 — the list of accounts unfolds INSIDE the bar. Reads, for the list as it is
+ * currently rendered: how it is positioned (a `fixed` layer would be the card this lot
+ * removes), and — for every unread badge it carries — how much of the badge's own box
+ * actually survives clipping. Visibility is computed by walking the ancestors and
+ * intersecting the badge with each scrolling/clipping box, which is what a user sees:
+ * a badge "present in the DOM" inside an `overflow-hidden` parent is still invisible.
+ */
+const probeAccountListBox = () => {
+  const list = document.querySelector('[data-account-list-open="true"]')
+  if (!list) return null
+  const bar = document.querySelector('[data-sidebar]')
+  const inter = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left))
+    * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top))
+  // Every ancestor that can crop, up to the viewport — the viewport itself included.
+  const clipBoxes = el => {
+    const boxes = [{ left: 0, top: 0, right: innerWidth, bottom: innerHeight }]
+    for (let n = el.parentElement; n; n = n.parentElement) {
+      const cs = getComputedStyle(n)
+      if (/hidden|clip|auto|scroll/.test(cs.overflowX + cs.overflowY)) boxes.push(n.getBoundingClientRect())
+    }
+    return boxes
+  }
+  const badges = [...list.querySelectorAll('[data-unread-badge]')].map(b => {
+    const r = b.getBoundingClientRect()
+    const area = r.width * r.height
+    // The worst clip wins: a badge clipped by ANY ancestor is clipped, full stop.
+    const visible = area ? Math.min(...clipBoxes(b).map(c => inter(r, c))) / area : 0
+    return { text: b.textContent ?? '', visible, w: r.width, h: r.height }
+  })
+  const cs = getComputedStyle(list)
+  const lr = list.getBoundingClientRect()
+  const br = bar?.getBoundingClientRect() ?? null
+  return {
+    position: cs.position,
+    radiusPx: parseFloat(cs.borderTopLeftRadius) || 0,
+    boxShadow: cs.boxShadow,
+    // Same surface as the bar: the list must not paint a card of its own.
+    background: cs.backgroundColor,
+    barBackground: bar ? getComputedStyle(bar).backgroundColor : '',
+    // Inside the bar, horizontally: a layer escaping a 56 px bar would fail this.
+    insideBar: br ? lr.left >= br.left - 1 && lr.right <= br.right + 1 : false,
+    rows: list.querySelectorAll('button').length,
+    badges,
   }
 }
 
@@ -507,6 +569,10 @@ const probeScrollbars = () => {
         scrollHeight: vp?.scrollHeight ?? 0,
         scrollTop: vp?.scrollTop ?? 0,
         overflowing: vp ? vp.scrollHeight - vp.clientHeight : 0,
+        // A folded accordion keeps its scrollable viewport in the DOM at zero height:
+        // it overflows, but no wheel can reach it. Only a painted container is a
+        // candidate for the fade check below.
+        onScreen: !!(hostBox.width && hostBox.height) && getComputedStyle(el).visibility !== 'hidden',
         hasThumb: !!thumb,
         opacity: st ? Number(st.opacity) : null,
         thumbBg: st ? st.backgroundColor : null,
@@ -570,7 +636,7 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
 
   const bar = document.querySelector('[data-sidebar]')
   const barBg = paint(getComputedStyle(bar).backgroundColor)
-  const rows = [...bar.querySelectorAll('[data-sidebar-row]')]
+  const rows = [...bar.querySelectorAll('[data-sidebar-row]')].filter(r => !r.closest('[data-account-list]'))
   const accents = new Map()
   const animated = []
   for (const el of bar.querySelectorAll('*')) {
@@ -968,11 +1034,11 @@ try {
     await toggle() // expanded: the popover hangs off the header row
     await page.click('[data-sidebar-row="account"]')
     await new Promise(r => setTimeout(r, SETTLE_MS))
-    const filter = await page.$('[data-account-popover] input')
+    const filter = await page.$('[data-account-list-open="true"] input')
     if (filter) await filter.type(biggest.label)
     await new Promise(r => setTimeout(r, SETTLE_MS))
     const switched = await page.evaluate(label => {
-      const row = [...document.querySelectorAll('[data-account-popover] button')]
+      const row = [...document.querySelectorAll('[data-account-list-open="true"] button')]
         .find(b => (b.textContent ?? '').includes(label))
       if (!row) return false
       row.click()
@@ -1103,6 +1169,73 @@ try {
     console.log('name x: every account of this list is shared — no same-run reference row, indent not judged')
   }
 
+  // --- Lot A14: the account list unfolds IN the bar, and crops no badge ---
+  // Measured in BOTH states of the bar: the list is the same markup folded or not, so a
+  // 56 px bar is the harder case — a card would overflow it, and a badge hanging 9 px off
+  // its bubble is the first thing an `overflow-hidden` edge cuts.
+  const listBoxes = {}
+  for (const state of ['expanded', 'collapsed']) {
+    const want = state === 'collapsed'
+    const now = await page.evaluate(() => document.querySelector('[data-sidebar]')?.dataset.collapsed === 'true')
+    if (now !== want) await toggle()
+    await page.evaluate(() => {
+      if (!document.querySelector('[data-account-list-open="true"]')) document.querySelector('[data-sidebar-row="account"]')?.click()
+    })
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    const box = await page.evaluate(probeAccountListBox)
+    if (!box) { console.error(`HARNESS: ${state}: the account list did not unfold — the A14 checks measured nothing`); process.exit(2) }
+    if (!box.rows) { console.error(`HARNESS: ${state}: the unfolded list carries no row — nothing to measure`); process.exit(2) }
+    if (!box.badges.length) { console.error(`HARNESS: ${state}: no unread badge in the account list — the clipping check measured nothing`); process.exit(2) }
+    listBoxes[state] = box
+    const worst = Math.min(...box.badges.map(b => b.visible))
+    console.log(`account list (${state}): position=${box.position} radius=${box.radiusPx}px insideBar=${box.insideBar} rows=${box.rows} bg=${box.background} (bar ${box.barBackground}) shadow=${box.boxShadow}`)
+    console.log(`  badges: ${box.badges.map(b => `"${b.text}" ${(b.visible * 100).toFixed(1)}%`).join(', ')} — worst ${(worst * 100).toFixed(1)}%`)
+    if (box.position === 'fixed' || box.position === 'absolute') {
+      failures.push(`account list (${state}): position ${box.position} — the list must unfold inside the bar, not float over it`)
+    }
+    if (box.radiusPx > MAX_LIST_RADIUS_PX) {
+      failures.push(`account list (${state}): ${box.radiusPx}px corner radius (max ${MAX_LIST_RADIUS_PX}) — the list is the bar's surface, not a card`)
+    }
+    if (box.boxShadow && box.boxShadow !== 'none') {
+      failures.push(`account list (${state}): casts a shadow (${box.boxShadow}) — the list is the bar's surface, not a raised card`)
+    }
+    if (!box.insideBar) failures.push(`account list (${state}): its box escapes the bar horizontally`)
+    for (const b of box.badges) {
+      if (b.visible < MIN_BADGE_VISIBLE) {
+        failures.push(`account list (${state}): badge "${b.text}" is ${(b.visible * 100).toFixed(1)}% visible (min ${(MIN_BADGE_VISIBLE * 100).toFixed(0)}%) — something crops it`)
+      }
+    }
+  }
+  // Escape folds it, and the folding is what the user sees — not a node left on screen.
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const afterEscape = await page.evaluate(probeAccountListBox)
+  console.log(`account list after Escape: ${afterEscape ? 'STILL OPEN' : 'folded'}`)
+  if (afterEscape) failures.push('account list: Escape did not fold it')
+  // A click outside must fold it AND reach what it landed on — a backdrop swallowing the
+  // first click is the light-dismiss bug this design rule exists to prevent. The target is
+  // a folder row: if the click got through, the bar navigated to that folder.
+  await page.evaluate(() => document.querySelector('[data-sidebar-row="account"]')?.click())
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const outsideTarget = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('[data-sidebar] [data-sidebar-row^="folder:"]')]
+      .find(r => r.getAttribute('data-sidebar-row') !== `folder:${new URLSearchParams(location.search).get('folder') ?? 'INBOX'}`)
+    if (!row) return null
+    const r = row.getBoundingClientRect()
+    return { path: row.getAttribute('data-sidebar-row'), x: r.left + r.width / 2, y: r.top + r.height / 2 }
+  })
+  if (!outsideTarget) { console.error('HARNESS: no second folder row to click outside onto — light-dismiss measured nothing'); process.exit(2) }
+  const urlBefore = page.url()
+  await page.mouse.click(outsideTarget.x, outsideTarget.y)
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const dismissed = await page.evaluate(probeAccountListBox)
+  const urlAfter = page.url()
+  console.log(`outside click on ${outsideTarget.path}: list ${dismissed ? 'STILL OPEN' : 'folded'}, url ${urlBefore === urlAfter ? 'UNCHANGED' : 'changed'} -> ${urlAfter}`)
+  if (dismissed) failures.push('account list: a click outside did not fold it')
+  if (urlBefore === urlAfter) {
+    failures.push(`account list: the outside click on ${outsideTarget.path} did not reach its target (url unchanged) — the dismiss swallowed it`)
+  }
+
   // --- Lot A12: the bar's accent IS the active account's colour, in both themes ---
   // Measured across TWO accounts in the SAME run: the bar's accent surfaces are compared
   // to the colour of the bubble heading the bar at that moment, never to a constant. The
@@ -1116,7 +1249,7 @@ try {
         // naming a second mailbox can land on the colour the bar already wears and the
         // check would compare one colour with itself. Take the first row of the shipped
         // popover whose bubble is painted a DIFFERENT colour.
-        const row = [...document.querySelectorAll('[data-account-popover] button')]
+        const row = [...document.querySelectorAll('[data-account-list-open="true"] button')]
           .find(b => {
             const bubble = b.querySelector('[data-account-initial]')?.parentElement
             return bubble && getComputedStyle(bubble).backgroundColor !== here
@@ -1145,7 +1278,7 @@ try {
   // Arm B: an account of a DIFFERENT colour — reached by a real click on a shipped row.
   // The popover must be open for that click; reopening it is itself the shipped path.
   await page.evaluate(() => {
-    if (!document.querySelector('[data-account-popover]')) document.querySelector('[data-sidebar-row="account"]')?.click()
+    if (!document.querySelector('[data-account-list-open="true"]')) document.querySelector('[data-sidebar-row="account"]')?.click()
   })
   await new Promise(r => setTimeout(r, SETTLE_MS))
   const accentB = await accentOf(true)
@@ -1189,11 +1322,11 @@ try {
   // same shipped click path. Without this the scrollbar checks measure nothing and the
   // verdict depends on the order the accounts come back in, not on the product.
   await page.evaluate(() => {
-    if (!document.querySelector('[data-account-popover]')) document.querySelector('[data-sidebar-row="account"]')?.click()
+    if (!document.querySelector('[data-account-list-open="true"]')) document.querySelector('[data-sidebar-row="account"]')?.click()
   })
   await new Promise(r => setTimeout(r, SETTLE_MS))
   const restored = await page.evaluate(label => {
-    const row = [...document.querySelectorAll('[data-account-popover] button')]
+    const row = [...document.querySelectorAll('[data-account-list-open="true"] button')]
       .find(b => (b.textContent ?? '').includes(label))
     if (!row) return false
     row.click()
@@ -1211,7 +1344,6 @@ try {
   // popover instead — the row would never see the pointer and its hover check would read
   // as a product failure. Dismissed the shipped way, by Escape.
   await page.keyboard.press('Escape')
-  await page.evaluate(() => { document.querySelector('[data-account-popover]')?.remove() })
   await new Promise(r => setTimeout(r, SETTLE_MS))
 
   // --- Scrollbar (lot A8): native bar hidden, drawn thumb that fades when scrolling stops ---
@@ -1230,15 +1362,15 @@ try {
   console.log(`ThinScroll containers in the bar: ${sb.containers.length}`)
   if (!sb.containers.length) { console.error('HARNESS: no [data-thin-scroll] container found — nothing to measure'); process.exit(2) }
   for (const c of sb.containers) {
-    console.log(`  <${c.tag}>: viewport scrollbar-width=${c.viewportHidden} gutter=${c.gutter}px overflowing=${c.overflowing}px thumb=${c.hasThumb}`)
+    console.log(`  <${c.tag}>: viewport scrollbar-width=${c.viewportHidden} gutter=${c.gutter}px overflowing=${c.overflowing}px onScreen=${c.onScreen} thumb=${c.hasThumb}`)
     if (c.viewportHidden !== 'none') failures.push(`<${c.tag}> viewport resolves scrollbar-width=${c.viewportHidden}, expected none — the native bar is showing`)
     if (c.gutter > sb.bare.gutter) failures.push(`<${c.tag}> viewport reserves ${c.gutter}px, more than the native reference (${sb.bare.gutter}px)`)
   }
   // The fade can only be measured on a container that actually scrolls. The folder nav is
   // the one that overflows in the bar; if none does, the check measured nothing — harness
   // failure, not a product verdict.
-  const scroller = sb.containers.findIndex(c => c.overflowing > 0)
-  if (scroller < 0) { console.error('HARNESS: no ThinScroll container overflows — the thumb was never exercised'); process.exit(2) }
+  const scroller = sb.containers.findIndex(c => c.overflowing > 0 && c.onScreen)
+  if (scroller < 0) { console.error('HARNESS: no ThinScroll container both overflows and is on screen — the thumb was never exercised'); process.exit(2) }
 
   // Real wheel input over the scrolling viewport, then read the thumb DURING the scroll.
   // Run in BOTH themes: the ink is derived from `currentColor`, so a value that paints on
@@ -1306,7 +1438,7 @@ try {
   }
 
   // --- Cleanliness: one accent, one row motif, static, follows the theme ---
-  await page.keyboard.press('Escape') // close the popover so only the bar's own rows are measured
+  await page.keyboard.press('Escape') // fold the account list so only the bar's own rows are measured
   await new Promise(r => setTimeout(r, SETTLE_MS))
   const clean = {}
   for (const theme of THEMES) {
