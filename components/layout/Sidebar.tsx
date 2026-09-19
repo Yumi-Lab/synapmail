@@ -18,6 +18,7 @@ import { ACCOUNTS_SETTINGS_HREF } from '@/components/settings/SettingsSidebar'
 import { FolderContextMenu, type FolderMenuState } from './FolderContextMenu'
 import { accountDelimiter, isDescendant, sanitizeFolderName, type FolderAction } from '@/lib/folderActions'
 import { MAIL_PATH } from '@/lib/compose'
+import { ACCOUNT_FILTER_MAX, filterAccounts } from '@/lib/accountFilter'
 import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, mailboxSwitchHref } from '@/app/(app)/mail/mailboxUrl'
 import type { EmailAccount } from '@/types/account'
 
@@ -37,7 +38,7 @@ export const SIDEBAR = {
   /** Rows the unfolded account list shows before it starts scrolling. */
   accountListRows: 8,
   /** Past this many other accounts the list offers a filter field. */
-  accountFilterFrom: 8,
+  accountFilterFrom: 3,
 } as const
 
 /** The bar's surface, as a CSS value: the theme's own sidebar token, so the bar
@@ -206,7 +207,10 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const [currentFolder, setCurrentFolder] = useState('INBOX')
   const [accountOpen, setAccountOpen] = useState(false)
   const [accountFilter, setAccountFilter] = useState('')
+  /** Ligne en surbrillance dans la liste dépliée, déplacée par ↑/↓ et validée par Entrée. */
+  const [accountHighlight, setAccountHighlight] = useState(0)
   const accountBoxRef = useRef<HTMLDivElement>(null)
+  const accountFilterRef = useRef<HTMLInputElement>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
   const [folderMenu, setFolderMenu] = useState<FolderMenuState | null>(null)
   /** Saisie EN LIGNE d'un nom de dossier — jamais `window.prompt`. `path` vide = création à la racine. */
@@ -256,7 +260,12 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
 
   useEffect(() => {
     if (!accountOpen) setAccountFilter('')
+    setAccountHighlight(0)
   }, [accountOpen])
+
+
+  // La surbrillance ne doit jamais désigner une ligne que le filtre vient de retirer.
+  useEffect(() => { setAccountHighlight(0) }, [accountFilter])
 
   const toggleAccountList = useCallback(() => setAccountOpen(o => !o), [])
 
@@ -271,10 +280,19 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   // The list offers the OTHER accounts only: the active one already heads the bar,
   // repeating it as a row would be a line that does nothing.
   const otherAccounts = accounts.filter(acc => acc.id !== activeAccount?.id)
-  const filteredAccounts = otherAccounts.filter(acc => {
-    const q = accountFilter.trim().toLowerCase()
-    return !q || acc.email.toLowerCase().includes(q) || (acc.name ?? '').toLowerCase().includes(q)
-  })
+  // Le QUOI du filtre vit dans `lib/accountFilter.ts` (moitié pure, auto-contrôlée) :
+  // la barre n'en garde que le champ et le clavier.
+  const filteredAccounts = filterAccounts(accountFilter, otherAccounts)
+  const showAccountFilter = otherAccounts.length > SIDEBAR.accountFilterFrom && !collapsed
+  // Le champ prend le focus à l'OUVERTURE, et pas au montage : la liste est toujours
+  // dans le document (c'est sa hauteur qui s'anime), donc un `autoFocus` volerait le
+  // focus au chargement de la page. Le pli dure `transitionMs` et le champ n'est
+  // atteignable qu'une fois visible, d'où l'attente de la fin du pli.
+  useEffect(() => {
+    if (!accountOpen || !showAccountFilter) return
+    const id = window.setTimeout(() => accountFilterRef.current?.focus(), SIDEBAR.transitionMs)
+    return () => window.clearTimeout(id)
+  }, [accountOpen, showAccountFilter])
 
   const { data: foldersData, error: foldersError, mutate: mutateFolders } = useSWR<{ data: FolderItem[] }>(
     resolvedAccountId ? `/api/folders?account=${resolvedAccountId}` : '/api/folders',
@@ -294,6 +312,35 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const pickAccount = (id: string) => {
     switchAccount(id)
     setAccountOpen(false)
+  }
+
+  /**
+   * Clavier du champ de filtre : ↑/↓ déplacent la surbrillance, Entrée bascule sur
+   * la ligne en surbrillance (la première par défaut), Échap vide le filtre s'il est
+   * rempli et ne ferme la liste que s'il est déjà vide — sinon une frappe de trop
+   * refermerait le panneau qu'on vient d'ouvrir. L'écouteur global de la liste voit
+   * le même Échap : l'événement est arrêté ici quand il a servi à vider le champ.
+   */
+  const onAccountFilterKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const last = filteredAccounts.length - 1
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (last < 0) return
+      const step = e.key === 'ArrowDown' ? 1 : -1
+      setAccountHighlight(i => Math.min(last, Math.max(0, i + step)))
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const picked = filteredAccounts[accountHighlight]
+      if (picked) pickAccount(picked.id)
+      return
+    }
+    if (e.key === 'Escape' && accountFilter) {
+      e.preventDefault()
+      e.stopPropagation()
+      setAccountFilter('')
+    }
   }
 
   const handleFolderClick = (path?: string) => {
@@ -330,7 +377,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
    * bubbles alone, at the exact x the header's bubble sits at, and the name and the
    * address move into the tooltip instead of overflowing 56 px.
    */
-  const accountRow = (acc: EmailAccount) => {
+  const accountRow = (acc: EmailAccount, highlighted = false) => {
     const label = acc.name || acc.email
     const bubble = (
       <AccountAvatar account={acc} colorIndex={accounts.indexOf(acc)} unread={acc.unreadCount ?? 0} />
@@ -344,7 +391,8 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
         <button
           onClick={() => pickAccount(acc.id)}
           data-sidebar-row={`account:${acc.id}`}
-          className={cn(ROW, ROW_IDLE, 'text-left')}
+          data-account-highlight={highlighted ? 'true' : undefined}
+          className={cn(ROW, ROW_IDLE, 'text-left', highlighted && 'bg-foreground/[0.06]')}
         >
           <span className={ICON_COL}>
             {collapsed ? <IconTooltip label={acc.name ? t('accountTooltip', { name: acc.name, email: acc.email }) : acc.email} align="start">{bubble}</IconTooltip> : bubble}
@@ -613,12 +661,16 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                 data-account-list
                 data-account-list-open={accountOpen ? 'true' : 'false'}
               >
-                {otherAccounts.length > SIDEBAR.accountFilterFrom && (
+                {showAccountFilter && (
                   <div className="px-1.5 pb-1.5">
                     <input
+                      ref={accountFilterRef}
                       value={accountFilter}
                       onChange={e => setAccountFilter(e.target.value)}
+                      onKeyDown={onAccountFilterKey}
+                      maxLength={ACCOUNT_FILTER_MAX}
                       placeholder={t('searchAccounts')}
+                      data-account-filter
                       className={cn(
                         'w-full px-2.5 py-1.5 rounded-md bg-foreground/[0.06] text-sm text-foreground',
                         'placeholder:text-muted-foreground outline-none focus:ring-1', ACCENT.ring,
@@ -638,7 +690,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                       {t('noAccountMatch')}
                     </p>
                   )}
-                  {filteredAccounts.map(acc => accountRow(acc))}
+                  {filteredAccounts.map((acc, i) => accountRow(acc, i === accountHighlight))}
                 </ThinScroll>
               </div>
             </div>
