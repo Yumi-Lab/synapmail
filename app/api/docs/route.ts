@@ -1,12 +1,14 @@
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { NextResponse } from 'next/server'
-import { API_DOC_FILE, MARKDOWN_CONTENT_TYPE, readApiDoc } from '@/lib/apiDocs'
+import { API_DOC_FILE, MARKDOWN_CONTENT_TYPE } from '@/lib/apiDocs'
 
 export const dynamic = 'force-dynamic'
 
 /** Serves the API reference as markdown, to anyone — a key is what it explains how to use. */
 export async function GET() {
   try {
-    return new NextResponse(await readApiDoc(), {
+    return new NextResponse(await readFile(join(process.cwd(), API_DOC_FILE), 'utf8'), {
       headers: { 'Content-Type': MARKDOWN_CONTENT_TYPE },
     })
   } catch {

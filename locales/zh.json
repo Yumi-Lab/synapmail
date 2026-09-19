@@ -539,6 +539,11 @@
         "smartRules": "智能 AI 规则",
         "personas": "按账户设定人设"
       }
+    },
+    "apiKeys": {
+      "docsTitle": "API 文档",
+      "docsDescription": "本实例提供的参考文档：每个接口、参数及访问方式，无需密钥即可阅读。",
+      "docsLink": "打开参考文档"
     }
   },
   "admin": {

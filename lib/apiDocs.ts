@@ -6,11 +6,13 @@
  * offers BEFORE it has a key. Neither serves anything but this repository's own
  * document, so there is nothing here an anonymous reader should not see.
  */
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+/**
+ * No `node:fs` here: the settings screen is a client component and reads
+ * `API_DOC_PATH` from this module. The route does the reading.
+ */
 
 /** The document, relative to the running application's root. */
-export const API_DOC_FILE = join('docs', 'API.md')
+export const API_DOC_FILE = 'docs/API.md'
 
 /** The paths the two routes answer on. Cited in the document and in `llms.txt`. */
 export const API_DOC_PATH = '/api/docs'
@@ -19,8 +21,6 @@ export const LLMS_TXT_PATH = '/llms.txt'
 /** Markdown, spelled the way a reader that cares about encoding needs it. */
 export const MARKDOWN_CONTENT_TYPE = 'text/markdown; charset=utf-8'
 export const PLAIN_CONTENT_TYPE = 'text/plain; charset=utf-8'
-
-export const readApiDoc = () => readFile(join(process.cwd(), API_DOC_FILE), 'utf8')
 
 /**
  * The llmstxt.org file: a title, a summary as a blockquote, then sections of

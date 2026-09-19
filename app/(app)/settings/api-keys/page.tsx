@@ -3,11 +3,12 @@
 import { useState } from 'react'
 import useSWR from 'swr'
 import { useTranslations } from 'next-intl'
-import { Plus, Trash2, Terminal, Copy, Check, TriangleAlert, ChevronDown, Activity } from 'lucide-react'
+import { Plus, Trash2, Terminal, Copy, Check, TriangleAlert, ChevronDown, Activity, BookOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { ApiKey, ApiKeyRequestLog } from '@/types/account'
-import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
+import { SettingsPage, SettingsHeader, SettingsSection } from '@/components/settings/primitives'
+import { API_DOC_PATH } from '@/lib/apiDocs'
 import { RowMenu, ContextMenuItem, MENU_ICON } from '@/components/ui/ContextMenu'
 import { cn } from '@/lib/utils'
 
@@ -49,6 +50,7 @@ function ActivityPanel({ keyId }: { keyId: string }) {
 
 export default function ApiKeysPage() {
   const tRow = useTranslations('settings.rowActions')
+  const tDocs = useTranslations('settings.apiKeys')
   const { data, mutate } = useSWR<{ data: ApiKey[] }>('/api/api-keys', fetcher)
   const keys = data?.data ?? []
 
@@ -104,6 +106,24 @@ export default function ApiKeysPage() {
         title="Clés API"
         description="Accès Bearer en lecture et écriture pour un script ou un agent externe, en plus de la connexion navigateur"
       />
+
+      <SettingsSection className="mb-6">
+        <div className="flex items-start gap-3">
+          <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">{tDocs('docsTitle')}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{tDocs('docsDescription')}</p>
+          </div>
+          <a
+            href={API_DOC_PATH}
+            target="_blank"
+            rel="noreferrer"
+            className="shrink-0 text-sm font-medium text-violet-600 hover:underline dark:text-violet-400"
+          >
+            {tDocs('docsLink')}
+          </a>
+        </div>
+      </SettingsSection>
 
       {revealedKey && (
         <div className="mb-6 rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5 shadow-sm">
