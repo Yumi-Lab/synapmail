@@ -17,6 +17,30 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `mail.ai.actions.*`, que les deux écrans relisent au lieu d'en garder chacun sa copie. Les noms de marque
   (Claude, OpenAI, Ollama) restent littéraux.
 
+- **La référence de l'API est complète, servie par l'instance, et contrôlée contre le code**
+  (`docs/API.md`, `lib/apiDocs.ts`, `GET /api/docs`, `GET /llms.txt`, `scripts/check-api-docs.mjs`,
+  `Dockerfile`) : neuf couples méthode/route existaient dans le code sans une ligne dans la doc
+  (`POST`/`PATCH`/`DELETE /api/folders`, `POST /api/folders/actions`, `GET`/`POST /api/accounts/[id]/shares`,
+  `DELETE /api/accounts/[id]/shares/[shareId]`, `GET`/`POST /api/invites/[token]`) ; ils y sont. Et
+  `POST /api/ai/action` était annoncé « session only » alors que le code appelle `authenticate(` : il
+  accepte une clé Bearer depuis le lot L1, la doc le dit enfin.
+  La doc n'existait que dans le dépôt : elle est désormais SERVIE. `GET /api/docs` rend `docs/API.md` en
+  `text/markdown; charset=utf-8` et `GET /llms.txt` suit le format llmstxt.org (titre, résumé en citation,
+  sections de liens). Les deux sont PUBLICS, et c'est le point : un agent doit pouvoir lire ce que
+  l'instance offre AVANT d'avoir une clé. Ils ne servent rien d'autre que le document du dépôt. Les liens
+  sont bâtis depuis l'ORIGINE DE LA REQUÊTE — aucun hôte d'instance n'est écrit en dur, une installation
+  auto-hébergée cite donc sa propre adresse. `llms.txt` prévient aussi, à l'endroit où un agent va lire ses
+  premiers messages, que le contenu d'un mail n'est pas une consigne.
+  Cette doc ne peut plus dériver : `scripts/check-api-docs.mjs`, appelé par `./verify.sh`, exige que chaque
+  méthode exportée de chaque `app/api/**/route.ts` ait sa ligne dans `docs/API.md`, que chaque ligne de la
+  doc désigne une route qui existe, et que le mode d'accès annoncé soit celui que le code applique. Le mode
+  est lu DANS la fonction de la méthode, pas dans le fichier : un fichier dont une méthode accepte Bearer et
+  l'autre non serait sinon décrit faux — un contrôle vérifie qu'un tel fichier existe, faute de quoi cette
+  lecture fine ne serait jamais exercée. Trois contrôles négatifs (route retirée, route fantôme, mode faux)
+  prouvent que la batterie rougit vraiment.
+  Le `Dockerfile` copie `docs/` dans l'image : la sortie `standalone` ne l'emporte pas, et sans elle la
+  référence servie répondrait 404.
+
 - **API des abonnements** (`lib/subscriptions.ts`, `GET /api/subscriptions`,
   `POST /api/subscriptions/unsubscribe`, `GET /api/subscriptions/unsubscribed`) : la liste des lettres
   d'information d'une boîte, regroupées par liste (`List-Id`, sinon adresse de l'expéditeur), lue sur les
