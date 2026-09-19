@@ -245,39 +245,61 @@ export function orderAccountsForSearch(accounts: readonly AccountRank[], activeI
 }
 
 /**
- * Lance `run` sur chaque élément avec au plus `limit` exécutions EN COURS, et
- * rend les résultats dans l'ordre d'ARRIVÉE (pas celui des entrées) : une boîte
- * lente ne retient pas l'affichage de celles qui ont déjà répondu. Un `run` qui
- * échoue rend son erreur au lieu de casser le balayage — une boîte injoignable
- * n'arrête pas les autres.
+ * Entrelace plusieurs générateurs en n'en laissant que `limit` OUVERTS à la fois,
+ * et rend chaque élément dès qu'il arrive — pas dans l'ordre des sources. Une
+ * source n'est CRÉÉE qu'au moment où une place se libère : une boîte dont le tour
+ * n'est pas venu n'ouvre aucune connexion IMAP.
  *
- * Générateur PUR au sens du banc : il n'ouvre rien lui-même, il ORDONNANCE ce
+ * Une source qui échoue s'arrête SEULE, les autres continuent : c'est le filet de
+ * sécurité, pas le chemin normal — une boîte injoignable est censée rendre son
+ * propre élément d'erreur pour que le flux puisse la signaler.
+ *
+ * Fonction PURE au sens du banc : elle n'ouvre rien elle-même, elle ORDONNANCE ce
  * qu'on lui donne. Auto-contrôle `scripts/check-search-accounts.mjs`.
  */
-export async function* mapWithConcurrency<TItem, TResult>(
-  items: readonly TItem[],
+export async function* mergeGenerators<T>(
+  sources: readonly (() => AsyncGenerator<T>)[],
   limit: number,
-  run: (item: TItem, index: number) => Promise<TResult>,
-): AsyncGenerator<{ item: TItem; index: number; value?: TResult; error?: unknown }> {
-  // `Math.max(1, …)` sur une liste VIDE démarrerait une tâche sur `items[0]`,
-  // qui n'existe pas : le plancher ne s'applique qu'à une liste non vide.
-  const width = items.length === 0 ? 0 : Math.max(1, Math.min(limit, items.length))
+): AsyncGenerator<T> {
+  // Sur une liste VIDE, un plancher à 1 démarrerait `sources[0]`, qui n'existe pas.
+  const width = sources.length === 0 ? 0 : Math.max(1, Math.min(limit, sources.length))
+  type Slot = { gen: AsyncGenerator<T>; pending: Promise<{ index: number; done: boolean; value?: T }> }
+  const active = new Map<number, Slot>()
   let next = 0
-  const settle = (index: number) => run(items[index], index)
-    .then(value => ({ item: items[index], index, value }))
-    .catch(error => ({ item: items[index], index, error }))
-  type Slot = ReturnType<typeof settle>
-  const running = new Map<number, Slot>()
-  const start = () => { const i = next++; running.set(i, settle(i)) }
+  const advance = (index: number, gen: AsyncGenerator<T>) => gen.next()
+    .then(r => ({ index, done: !!r.done, value: r.value as T | undefined }))
+    .catch(() => ({ index, done: true, value: undefined }))
+  const start = () => {
+    const index = next++
+    let gen: AsyncGenerator<T>
+    try { gen = sources[index]() } catch { return }
+    active.set(index, { gen, pending: advance(index, gen) })
+  }
   while (next < width) start()
-  while (running.size) {
-    // `Promise.race` sur les tâches EN COURS : la première arrivée est rendue,
-    // puis sa place est reprise par la suivante. Sans le retrait explicite, une
-    // tâche déjà rendue gagnerait toutes les courses suivantes.
-    const done = await Promise.race(Array.from(running.values()))
-    running.delete(done.index)
-    yield done
-    if (next < items.length) start()
+  try {
+    while (active.size) {
+      // Course sur les sources OUVERTES : la première arrivée est rendue, puis sa
+      // promesse est remplacée. Sans ce remplacement, une source déjà rendue
+      // gagnerait toutes les courses suivantes.
+      const done = await Promise.race(Array.from(active.values(), slot => slot.pending))
+      const slot = active.get(done.index)
+      if (!slot) continue
+      if (done.done) {
+        active.delete(done.index)
+        if (next < sources.length) start()
+        continue
+      }
+      slot.pending = advance(done.index, slot.gen)
+      yield done.value as T
+    }
+  } finally {
+    // Abandon (`break`, `return`, erreur du consommateur) : chaque source encore
+    // ouverte est close, donc son `finally` — celui qui ferme la connexion IMAP —
+    // s'exécute. Sans attendre : une source peut être au milieu d'un `SEARCH` de
+    // plusieurs dizaines de secondes, et la réponse n'a pas à l'attendre pour se
+    // fermer (l'abandon est déjà signalé par ailleurs).
+    for (const slot of Array.from(active.values())) void slot.gen.return(undefined as never).catch(() => {})
+    active.clear()
   }
 }
 

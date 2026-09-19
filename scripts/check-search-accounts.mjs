@@ -22,7 +22,7 @@ registerHooks({
 const {
   SEARCH_SCOPES, SCOPE_FOLDER, SCOPE_ALL, SCOPE_ACCOUNTS, ACCOUNT_CONCURRENCY,
   readScope, isWideScope, buildSearchHref,
-  splitFolderPasses, orderAccountsForSearch, mapWithConcurrency,
+  splitFolderPasses, orderAccountsForSearch, mergeGenerators,
 } = await import(new URL('../lib/search.ts', import.meta.url).href)
 
 let failed = 0
@@ -99,57 +99,92 @@ check('a mailbox listed twice is swept once',
 check('an entry without an id is dropped',
   orderAccountsForSearch([{ id: '' }, { id: 'b' }], null), ['b'])
 
-console.log('\nmapWithConcurrency')
+console.log('\nmergeGenerators')
 
-// A fake scheduler: each item resolves after `ms` ticks of a virtual clock, so
-// the check measures the ORDERING, never the wall clock.
-const collect = async (items, limit, run) => {
+const delayed = (value, ms) => new Promise(res => setTimeout(() => res(value), ms))
+const collect = async (sources, limit) => {
   const out = []
-  for await (const r of mapWithConcurrency(items, limit, run)) out.push(r)
+  for await (const v of mergeGenerators(sources, limit)) out.push(v)
   return out
 }
-const delayed = (value, ms) => new Promise(res => setTimeout(() => res(value), ms))
+// A source that yields its items after a delay, and records that it was OPENED.
+const source = (items, ms, opened) => () => (async function* () {
+  opened?.push(items[0])
+  for (const i of items) { await delayed(null, ms); yield i }
+})()
 
 check('the concurrency cap is a measured constant, not a magic number',
   typeof ACCOUNT_CONCURRENCY === 'number' && ACCOUNT_CONCURRENCY >= 1, true)
 
-check('results arrive in completion order, not input order',
-  (await collect(['slow', 'fast'], 2, (i) => delayed(i, i === 'slow' ? 40 : 5))).map(r => r.value),
+check('items arrive in completion order, not source order',
+  await collect([source(['slow'], 40), source(['fast'], 5)], 2),
   ['fast', 'slow'])
 
-check('every item is yielded exactly once',
-  (await collect([1, 2, 3, 4, 5], 2, (i) => delayed(i, 1))).map(r => r.value).sort(),
+check('every item of every source is yielded exactly once',
+  (await collect([source([1, 2], 1), source([3], 1), source([4, 5], 1)], 2)).sort(),
   [1, 2, 3, 4, 5])
 
-check('each result carries its item and its index',
-  (await collect(['x', 'y'], 1, (i) => delayed(i, 1))).map(r => [r.item, r.index]),
-  [['x', 0], ['y', 1]])
-
-check('a failing item yields its error and does not stop the others',
-  (await collect([1, 2, 3], 2, (i) => i === 2 ? Promise.reject(new Error('boom')) : delayed(i, 1)))
-    .map(r => r.error ? `err:${String(r.error.message)}` : `ok:${r.value}`).sort(),
-  ['err:boom', 'ok:1', 'ok:3'])
-
-check('never more than `limit` runs are in flight at once',
+check('a source is only OPENED when a slot frees up',
   await (async () => {
-    let inFlight = 0, peak = 0
-    await collect([1, 2, 3, 4, 5, 6, 7], 3, async () => {
-      inFlight++; peak = Math.max(peak, inFlight)
-      await delayed(null, 5)
-      inFlight--
-    })
+    const opened = []
+    const sources = [source([1], 20, opened), source([2], 20, opened), source([3], 20, opened)]
+    const it = mergeGenerators(sources, 1)
+    await it.next()
+    const afterFirst = opened.length
+    // eslint-disable-next-line no-empty
+    for await (const _ of it) {}
+    return [afterFirst, opened.length]
+  })(), [1, 3])
+
+check('a source that throws stops alone and the others complete',
+  (await collect([
+    source([1], 1),
+    () => (async function* () { throw new Error('boom') })(),
+    source([3], 1),
+  ], 3)).sort(),
+  [1, 3])
+
+check('a source that throws MID-stream keeps what it already yielded',
+  (await collect([
+    () => (async function* () { yield 'a'; throw new Error('boom') })(),
+    source(['b'], 1),
+  ], 2)).sort(),
+  ['a', 'b'])
+
+check('never more than `limit` sources are open at once',
+  await (async () => {
+    let open = 0, peak = 0
+    const busy = () => (async function* () {
+      open++; peak = Math.max(peak, open)
+      await delayed(null, 5); yield 1
+      open--
+    })()
+    await collect(Array.from({ length: 7 }, () => busy), 3)
     return peak
   })(), 3)
 
-check('a limit wider than the list does not start phantom runs',
+check('a limit wider than the list does not open phantom sources',
   await (async () => {
-    let started = 0
-    await collect([1, 2], 10, async () => { started++ })
-    return started
+    let opened = 0
+    await collect([1, 2].map(() => () => (async function* () { opened++; yield 1 })()), 10)
+    return opened
   })(), 2)
 
 check('an empty list yields nothing and terminates',
-  (await collect([], 3, async () => 'never')).length, 0)
+  (await collect([], 3)).length, 0)
+
+check('abandoning the merge closes every open source',
+  await (async () => {
+    const closed = []
+    const closeable = name => () => (async function* () {
+      try { for (;;) { await delayed(null, 2); yield name } } finally { closed.push(name) }
+    })()
+    const it = mergeGenerators([closeable('a'), closeable('b')], 2)
+    await it.next()
+    await it.return(undefined)
+    await delayed(null, 20)
+    return closed.sort()
+  })(), ['a', 'b'])
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1) }
 console.log('\ncheck-search-accounts: OK')

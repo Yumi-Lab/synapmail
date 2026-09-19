@@ -3,16 +3,69 @@ import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { listFolders, listFoldersRanked, searchMessagesByFolder, searchMessagesIn } from '@/lib/imap'
+import { accountOrderBy } from '@/lib/accountColor'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
-import { MIN_QUERY_LENGTH, SCOPE_ALL, SCOPE_PARAM, SEARCH_FIELDS, SEARCH_PARAM, SEARCH_RESULT_LIMIT, STREAM_PARAM, parseQuery, readScope } from '@/lib/search'
+import {
+  ACCOUNT_CONCURRENCY, MIN_QUERY_LENGTH, SCOPE_ACCOUNTS, SCOPE_ALL, SCOPE_PARAM, SEARCH_FIELDS,
+  SEARCH_PARAM, SEARCH_RESULT_LIMIT, STREAM_PARAM, mergeGenerators, orderAccountsForSearch,
+  parseQuery, readScope,
+} from '@/lib/search'
 
 export const dynamic = 'force-dynamic'
 
 type AccountRow = {
-  id: string; imap_host: string; imap_port: number; imap_secure: boolean;
+  id: string; email: string; imap_host: string; imap_port: number; imap_secure: boolean;
   username: string; password_encrypted: string; prompt_guard: boolean;
   oauth_provider: string | null; oauth_access_token: string | null;
   oauth_refresh_token: string | null; oauth_expires_at: number | null;
+}
+
+/** La configuration IMAP d'une boîte — même forme pour les trois portées. */
+function imapConfig(row: AccountRow) {
+  return {
+    id: row.id,
+    imapHost: row.imap_host,
+    imapPort: row.imap_port,
+    imapSecure: row.imap_secure,
+    username: row.username,
+    passwordEncrypted: row.password_encrypted,
+    oauthProvider: row.oauth_provider,
+    oauthAccessToken: row.oauth_access_token,
+    oauthRefreshToken: row.oauth_refresh_token,
+    oauthExpiresAt: row.oauth_expires_at,
+  }
+}
+
+/**
+ * Les messages d'un morceau, prêts à partir : du plus récent au plus ancien,
+ * plafonnés, et portant la boîte d'où ils viennent — sans elle, la liste ne
+ * saurait pas dans QUELLE boîte ouvrir un résultat.
+ */
+function streamedMessages<T extends { date: string }>(messages: T[], accountId: string) {
+  return messages
+    .slice()
+    .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
+    .slice(0, SEARCH_RESULT_LIMIT)
+    .map(m => ({ ...m, accountId }))
+}
+
+/**
+ * Les boîtes que cet utilisateur peut RÉELLEMENT balayer : les siennes, plus
+ * celles reçues en partage actif et non expiré — la même condition que
+ * `getAccessibleAccount`, appliquée en une seule requête au lieu d'une par boîte.
+ * Aucun identifiant venu du client n'entre ici : la liste vient de la base.
+ */
+async function listAccessibleAccounts(userId: string): Promise<AccountRow[]> {
+  return query<AccountRow>(
+    `SELECT a.* FROM email_accounts a WHERE a.user_id = $1
+     UNION
+     SELECT a.* FROM email_accounts a
+       JOIN account_shares sh ON sh.account_id = a.id
+      WHERE sh.invitee_user_id = $1 AND sh.status = 'active'
+        AND (sh.expires_at IS NULL OR sh.expires_at > NOW())
+     ${accountOrderBy({ isDefault: 'is_default', createdAt: 'created_at', id: 'id' })}`,
+    [userId]
+  )
 }
 
 export async function GET(req: Request) {
@@ -46,17 +99,84 @@ export async function GET(req: Request) {
     if (!account) {
       return NextResponse.json({ messages: [], total: 0, fields: SEARCH_FIELDS, error: 'No account configured' })
     }
-    const config = {
-      id: account.id,
-      imapHost: account.imap_host,
-      imapPort: account.imap_port,
-      imapSecure: account.imap_secure,
-      username: account.username,
-      passwordEncrypted: account.password_encrypted,
-      oauthProvider: account.oauth_provider,
-      oauthAccessToken: account.oauth_access_token,
-      oauthRefreshToken: account.oauth_refresh_token,
-      oauthExpiresAt: account.oauth_expires_at,
+    const config = imapConfig(account)
+
+    // `scope=accounts` + `stream=1` : le même flux NDJSON, étendu à TOUTES les
+    // boîtes accessibles. Une boîte est balayée en DEUX passes (réception + envoyés
+    // d'abord, le reste ensuite) et au plus ACCOUNT_CONCURRENCY boîtes sont
+    // ouvertes de front, pour que les résultats utiles arrivent en quelques
+    // secondes même avec beaucoup de boîtes (mesuré le 20/09/2026 sur le compte de
+    // test : 7 boîtes, 185 dossiers, 50,7 s boîte par boîte en série).
+    if (scope === SCOPE_ACCOUNTS && searchParams.get(STREAM_PARAM)) {
+      const accessible = await listAccessibleAccounts(authCtx.id)
+      // L'identifiant reçu du client ne sert QU'À ordonner : il n'ouvre aucune
+      // boîte par lui-même, seules celles de `listAccessibleAccounts` sont balayées.
+      const order = orderAccountsForSearch(accessible, account.id)
+      const byId = new Map(accessible.map(a => [a.id, a]))
+      const accounts = order.map(id => byId.get(id)).filter((a): a is AccountRow => !!a)
+      const machine = isMachineRequest(req)
+      const encoder = new TextEncoder()
+      const sweep = new AbortController()
+      req.signal.addEventListener('abort', () => sweep.abort(), { once: true })
+
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          const send = (payload: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`))
+          // La progression est comptée pour l'ENSEMBLE des boîtes : une seule barre
+          // pour l'utilisateur, alors que chaque boîte compte ses dossiers à part.
+          let searched = 0
+          let folders = 0
+          const unreachable: string[] = []
+          try {
+            const sources = accounts.map(row => async function* () {
+              const cfg = imapConfig(row)
+              let ranked: string[]
+              try {
+                ranked = await listFoldersRanked(cfg)
+              } catch {
+                // Une boîte injoignable n'arrête pas les autres : elle est signalée
+                // en fin de flux, et son balayage est simplement sauté.
+                unreachable.push(row.email)
+                return
+              }
+              folders += ranked.length
+              const guard = { enabled: machine && row.prompt_guard }
+              for await (const chunk of searchMessagesByFolder(cfg, ranked, terms, sweep.signal)) {
+                if (sweep.signal.aborted) return
+                searched += 1
+                // La garde d'invite s'applique PAR BOÎTE : `prompt_guard` diffère
+                // d'une boîte à l'autre, donc chaque morceau porte celle de la sienne.
+                yield guardApiPayload({
+                  messages: streamedMessages(chunk.messages, row.id),
+                  total: chunk.total,
+                  fields: SEARCH_FIELDS,
+                  folder: chunk.folder,
+                  accountId: row.id,
+                  accountEmail: row.email,
+                  searched,
+                  folders,
+                }, guard)
+              }
+            })
+            for await (const payload of mergeGenerators(sources, ACCOUNT_CONCURRENCY)) {
+              if (sweep.signal.aborted) break
+              send(payload)
+            }
+            if (!sweep.signal.aborted && unreachable.length) send({ unreachable })
+          } catch (err) {
+            if (!sweep.signal.aborted) send({ error: String(err) })
+          } finally {
+            controller.close()
+          }
+        },
+        cancel() { sweep.abort() },
+      })
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Cache-Control': 'no-store, no-transform',
+        },
+      })
     }
 
     // `scope=all` + `stream=1` : la réponse part dossier par dossier (NDJSON), dans
@@ -80,11 +200,7 @@ export async function GET(req: Request) {
             for await (const chunk of searchMessagesByFolder(config, ranked, terms, sweep.signal)) {
               if (sweep.signal.aborted) break
               const payload = guardApiPayload({
-                messages: chunk.messages
-                  .slice()
-                  .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
-                  .slice(0, SEARCH_RESULT_LIMIT)
-                  .map(m => ({ ...m, accountId })),
+                messages: streamedMessages(chunk.messages, accountId),
                 total: chunk.total,
                 fields: SEARCH_FIELDS,
                 folder: chunk.folder,
