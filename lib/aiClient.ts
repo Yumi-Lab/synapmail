@@ -249,9 +249,12 @@ export function buildOllamaOriginCommand(os: LocalOs, origin: string): string {
       '</dict></plist>',
       'PLIST_EOF',
       `launchctl setenv ${V} "$NEW"`,
-      'osascript -e \'quit app "Ollama"\' || true',
+      // Both names, case sensitive: `ollama` is only the server, and the
+      // `Ollama` app restarts it with its OLD environment if left running.
+      // A quit through AppleScript is refused by the app, so it is not used.
+      'pkill -x Ollama || true',
       'pkill -x ollama || true',
-      'sleep 2',
+      'for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -x Ollama >/dev/null || pgrep -x ollama >/dev/null || break; sleep 1; done',
       'open -a Ollama',
     ].join('\n')
   }
@@ -261,7 +264,7 @@ export function buildOllamaOriginCommand(os: LocalOs, origin: string): string {
       `CUR=$(systemctl show -p Environment --value ollama.service | tr ' ' '\\n' | sed -n 's/^${V}=//p')`,
       `case ",$CUR," in *",$ORIGIN,"*) NEW="$CUR" ;; *) NEW="${'${CUR:+$CUR,}'}$ORIGIN" ;; esac`,
       'sudo mkdir -p /etc/systemd/system/ollama.service.d',
-      `printf '[Service]\\nEnvironment="${V}=%s"\\n' "$NEW" | sudo tee /etc/systemd/system/ollama.service.d/origins.conf`,
+      `printf '[Service]\\nEnvironment="${V}=%s"\\n' "$NEW" | sudo tee /etc/systemd/system/ollama.service.d/zz-origins.conf`,
       'sudo systemctl daemon-reload',
       'sudo systemctl restart ollama',
     ].join('\n')
@@ -272,7 +275,9 @@ export function buildOllamaOriginCommand(os: LocalOs, origin: string): string {
     "$list = @($cur -split ',' | Where-Object { $_ -ne '' })",
     'if ($list -notcontains $origin) { $list += $origin }',
     `[Environment]::SetEnvironmentVariable('${V}', ($list -join ','), 'User')`,
-    'Get-Process ollama -ErrorAction SilentlyContinue | Stop-Process -Force',
+    // Same trap as macOS: 'ollama' is the server only, the 'ollama app' tray
+    // icon survives it and restarts it with the old environment.
+    "Get-Process 'ollama app','ollama' -ErrorAction SilentlyContinue | Stop-Process -Force",
     'Start-Process "$env:LOCALAPPDATA\\Programs\\Ollama\\ollama app.exe"',
   ].join('\n')
 }

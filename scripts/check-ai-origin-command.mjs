@@ -53,6 +53,7 @@ const BREAKAGES = {
   'accepts-any-origin': 'a booby-trapped origin is let through instead of refused',
   'origin-dropped': 'the command no longer carries the origin it was asked for',
   'overwrites-existing': 'the command replaces OLLAMA_ORIGINS instead of adding to it',
+  'app-left-running': 'only the ollama server is stopped, so the app restarts it with the old environment',
 }
 const BREAK = process.argv.find(a => a.startsWith('--break='))?.slice('--break='.length) ?? null
 if (BREAK && !BREAKAGES[BREAK]) {
@@ -75,6 +76,18 @@ const build = (os, origin) => {
   const cmd = buildOllamaOriginCommand(os, origin)
   if (BREAK === 'origin-dropped') return cmd.replaceAll(origin, 'https://elsewhere.test')
   if (BREAK === 'overwrites-existing') return cmd.replace(/\$\{?CUR/g, '${EMPTY')
+  if (BREAK === 'app-left-running') {
+    // What the screen shipped before the 2026-09-19 gate: the app is asked to
+    // quit (it refuses) and only the lowercase server process is killed.
+    if (os === 'mac') {
+      return cmd
+        .replace("pkill -x Ollama || true", `osascript -e 'quit app "Ollama"' || true`)
+        .replace(/for i in 1 2 3.*\n/, 'sleep 2\n')
+    }
+    if (os === 'windows') {
+      return cmd.replace(/Get-Process [^\n]*Stop-Process -Force/, 'Get-Process ollama -ErrorAction SilentlyContinue | Stop-Process -Force')
+    }
+  }
   return cmd
 }
 
@@ -124,18 +137,33 @@ const LINUX = build('linux', ORIGIN)
 const WINDOWS = build('windows', ORIGIN)
 
 check(MAC.includes('LaunchAgents'), 'macOS: the setting survives a reboot (LaunchAgent)')
-check(/open -a Ollama/.test(MAC) && /pkill|quit app/.test(MAC), 'macOS: Ollama is stopped then started again')
+check(/open -a Ollama/.test(MAC), 'macOS: Ollama is started again')
+// Measured on a real Mac (2026-09-19 gate): `quit app` is REFUSED by Ollama and
+// `pkill -x ollama` only reaches the server, which the app restarts at once with
+// its old environment. Both process names, and no AppleScript.
+check(/pkill -x Ollama\b/.test(MAC), 'macOS: the Ollama APP is stopped (capital O)')
+check(/pkill -x ollama\b/.test(MAC), 'macOS: the ollama SERVER is stopped (lowercase o)')
+check(!/osascript/.test(MAC), 'macOS: no AppleScript quit, the app refuses it')
+check(/pgrep -x Ollama/.test(MAC) && /pgrep -x ollama/.test(MAC), 'macOS: it waits for both to be gone before starting again')
+check(MAC.indexOf('open -a Ollama') > MAC.indexOf('pkill -x Ollama'), 'macOS: it starts Ollama only after stopping it')
 check(MAC.includes('launchctl getenv ' + OLLAMA_ORIGINS_VAR), 'macOS: the existing value is read first')
 check(/\$\{CUR:\+\$CUR,\}/.test(MAC), 'macOS: the origin is ADDED to the existing value')
 check(/\*",\$ORIGIN,"\*/.test(MAC), 'macOS: an origin already present is not added twice')
 
 check(LINUX.includes('ollama.service.d'), 'Linux: the setting survives a reboot (systemd drop-in)')
+// systemd reads drop-ins in alphabetical order: a pre-existing override.conf
+// setting the same variable would win over an origins.conf.
+check(/ollama\.service\.d\/zz-[a-z-]+\.conf/.test(LINUX), 'Linux: the drop-in sorts after an existing override.conf')
 check(LINUX.includes('daemon-reload') && LINUX.includes('restart ollama'), 'Linux: the service is reloaded and restarted')
 check(LINUX.includes('systemctl show -p Environment'), 'Linux: the existing value is read first')
 check(/\$\{CUR:\+\$CUR,\}/.test(LINUX), 'Linux: the origin is ADDED to the existing value')
 
 check(WINDOWS.includes("'User'"), 'Windows: the setting survives a reboot (user variable)')
 check(/Stop-Process/.test(WINDOWS) && /Start-Process/.test(WINDOWS), 'Windows: Ollama is stopped then started again')
+// Same trap as macOS, read in the Windows packaging: the 'ollama app' tray
+// process survives a Stop-Process on 'ollama' and restarts the server.
+check(/'ollama app'/.test(WINDOWS), "Windows: the 'ollama app' tray process is stopped")
+check(/'ollama'/.test(WINDOWS.split('Stop-Process')[0].split('SetEnvironmentVariable')[1] ?? ''), 'Windows: the ollama server process is stopped')
 check(WINDOWS.includes('GetEnvironmentVariable'), 'Windows: the existing value is read first')
 check(WINDOWS.includes('-notcontains'), 'Windows: an origin already present is not added twice')
 
