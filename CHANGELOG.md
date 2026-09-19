@@ -274,8 +274,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   et les blancs de bord, mais la connexion partait ensuite avec la chaîne BRUTE du formulaire — un hôte SMTP
   enregistré suivi d'une espace était accepté comme le même serveur, puis joint sous un nom qui ne résout pas
   (`tested: "stored"` avec un SMTP « injoignable », là où les réglages exacts donnaient IMAP et SMTP ok).
-  Quand c'est le mot de passe enregistré qui part, la connexion utilise désormais les valeurs ENREGISTRÉES du
-  compte — hôtes, ports, TLS, identifiant — et non celles du formulaire.
+  Quand c'est le mot de passe enregistré qui part, la DESTINATION vient désormais du compte — hôtes IMAP et
+  SMTP, identifiant — et non de la chaîne brute du formulaire.
+- **Le port et le TLS testés sont ceux du FORMULAIRE, même avec le mot de passe enregistré**
+  (`lib/accountTest.ts`) : c'est l'usage même du bouton, essayer un réglage AVANT de l'enregistrer (passer un
+  SMTP de 587 à 465, cocher TLS pour réparer une boîte). Le correctif précédent joignait l'ANCIEN port, sans
+  le dire à l'écran. Une seule fabrique construit maintenant la connexion à partir de deux sources : la
+  destination (hôtes, identifiant), qui est la frontière de sécurité et reste celle du compte, et le réglage
+  (ports, TLS), qui dit seulement comment frapper à cette porte-là et suit le formulaire. Changer l'HÔTE
+  demande toujours le mot de passe ; aucune connexion n'est tentée sans lui.
 
 ### Removed
 - La corbeille de chaque ligne des sept écrans de réglages (remplacée par le menu « … » décrit plus haut).
