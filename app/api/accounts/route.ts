@@ -17,6 +17,7 @@ export async function GET(req: Request) {
               a.smtp_host AS "smtpHost", a.smtp_port AS "smtpPort", a.smtp_secure AS "smtpSecure",
               a.username, a.is_default AS "isDefault", a.color,
               a.oauth_provider AS "oauthProvider", a.prompt_guard AS "promptGuard",
+              a.badge_color AS "badgeColor",
               a.created_at AS "createdAt",
               -- authoritative SEARCH UNSEEN count (mailbox_stats), falling back to
               -- the cached-row count until the first background sync populates it
@@ -42,6 +43,7 @@ export async function GET(req: Request) {
               a.smtp_host AS "smtpHost", a.smtp_port AS "smtpPort", a.smtp_secure AS "smtpSecure",
               a.username, false AS "isDefault", a.color,
               a.oauth_provider AS "oauthProvider", a.prompt_guard AS "promptGuard",
+              a.badge_color AS "badgeColor",
               a.created_at AS "createdAt",
               COALESCE(ms.unread_count, um.cnt, 0)::int AS "unreadCount",
               true AS "isShared", owner.name AS "ownerName", sh.expires_at AS "expiresAt",

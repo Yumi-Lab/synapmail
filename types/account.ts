@@ -15,6 +15,8 @@ export interface EmailAccount {
   oauthProvider?: 'google' | 'microsoft' | null
   /** Prompt-injection guard for this mailbox (default on) — see lib/promptGuard.ts. */
   promptGuard: boolean
+  /** Badge colour chosen by the owner, `null` = automatic colour by rank — see lib/accountColor.ts. */
+  badgeColor?: string | null
   createdAt: string
   /** Unread count in the account's top-level INBOX — authoritative IMAP SEARCH UNSEEN
    *  (mailbox_stats), falling back to cached-row count. GET /api/accounts only. */
