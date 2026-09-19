@@ -186,3 +186,93 @@ export function aiFailureKey(err: unknown): string {
   const kind = err instanceof AIClientError ? err.kind : 'server'
   return `errors.${kind}`
 }
+
+// ── Allowing this site in Ollama ────────────────────────────────────────────
+
+/**
+ * Ollama only answers pages served from the machine it runs on; every other
+ * origin gets a 403 that no client code can work around. The fix is one
+ * setting on the user's own computer, so the screen hands them the exact
+ * command instead of describing it.
+ */
+export const OLLAMA_ORIGINS_VAR = 'OLLAMA_ORIGINS'
+
+export type LocalOs = 'mac' | 'windows' | 'linux'
+
+/** Order the commands are offered in, the visitor's own system first. */
+export const LOCAL_OS_ORDER = ['mac', 'windows', 'linux'] as const
+
+/**
+ * The command lands in a terminal, so the origin is a TRUST BOUNDARY: only a
+ * plain http(s) origin passes, which leaves no room for a quote, a space, a
+ * `;`, a `$` or a newline to reach the shell.
+ */
+const SAFE_ORIGIN = /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/
+
+export function isSafeOrigin(origin: string): boolean {
+  return SAFE_ORIGIN.test(origin)
+}
+
+/** Reads the visitor's system from a user agent; anything unknown reads as Linux. */
+export function detectLocalOs(userAgent: string): LocalOs {
+  if (/Mac OS X|Macintosh/i.test(userAgent)) return 'mac'
+  if (/Windows/i.test(userAgent)) return 'windows'
+  return 'linux'
+}
+
+/**
+ * Builds the command that allows `origin` in Ollama on one system. Each one
+ * PERSISTS across a reboot, ADDS to any existing value instead of replacing it
+ * (another app may rely on it) and restarts Ollama.
+ *
+ * Throws on an origin that is not a plain http(s) origin: see SAFE_ORIGIN.
+ */
+export function buildOllamaOriginCommand(os: LocalOs, origin: string): string {
+  if (!isSafeOrigin(origin)) {
+    throw new AIClientError('server', `Refused origin: ${origin}`)
+  }
+  const V = OLLAMA_ORIGINS_VAR
+  if (os === 'mac') {
+    return [
+      `ORIGIN='${origin}'`,
+      `CUR=$(launchctl getenv ${V})`,
+      `case ",$CUR," in *",$ORIGIN,"*) NEW="$CUR" ;; *) NEW="${'${CUR:+$CUR,}'}$ORIGIN" ;; esac`,
+      'PLIST="$HOME/Library/LaunchAgents/com.ollama.origins.plist"',
+      'mkdir -p "$HOME/Library/LaunchAgents"',
+      'cat > "$PLIST" <<PLIST_EOF',
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+      '<plist version="1.0"><dict>',
+      '<key>Label</key><string>com.ollama.origins</string>',
+      `<key>ProgramArguments</key><array><string>launchctl</string><string>setenv</string><string>${V}</string><string>$NEW</string></array>`,
+      '<key>RunAtLoad</key><true/>',
+      '</dict></plist>',
+      'PLIST_EOF',
+      `launchctl setenv ${V} "$NEW"`,
+      'osascript -e \'quit app "Ollama"\' || true',
+      'pkill -x ollama || true',
+      'sleep 2',
+      'open -a Ollama',
+    ].join('\n')
+  }
+  if (os === 'linux') {
+    return [
+      `ORIGIN='${origin}'`,
+      `CUR=$(systemctl show -p Environment --value ollama.service | tr ' ' '\\n' | sed -n 's/^${V}=//p')`,
+      `case ",$CUR," in *",$ORIGIN,"*) NEW="$CUR" ;; *) NEW="${'${CUR:+$CUR,}'}$ORIGIN" ;; esac`,
+      'sudo mkdir -p /etc/systemd/system/ollama.service.d',
+      `printf '[Service]\\nEnvironment="${V}=%s"\\n' "$NEW" | sudo tee /etc/systemd/system/ollama.service.d/origins.conf`,
+      'sudo systemctl daemon-reload',
+      'sudo systemctl restart ollama',
+    ].join('\n')
+  }
+  return [
+    `$origin = '${origin}'`,
+    `$cur = [Environment]::GetEnvironmentVariable('${V}', 'User')`,
+    "$list = @($cur -split ',' | Where-Object { $_ -ne '' })",
+    'if ($list -notcontains $origin) { $list += $origin }',
+    `[Environment]::SetEnvironmentVariable('${V}', ($list -join ','), 'User')`,
+    'Get-Process ollama -ErrorAction SilentlyContinue | Stop-Process -Force',
+    'Start-Process "$env:LOCALAPPDATA\\Programs\\Ollama\\ollama app.exe"',
+  ].join('\n')
+}

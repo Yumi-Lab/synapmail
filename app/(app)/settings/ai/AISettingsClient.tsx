@@ -7,7 +7,7 @@ import {
   Bot, CheckCircle2, AlertCircle, Loader2, Zap,
   ChevronDown, ChevronUp, Clock, Wand2, MessageSquareDiff,
   Languages, FileText, Globe, Lock, ScanSearch,
-  Sparkles, Brain, Server, Settings2, Laptop,
+  Sparkles, Brain, Server, Settings2, Laptop, Copy,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -20,7 +20,8 @@ import {
 } from '@/lib/ai'
 import {
   AIClientError, callLocalModel, listLocalModels, localAccessState,
-  type LocalAccessState,
+  buildOllamaOriginCommand, detectLocalOs, LOCAL_OS_ORDER,
+  type LocalAccessState, type LocalOs,
 } from '@/lib/aiClient'
 import { LocalAccessNotice } from '@/components/ai/LocalAccessNotice'
 
@@ -116,42 +117,103 @@ const PROVIDERS: {
 ]
 
 /**
+ * A failed local detection, with the port that failed when one ANSWERED: the
+ * CORS help has to name it, and only the caller knows which one it was.
+ */
+interface LocalFailure {
+  kind: AIClientError['kind']
+  port?: number
+  label?: string
+}
+
+/** The known local server sitting at `url`, if it is one of the probed ports. */
+function localServerAt(url: string): { port?: number; label?: string } {
+  const hit = LOCAL_DETECT_PORTS.find(p => url.includes(`:${p.port}`))
+  return hit ? { port: hit.port, label: hit.label } : {}
+}
+
+/** One system's command, with a Copy button. The command itself is never translated. */
+function OriginCommand({ os, origin }: { os: LocalOs; origin: string }) {
+  const t = useTranslations('settings.ai.local')
+  const [copied, setCopied] = useState(false)
+  let command: string
+  try {
+    command = buildOllamaOriginCommand(os, origin)
+  } catch {
+    // A page whose own origin is not a plain http(s) origin cannot be allowed
+    // by a command: saying so is the only honest answer.
+    return <p className="text-[11px] text-destructive">{t('originRefused')}</p>
+  }
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium">{t(`os.${os}`)}</span>
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard.writeText(command).then(() => setCopied(true))
+          }}
+          className="flex items-center gap-1 text-[11px] text-violet-500 hover:text-violet-400 transition-colors"
+        >
+          <Copy className="w-2.5 h-2.5" />
+          {copied ? t('copied') : t('copy')}
+        </button>
+      </div>
+      <pre className="whitespace-pre-wrap break-all rounded-lg bg-muted/40 px-2 py-1.5 font-mono text-[10px] leading-relaxed">{command}</pre>
+    </div>
+  )
+}
+
+/**
  * What to do when the browser could not reach the local model. The origin to
  * allow is read from the page itself, never written in the source: a fork or a
  * staging host would otherwise print an address that does not exist.
  */
-function LocalHelp({ kind }: { kind: AIClientError['kind'] }) {
+function LocalHelp({ failure }: { failure: LocalFailure }) {
   const t = useTranslations('settings.ai.local')
   // The same `mail.ai.errors` wording the reading pane shows: one sentence per
   // failure, wherever the user meets it.
   const tError = useTranslations('mail.ai')
   const origin = typeof window === 'undefined' ? '' : window.location.origin
+  const os = detectLocalOs(typeof navigator === 'undefined' ? '' : navigator.userAgent)
+  const others = LOCAL_OS_ORDER.filter(o => o !== os)
+  const { kind, port, label } = failure
   // A refused permission has its own box: the model is not the cause here,
   // and that box already names the cause, so this one stays silent about it.
   if (kind === 'permission') return <LocalAccessNotice state="denied" />
-  const steps = kind === 'cors'
-    ? [
-        t('corsMac', { origin }),
-        t('corsLinux', { origin }),
-        t('corsLmStudio', { origin }),
-        t('corsSafari'),
-      ]
-    : [
-        t('startModel'),
-        t('checkAddress', { url: LOCAL_DEFAULT_BASE_URL }),
-        t('remoteNeedsKey'),
-      ]
 
   return (
-    <div className="rounded-xl border border-border bg-muted/20 px-4 py-3 text-xs space-y-1.5">
-      <p className="font-medium">{tError(`errors.${kind}`, { origin })}</p>
-      <ul className="space-y-1 text-muted-foreground">
-        {steps.map(step => <li key={step} className="font-mono break-all">{step}</li>)}
-      </ul>
+    <div className="rounded-xl border border-border bg-muted/20 px-4 py-3 text-xs space-y-2">
+      <p className="font-medium">
+        {kind === 'cors' && port
+          ? t('corsRefusesSite', { label: label ?? '', port })
+          : tError(`errors.${kind}`, { origin })}
+      </p>
+      {kind === 'cors' ? (
+        <div className="space-y-2">
+          <p className="text-muted-foreground">{t('corsIntro')}</p>
+          <OriginCommand os={os} origin={origin} />
+          <details>
+            <summary className="cursor-pointer text-[11px] text-muted-foreground">{t('otherSystems')}</summary>
+            <div className="mt-2 space-y-2">
+              {others.map(o => <OriginCommand key={o} os={o} origin={origin} />)}
+            </div>
+          </details>
+          <p className="text-muted-foreground">{t('corsLmStudio', { origin })}</p>
+          <p className="text-muted-foreground">{t('corsSafari')}</p>
+          <p className="font-medium">{t('thenDetectAgain')}</p>
+        </div>
+      ) : (
+        <ul className="space-y-1 text-muted-foreground">
+          <li>{t('startModel')}</li>
+          <li className="font-mono break-all">{t('checkAddress', { url: LOCAL_DEFAULT_BASE_URL })}</li>
+          <li>{t('remoteNeedsKey')}</li>
+          <li>{t('loopbackOnly')}</li>
+        </ul>
+      )}
     </div>
   )
 }
-
 
 function ComingSoonBadge() {
   return (
@@ -194,7 +256,7 @@ export function AISettingsClient() {
   const [detectResult, setDetectResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [detectedModels, setDetectedModels] = useState<string[]>([])
   /** Shown only when the BROWSER could not reach the local model, see lib/aiClient.ts. */
-  const [localHelp, setLocalHelp] = useState<AIClientError['kind'] | null>(null)
+  const [localHelp, setLocalHelp] = useState<LocalFailure | null>(null)
   /** Whether the browser lets this page reach apps on this device (read before calling). */
   const [accessState, setAccessState] = useState<LocalAccessState>('unknown')
 
@@ -240,6 +302,8 @@ export function AISettingsClient() {
    * the server-side scan.
    */
   const detectLocal = async () => {
+    /** What each probed port answered, so the cause is READ rather than guessed. */
+    const failures: { kind: AIClientError['kind']; port: number; label: string }[] = []
     for (const { port, label, path } of LOCAL_DETECT_PORTS) {
       const url = `http://127.0.0.1:${port}${path}`
       try {
@@ -250,15 +314,30 @@ export function AISettingsClient() {
         setDetectResult({ ok: true, msg: t('local.detectFound', { label, url }) })
         setLocalHelp(null)
         return
-      } catch {
-        // Next port.
+      } catch (err) {
+        // The typed reason lib/aiClient.ts already worked out is kept as is:
+        // re-deciding here is how a running-but-refusing Ollama came out as
+        // "start the model".
+        failures.push({
+          kind: err instanceof AIClientError ? err.kind : 'unreachable',
+          port,
+          label,
+        })
       }
     }
     const state = await localAccessState()
     setAccessState(state)
-    // The cause is stated once, by the help box below: an inline copy of its
-    // first sentence is what the gate read twice on screen.
-    setLocalHelp(state === 'denied' ? 'permission' : 'unreachable')
+    // A refused permission blocks every port, so it wins. Otherwise a port that
+    // ANSWERED and refused this site is the real cause; nothing listening
+    // anywhere is the only case left.
+    const refusing = failures.find(f => f.kind === 'cors')
+    if (state === 'denied' || failures.some(f => f.kind === 'permission')) {
+      setLocalHelp({ kind: 'permission' })
+    } else if (refusing) {
+      setLocalHelp({ kind: 'cors', port: refusing.port, label: refusing.label })
+    } else {
+      setLocalHelp({ kind: 'unreachable' })
+    }
   }
 
   const handleDetect = async () => {
@@ -335,7 +414,7 @@ export function AISettingsClient() {
       } catch (e: unknown) {
         const kind = e instanceof AIClientError ? e.kind : 'server'
         setAccessState(await localAccessState())
-        setLocalHelp(kind)
+        setLocalHelp({ kind, ...localServerAt(baseUrl) })
         // Same reason as above: LocalHelp is the single place a local failure
         // is explained.
         setTestResult(null)
@@ -563,7 +642,7 @@ export function AISettingsClient() {
       {isLocal && accessState === 'prompt' && <LocalAccessNotice state="prompt" />}
 
       {/* Local model: what to do when the browser could not reach it */}
-      {localHelp && <LocalHelp kind={localHelp} />}
+      {localHelp && <LocalHelp failure={localHelp} />}
 
       {/* Test result */}
       {testResult && (

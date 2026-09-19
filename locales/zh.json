@@ -469,10 +469,21 @@
         "startModel": "在这台电脑上启动模型（ollama serve、LM Studio、llama.cpp）。",
         "checkAddress": "检查地址：Ollama 为 {url}。",
         "remoteNeedsKey": "模型必须运行在这台电脑上：远程地址需要带密钥的 API。",
-        "corsMac": "macOS：运行 launchctl setenv OLLAMA_ORIGINS \"{origin}\"，然后重启 Ollama。",
-        "corsLinux": "Linux：在服务中添加 Environment=\"OLLAMA_ORIGINS={origin}\"，然后重新加载。",
         "corsLmStudio": "LM Studio：在本地服务器中启用 CORS，来源为 {origin}。",
-        "corsSafari": "Safari 会拦截此调用：请使用 Chrome、Edge 或 Firefox。"
+        "corsSafari": "Safari 会拦截此调用：请使用 Chrome、Edge 或 Firefox。",
+        "os": {
+          "mac": "macOS 系统",
+          "windows": "Windows 系统（PowerShell）",
+          "linux": "Linux 系统（systemd）"
+        },
+        "corsRefusesSite": "{label} 在端口 {port} 上有响应，但拒绝了本站点。",
+        "corsIntro": "Ollama 只响应由您自己电脑提供的页面。在您的电脑上运行一次此命令以允许本站点，之后 Ollama 会自行重启。",
+        "thenDetectAgain": "然后再次点击“检测”。",
+        "otherSystems": "其他系统",
+        "copy": "复制",
+        "copied": "已复制",
+        "originRefused": "本页面的地址无法通过命令授权。",
+        "loopbackOnly": "检测只查看本机（端口 11434、1234、8080）：不会扫描局域网。"
       }
     }
   },

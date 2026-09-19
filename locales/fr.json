@@ -469,10 +469,21 @@
         "startModel": "Démarrer le modèle sur cet ordinateur (ollama serve, LM Studio, llama.cpp).",
         "checkAddress": "Vérifier l'adresse : {url} pour Ollama.",
         "remoteNeedsKey": "Le modèle doit tourner sur CE poste : une adresse distante demande une API avec clé.",
-        "corsMac": "macOS : launchctl setenv OLLAMA_ORIGINS \"{origin}\" puis relancer Ollama.",
-        "corsLinux": "Linux : ajouter Environment=\"OLLAMA_ORIGINS={origin}\" au service, puis le recharger.",
         "corsLmStudio": "LM Studio : activer CORS dans le serveur local, avec l'origine {origin}.",
-        "corsSafari": "Safari bloque cet appel : utilisez Chrome, Edge ou Firefox."
+        "corsSafari": "Safari bloque cet appel : utilisez Chrome, Edge ou Firefox.",
+        "os": {
+          "mac": "macOS",
+          "windows": "Windows (PowerShell)",
+          "linux": "Linux (systemd)"
+        },
+        "corsRefusesSite": "{label} répond sur le port {port} mais refuse ce site.",
+        "corsIntro": "Ollama ne répond qu'aux pages servies depuis votre ordinateur. Lancez cette commande une fois sur le vôtre pour autoriser ce site : Ollama redémarre ensuite tout seul.",
+        "thenDetectAgain": "Puis cliquez de nouveau sur Détecter.",
+        "otherSystems": "Autres systèmes",
+        "copy": "Copier",
+        "copied": "Copié",
+        "originRefused": "L'adresse de cette page ne peut pas être autorisée par une commande.",
+        "loopbackOnly": "La détection ne regarde que cet ordinateur (ports 11434, 1234, 8080) : le réseau local n’est pas balayé."
       }
     }
   },
