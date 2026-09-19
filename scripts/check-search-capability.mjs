@@ -28,44 +28,9 @@
  *
  *   node --experimental-strip-types scripts/check-search-capability.mjs
  */
-import { readFileSync, existsSync } from 'node:fs'
-import { registerHooks } from 'node:module'
-import { Pool } from 'pg'
+import { openTestMailbox, harness } from './bench-imap.mjs'
 
-// Unlike the HTTP benches, this one talks to IMAP and PostgreSQL directly, so it
-// needs the server-side secrets too: `.env.local` carries DATABASE_URL and
-// ENCRYPTION_KEY, `.env` the test account. Neither is ever printed.
-for (const file of ['.env', '.env.local']) {
-  const url = new URL(`../${file}`, import.meta.url)
-  if (!existsSync(url)) continue
-  for (const line of readFileSync(url, 'utf8').split('\n')) {
-    const m = line.match(/^([A-Z_]+)=(.*)$/)
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim()
-  }
-}
-
-// The product's own modules are IMPORTED, never retyped: a change in lib/imap.ts
-// or lib/search.ts fails this bench instead of silently making it measure
-// something else. Same resolver as the other benches — extensionless relative
-// specifiers and the `@/` root alias, both resolved to their .ts source.
-const ROOT = new URL('../', import.meta.url)
-registerHooks({
-  resolve(spec, ctx, next) {
-    if (spec.startsWith('@/')) {
-      const url = new URL(`${spec.slice(2)}.ts`, ROOT)
-      if (existsSync(url)) return next(url.href, ctx)
-      return next(new URL(spec.slice(2), ROOT).href, ctx)
-    }
-    if (spec.startsWith('.') && !/\.[a-z]+$/.test(spec)) {
-      const url = new URL(`${spec}.ts`, ctx.parentURL)
-      if (existsSync(url)) return next(url.href, ctx)
-    }
-    return next(spec, ctx)
-  },
-})
-
-const { ImapFlow } = await import('imapflow')
-const { decrypt } = await import(new URL('../lib/encrypt.ts', import.meta.url).href)
+const { client, config, close } = await openTestMailbox()
 const { listFoldersRanked, SEARCH_CONNECTIONS } = await import(new URL('../lib/imap.ts', import.meta.url).href)
 const { SEARCH_FIELDS } = await import(new URL('../lib/search.ts', import.meta.url).href)
 
@@ -83,46 +48,6 @@ const check = (label, ok, detail) => {
   if (ok) { console.log(`  ok   ${label}${detail ? ` — ${detail}` : ''}`); return }
   console.error(`  FAIL ${label}${detail ? ` — ${detail}` : ''}`)
   failures.push(label)
-}
-const harness = msg => { console.error(`HARNESS: ${msg}`); process.exit(2) }
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL })
-let account
-try {
-  const { rows } = await pool.query(
-    `SELECT id, imap_host, imap_port, imap_secure, username, password_encrypted
-       FROM email_accounts ORDER BY created_at ASC LIMIT 1`
-  )
-  account = rows[0]
-} catch (err) {
-  harness(`cannot read the test account from the database: ${err}`)
-}
-if (!account) harness('no email account configured in the database')
-
-const config = {
-  id: account.id,
-  imapHost: account.imap_host,
-  imapPort: account.imap_port,
-  imapSecure: account.imap_secure,
-  username: account.username,
-  passwordEncrypted: account.password_encrypted,
-}
-
-const client = new ImapFlow({
-  host: config.imapHost,
-  port: config.imapPort,
-  secure: config.imapSecure,
-  auth: { user: config.username, pass: decrypt(config.passwordEncrypted) },
-  logger: false,
-  tls: { rejectUnauthorized: false },
-})
-
-try {
-  await client.connect()
-} catch (err) {
-  // No connection = the product was never exercised: a harness failure, which
-  // licenses NO conclusion about the search.
-  harness(`IMAP connection failed: ${err}`)
 }
 
 try {
@@ -225,8 +150,7 @@ try {
     console.log('  skip this mailbox declares no inbox role — nothing to assert')
   }
 } finally {
-  await client.logout().catch(() => {})
-  await pool.end().catch(() => {})
+  await close()
 }
 
 if (failures.length) { console.error(`\n${failures.length} check(s) failed`); process.exit(1) }

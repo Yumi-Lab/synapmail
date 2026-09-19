@@ -10,12 +10,15 @@ Un terme est cherché dans **l'expéditeur, les destinataires, la copie et l'obj
 (`SEARCH_FIELDS = ['from', 'to', 'cc', 'subject']`), côté serveur, par un `SEARCH` IMAP.
 
 **Le corps des messages n'est PAS cherché.** Ce n'est pas un choix d'ergonomie, c'est une mesure : sur
-IONOS, les critères `BODY` et `TEXT` renvoient **0 résultat** — et, pire, ajouter `body` au `OR` fait
-tomber le `OR` entier à 0, c'est-à-dire que chercher « dans plus de champs » ne rendait plus rien du
-tout. La bannière le dit à la personne quand une recherche ne donne aucun résultat.
+IONOS, les critères `BODY` et `TEXT` sont REFUSÉS par le serveur, qui répond
+`NO full text search not supported` (mesuré le 20/09/2026, contre une recherche sur l'objet qui
+répond normalement dans le même run). La bannière le dit à la personne quand une recherche ne donne
+aucun résultat.
 
 Avant de rétablir la recherche dans le corps sur un autre serveur, il faut la MESURER sur ce serveur :
-`scripts/check-search-capability.mjs` lit ce que le serveur annonce.
+`scripts/check-search-capability.mjs` lit ce que le serveur annonce, et
+`scripts/probe-search-body.mjs` lui pose directement la question. Ce que coûterait un index local, et
+le choix de fond qu'il engage, sont chiffrés dans [RECHERCHE-CORPS.md](RECHERCHE-CORPS.md).
 
 ## Comment une requête est découpée
 
