@@ -94,8 +94,8 @@ const browser = await puppeteer.launch({
   protocolTimeout: NAV_TIMEOUT_MS * 2,
 })
 let page = null
-// Boîte active de l'utilisateur de test, rendue telle quelle à la sortie.
-let previousAccountId = null
+// Réglages de l'utilisateur de test empruntés par le banc, rendus tels quels à la sortie.
+let previousSettings = null
 try {
   page = await browser.newPage()
   await page.setViewport(WIDE)
@@ -143,15 +143,17 @@ try {
   }
   counted.sort((x, y) => y.folders - x.folders)
   const richest = counted[0]
-  previousAccountId = (await page.evaluate(async () => (await (await fetch('/api/settings')).json()).data))?.active_account_id ?? null
-  if (richest.id !== previousAccountId) {
-    await page.evaluate(async id => {
-      await fetch('/api/settings', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active_account_id: id }),
-      })
-    }, richest.id)
-  }
+  const settings = await page.evaluate(async () => (await (await fetch('/api/settings')).json()).data)
+  previousSettings = { active_account_id: settings?.active_account_id ?? null, reading_pane: settings?.reading_pane ?? false }
+  // `reading_pane` à vrai fait couvrir la colonne de LISTE par le volet de lecture sous
+  // `lg` : à 390 px il n'y a alors plus une seule ligne de courrier sur laquelle faire un
+  // clic droit, et le banc n'aurait rien à mesurer. C'est un réglage, pas un défaut ; le
+  // banc l'emprunte et le rend.
+  await page.evaluate(async patch => {
+    await fetch('/api/settings', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+    })
+  }, { active_account_id: richest.id, reading_pane: false })
 
   await page.goto(`${BASE}/mail`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector(ROW, { timeout: NAV_TIMEOUT_MS })
@@ -323,6 +325,8 @@ try {
     && r.y + r.height <= vp.height - EDGE_GAP + PX_SLACK
   for (const vp of [WIDE, NARROW]) {
     await page.setViewport(vp)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.waitForSelector(ROW, { timeout: NAV_TIMEOUT_MS })
     await settle()
     for (const [what, at, which] of [['bord droit', { fx: 0.97, fy: 0.5 }, 'first'], ['bas', { fx: 0.5, fy: 0.5 }, 'last']]) {
       // Près du BAS de la fenêtre : la dernière ligne atteignable à la souris.
@@ -346,12 +350,18 @@ try {
     // Un popover TRANSPARENT laisse la liste des mails transparaître au travers : le
     // menu devient illisible, quel que soit le thème. La couleur elle-même est un choix
     // visuel, c'est le gate humain qui la juge ; l'opacité, elle, se mesure.
-    const alpha = await page.evaluate(s => {
+    // L'opacité se MESURE, elle ne se lit pas dans la chaîne de couleur : les variables du
+    // thème sont écrites en `oklch()`, qu'aucune analyse de `rgba(...)` ne sait lire — et
+    // une analyse qui rend `null` ferait passer l'arm pour un défaut du produit. On peint
+    // donc la couleur calculée sur un canevas et on lit le canal alpha obtenu.
+    const paint = await page.evaluate(s => {
       const bg = getComputedStyle(document.querySelector(s)).backgroundColor
-      const m = bg.match(/rgba?\(([^)]+)\)/)
-      return m ? Number(m[1].split(',')[3] ?? 1) : null
+      const c = document.createElement('canvas').getContext('2d')
+      c.fillStyle = bg
+      c.fillRect(0, 0, 1, 1)
+      return { bg, alpha: c.getImageData(0, 0, 1, 1).data[3] / 255 }
     }, SURFACE)
-    check(`G. thème ${theme} : la surface du menu est opaque`, alpha === 1, `alpha=${alpha}`)
+    check(`G. thème ${theme} : la surface du menu est opaque`, paint.alpha === 1, `${paint.bg} -> alpha=${paint.alpha}`)
   }
   await page.evaluate(() => document.documentElement.classList.remove('dark'))
 
@@ -384,13 +394,12 @@ try {
 
   console.log(`\nwrites intercepted: ${writes.length} (aucune n'a atteint le serveur)`)
 } finally {
-  if (page && previousAccountId) {
-    await page.evaluate(async id => {
+  if (page && previousSettings) {
+    await page.evaluate(async patch => {
       await fetch('/api/settings', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active_account_id: id }),
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
       })
-    }, previousAccountId).catch(() => {})
+    }, previousSettings).catch(() => {})
   }
   if (page) await page.close().catch(() => {})
   await browser.close().catch(() => {})
