@@ -74,6 +74,9 @@ export async function GET(req: Request) {
       .map(f => ({
         name: f.name,
         path: f.path,
+        // Le délimiteur du serveur : sans lui le client ne peut pas savoir quel dossier
+        // est rangé SOUS quel autre — et « supprimer » doit se refuser sur un parent.
+        delimiter: f.delimiter ?? '/',
         special: specials.get(f.path) ?? null,
       }))
 
