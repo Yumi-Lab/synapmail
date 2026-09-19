@@ -350,6 +350,7 @@ try {
   if (!keys.includes(foreign)) harness('the cross-mailbox row left the screen before it could be clicked')
   console.log(`  clicking a result of ${accountOf(foreign)} (${folderOf(foreign)}) while the active mailbox is ${active.id}`)
   reads.length = 0
+  blockedWrites.length = 0   // l'arm F ne juge que les écritures nées de CE clic
   await page.click(`[${ORIGIN_ATTR}="${foreign}"]`)
   await settle()
   await settle()
@@ -372,21 +373,29 @@ try {
     await page.goto(href, { waitUntil: 'domcontentloaded' })
     await page.waitForSelector('[data-search-summary]', { timeout: NAV_TIMEOUT_MS })
     await settle()
-    const shot = await page.evaluate(([minGap, scopeAcc]) => {
-      const boxes = [...document.querySelectorAll('header [data-omnibar-menu], header [data-omnibar-action], header [data-mail-toolbar-more], header [data-omnibar-search], header [data-user-menu-trigger], header [data-omnibar-scope]')]
-        .map(el => ({ el, r: el.getBoundingClientRect() }))
-        .filter(b => b.r.width > 0 && b.r.height > 0)
-      let worst = Infinity
-      for (let i = 0; i < boxes.length; i++) {
-        for (let j = i + 1; j < boxes.length; j++) {
-          const a = boxes[i].r, b = boxes[j].r
-          const gapX = Math.max(a.left, b.left) - Math.min(a.right, b.right)
-          const gapY = Math.max(a.top, b.top) - Math.min(a.bottom, b.bottom)
-          worst = Math.min(worst, Math.max(gapX, gapY))
+    const shot = await page.evaluate(scopeAcc => {
+      const gap = (a, b) => Math.max(
+        Math.max(a.left, b.left) - Math.min(a.right, b.right),
+        Math.max(a.top, b.top) - Math.min(a.bottom, b.bottom),
+      )
+      const closest = rects => {
+        let worst = Infinity
+        for (let i = 0; i < rects.length; i++) {
+          for (let j = i + 1; j < rects.length; j++) worst = Math.min(worst, gap(rects[i], rects[j]))
         }
+        return worst === Infinity ? null : worst
       }
-      const scopes = [...document.querySelectorAll('[data-omnibar-scope]')]
-        .filter(el => el.getBoundingClientRect().width > 0)
+      const visible = sel => [...document.querySelectorAll(sel)]
+        .filter(el => el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0)
+      const scopes = visible('[data-omnibar-scope]')
+      // Le sélecteur de portée compte pour UNE cible : ses trois segments sont un
+      // seul contrôle segmenté, ils se TOUCHENT par construction (`p-0.5`, aucun
+      // écart entre segments). C'est le groupe entier qui doit garder ses distances
+      // avec les autres cibles du header — la même frontière que `check-omnibar.mjs`,
+      // dont la liste `HEADER_BOXES` n'inclut d'ailleurs pas les segments.
+      const group = scopes[0]?.parentElement?.getBoundingClientRect() ?? null
+      const others = visible('header [data-omnibar-menu], header [data-omnibar-action], header [data-mail-toolbar-more], header [data-omnibar-search], header [data-user-menu-trigger]')
+        .map(el => el.getBoundingClientRect())
       const header = document.querySelector('header')?.getBoundingClientRect() ?? null
       return {
         overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -394,10 +403,13 @@ try {
         hasAccountsScope: scopes.some(el => el.dataset.omnibarScope === scopeAcc),
         scopeRight: scopes.at(-1)?.getBoundingClientRect().right ?? null,
         headerRight: header?.right ?? null,
-        worstGap: worst === Infinity ? null : worst,
-        minGap,
+        // Entre cibles VOISINES : le groupe de portée compté une fois.
+        worstGap: closest(group ? [...others, group] : others),
+        // Entre SEGMENTS du même contrôle : ils peuvent se toucher (0), jamais se
+        // recouvrir (négatif) — un segment sous un autre n'est plus cliquable.
+        worstSegmentGap: closest(scopes.map(el => el.getBoundingClientRect())),
       }
-    }, [MIN_HIT_GAP_PX, SCOPE_ACC])
+    }, SCOPE_ACC)
     console.log(`  ${width}px: scope buttons=${shot.scopes} (all-mailboxes shown=${shot.hasAccountsScope}) ` +
       `overflow=${shot.overflow} closest gap=${shot.worstGap === null ? 'n/a' : `${shot.worstGap.toFixed(2)}px`}`)
     check(`no horizontal overflow at ${width}px`, shot.overflow === false, `scrollWidth vs clientWidth`)
@@ -409,15 +421,32 @@ try {
       check(`the scope selector stays inside the header at ${width}px`,
         shot.scopeRight !== null && shot.headerRight !== null && shot.scopeRight <= shot.headerRight + 0.5,
         `selector ends at ${shot.scopeRight?.toFixed(0)}px, header at ${shot.headerRight?.toFixed(0)}px`)
-      check(`no two header targets overlap at ${width}px`,
+      check(`the scope selector keeps its distance from the other targets at ${width}px`,
         shot.worstGap === null || shot.worstGap >= MIN_HIT_GAP_PX,
         `closest pair ${shot.worstGap?.toFixed(2)}px, floor ${MIN_HIT_GAP_PX}px`)
+      check(`no two scope segments overlap at ${width}px`,
+        shot.worstSegmentGap === null || shot.worstSegmentGap >= 0,
+        `closest segment pair ${shot.worstSegmentGap?.toFixed(2)}px (0 = adjacent, allowed)`)
     }
   }
 
-  console.log('\nF. read-only guarantee on mail')
-  check('no mutating request reached the messages API', blockedWrites.length === 0,
-    blockedWrites.slice(0, 3).join(' | ') || 'none')
+  console.log('\nF. read-only guarantee, and where a write WOULD have gone')
+  // Chaque écriture est avortée avant d'atteindre le serveur : aucune ne compte
+  // comme une violation. Mais ce qu'elle VISAIT est une mesure — ouvrir un
+  // résultat d'une autre boîte déclenche un « marquer lu », et c'est exactement
+  // là que le défaut du lot S4a envoyait la requête sur la boîte AFFICHÉE.
+  console.log(`  ${blockedWrites.length} write(s) captured and aborted: ${blockedWrites.slice(0, 3).join(' | ') || 'none'}`)
+  const strayWrites = blockedWrites.filter(w => {
+    const m = w.match(/^\S+ (\S+)$/)
+    if (!m) return true
+    const u = new URL(m[1])
+    // Une écriture née du clic de l'arm D : elle doit porter la boîte ET le
+    // dossier de la LIGNE, jamais ceux de la boîte active.
+    return !(u.searchParams.get('account') === accountOf(foreign) && u.searchParams.get('folder') === folderOf(foreign))
+  })
+  check('every write the app attempted targets the row\'s own mailbox and folder',
+    strayWrites.length === 0,
+    strayWrites.slice(0, 3).join(' | ') || `all on ${accountOf(foreign)}/${folderOf(foreign)}`)
 } finally {
   // La boîte en panne de l'arm C est retirée QUOI QU'IL ARRIVE — y compris si un
   // contrôle a échoué ou si le banc a jeté : elle ne doit pas survivre au run.
