@@ -786,7 +786,7 @@ export function ComposeModal({ mode, replyTo, forwardedMessages, accountEmail, a
 
           {/* Messages entiers transférés en pièce jointe (lot M5) */}
           {forwardedCount > 0 && (
-            <div className={cn('flex items-center gap-1.5 py-2.5', FIELD_ROW)}>
+            <div className={cn('flex items-center gap-1.5 py-2.5', FIELD_ROW)} data-forwarded-count={forwardedCount}>
               <span className="flex items-center gap-1.5 bg-muted/50 rounded-md px-2 py-1 text-xs text-muted-foreground">
                 <Paperclip className="w-3 h-3 shrink-0" />
                 <span className="text-foreground">{t('forwardedAttached', { count: forwardedCount })}</span>
