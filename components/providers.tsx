@@ -1,16 +1,28 @@
 'use client'
 
+import { createContext, useContext } from 'react'
 import { SessionProvider } from 'next-auth/react'
 import { ThemeProvider } from '@/components/theme/ThemeProvider'
 import { SWRConfig } from 'swr'
 import { Toaster } from '@/components/ui/toast'
 import { DEFAULT_THEME, type Theme } from '@/lib/theme'
+import { DEFAULT_APP_NAME } from '@/lib/branding'
+
+/**
+ * Le nom de l'instance, résolu une fois côté serveur dans `app/layout.tsx` et
+ * distribué ici : tout texte VISIBLE qui nomme le produit lit `useAppName()`,
+ * pour qu'un seul réglage suffise à tous les renommer.
+ */
+const AppNameContext = createContext(DEFAULT_APP_NAME)
+export const useAppName = () => useContext(AppNameContext)
 
 export function Providers({
   initialTheme = DEFAULT_THEME,
+  appName = DEFAULT_APP_NAME,
   children,
 }: {
   initialTheme?: Theme
+  appName?: string
   children: React.ReactNode
 }) {
   return (
@@ -30,8 +42,10 @@ export function Providers({
         }}
       >
         <ThemeProvider initialTheme={initialTheme}>
-          {children}
-          <Toaster />
+          <AppNameContext.Provider value={appName}>
+            {children}
+            <Toaster />
+          </AppNameContext.Provider>
         </ThemeProvider>
       </SWRConfig>
     </SessionProvider>

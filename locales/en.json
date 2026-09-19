@@ -428,6 +428,25 @@
       "actions": "Actions",
       "delete": "Delete",
       "confirmDelete": "Are you sure you want to delete this user?"
+    },
+    "branding": {
+      "title": "Identity",
+      "description": "The name and the icon this instance shows in the browser tab, for everyone.",
+      "nameLabel": "Name",
+      "iconLabel": "Tab icon",
+      "iconHint": "PNG, ICO, JPEG or WebP, 256 KiB at most.",
+      "choose": "Choose a file",
+      "save": "Save",
+      "saving": "Saving",
+      "saved": "Saved",
+      "resetName": "Restore the default name",
+      "resetIcon": "Restore the default icon",
+      "preview": "Preview",
+      "errors": {
+        "branding_too_large": "This file is over 256 KiB.",
+        "branding_bad_type": "This file is not a PNG, ICO, JPEG or WebP image.",
+        "branding_bad_name": "Enter a name of 1 to 60 characters."
+      }
     }
   },
   "contacts": {

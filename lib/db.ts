@@ -386,6 +386,19 @@ export async function initDb(): Promise<void> {
     ON account_shares(account_id, invitee_user_id)
     WHERE status IN ('pending', 'active')
   `)
+
+  // Identité de l'instance — UNE seule ligne, forcée par `id BOOLEAN PRIMARY KEY DEFAULT TRUE`
+  // contraint à TRUE : une deuxième insertion viole la clé primaire. Tout à NULL = apparence
+  // d'origine, donc aucune instance ne change d'aspect à la mise à jour.
+  await query(`
+    CREATE TABLE IF NOT EXISTS instance_settings (
+      id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+      app_name VARCHAR(60),
+      favicon BYTEA,
+      favicon_type VARCHAR(40),
+      favicon_updated_at TIMESTAMPTZ
+    )
+  `)
 }
 
 export default pool
