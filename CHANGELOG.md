@@ -14,6 +14,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   de front, chacune en deux passes (réception et envoyés d'abord). Une boîte injoignable est signalée
   en fin de flux au lieu d'arrêter les autres. Mesuré sur le compte de test (8 boîtes) : premier
   résultat à **1,1-1,3 s**, balayage complet 65 s.
+- **`scripts/check-mail-context-widths.mjs`** : banc navigateur du clic droit du courrier à TOUTE
+  largeur de fenêtre (1440 / 1200 / 1024 / 900 / 780 / 390 px), à la vraie souris, déplacements
+  interceptés. Il NOMME la règle de disposition qui explique le constat de terrain « à 900 px rien ne
+  s'ouvre » : sous le `lg` de Tailwind la coquille du courrier montre une colonne à la fois, donc un
+  message ouvert met la liste en `display: none` et il n'y a plus de ligne à l'écran à cliquer droit —
+  le gestionnaire, lui, est bien présent et le menu s'ouvre à ces largeurs dès que la liste est
+  visible. Il mesure aussi le repli À GAUCHE du panneau « Déplacer vers » en fenêtre étroite, avec sa
+  référence à 1440 px où il s'ouvre à droite. Aucune ligne de produit modifiée : la mesure conclut que
+  le code livré satisfait déjà la cible.
 - **`docs/RECHERCHE-CORPS.md`** : ce que coûterait une recherche dans le CORPS des messages. IONOS
   refuse `BODY` et `TEXT` par `NO full text search not supported` (ce n'est pas « zéro résultat ») ;
   la seule voie serait un index local, chiffré dans la note. Aucun code produit : la décision
