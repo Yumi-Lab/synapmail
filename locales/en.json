@@ -249,6 +249,22 @@
       "saved": "Saved",
       "unsaved": "Unsaved changes"
     },
+    "rowActions": {
+      "menu": "Actions for {name}",
+      "edit": "Edit",
+      "apiKeyRevoke": "Revoke this key…",
+      "apiKeyRevokeConfirm": "Revoke the key \"{name}\"? Any application using it loses access immediately, and a revoked key cannot be restored.",
+      "contactDelete": "Delete this contact…",
+      "contactDeleteConfirm": "Delete the contact \"{name}\" from this webmail? It will be suggested again the next time you exchange messages.",
+      "signatureDelete": "Delete this signature…",
+      "signatureDeleteConfirm": "Delete the signature \"{name}\"? Messages already sent keep it, but it cannot be restored here.",
+      "templateDelete": "Delete this template…",
+      "templateDeleteConfirm": "Delete the template \"{name}\"? It cannot be restored.",
+      "pgpKeyDelete": "Delete this key…",
+      "pgpKeyDeleteConfirm": "Delete {name}'s public key? You will no longer be able to encrypt messages to them until you import it again.",
+      "ruleDelete": "Delete this rule…",
+      "ruleDeleteConfirm": "Delete the rule \"{name}\"? Messages it already sorted stay where they are, but the rule cannot be restored."
+    },
     "accounts": {
       "title": "Email accounts",
       "add": "Add account",
@@ -584,8 +600,6 @@
       "uploadFile": "Or choose a .asc file",
       "invalidKey": "Invalid PGP public key block",
       "empty": "No contact keys imported",
-      "delete": "Delete",
-      "deleteConfirm": "Delete this contact key?",
       "add": "Add"
     },
     "compose": {

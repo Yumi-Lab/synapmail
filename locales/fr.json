@@ -249,6 +249,22 @@
       "saved": "Enregistré",
       "unsaved": "Modifications non enregistrées"
     },
+    "rowActions": {
+      "menu": "Actions pour {name}",
+      "edit": "Modifier",
+      "apiKeyRevoke": "Révoquer cette clé…",
+      "apiKeyRevokeConfirm": "Révoquer la clé « {name} » ? Toute application qui l’utilise perd l’accès immédiatement, et une clé révoquée ne se récupère pas.",
+      "contactDelete": "Supprimer ce contact…",
+      "contactDeleteConfirm": "Supprimer le contact « {name} » de ce webmail ? Il sera de nouveau proposé au prochain échange de messages.",
+      "signatureDelete": "Supprimer cette signature…",
+      "signatureDeleteConfirm": "Supprimer la signature « {name} » ? Les messages déjà envoyés la gardent, mais elle ne se récupère pas ici.",
+      "templateDelete": "Supprimer ce modèle…",
+      "templateDeleteConfirm": "Supprimer le modèle « {name} » ? Il ne se récupère pas.",
+      "pgpKeyDelete": "Supprimer cette clé…",
+      "pgpKeyDeleteConfirm": "Supprimer la clé publique de {name} ? Vous ne pourrez plus lui écrire de message chiffré tant que vous ne l’aurez pas réimportée.",
+      "ruleDelete": "Supprimer cette règle…",
+      "ruleDeleteConfirm": "Supprimer la règle « {name} » ? Les messages qu’elle a déjà triés restent où ils sont, mais la règle ne se récupère pas."
+    },
     "accounts": {
       "title": "Comptes email",
       "add": "Ajouter un compte",
@@ -584,8 +600,6 @@
       "uploadFile": "Ou choisir un fichier .asc",
       "invalidKey": "Bloc de clé publique PGP invalide",
       "empty": "Aucune clé de contact importée",
-      "delete": "Supprimer",
-      "deleteConfirm": "Supprimer cette clé de contact ?",
       "add": "Ajouter"
     },
     "compose": {
