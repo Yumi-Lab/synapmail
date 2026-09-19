@@ -31,12 +31,14 @@ export const MENU_ICON = 'w-3.5 h-3.5 shrink-0'
  *  Tailwind ne compile pas une valeur calculée, et deux écritures dériveraient. */
 export const MENU_MIN_WIDTH = 210
 
-/** Délai avant qu'un sous-menu se ferme quand le pointeur passe sur une AUTRE entrée du
- *  menu parent, en ms. Il existe parce qu'une traversée en diagonale vers le panneau passe
- *  forcément au-dessus des entrées voisines : fermer à l'instant même rendait le sous-menu
- *  inatteignable à la souris. Atteindre le panneau pendant ce délai annule la fermeture.
+/** Délai avant qu'un sous-menu OUVERT cède la place, en ms : le pointeur est passé sur une
+ *  autre entrée du menu parent. Il existe parce qu'une traversée en diagonale vers le
+ *  panneau passe forcément au-dessus des entrées voisines — changer à l'instant même rendait
+ *  le sous-menu inatteignable à la souris (mesuré : panneau fermé avant l'arrivée, banc
+ *  scripts/check-move-menu.mjs). Atteindre le panneau pendant ce délai annule le changement.
+ *  Rien à attendre à la PREMIÈRE ouverture : aucun panneau n'est encore posé.
  *  ponytail: valeur posée à la main ; à recalibrer si un banc mesure une traversée plus lente. */
-const SUBMENU_CLOSE_MS = 260
+const SUBMENU_SWITCH_MS = 260
 
 /**
  * Un menu n'a qu'UN sous-menu ouvert. L'état vit donc sur la SURFACE, pas sur chaque
@@ -49,10 +51,12 @@ type SubmenuControl = {
    *  dedans lui appartient, alors qu'il n'est pas son descendant (il est porté par le
    *  même portail, pas par le menu). */
   panelRef: React.MutableRefObject<HTMLDivElement | null>
+  /** Demande que `key` (ou aucun sous-menu, pour `null`) soit l'ouvert. Immédiat si rien
+   *  n'est ouvert, différé de `SUBMENU_SWITCH_MS` sinon — le temps d'atteindre le panneau. */
+  request: (key: string | null) => void
+  /** Annule un changement en attente : le pointeur a atteint le panneau. */
+  cancelSwitch: () => void
   open: (key: string) => void
-  /** Ferme après `SUBMENU_CLOSE_MS`, sauf si `cancelClose` arrive avant. */
-  closeSoon: () => void
-  cancelClose: () => void
   close: () => void
 }
 
@@ -90,14 +94,19 @@ export function ContextMenuSurface({
   const [openKey, setOpenKey] = useState<string | null>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout>>()
 
-  const cancelClose = () => clearTimeout(closeTimer.current)
+  const cancelSwitch = () => clearTimeout(closeTimer.current)
   const submenu: SubmenuControl = {
     openKey,
     panelRef,
-    open: key => { cancelClose(); setOpenKey(key) },
-    closeSoon: () => { cancelClose(); closeTimer.current = setTimeout(() => setOpenKey(null), SUBMENU_CLOSE_MS) },
-    cancelClose,
-    close: () => { cancelClose(); setOpenKey(null) },
+    cancelSwitch,
+    request: key => {
+      cancelSwitch()
+      if (openKey === null) return setOpenKey(key)
+      if (key === openKey) return
+      closeTimer.current = setTimeout(() => setOpenKey(key), SUBMENU_SWITCH_MS)
+    },
+    open: key => { cancelSwitch(); setOpenKey(key) },
+    close: () => { cancelSwitch(); setOpenKey(null) },
   }
   useEffect(() => () => clearTimeout(closeTimer.current), [])
 
@@ -183,11 +192,15 @@ export function ContextMenuItem({
   enabled: boolean
   danger?: boolean
 }) {
+  const ctx = useContext(SubmenuContext)
   return (
     <button
       type="button"
       data-menu-item={itemKey}
       disabled={!enabled}
+      // Survoler une entrée ORDINAIRE demande au sous-menu ouvert de céder la place —
+      // après le délai, pour qu'une diagonale qui passe par là puisse encore l'atteindre.
+      onMouseEnter={() => ctx?.request(null)}
       onClick={() => { onClick(); onClose() }}
       className={cn(
         'w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-left transition-colors',
@@ -228,8 +241,7 @@ export function ContextMenuSubmenu({
     <div
       className={cn('relative', !enabled && 'opacity-40 pointer-events-none')}
       data-menu-item={itemKey}
-      onMouseEnter={() => ctx?.open(itemKey)}
-      onMouseLeave={() => ctx?.closeSoon()}
+      onMouseEnter={() => ctx?.request(itemKey)}
     >
       <div
         ref={rowRef}
@@ -300,8 +312,8 @@ function SubmenuPanel({ rowRef, ctx, itemKey, children }: {
     <div
       ref={setRef}
       data-menu-panel={itemKey}
-      onMouseEnter={ctx.cancelClose}
-      onMouseLeave={ctx.closeSoon}
+      onMouseEnter={ctx.cancelSwitch}
+      onMouseLeave={() => ctx.request(null)}
       className="fixed z-[101] bg-popover border border-border rounded-lg shadow-xl py-1"
       // Avant la première mesure le panneau est rendu hors champ plutôt que caché :
       // `visibility: hidden` lui donnerait une taille, `display: none` non — et sans

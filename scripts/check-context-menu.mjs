@@ -38,8 +38,10 @@ assert.ok(/panelRef\.current\?\.contains\(node\)/.test(surface),
 assert.ok(!/group-hover:block/.test(surface),
   'the submenu is still a pure CSS hover — it disappears when the pointer leaves the row')
 assert.ok(/ctx\?\.openKey === itemKey/.test(surface), 'the submenu must read its open state from the surface')
-assert.ok(/SUBMENU_CLOSE_MS/.test(surface) && /closeSoon/.test(surface),
-  'leaving the row must schedule a delayed close, so a diagonal crossing can still reach the panel')
+assert.ok(/SUBMENU_SWITCH_MS/.test(surface) && /closeTimer\.current = setTimeout/.test(surface),
+  'switching away from an open panel must be DELAYED, so a diagonal crossing can still reach it')
+assert.ok(/onMouseEnter=\{\(\) => ctx\?\.request\(null\)\}/.test(surface),
+  'hovering a plain entry must ask the open panel to give way')
 assert.ok(/onClick=\{\(\) => \(open \? ctx\?\.close\(\) : ctx\?\.open\(itemKey\)\)\}/.test(surface),
   'the submenu must open on click as well as on hover')
 
