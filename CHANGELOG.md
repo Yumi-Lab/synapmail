@@ -8,6 +8,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — actions sur les mails — 2026-09-20
 
 ### Added
+- **« Détecter » dit la vraie raison, et le réglage d'Ollama tient en un copier-coller**
+  (`lib/aiClient.ts`, `app/(app)/settings/ai/AISettingsClient.tsx`) : un Ollama qui TOURNE mais refuse le
+  site répondait « Démarrer le modèle sur cet ordinateur », la seule chose qui n'était pas le problème.
+  `detectLocal()` garde désormais le `kind` que `listLocalModels` a déjà levé au lieu d'en redécider :
+  autorisation refusée d'abord, sinon le port qui a RÉPONDU en refusant est nommé (« Ollama répond sur le
+  port 11434 mais refuse ce site »), et « rien n'écoute » ne reste que si aucun des trois ports n'a répondu.
+  L'aide CORS devient une commande prête à coller, avec bouton Copier, pour le système du visiteur (lu dans
+  `navigator.userAgent`), les autres dans un `<details>`. Chaque commande survit au redémarrage, AJOUTE
+  l'origine à une valeur `OLLAMA_ORIGINS` existante sans doublon, et relance Ollama : LaunchAgent sur macOS,
+  variable utilisateur sur Windows, `ollama.service.d` sur Linux. L'origine vient de `location.origin` et
+  passe une fonction pure qui REFUSE tout ce qui n'est pas `http(s)://hôte[:port]` — aucun guillemet,
+  espace, `;`, `$` ni retour à la ligne ne peut entrer dans la commande. La détection ne regarde que cet
+  ordinateur (ports 11434, 1234, 8080) : le réseau local n'est pas balayé, et c'est dit à l'écran.
 - **Sélection multiple façon explorateur** (`lib/mailSelection.tsx`, `components/layout/MessageList.tsx`) :
   Cmd/Ctrl-clic ajoute ou retire une ligne, Maj-clic prend la plage depuis la dernière ligne cliquée,
   Cmd/Ctrl+A prend tout le chargé, Échap vide, Suppr supprime (confirmation au-delà d'une ligne). La case
