@@ -17,6 +17,8 @@ RUN mkdir -p ./public
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# `GET /api/docs` serves this file at runtime; the standalone output does not carry it.
+COPY --from=builder --chown=nextjs:nodejs /app/docs ./docs
 # Copy node_modules for non-bundled deps (pg, imapflow, nodemailer, bcryptjs)
 COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 USER nextjs

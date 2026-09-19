@@ -542,6 +542,11 @@
         "smartRules": "Règles IA intelligentes",
         "personas": "Personas par compte"
       }
+    },
+    "apiKeys": {
+      "docsTitle": "Documentation de l'API",
+      "docsDescription": "La référence que cette instance sert : chaque route, ses paramètres et son mode d'accès. Lisible sans clé.",
+      "docsLink": "Ouvrir la référence"
     }
   },
   "admin": {

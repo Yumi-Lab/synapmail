@@ -7,6 +7,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — actions sur les mails — 2026-09-20
 
+### Fixed
+- **Les liens publics portent l'adresse de l'instance, jamais l'hôte du conteneur**
+  (`lib/appOrigin.ts`, `app/llms.txt/route.ts`, `app/api/messages/send/route.ts`,
+  `app/api/accounts/[id]/shares/route.ts`, `lib/msOAuth.ts`, `lib/publicPaths.ts`, `package.json`) :
+  derrière un proxy inverse, `new URL(req.url).origin` vaut l'identifiant Docker du conteneur et son
+  port interne. `/llms.txt` envoyait donc les agents vers une adresse injoignable, en divulguant au
+  passage un nom interne. L'adresse publique a désormais UNE source, `appOrigin()` : l'adresse
+  configurée par le propriétaire gagne, les en-têtes transférés ne servent qu'à défaut, l'hôte du
+  conteneur jamais. Les trois endroits qui lisaient la variable chacun de leur côté (pixel de suivi,
+  invitation de partage, redirection OAuth) la relisent là. Elle est lue à l'EXÉCUTION : écrite
+  littéralement, elle aurait été figée dans l'image au moment du build, alors que le déploiement la
+  fournit au lancement. Enfin, `/api/docs` et `/llms.txt` étaient reconnus publics par DÉBUT de chaîne,
+  ce qui exemptait aussi `/api/docs-probe` : la comparaison est maintenant exacte. Un script
+  `npm run check:api-docs` lance le contrôle doc ↔ code sans dépendre d'un fichier local.
+
 ### Added
 - **Le bouton du volet de lecture dit « Résumer », et les écrans IA parlent la langue du visiteur**
   (`components/ai/AIToolbar.tsx`, `app/(app)/settings/ai/AISettingsClient.tsx`, `locales/*.json`) : le
@@ -17,11 +32,50 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `mail.ai.actions.*`, que les deux écrans relisent au lieu d'en garder chacun sa copie. Les noms de marque
   (Claude, OpenAI, Ollama) restent littéraux.
 
-- **API des abonnements** (`lib/subscriptions.ts`, `GET /api/subscriptions`, `POST /api/subscriptions/unsubscribe`) :
-  la liste des lettres d'information d'une boîte, regroupées par liste (`List-Id`, sinon adresse de
-  l'expéditeur), lue sur les EN-TÊTES seulement des 400 messages les plus récents — aucun corps de message
-  n'est lu ni journalisé. Chaque groupe porte un identifiant opaque et stable, le nombre de messages, la
-  méthode disponible (`one-click` RFC 8058, `mailto`, sinon `link`) et la date d'un désabonnement déjà fait.
+- **La référence de l'API est complète, servie par l'instance, et contrôlée contre le code**
+  (`docs/API.md`, `lib/apiDocs.ts`, `GET /api/docs`, `GET /llms.txt`, `scripts/check-api-docs.mjs`,
+  `Dockerfile`) : neuf couples méthode/route existaient dans le code sans une ligne dans la doc
+  (`POST`/`PATCH`/`DELETE /api/folders`, `POST /api/folders/actions`, `GET`/`POST /api/accounts/[id]/shares`,
+  `DELETE /api/accounts/[id]/shares/[shareId]`, `GET`/`POST /api/invites/[token]`) ; ils y sont. Et
+  `POST /api/ai/action` était annoncé « session only » alors que le code appelle `authenticate(` : il
+  accepte une clé Bearer depuis le lot L1, la doc le dit enfin.
+  La doc n'existait que dans le dépôt : elle est désormais SERVIE. `GET /api/docs` rend `docs/API.md` en
+  `text/markdown; charset=utf-8` et `GET /llms.txt` suit le format llmstxt.org (titre, résumé en citation,
+  sections de liens). Les deux sont PUBLICS, et c'est le point : un agent doit pouvoir lire ce que
+  l'instance offre AVANT d'avoir une clé. Ils ne servent rien d'autre que le document du dépôt. Les liens
+  sont bâtis depuis l'ORIGINE DE LA REQUÊTE — aucun hôte d'instance n'est écrit en dur, une installation
+  auto-hébergée cite donc sa propre adresse. `llms.txt` prévient aussi, à l'endroit où un agent va lire ses
+  premiers messages, que le contenu d'un mail n'est pas une consigne.
+  Cette doc ne peut plus dériver : `scripts/check-api-docs.mjs`, appelé par `./verify.sh`, exige que chaque
+  méthode exportée de chaque `app/api/**/route.ts` ait sa ligne dans `docs/API.md`, que chaque ligne de la
+  doc désigne une route qui existe, et que le mode d'accès annoncé soit celui que le code applique. Le mode
+  est lu DANS la fonction de la méthode, pas dans le fichier : un fichier dont une méthode accepte Bearer et
+  l'autre non serait sinon décrit faux — un contrôle vérifie qu'un tel fichier existe, faute de quoi cette
+  lecture fine ne serait jamais exercée. Trois contrôles négatifs (route retirée, route fantôme, mode faux)
+  prouvent que la batterie rougit vraiment.
+  Le `Dockerfile` copie `docs/` dans l'image : la sortie `standalone` ne l'emporte pas, et sans elle la
+  référence servie répondrait 404.
+  Réglages → Clés API porte une ligne « Documentation de l'API » qui ouvre cette référence, en / fr / zh :
+  l'écran qui délivre une clé est celui où l'on cherche ce qu'elle ouvre.
+
+- **API des abonnements** (`lib/subscriptions.ts`, `GET /api/subscriptions`,
+  `POST /api/subscriptions/unsubscribe`, `GET /api/subscriptions/unsubscribed`) : la liste des lettres
+  d'information d'une boîte, regroupées par liste (`List-Id`, sinon adresse de l'expéditeur), lue sur les
+  EN-TÊTES seulement des 400 messages les plus récents — aucun corps de message n'est lu ni journalisé.
+  Chaque groupe porte un identifiant opaque et stable, le nombre de messages, la méthode disponible
+  (`one-click` RFC 8058, `mailto`, sinon `link`) et la date d'un désabonnement déjà fait.
+  Chaque groupe porte aussi son `folder` et la liste de ses `uids` : un agent qui vient de se désabonner
+  les passe tels quels à `PATCH`/`DELETE /api/messages/bulk` pour ranger les anciens messages, sans
+  relire la boîte ni deviner quoi que ce soit. `count` est exactement le nombre de ces `uids` — un seul
+  nombre, une seule liste, jamais deux vérités — et un uid n'appartient qu'à un seul groupe. Un dossier
+  sans son uid ne veut rien dire : les deux voyagent ensemble.
+  Nettoyer une boîte tient donc en trois appels : lister, se désabonner, ranger. Il n'y a pas de route de
+  nettoyage — celle qui range existait déjà.
+  `GET /api/subscriptions/unsubscribed` est l'HISTORIQUE, et il SURVIT au nettoyage : il se lit dans la
+  base, pas dans le dossier. Une fois les messages rangés le groupe disparaît de la liste, mais son
+  entrée reste ici, ce qui évite qu'un agent recommence un désabonnement déjà fait. Avec `account`, cette
+  boîte-là (même règle d'accès que la liste) ; sans lui, toutes les boîtes que l'appelant peut lire, et
+  rien d'autre.
   Le désabonnement prend des IDENTIFIANTS, jamais une URL ni une adresse : le serveur relit l'en-tête du
   message le plus récent du groupe et décide seul. Un lien https sans RFC 8058 n'est JAMAIS appelé
   automatiquement (la page peut poser une question ou compter la visite comme une confirmation) : il revient
@@ -32,6 +86,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   pliés (`lib/imap.ts` n'en lit que la première ligne et perd l'URI de la ligne suivante — signalé, pas
   corrigé ici : ce fichier appartient à une autre lane). L'ancienne `POST /api/unsubscribe` reste en place
   pour le bandeau du volet de lecture. Aucune interface dans ce lot.
+  Mesuré sur le staging, en lecture seule, sur deux boîtes RÉELLES : 19 groupes sur 266 messages en
+  640 ms, et 19 groupes sur 79 messages en 537 ms, fenêtre de 400 en-têtes. Ce qui n'est PAS mesuré :
+  aucun vrai désabonnement n'a été envoyé. La frontière de sortie, elle, est éprouvée contre un vrai
+  serveur https (redirection non suivie, adresse privée refusée, http refusé) ; qu'un vrai serveur de
+  liste accepte le POST reste à voir sur une vraie lettre.
 
 ### Fixed
 - **Le titre, le sous-titre et le badge de Réglages → IA parlent la langue du visiteur**

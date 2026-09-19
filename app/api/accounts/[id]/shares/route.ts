@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
 import { NextResponse } from 'next/server'
+import { appOrigin } from '@/lib/appOrigin'
 import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { sendMail } from '@/lib/smtp'
@@ -180,7 +181,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     )
     share = rows[0]
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
+    const appUrl = appOrigin(req)
     const acceptUrl = `${appUrl}/invite/${rawToken}`
     try {
       await sendMail(smtpConfig, {
