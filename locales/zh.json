@@ -184,7 +184,22 @@
         "prompt": "浏览器将请求访问本设备上运行的应用的权限，请允许后继续。",
         "deniedStep1": "点击地址栏左侧的图标，然后打开网站设置。",
         "deniedStep2": "允许访问本地网络（本设备上的应用），然后重试。"
-      }
+      },
+      "actions": {
+        "summarize": "摘要",
+        "reply": "用 AI 回复",
+        "improve": "润色 / 语气",
+        "translate": "翻译"
+      },
+      "translateToFr": "译成法语",
+      "translateToEn": "译成英语",
+      "tasks": "任务",
+      "priority": "优先级",
+      "soonBadge": "即将推出",
+      "soonTitle": "即将推出",
+      "resultSummary": "摘要",
+      "resultTranslation": "译文",
+      "resultReply": "AI 草稿，已在撰写窗口打开"
     }
   },
   "compose": {
@@ -469,10 +484,58 @@
         "startModel": "在这台电脑上启动模型（ollama serve、LM Studio、llama.cpp）。",
         "checkAddress": "检查地址：Ollama 为 {url}。",
         "remoteNeedsKey": "模型必须运行在这台电脑上：远程地址需要带密钥的 API。",
-        "corsMac": "macOS：运行 launchctl setenv OLLAMA_ORIGINS \"{origin}\"，然后重启 Ollama。",
-        "corsLinux": "Linux：在服务中添加 Environment=\"OLLAMA_ORIGINS={origin}\"，然后重新加载。",
         "corsLmStudio": "LM Studio：在本地服务器中启用 CORS，来源为 {origin}。",
-        "corsSafari": "Safari 会拦截此调用：请使用 Chrome、Edge 或 Firefox。"
+        "corsSafari": "Safari 会拦截此调用：请使用 Chrome、Edge 或 Firefox。",
+        "os": {
+          "mac": "macOS 系统",
+          "windows": "Windows 系统（PowerShell）",
+          "linux": "Linux 系统（systemd）"
+        },
+        "corsRefusesSite": "{label} 在端口 {port} 上有响应，但拒绝了本站点。",
+        "corsIntro": "Ollama 只响应由您自己电脑提供的页面。在您的电脑上运行一次此命令以允许本站点，之后 Ollama 会自行重启。",
+        "thenDetectAgain": "然后再次点击“检测”。",
+        "otherSystems": "其他系统",
+        "copy": "复制",
+        "copied": "已复制",
+        "originRefused": "本页面的地址无法通过命令授权。",
+        "loopbackOnly": "检测只查看本机（端口 11434、1234、8080）：不会扫描局域网。"
+      },
+      "detect": "自动检测",
+      "detecting": "检测中",
+      "detectError": "检测失败",
+      "model": "模型",
+      "saveAndTest": "保存并测试",
+      "saving": "保存中",
+      "testing": "测试中",
+      "saved": "已保存",
+      "failed": "出错",
+      "advanced": "高级设置",
+      "systemPrompt": "系统提示词",
+      "systemPromptPlaceholder": "例如：你是一位专业的邮件助手，回答请始终简明扼要。",
+      "features": "功能",
+      "soonTitle": "即将推出",
+      "soonBadge": "即将推出",
+      "keySaved": "（密钥已保存）",
+      "getKey": "获取密钥",
+      "keyLabel": {
+        "anthropic": "Anthropic API 密钥",
+        "openai": "OpenAI API 密钥",
+        "optional": "API 密钥（如需要）"
+      },
+      "urlLabel": {
+        "ollama": "Ollama 地址",
+        "server": "服务器地址"
+      },
+      "modelHint": {
+        "custom": "你的接口支持的模型名称"
+      },
+      "soon": {
+        "inlineCompletion": "行内补全",
+        "priorityScore": "自动优先级评分",
+        "taskExtraction": "任务提取",
+        "mailboxChat": "与邮箱对话",
+        "smartRules": "智能 AI 规则",
+        "personas": "按账户设定人设"
       }
     }
   },

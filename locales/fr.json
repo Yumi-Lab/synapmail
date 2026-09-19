@@ -184,7 +184,22 @@
         "prompt": "Votre navigateur va demander l'autorisation d'accéder aux applications de cet appareil. Acceptez-la pour continuer.",
         "deniedStep1": "Cliquez sur l'icône à gauche de la barre d'adresse, puis ouvrez les réglages du site.",
         "deniedStep2": "Autorisez l'accès au réseau local (les applications de cet appareil), puis réessayez."
-      }
+      },
+      "actions": {
+        "summarize": "Résumer",
+        "reply": "Répondre avec l'IA",
+        "improve": "Améliorer / Ton",
+        "translate": "Traduire"
+      },
+      "translateToFr": "En français",
+      "translateToEn": "En anglais",
+      "tasks": "Tâches",
+      "priority": "Priorité",
+      "soonBadge": "Bientôt",
+      "soonTitle": "Bientôt disponible",
+      "resultSummary": "Résumé",
+      "resultTranslation": "Traduction",
+      "resultReply": "Brouillon IA, ouvert dans la composition"
     }
   },
   "compose": {
@@ -469,10 +484,58 @@
         "startModel": "Démarrer le modèle sur cet ordinateur (ollama serve, LM Studio, llama.cpp).",
         "checkAddress": "Vérifier l'adresse : {url} pour Ollama.",
         "remoteNeedsKey": "Le modèle doit tourner sur CE poste : une adresse distante demande une API avec clé.",
-        "corsMac": "macOS : launchctl setenv OLLAMA_ORIGINS \"{origin}\" puis relancer Ollama.",
-        "corsLinux": "Linux : ajouter Environment=\"OLLAMA_ORIGINS={origin}\" au service, puis le recharger.",
         "corsLmStudio": "LM Studio : activer CORS dans le serveur local, avec l'origine {origin}.",
-        "corsSafari": "Safari bloque cet appel : utilisez Chrome, Edge ou Firefox."
+        "corsSafari": "Safari bloque cet appel : utilisez Chrome, Edge ou Firefox.",
+        "os": {
+          "mac": "macOS",
+          "windows": "Windows (PowerShell)",
+          "linux": "Linux (systemd)"
+        },
+        "corsRefusesSite": "{label} répond sur le port {port} mais refuse ce site.",
+        "corsIntro": "Ollama ne répond qu'aux pages servies depuis votre ordinateur. Lancez cette commande une fois sur le vôtre pour autoriser ce site : Ollama redémarre ensuite tout seul.",
+        "thenDetectAgain": "Puis cliquez de nouveau sur Détecter.",
+        "otherSystems": "Autres systèmes",
+        "copy": "Copier",
+        "copied": "Copié",
+        "originRefused": "L'adresse de cette page ne peut pas être autorisée par une commande.",
+        "loopbackOnly": "La détection ne regarde que cet ordinateur (ports 11434, 1234, 8080) : le réseau local n’est pas balayé."
+      },
+      "detect": "Détecter automatiquement",
+      "detecting": "Détection",
+      "detectError": "Erreur lors de la détection",
+      "model": "Modèle",
+      "saveAndTest": "Enregistrer et tester",
+      "saving": "Enregistrement",
+      "testing": "Test",
+      "saved": "Enregistré",
+      "failed": "Erreur",
+      "advanced": "Paramètres avancés",
+      "systemPrompt": "Prompt système",
+      "systemPromptPlaceholder": "Par exemple : tu es un assistant email professionnel. Réponds toujours de manière concise.",
+      "features": "Fonctionnalités",
+      "soonTitle": "Prochainement",
+      "soonBadge": "Bientôt",
+      "keySaved": "(clé déjà enregistrée)",
+      "getKey": "Obtenir une clé",
+      "keyLabel": {
+        "anthropic": "Clé API Anthropic",
+        "openai": "Clé API OpenAI",
+        "optional": "Clé API (si requise)"
+      },
+      "urlLabel": {
+        "ollama": "URL Ollama",
+        "server": "URL du serveur"
+      },
+      "modelHint": {
+        "custom": "Nom du modèle accepté par votre endpoint"
+      },
+      "soon": {
+        "inlineCompletion": "Complétion inline",
+        "priorityScore": "Score de priorité automatique",
+        "taskExtraction": "Extraction des tâches",
+        "mailboxChat": "Chat avec la boîte mail",
+        "smartRules": "Règles IA intelligentes",
+        "personas": "Personas par compte"
       }
     }
   },
