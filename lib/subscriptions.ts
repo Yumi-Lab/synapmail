@@ -381,6 +381,11 @@ export interface HttpsRequester {
   }): Promise<{ status: number }>
 }
 
+/** The two shapes `net.connect` may call a custom `lookup` with. */
+type LookupOneCallback = (err: Error | null, address: string, family: number) => void
+type LookupAllCallback = (err: Error | null, addresses: ResolvedAddress[]) => void
+type LookupCallback = LookupOneCallback | LookupAllCallback
+
 const defaultRequester: HttpsRequester = ({ url, address, body, contentType, timeoutMs }) =>
   new Promise((resolve, reject) => {
     const req = https.request(
@@ -395,8 +400,16 @@ const defaultRequester: HttpsRequester = ({ url, address, body, contentType, tim
         // Connect to the address that was VERIFIED, without a second
         // resolution: between the check and the connection, DNS could
         // otherwise answer a private address (rebinding).
-        lookup: (_hostname, _opts, cb) =>
-          (cb as (e: Error | null, a: string, f: number) => void)(null, address.address, address.family),
+        //
+        // Two calling conventions: since Node 20 `net.connect` sets
+        // `autoSelectFamily` and calls the hook with `{ all: true }`, expecting an
+        // ARRAY. Answering the single-address form there yields
+        // `ERR_INVALID_IP_ADDRESS: undefined` — every real one-click failed as
+        // `transport` while a bench with an injected requester stayed green.
+        lookup: ((_hostname: string, opts: { all?: boolean }, cb: LookupCallback) =>
+          opts?.all
+            ? (cb as LookupAllCallback)(null, [{ address: address.address, family: address.family }])
+            : (cb as LookupOneCallback)(null, address.address, address.family)) as never,
       },
       res => {
         // The response body is never read, never returned, never logged: it is

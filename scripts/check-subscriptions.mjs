@@ -17,6 +17,7 @@
  *
  *   node --experimental-strip-types scripts/check-subscriptions.mjs
  *   node --experimental-strip-types scripts/check-subscriptions.mjs --break-boundary
+ *   node --experimental-strip-types scripts/check-subscriptions.mjs --transport
  * The second form makes the boundary accept private addresses in a COPY of the
  * decision and EXPECTS the run to fail — a battery that cannot fail proves nothing.
  */
@@ -413,6 +414,70 @@ if (BREAK_BOUNDARY) {
   }
   assert.equal(failed, true, 'NEGATIVE CONTROL FAILED: the battery accepted a boundary that allows private addresses')
   ok('negative control: a boundary that allows private addresses IS caught by this battery')
+}
+
+
+// ---------------------------------------------------------------------------
+// REAL-TRANSPORT ARM (--transport). Everything above injects a requester, so the
+// SHIPPED `defaultRequester` was never executed: a one-click that failed at the
+// socket for every real sender still showed a green battery. This arm runs the
+// real one through `unsubscribeOneClick` WITHOUT any injection, against a page
+// that does not exist on our own staging — nobody is unsubscribed, no third
+// party is called. Expected: anything but `transport`.
+if (process.argv.includes('--transport')) {
+  console.log('\ntransport — the SHIPPED requester, no injection')
+  // Our own staging, a path that exists nowhere: calling it has no effect on
+  // anyone. Overridable so this arm can be pointed at another harmless URL.
+  const PROBE = process.env.SYNAPMAIL_TRANSPORT_PROBE_URL ?? 'https://srv1774179.hstgr.cloud/gate-n1-sonde-inexistante'
+  const started = Date.now()
+  const real = await unsubscribeOneClick(PROBE)
+  const elapsedMs = Date.now() - started
+  // PRODUCT vs HARNESS: a `transport`/`unresolvable` in ~0 ms with the host up
+  // is the defect; the same with the host down is a harness error, so the
+  // elapsed time and the reason are both printed.
+  assert.notEqual(
+    real.reason,
+    'transport',
+    `the SHIPPED requester failed at the socket against ${PROBE} in ${elapsedMs} ms — ` +
+      `a real one-click can never complete (reason=${real.reason}, status=${real.status})`
+  )
+  ok(`shipped requester reached ${PROBE}: reason=${real.reason ?? 'none'} status=${real.status ?? '-'} in ${elapsedMs} ms`)
+
+  // Negative control: the SAME URL, the SAME network, only the pre-fix `lookup`
+  // convention (a single address where Node asks for an array). It must fail as
+  // `transport` — otherwise this arm cannot tell a working socket from a broken one.
+  //
+  // Its own non-pooling agent: `https.globalAgent` keeps sockets alive since
+  // Node 19, so reusing the one the call above opened would skip `lookup`
+  // entirely and the control would pass while measuring nothing (observed).
+  const https = await import('node:https')
+  const freshSocket = new https.Agent({ keepAlive: false, maxSockets: 1 })
+  const legacyRequester = ({ url, address, body, contentType, timeoutMs }) =>
+    new Promise((resolve, reject) => {
+      const req = https.request(
+        {
+          protocol: url.protocol,
+          hostname: url.hostname,
+          port: url.port || 443,
+          path: `${url.pathname}${url.search}`,
+          method: 'POST',
+          headers: { 'Content-Type': contentType, 'Content-Length': Buffer.byteLength(body) },
+          timeout: timeoutMs,
+          agent: freshSocket,
+          lookup: (_h, _o, cb) => cb(null, address.address, address.family),
+        },
+        res => { res.resume(); resolve({ status: res.statusCode ?? 0 }) }
+      )
+      req.on('error', reject)
+      req.end(body)
+    })
+  const legacy = await unsubscribeOneClick(PROBE, { request: legacyRequester })
+  assert.equal(
+    legacy.reason,
+    'transport',
+    'NEGATIVE CONTROL FAILED: the pre-fix lookup convention did NOT fail here, so this arm proves nothing'
+  )
+  ok('negative control: the pre-fix lookup convention IS caught here (transport)')
 }
 
 console.log('\nsubscriptions: all checks passed')
