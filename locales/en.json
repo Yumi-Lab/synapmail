@@ -171,7 +171,15 @@
     "folderConfirmDelete": "Delete “{name}” and its {count} messages?",
     "folderConfirmEmpty": "Permanently delete the {count} messages in “{name}”?",
     "folderHasChildren": "This folder contains subfolders. Delete them first.",
-    "folderActionFailed": "Couldn't apply that to the folder"
+    "folderActionFailed": "Couldn't apply that to the folder",
+    "ai": {
+      "errors": {
+        "server": "The assistant could not be reached.",
+        "unreachable": "No local model is listening at that address on this device.",
+        "cors": "A local model answered but your browser blocked it: allow the origin {origin}.",
+        "model": "The local model returned an error."
+      }
+    }
   },
   "compose": {
     "newMessage": "New message",

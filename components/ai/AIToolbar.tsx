@@ -6,7 +6,9 @@ import {
   Bot, FileText, MessageSquareDiff, Languages,
   Loader2, X, Clock, AlertCircle, Sparkles,
 } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
+import { runAIAction, aiFailureKey } from '@/lib/aiClient'
 import type { Message } from '@/types/email'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -35,6 +37,7 @@ function ComingSoonBadge() {
 }
 
 export function AIToolbar({ message, onReplyWithAI }: Props) {
+  const t = useTranslations('mail.ai')
   const { data } = useSWR<{ data: AISettingsData }>('/api/ai/settings', fetcher)
   const settings = data?.data
 
@@ -60,21 +63,12 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
     else { apiAction = action }
 
     try {
-      const res = await fetch('/api/ai/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // The mailbox decides whether the guard applies — see lib/accounts.ts.
-        body: JSON.stringify({ action: apiAction, content, accountId: message.accountId, ...extra }),
-      })
-      const json = await res.json() as { data?: { result: string }; error?: string }
-      if (res.ok && json.data?.result) {
-        setResult({ action, text: json.data.result })
-        if (action === 'reply') onReplyWithAI(json.data.result)
-      } else {
-        setError(json.error || 'Erreur IA')
-      }
-    } catch {
-      setError('Impossible de joindre le service IA')
+      // The mailbox decides whether the guard applies — see lib/accounts.ts.
+      const text = await runAIAction({ action: apiAction, content, accountId: message.accountId, ...extra })
+      setResult({ action, text })
+      if (action === 'reply') onReplyWithAI(text)
+    } catch (e: unknown) {
+      setError(t(aiFailureKey(e), { origin: location.origin }))
     } finally {
       setLoading(null)
     }

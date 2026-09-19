@@ -171,7 +171,15 @@
     "folderConfirmDelete": "删除“{name}”及其 {count} 封邮件？",
     "folderConfirmEmpty": "永久删除“{name}”中的 {count} 封邮件？",
     "folderHasChildren": "该文件夹包含子文件夹，请先删除子文件夹。",
-    "folderActionFailed": "无法对该文件夹执行此操作"
+    "folderActionFailed": "无法对该文件夹执行此操作",
+    "ai": {
+      "errors": {
+        "server": "无法连接到助手。",
+        "unreachable": "此设备上该地址没有本地模型在监听。",
+        "cors": "本地模型已响应，但浏览器拦截了它：请允许来源 {origin}。",
+        "model": "本地模型返回了错误。"
+      }
+    }
   },
   "compose": {
     "newMessage": "新邮件",

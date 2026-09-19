@@ -192,7 +192,9 @@ check(/promptGuardApplies\(session\.user\.id, accountId\)/.test(route),
 const toolbar = readFileSync(new URL('../components/ai/AIToolbar.tsx', import.meta.url), 'utf8')
 const compose = readFileSync(new URL('../components/ai/AICompose.tsx', import.meta.url), 'utf8')
 const toolbarSrc = BREAK === 'caller-sends-no-mailbox' ? toolbar.replace(/accountId: message\.accountId,\s*/, '') : toolbar
-check(/body:\s*JSON\.stringify\(\{[^}]*accountId:\s*message\.accountId/.test(toolbarSrc),
+// Both components now go through lib/aiClient.ts, so the mailbox travels in the
+// arguments of runAIAction rather than in an inline fetch body.
+check(/runAIAction\(\{[^}]*accountId:\s*message\.accountId/.test(toolbarSrc),
   'reading pane: the assistant call names the message\'s mailbox')
 check(/accountId\?:\s*string/.test(compose) && /accountId\s*\?\s*\{\s*accountId\s*\}/.test(compose),
   'compose: the mailbox is forwarded when the caller knows it, and omitted otherwise')

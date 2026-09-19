@@ -171,7 +171,15 @@
     "folderConfirmDelete": "Supprimer « {name} » et ses {count} messages ?",
     "folderConfirmEmpty": "Supprimer définitivement les {count} messages de « {name} » ?",
     "folderHasChildren": "Ce dossier contient des sous-dossiers. Supprimez-les d’abord.",
-    "folderActionFailed": "Action impossible sur le dossier"
+    "folderActionFailed": "Action impossible sur le dossier",
+    "ai": {
+      "errors": {
+        "server": "L'assistant n'a pas pu être joint.",
+        "unreachable": "Aucun modèle local n'écoute à cette adresse sur cet appareil.",
+        "cors": "Un modèle local a répondu mais votre navigateur l'a bloqué : autorisez l'origine {origin}.",
+        "model": "Le modèle local a renvoyé une erreur."
+      }
+    }
   },
   "compose": {
     "newMessage": "Nouveau message",
