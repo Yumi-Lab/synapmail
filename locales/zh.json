@@ -151,7 +151,18 @@
       "gray": "灰色"
     },
     "noFolders": "没有文件夹",
-    "messageList": "邮件列表"
+    "messageList": "邮件列表",
+    "folderNew": "新建文件夹…",
+    "folderNewChild": "新建子文件夹…",
+    "folderRename": "重命名…",
+    "folderMarkRead": "全部标记为已读",
+    "folderEmpty": "清空",
+    "folderDelete": "删除文件夹…",
+    "folderNamePlaceholder": "文件夹名称",
+    "folderConfirmDelete": "删除“{name}”及其 {count} 封邮件？",
+    "folderConfirmEmpty": "永久删除“{name}”中的 {count} 封邮件？",
+    "folderHasChildren": "该文件夹包含子文件夹，请先删除子文件夹。",
+    "folderActionFailed": "无法对该文件夹执行此操作"
   },
   "compose": {
     "newMessage": "新邮件",

@@ -151,7 +151,18 @@
       "gray": "Gris"
     },
     "noFolders": "Aucun dossier",
-    "messageList": "Liste des messages"
+    "messageList": "Liste des messages",
+    "folderNew": "Nouveau dossier…",
+    "folderNewChild": "Nouveau sous-dossier…",
+    "folderRename": "Renommer…",
+    "folderMarkRead": "Tout marquer comme lu",
+    "folderEmpty": "Vider",
+    "folderDelete": "Supprimer le dossier…",
+    "folderNamePlaceholder": "Nom du dossier",
+    "folderConfirmDelete": "Supprimer « {name} » et ses {count} messages ?",
+    "folderConfirmEmpty": "Supprimer définitivement les {count} messages de « {name} » ?",
+    "folderHasChildren": "Ce dossier contient des sous-dossiers — supprimez-les d’abord.",
+    "folderActionFailed": "Action impossible sur le dossier"
   },
   "compose": {
     "newMessage": "Nouveau message",
