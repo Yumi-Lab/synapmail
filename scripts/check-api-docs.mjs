@@ -1,0 +1,236 @@
+#!/usr/bin/env node
+/**
+ * Self-check of lot N3: `docs/API.md` cannot drift away from `app/api/**`.
+ *
+ * PURE: no database, no mailbox, no network, no dev server. It reads the route
+ * files and the document from disk and compares them three ways:
+ *
+ *  1. Every HTTP method exported by a route file has its own heading.
+ *  2. Every heading names a route and a method that really exist.
+ *  3. The access mode announced by the heading is the one the code enforces,
+ *     read INSIDE that method's own body — a sibling method calling
+ *     `authenticate()` must never make its neighbour look Bearer-eligible.
+ *
+ *   node scripts/check-api-docs.mjs
+ *   node scripts/check-api-docs.mjs --break=missing   (a route dropped from the doc)
+ *   node scripts/check-api-docs.mjs --break=ghost     (a heading for a dead route)
+ *   node scripts/check-api-docs.mjs --break=mode      (a mode the code contradicts)
+ * The `--break` forms damage a COPY of one input and EXPECT the run to fail: a
+ * battery that cannot fail proves nothing.
+ */
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
+const API_DIR = join(ROOT, 'app', 'api')
+const DOC_PATH = join(ROOT, 'docs', 'API.md')
+
+/** The methods Next.js routes may export. Anything else is not a route method. */
+const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
+
+/**
+ * The access modes, from the widest to the narrowest. Each carries the marker
+ * the document writes and the evidence the code must show. ONE source: the
+ * heading parser and the body reader both read this table.
+ */
+const MODES = {
+  admin: { markers: ['👑 Admin'], detect: body => /\bisAdmin\s*\(|\brequireAdmin\b/.test(body) },
+  bearer: { markers: ['🔑 Bearer', 'Bearer or session'], detect: body => /\bauthenticate\s*\(/.test(body) },
+  session: { markers: ['session only'], detect: body => /\bauth\s*\(\s*\)/.test(body) },
+  public: { markers: ['public, no auth', 'Auth.js v5 handler'], detect: () => true },
+}
+/** Narrowest first: a route calling both `isAdmin` and `auth()` is an admin route. */
+const MODE_ORDER = ['admin', 'bearer', 'session', 'public']
+
+const ok = label => console.log(`  ok  ${label}`)
+const fail = []
+const check = (condition, label, detail) => {
+  if (condition) ok(label)
+  else fail.push(detail ? `${label}\n      ${detail}` : label)
+}
+
+/** `app/api/messages/[id]/route.ts` -> `/api/messages/[id]`. Posix separators only. */
+const routePathOf = file => '/' + relative(ROOT, file).split(sep).slice(1, -1).join('/')
+
+const routeFiles = dir =>
+  readdirSync(dir).flatMap(name => {
+    const full = join(dir, name)
+    if (statSync(full).isDirectory()) return routeFiles(full)
+    return name === 'route.ts' ? [full] : []
+  })
+
+/**
+ * The source of one exported method, from its `export` keyword to the brace that
+ * closes its body. Brace counting, so a sibling method never leaks into this body.
+ * The parameter list is skipped FIRST: `({ params }: { params: { id: string } })`
+ * carries braces of its own, and counting them would end the body on the signature
+ * and report every such route as unauthenticated.
+ * Returns null when the method is not exported as a function of its own.
+ */
+const methodBody = (source, method) =>
+  functionBody(source, new RegExp(`export\\s+(?:async\\s+)?function\\s+${method}\\s*\\(`))
+
+function functionBody(source, pattern) {
+  const opener = pattern.exec(source)
+  if (!opener) return null
+  let parens = 0
+  let i = opener.index
+  for (; i < source.length; i++) {
+    if (source[i] === '(') parens++
+    else if (source[i] === ')' && --parens === 0) break
+  }
+  let depth = 0
+  for (; i < source.length; i++) {
+    if (source[i] === '{') depth++
+    else if (source[i] === '}' && --depth === 0) return source.slice(opener.index, i + 1)
+  }
+  return source.slice(opener.index)
+}
+
+/** The methods a route file exports, as functions or re-exported from a handler. */
+function exportedMethods(source) {
+  const found = new Set()
+  for (const method of HTTP_METHODS) {
+    if (new RegExp(`export\\s+(?:async\\s+)?function\\s+${method}\\s*\\(`).test(source)) found.add(method)
+  }
+  for (const [, names] of source.matchAll(/export\s+const\s*\{([^}]*)\}\s*=/g)) {
+    for (const name of names.split(',')) {
+      const clean = name.split(':')[0].trim()
+      if (HTTP_METHODS.includes(clean)) found.add(clean)
+    }
+  }
+  return [...found]
+}
+
+/**
+ * The bodies of the file's own non-exported helper functions, by name. A route
+ * often keeps its guard in one (`async function guard() { ... isAdmin ... }`),
+ * and a method that only CALLS it would otherwise read as unauthenticated.
+ */
+function localHelpers(source) {
+  const helpers = {}
+  for (const [, name] of source.matchAll(/(?:^|\n)\s*(?:async\s+)?function\s+(\w+)\s*\(/g)) {
+    if (HTTP_METHODS.includes(name)) continue
+    helpers[name] = functionBody(source, new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`))
+  }
+  return helpers
+}
+
+/** The mode the CODE enforces for one method: narrowest evidence wins. */
+const modeOf = (source, method) => {
+  let body = methodBody(source, method) ?? source
+  const helpers = localHelpers(source)
+  // One hop is enough for the shape used here (a method calls its file's guard);
+  // ponytail: a guard hidden two hops deep would read as public — widen only if
+  // a route ever does that.
+  for (const [name, helperBody] of Object.entries(helpers)) {
+    if (helperBody && new RegExp(`\\b${name}\\s*\\(`).test(body)) body += '\n' + helperBody
+  }
+  return MODE_ORDER.find(name => MODES[name].detect(body))
+}
+
+/** Reads `app/api/**` into `{ 'GET /api/x': { file, mode } }`. */
+function readCode(overrides = {}) {
+  const routes = {}
+  for (const file of routeFiles(API_DIR)) {
+    const source = overrides[file] ?? readFileSync(file, 'utf8')
+    const path = routePathOf(file)
+    for (const method of exportedMethods(source)) {
+      routes[`${method} ${path}`] = { file: relative(ROOT, file), mode: modeOf(source, method) }
+    }
+  }
+  return routes
+}
+
+/**
+ * Reads the `### \`METHOD /api/path?query\` — mode` headings of the document.
+ * Query strings and the optional-parameter brackets the prose uses (`[?account=…]`)
+ * are stripped: they describe a call, not a route. Path segments in brackets
+ * (`[id]`) are kept — those ARE the route.
+ */
+function readDoc(text) {
+  const entries = {}
+  for (const line of text.split('\n')) {
+    const heading = /^###\s+`([^`]+)`(.*)$/.exec(line)
+    if (!heading) continue
+    const [, target, rest] = heading
+    const spaced = target.trim().split(/\s+/)
+    // A heading may name a bare path with no method (`/api/auth/[...nextauth]`),
+    // which covers every method that path exports. `*` marks it; it expands below.
+    const [method, raw] =
+      spaced.length === 1 && spaced[0].startsWith('/') ? ['*', spaced[0]] : spaced
+    if (!HTTP_METHODS.includes(method) && method !== '*') continue
+    const path = raw.replace(/\[\?[^\]]*\]/g, '').split('?')[0].replace(/\/$/, '')
+    const mode = MODE_ORDER.find(name => MODES[name].markers.some(marker => rest.includes(marker)))
+    entries[`${method} ${path}`] = { mode, line: line.trim() }
+  }
+  return entries
+}
+
+const BREAK = (/--break=(\w+)/.exec(process.argv.join(' )')) || [])[1]
+
+let docText = readFileSync(DOC_PATH, 'utf8')
+let code = readCode()
+
+if (BREAK === 'missing') {
+  // Drop the first documented route from a COPY of the document.
+  const victim = Object.values(readDoc(docText))[0].line
+  docText = docText.replace(victim, '### `GET /api/nothing-here` — session only')
+} else if (BREAK === 'ghost') {
+  docText += '\n### `DELETE /api/ghost-route` — session only\nA route that does not exist.\n'
+} else if (BREAK === 'mode') {
+  // Announce a session-only route as Bearer-eligible, in a COPY of the document.
+  const victim = Object.entries(readDoc(docText)).find(([key]) => code[key]?.mode === 'session')[1].line
+  docText = docText.replace(victim, victim.replace('— session only', '🔑 Bearer'))
+}
+
+const doc = readDoc(docText)
+// Expand a method-less heading into the methods its path really exports.
+for (const [key, entry] of Object.entries(doc)) {
+  if (!key.startsWith('* ')) continue
+  delete doc[key]
+  const path = key.slice(2)
+  for (const method of Object.keys(code).filter(k => k.endsWith(` ${path}`))) doc[method] = entry
+}
+console.log(`api docs — ${Object.keys(code).length} method/route pairs in the code, ${Object.keys(doc).length} headings in the document`)
+
+const undocumented = Object.keys(code).filter(key => !doc[key]).sort()
+check(undocumented.length === 0, 'every exported method has its heading', undocumented.join('\n      '))
+
+const ghosts = Object.keys(doc).filter(key => !code[key]).sort()
+check(ghosts.length === 0, 'every heading names a route and a method that exist', ghosts.join('\n      '))
+
+const wrongMode = Object.entries(doc)
+  .filter(([key, entry]) => code[key] && entry.mode !== code[key].mode)
+  .map(([key, entry]) => `${key}: the document says ${entry.mode ?? 'no mode'}, ${code[key].file} enforces ${code[key].mode}`)
+check(wrongMode.length === 0, 'the announced access mode is the one the code enforces', wrongMode.join('\n      '))
+
+// The mode reader must look inside the method, not across the file: a route file
+// holding one Bearer method and one session method must report both truthfully.
+const mixed = Object.entries(code).reduce((seen, [key, { file, mode }]) => {
+  const modes = seen.get(file) ?? new Set()
+  return seen.set(file, modes.add(mode)) && seen
+}, new Map())
+check(
+  [...mixed.values()].some(modes => modes.size > 1),
+  'at least one route file mixes two access modes, so the per-method read is exercised',
+)
+
+if (BREAK) {
+  if (fail.length === 0) {
+    console.error(`\nKO: negative control --break=${BREAK} was NOT caught — this battery proves nothing`)
+    process.exit(1)
+  }
+  console.log(`\n  ok  negative control: --break=${BREAK} IS caught by this battery`)
+  console.log(`      (${fail.length} check(s) failed, as expected)`)
+  console.log('\napi docs: negative control passed')
+  process.exit(0)
+}
+
+if (fail.length) {
+  console.error('\nKO: the document and the code disagree\n')
+  for (const detail of fail) console.error(`  KO  ${detail}`)
+  process.exit(1)
+}
+console.log('\napi docs: all checks passed')
