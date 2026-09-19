@@ -5,6 +5,69 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — fork Yumi-Lab (branche `yumi`) — actions sur les mails — 2026-09-20
+
+### Added
+- **Sélection multiple façon explorateur** (`lib/mailSelection.tsx`, `components/layout/MessageList.tsx`) :
+  Cmd/Ctrl-clic ajoute ou retire une ligne, Maj-clic prend la plage depuis la dernière ligne cliquée,
+  Cmd/Ctrl+A prend tout le chargé, Échap vide, Suppr supprime (confirmation au-delà d'une ligne). La case
+  au survol de la bulle reste le chemin tactile. Glisser une ligne qui fait partie de la sélection emporte
+  TOUTE la sélection vers le dossier visé. La sélection vit dans un contexte monté au niveau de la page,
+  que la barre d'outils de l'en-tête lit sans dupliquer la moindre logique de mail.
+- **Rectangle de sélection à la souris** : les lignes étant `draggable` et pleine largeur, il n'existait
+  aucun vide où commencer un rectangle. Le geste est tranché à la direction — mouvement surtout vertical
+  → rectangle, surtout horizontal → glisser-déposer vers un dossier, inchangé. Défilement automatique aux
+  bords, Échap rétablit la sélection d'avant, un déplacement de moins de 4 px reste un clic qui ouvre.
+- **Drapeaux de couleur, convention Apple** (`lib/flags.ts`) : 7 couleurs (rouge, orange, jaune, vert,
+  bleu, violet, gris) écrites en IMAP comme Mail sur Mac — `\Flagged` plus les mots-clés `$MailFlagBit0/1/2`,
+  après une sonde du serveur consignée au Journal. `PATCH /api/messages/[id]` et `/api/messages/bulk`
+  acceptent `flag: <couleur> | null` ; l'ancien `isStarred` reste accepté et vaut rouge. L'étoile devient
+  un drapeau dans la liste et le volet de lecture, et un filtre « Avec drapeau » rejoint « Non lus ».
+- **Clic droit qui agit sur la SÉLECTION** (`components/ui/MessageContextMenu.tsx`) : Répondre, Répondre à
+  tous, Transférer, Drapeau ▸ (7 pastilles + retrait), lu / non lu, Archiver, Déplacer vers ▸, Reporter ▸,
+  Indésirable, Supprimer. Un clic droit dans une sélection agit sur toute la sélection (Répondre et
+  Répondre à tous grisés au-delà d'une ligne) ; hors sélection, il sélectionne la ligne visée puis ouvre.
+- **Temps réel par IMAP IDLE sur la boîte du compte actif** (`lib/idle.ts`, `/api/stream?account=`) : une
+  connexion écoute `exists` / `expunge` / `flags` et pousse l'événement dans le flux SSE existant ; la
+  liste et les compteurs se relisent à l'annonce. Mesuré sur une vraie boîte IONOS : la ligne apparaît à
+  10,0 s, dont **7,5 à 9,2 s d'annonce par le serveur lui-même** (bras de référence mesuré dans le même
+  passage) — la part ajoutée par l'application est d'environ 2 s. Les relectures périodiques (30 s / 60 s)
+  restent en filet de sécurité.
+- **Transfert de plusieurs messages en pièces jointes** (`lib/forward.ts`) : une sélection de N messages
+  ouvre la fenêtre de rédaction avec N pièces `.eml` (`message/rfc822`, source IMAP brute), objet
+  « Fwd : N messages ». Sur un seul message, le comportement est inchangé. La frontière de confiance
+  refuse par un CODE, jamais par une phrase : requête malformée, plus de 25 messages, plus de 25 Mio au
+  total (les TAILLES sont lues avant le moindre octet de corps), un uid disparu (409, rien ne part), boîte
+  d'origine inaccessible. Les uid sont validés un à un : un jeu de séquences IMAP (`1:*`) est refusé.
+
+### Changed
+- **Plus aucune icône d'action sur les lignes de la liste** : archiver, lu / non lu, supprimer et reporter
+  quittent les lignes, au repos comme au survol. À leur place, la date COMPLÈTE avec l'heure, dans la
+  langue de l'interface (`lib/dates.ts`, `Intl.DateTimeFormat`). Chaque action retirée reste atteignable
+  depuis l'en-tête et le clic droit ; « Reporter » a rejoint le clic droit pour cela.
+- **La liste et les volets ont la barre de défilement de la barre latérale** : le composant `ThinScroll`
+  est réutilisé tel quel (pouce de 6 px, visible pendant le défilement, fondu après 2 s), et son pouce se
+  SAISIT à la souris — appui sur le pouce, clic dans la bande, sans ouvrir de message ni toucher la
+  sélection.
+- **Le bouton Archiver mort du volet de lecture ne trompe plus personne** : il n'avait aucun gestionnaire
+  de clic et ne faisait rien. L'archivage est désormais une action du contexte partagé, atteignable depuis
+  la barre d'outils de l'en-tête et le clic droit, et n'est proposée que si un dossier d'archive existe
+  sur le compte.
+- **Les lignes de la liste s'annoncent** : `role="listbox"` / `role="option"` et `aria-selected`.
+
+### Fixed
+- **Un transfert ne lit plus les messages dans la mauvaise boîte** (`lib/forward.ts`) : la charge utile ne
+  portait qu'un dossier et des uid, et le serveur les relisait dans le compte EXPÉDITEUR — qu'on peut
+  changer dans « De » APRÈS avoir coché. Sur deux boîtes, des uid identiques désignent des messages
+  différents : le transfert aurait joint les messages d'une autre boîte. Le compte d'ORIGINE voyage
+  désormais dans la charge utile et son accès est contrôlé SÉPARÉMENT de celui de l'expéditeur ; origine
+  inaccessible → 404, rien ne part.
+- **Le refus « des messages ont disparu » s'accorde** : il annonçait « 1 des messages sélectionnés ne sont
+  plus » au singulier. Les trois langues passent en règle de pluriel ICU, et les libellés des cinq refus
+  sont désormais RENDUS par le banc, dans les trois langues, au singulier comme au pluriel.
+
+---
+
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — recherche — 2026-09-19
 
 ### Changed
