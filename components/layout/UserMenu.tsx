@@ -3,10 +3,11 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { signOut } from 'next-auth/react'
-import { useTranslations } from 'next-intl'
+import { useLocale, useTranslations } from 'next-intl'
 import useSWR from 'swr'
 import { LogOut, Settings } from 'lucide-react'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { LOCALES, setLocale, type Locale } from '@/lib/locales'
 import { twoLetters } from './AccountAvatar'
 import { IconTooltip } from '@/components/ui/IconTooltip'
 import { cn } from '@/lib/utils'
@@ -48,6 +49,9 @@ export function UserMenu() {
   const t = useTranslations('mail')
   // The theme label already exists for the appearance settings — one string, one key.
   const tTheme = useTranslations('settings.appearance')
+  // Le libelle « Langue » existe deja pour l'omnibar : une chaine, une cle.
+  const tOmni = useTranslations('omnibar')
+  const locale = useLocale()
   const { data } = useSWR<{ data?: { name?: string; email?: string } }>('/api/profile', fetcher, {
     revalidateOnFocus: false,
   })
@@ -125,6 +129,30 @@ export function UserMenu() {
           <div className={cn(MENU_ROW, 'hover:bg-transparent hover:text-foreground/80')} data-user-menu-item="theme">
             <span className="flex-1 truncate text-left">{tTheme('theme')}</span>
             <ThemeToggle />
+          </div>
+          {/* Lot H3f : la langue se change d'ici, meme gabarit que la ligne du theme.
+              Le mecanisme est celui des reglages Apparence (lib/locales.ts), pas un second. */}
+          <div className={cn(MENU_ROW, 'hover:bg-transparent hover:text-foreground/80')} data-user-menu-item="language">
+            <span className="flex-1 truncate text-left">{tOmni('language')}</span>
+            <div className="flex shrink-0 items-center rounded-lg border border-border bg-muted/40 p-0.5">
+              {LOCALES.map(({ code, label }) => (
+                <button
+                  key={code}
+                  type="button"
+                  data-user-menu-language={code}
+                  aria-pressed={locale === code}
+                  title={label}
+                  onClick={() => { if (locale !== code) void setLocale(code as Locale) }}
+                  className={cn(
+                    'rounded-[7px] px-2 py-1 text-[11px] transition-colors',
+                    locale === code ? 'bg-background text-foreground shadow-sm dark:bg-white/15'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="my-1 border-t border-border" />
           <button

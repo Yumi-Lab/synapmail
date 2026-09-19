@@ -94,6 +94,29 @@ const MIN_HIT_GAP_PX = 4
 // Largeur d'un bouton du gabarit `ACTION` (`w-8`), LUE dans la feuille Tailwind par
 // le composant : un « … » plus étroit que ça est un bouton écrasé, pas un bouton.
 const MORE_BUTTON_PX = 32
+// Delai du debounce de la recherche, LU dans le contrat partage (`lib/search.ts`) :
+// apres avoir vide le champ, le banc laisse passer la navigation qu'il declenche.
+const SEARCH_SRC = readFileSync(new URL('../lib/search.ts', import.meta.url), 'utf8')
+const SEARCH_DEBOUNCE_MS = Number(SEARCH_SRC.match(/SEARCH_DEBOUNCE_MS = (\d+)/)?.[1])
+if (!SEARCH_DEBOUNCE_MS) { console.error('HARNESS: could not read SEARCH_DEBOUNCE_MS from lib/search.ts'); process.exit(2) }
+const SEARCH_SETTLE_MS = SEARCH_DEBOUNCE_MS + 400
+
+// --- Lot H3f : le panneau de l'omnibar ---
+const PANEL = '[data-omnibar-panel]'
+// Les entrees de reglages et les langues sont LUES dans les sources du produit :
+// le banc n'en tient aucune liste de son cote, sinon il mesurerait sa copie.
+const NAV_SRC = readFileSync(new URL('../components/settings/SettingsSidebar.tsx', import.meta.url), 'utf8')
+const NAV_BLOCK = NAV_SRC.slice(NAV_SRC.indexOf('export const SETTINGS_NAV'), NAV_SRC.indexOf('] as const', NAV_SRC.indexOf('export const SETTINGS_NAV')))
+const SETTINGS_NAV_KEYS = [...NAV_BLOCK.matchAll(/key:\s*'([\w-]+)'/g)].map(m => m[1])
+const API_KEYS_HREF = NAV_BLOCK.match(/href:\s*'([^']*api-keys)'/)?.[1]
+const SETTINGS_ENTRY_API = 'settings:apiKeys'
+const LOCALES_SRC = readFileSync(new URL('../lib/locales.ts', import.meta.url), 'utf8')
+const LOCALE_CODES = [...LOCALES_SRC.slice(LOCALES_SRC.indexOf('export const LOCALES'), LOCALES_SRC.indexOf('] as const')).matchAll(/code:\s*'(\w+)'/g)].map(m => m[1])
+if (!SETTINGS_NAV_KEYS.length || !API_KEYS_HREF || LOCALE_CODES.length < 2) {
+  console.error('HARNESS: could not read SETTINGS_NAV / LOCALES from the product sources')
+  process.exit(2)
+}
+
 // Navigations and the compose window settle well under this; the bar's own
 // transitions are colour-only (no layout animation to wait out).
 const SETTLE_MS = 600
@@ -770,6 +793,160 @@ page.setDefaultNavigationTimeout(120000)
     await page.keyboard.press('Escape')
     await new Promise(r => setTimeout(r, SETTLE_MS))
   }
+
+  // --- Lot H3f : les reglages, les comptes, le theme et la langue remontent dans l'omnibar ---
+  await page.setViewport(VIEWPORT)
+  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await page.waitForSelector(SEARCH, { timeout: 20000 })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  /**
+   * Vide le champ puis tape `text`, et rend ce que le panneau propose alors.
+   *
+   * L'attente apres le vidage n'est pas decorative : vider declenche la recherche
+   * debouncee (SEARCH_DEBOUNCE_MS), donc une navigation qui REALIGNE le champ sur
+   * l'URL. Taper avant qu'elle soit passee ferait effacer la saisie par cette
+   * navigation, et le banc mesurerait sa propre course au lieu du produit.
+   */
+  const typeInOmnibar = async text => {
+    await page.click(SEARCH)
+    // Vidage caractere par caractere : mesure faite le 19/09, un triple-clic suivi
+    // d'un Backspace (comme un Cmd+A) n'efface QU'UN caractere dans ce Chrome
+    // headless, et les saisies s'empilaient (« api » puis « dark » -> « apdark »),
+    // ce qui faisait echouer le banc sur sa propre saisie et non sur le produit.
+    const length = await page.$eval(SEARCH, el => el.value.length)
+    for (let i = 0; i < length; i++) await page.keyboard.press('Backspace')
+    await new Promise(r => setTimeout(r, SEARCH_SETTLE_MS))
+    await page.type(SEARCH, text, { delay: 20 })
+    await new Promise(r => setTimeout(r, 250))
+    return page.evaluate(sel => {
+      const panel = document.querySelector(sel)
+      if (!panel) return null
+      const rows = [...panel.querySelectorAll('[data-omnibar-entry]')]
+      return {
+        ids: rows.map(r => r.dataset.omnibarEntry),
+        labels: rows.map(r => r.textContent.trim()),
+        sections: [...panel.querySelectorAll('[data-omnibar-section]')].map(d => d.dataset.omnibarSection),
+        // Le panneau doit couvrir exactement la largeur du champ et rester a l'ecran.
+        sameWidthAsField: (() => {
+          const f = document.querySelector('[data-omnibar-search]')
+          if (!f) return null
+          const a = panel.getBoundingClientRect(); const b = f.getBoundingClientRect()
+          return Math.abs(a.width - b.width) <= 2 && a.bottom <= document.documentElement.clientHeight
+        })(),
+      }
+    }, PANEL)
+  }
+
+  // (1) « api » propose l'entree des cles API, et rien d'autre du cote des reglages.
+  const apiPanel = await typeInOmnibar('api')
+  if (!apiPanel) failures.push('H3f: typing « api » opened no panel')
+  else {
+    console.log(`H3f: « api » -> ${apiPanel.ids.join(' | ')}`)
+    if (!apiPanel.ids.includes(SETTINGS_ENTRY_API)) failures.push(`H3f: « api » does not propose ${SETTINGS_ENTRY_API} (got ${apiPanel.ids.join(',')})`)
+    if (apiPanel.ids[apiPanel.ids.length - 1] !== 'search') failures.push('H3f: the mail-search row is not last in the panel')
+    if (apiPanel.sameWidthAsField === false) failures.push('H3f: the panel does not match the field width / leaves the screen')
+  }
+
+  // (2) Fleche bas + Entree emmene a la page, PAS a /mail?q=api.
+  await page.keyboard.press('ArrowDown')
+  await new Promise(r => setTimeout(r, 150))
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
+    page.keyboard.press('Enter'),
+  ])
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const apiLanding = new URL(page.url()).pathname
+  console.log(`H3f: ArrowDown + Enter on « api » -> ${apiLanding}`)
+  if (apiLanding !== API_KEYS_HREF) failures.push(`H3f: choosing the API entry landed on ${apiLanding}, expected ${API_KEYS_HREF}`)
+
+  // (3) Le comportement par DEFAUT est inchange : Entree sans choix cherche le courrier.
+  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await page.waitForSelector(SEARCH, { timeout: 20000 })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  await typeInOmnibar('api')
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
+    page.keyboard.press('Enter'),
+  ])
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const searchLanding = new URL(page.url())
+  console.log(`H3f: Enter with no selection -> ${searchLanding.pathname}?${searchLanding.searchParams}`)
+  if (searchLanding.pathname !== '/mail' || searchLanding.searchParams.get('q') !== 'api')
+    failures.push(`H3f: plain Enter landed on ${searchLanding.pathname}?${searchLanding.searchParams} instead of /mail?q=api`)
+
+  // (4) Chaque entree de la navigation des reglages est trouvable par son libelle,
+  //     dans la langue courante — la liste vient de SETTINGS_NAV, pas d'une copie.
+  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await page.waitForSelector(SEARCH, { timeout: 20000 })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const activeLocale = await page.evaluate(() => document.documentElement.lang || 'en')
+  // Les libelles attendus sont ceux de la langue REELLEMENT rendue par la page :
+  // le banc ne suppose pas l'anglais, il lit `<html lang>` puis le fichier assorti.
+  if (!LOCALE_CODES.includes(activeLocale)) { console.error(`HARNESS: the page renders lang="${activeLocale}", which lib/locales does not declare`); process.exit(2) }
+  const LABELS = JSON.parse(readFileSync(new URL(`../locales/${activeLocale}.json`, import.meta.url), 'utf8')).settings.nav
+  const notFound = []
+  for (const key of SETTINGS_NAV_KEYS) {
+    const panel = await typeInOmnibar(LABELS[key])
+    if (!panel?.ids.includes(`settings:${key}`)) notFound.push(`${key} (« ${LABELS[key]} »)`)
+  }
+  console.log(`H3f: ${SETTINGS_NAV_KEYS.length - notFound.length}/${SETTINGS_NAV_KEYS.length} settings entries found by their ${activeLocale} label`)
+  if (notFound.length) failures.push(`H3f: settings entries not findable by their label: ${notFound.join(', ')}`)
+
+  // (5) Le theme remonte, et l'action change VRAIMENT le theme (pas seulement une ligne).
+  const themeWord = LABELS.appearance
+  const themePanel = await typeInOmnibar(themeWord)
+  console.log(`H3f: « ${themeWord} » -> ${themePanel?.ids.join(' | ')}`)
+  if (!themePanel?.ids.includes('settings:appearance'))
+    failures.push(`H3f: « ${themeWord} » does not propose the appearance settings`)
+
+  const darkBefore = await page.evaluate(() => document.documentElement.classList.contains('dark'))
+  const themeActionPanel = await typeInOmnibar('dark')
+  const darkEntry = themeActionPanel?.ids.find(id => id === 'action:theme-dark')
+  if (!darkEntry) failures.push(`H3f: « dark » proposes no dark-theme action (got ${themeActionPanel?.ids.join(',')})`)
+  else {
+    await page.click(`[data-omnibar-entry="action:theme-dark"]`)
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    const darkAfter = await page.evaluate(() => document.documentElement.classList.contains('dark'))
+    console.log(`H3f: dark theme from the omnibar — before=${darkBefore}, after=${darkAfter}, still on ${new URL(page.url()).pathname}`)
+    if (!darkAfter) failures.push('H3f: choosing « dark theme » in the omnibar did not darken the page')
+    if (new URL(page.url()).pathname !== '/mail') failures.push('H3f: choosing a theme navigated away from the mailbox')
+  }
+
+  // (6) La langue est aussi une ligne du menu du compte, avec les 3 langues declarees.
+  await page.click(USER_TRIGGER)
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const langRow = await page.evaluate(() => {
+    const row = document.querySelector('[data-user-menu-item="language"]')
+    if (!row) return null
+    const buttons = [...row.querySelectorAll('[data-user-menu-language]')]
+    return {
+      codes: buttons.map(b => b.dataset.userMenuLanguage),
+      pressed: buttons.filter(b => b.getAttribute('aria-pressed') === 'true').map(b => b.dataset.userMenuLanguage),
+    }
+  })
+  console.log(`H3f: user menu language row -> ${langRow ? langRow.codes.join(',') : 'ABSENT'} (active: ${langRow?.pressed.join(',')})`)
+  if (!langRow) failures.push('H3f: the user menu has no language row')
+  else {
+    if (langRow.codes.join(',') !== LOCALE_CODES.join(','))
+      failures.push(`H3f: the language row lists ${langRow.codes.join(',')}, lib/locales declares ${LOCALE_CODES.join(',')}`)
+    if (langRow.pressed.length !== 1)
+      failures.push(`H3f: the language row marks ${langRow.pressed.length} active languages, expected exactly 1`)
+  }
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // (7) Le panneau se ferme sur Echap, et le champ garde sa saisie.
+  await typeInOmnibar('api')
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, 250))
+  const afterEscape = await page.evaluate(sel => ({
+    panel: !!document.querySelector(sel),
+    value: document.querySelector('[data-omnibar-search]')?.value,
+  }), PANEL)
+  console.log(`H3f: Escape -> panel present=${afterEscape.panel}, field="${afterEscape.value}"`)
+  if (afterEscape.panel) failures.push('H3f: Escape did not close the panel')
+  if (afterEscape.value !== 'api') failures.push(`H3f: Escape also cleared the field ("${afterEscape.value}"), it should only close the panel`)
 
   // --- Sign out, LAST: it invalidates the session every check above needs ---
   await page.setViewport(VIEWPORT)
