@@ -3,6 +3,11 @@
  * Measures lot C4b in the browser: what the "Test connection" button actually PUTS ON THE
  * WIRE from the edit screen, and what the password field tells the browser about itself.
  *
+ * Also covers the CREATION wizard, which shares that route: since the route classifies every
+ * failure into a cause instead of forwarding the driver's message, a screen that printed the
+ * response verbatim would show the bare code `unreachable` to the reader. Section 5 drives
+ * the wizard with a failing host and reads the rendered line back.
+ *
  * NOT ONE real authentication attempt is made: `/api/accounts/test` is INTERCEPTED and
  * answered from here, so nothing ever reaches the mail host. That is the whole point of
  * the lot — every press of this button used to cost the provider two failed logins.
@@ -23,6 +28,13 @@ const SETTLE_MS = 400
 const TEST_PATH = '/api/accounts/test'
 /** A password no mailbox has: it is intercepted, so it never leaves the browser anyway. */
 const TYPED = 'bench-typed-password'
+/**
+ * The cause codes `lib/accountTest.ts` returns. They are keys, not sentences: seeing one of
+ * them on screen means a result line was printed verbatim instead of being translated.
+ */
+const FAILURE_CODES = ['credentials', 'unreachable', 'other']
+/** A host name that resolves nowhere, so the wizard's own fields stay realistic. */
+const DEAD_HOST = 'imap.invalid.bench.test'
 
 for (const file of ['../.env', '../.env.local']) {
   const path = new URL(file, import.meta.url)
@@ -192,6 +204,68 @@ try {
     'a refusal reads as "the server refused these credentials"')
   check(!/\b535\b/.test(refused) && !/AUTHENTICATIONFAILED/i.test(refused),
     'the raw server line is not shown as-is')
+  check(!FAILURE_CODES.some(code => new RegExp(`(^|[^-\\w])${code}([^-\\w]|$)`).test(refused)),
+    'edit screen: no raw cause CODE is shown, only the translated sentence')
+
+  // ── 5. The CREATION wizard shares the route, so it must read the same way ──
+  await page.goto(`${BASE}/settings/accounts`, { waitUntil: 'networkidle2' })
+  const opened = await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button'))
+      .find(b => /ajouter|add|\u6dfb\u52a0/i.test(b.textContent ?? ''))
+    if (!btn) return false
+    btn.click()
+    return true
+  })
+  if (!opened) {
+    fail('HARNESS-ish: the "add account" button was not found on the accounts screen')
+  } else {
+    await settle()
+    // "Autre serveur" goes straight to the manual IMAP/SMTP step, the only one that lets the
+    // bench name a host of its own instead of a provider's.
+    const picked = await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll('button'))
+        .find(b => /autre serveur|other server|\u5176\u4ed6/i.test(b.textContent ?? ''))
+      if (!btn) return false
+      btn.click()
+      return true
+    })
+    check(picked, 'the wizard offers a manual IMAP/SMTP entry')
+    await page.waitForSelector('input[type="password"]', { visible: true, timeout: 10000 })
+    await settle()
+
+    // The manual step has no ids: fill by role, in DOM order, leaving the prefilled ports.
+    await page.$eval('input[type="email"]', el => { el.value = '' })
+    await page.type('input[type="email"]', 'bench@invalid.bench.test')
+    // The host fields carry no type attribute, so they are found by placeholder instead.
+    for (const handle of await page.$$('input')) {
+      const ph = await handle.evaluate(el => el.getAttribute('placeholder') ?? '')
+      if (/imap\./i.test(ph)) await handle.type(DEAD_HOST)
+      else if (/smtp\./i.test(ph)) await handle.type(DEAD_HOST.replace('imap.', 'smtp.'))
+    }
+    await page.type('input[type="password"]', TYPED)
+
+    reply = {
+      tested: 'submitted',
+      imap: { ok: false, error: 'unreachable' },
+      smtp: { ok: false, error: 'unreachable' },
+    }
+    const created = await clickTest()
+    if (created === null) {
+      fail('creation wizard: the test button sent nothing at all')
+    } else {
+      check(!created.accountId,
+        `creation wizard: the request names NO mailbox — accountId=${JSON.stringify(created.accountId)}`)
+      check(created.password === TYPED,
+        'creation wizard: the request carries the typed password, unchanged behaviour')
+      check(created.imapHost === DEAD_HOST,
+        `creation wizard: the request carries the host from the FORM — ${JSON.stringify(created.imapHost)}`)
+    }
+    const wizardLine = await page.evaluate(() => document.body.innerText)
+    check(/injoignable|could not be reached|\u65e0\u6cd5\u8fde\u63a5/i.test(wizardLine),
+      'creation wizard: a dead host reads as a translated sentence about reaching the server')
+    check(!FAILURE_CODES.some(code => new RegExp(`(^|[^-\\w])${code}([^-\\w]|$)`).test(wizardLine)),
+      'creation wizard: no raw cause CODE is shown to the reader')
+  }
 } catch (e) {
   console.error(`HARNESS: ${e.stack}`)
   await browser.close().catch(() => {})
