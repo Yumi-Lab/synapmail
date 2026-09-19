@@ -273,6 +273,14 @@
           "canManageRules": "Manage rules",
           "canManageSignatures": "Manage signatures"
         }
+      },
+      "receivedShares": {
+        "title": "Inboxes shared with me",
+        "empty": "No one has shared an inbox with you",
+        "sharedBy": "Shared by {name}",
+        "leave": "Remove this share",
+        "leaveConfirm": "Remove this share? You will lose access to this inbox.",
+        "leaveFailed": "Failed to remove the share"
       }
     },
     "profile": {

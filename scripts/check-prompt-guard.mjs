@@ -37,7 +37,7 @@ import { join } from 'node:path'
 import crypto from 'node:crypto'
 import { ImapFlow } from 'imapflow'
 import { decrypt } from '../lib/encrypt.ts'
-import { HIDDEN_CONTENT_KINDS } from '../lib/promptGuard.ts'
+import { HIDDEN_CONTENT_KINDS, UNTRUSTED_FIELDS } from '../lib/promptGuard.ts'
 
 const FOLDER = 'Tests-lane'
 /** An IMAP APPEND has to become visible to the route's own IMAP connection. */
@@ -47,6 +47,28 @@ const BREAK_DETECTOR = process.argv.find(a => a.startsWith('--break-detector='))
 if (BREAK_DETECTOR && !HIDDEN_CONTENT_KINDS.includes(BREAK_DETECTOR)) {
   console.error(`HARNESS: --break-detector=${BREAK_DETECTOR} is not one of ${HIDDEN_CONTENT_KINDS.join(', ')}`)
   process.exit(2)
+}
+
+// ── documentation drift ─────────────────────────────────────────────────────
+// `aiSafety` is a published contract: an agent author reads docs/API.md, not
+// this module. Adding a field or a hiding technique without writing it down
+// leaves the doc quietly wrong, so the doc has to name every one of them.
+// Runs with no server, no database and no mailbox:
+//   node --experimental-strip-types scripts/check-prompt-guard.mjs --doc-only
+{
+  const doc = readFileSync(new URL('../docs/API.md', import.meta.url), 'utf8')
+  const undocumented = [
+    ...UNTRUSTED_FIELDS.filter(f => !doc.includes('`' + f + '`')).map(f => `untrusted field ${f}`),
+    ...HIDDEN_CONTENT_KINDS.filter(k => !doc.includes("'" + k + "'")).map(k => `hidden-content kind ${k}`),
+  ]
+  if (undocumented.length) {
+    console.error('check-prompt-guard: docs/API.md does not document:')
+    for (const u of undocumented) console.error(`  - ${u}`)
+    process.exit(1)
+  }
+  const n = UNTRUSTED_FIELDS.length + HIDDEN_CONTENT_KINDS.length
+  console.log(`ok   docs/API.md documents all ${n} published names`)
+  if (process.argv.includes('--doc-only')) { console.log('\ncheck-prompt-guard: OK (doc only)'); process.exit(0) }
 }
 
 for (const f of [new URL('../.env.local', import.meta.url), new URL('../.env', import.meta.url)]) {

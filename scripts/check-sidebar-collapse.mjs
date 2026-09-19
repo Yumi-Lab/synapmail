@@ -43,6 +43,19 @@ const BUBBLE_LETTERS = 2
 // as the collapse contract (MAX_DRIFT_PX) — one pixel is where sub-pixel text layout lands,
 // anything above it is a real indent difference between two rows.
 const MAX_TEXT_X_SPREAD_PX = MAX_DRIFT_PX
+// Lot H3b — the sentence that must NOT be rendered any more, and the destination of the
+// glyph that replaces it. Both are read from the shipped sources (`locales/fr.json`,
+// `components/settings/SettingsSidebar.tsx`) so this check follows the product instead of
+// carrying its own stale copy. The prefix stops at the interpolation: only the fixed part
+// of `sharedBy` can be matched against rendered text.
+const SHARED_BY_PREFIX = JSON.parse(readFileSync(new URL('../locales/fr.json', import.meta.url), 'utf8'))
+  .mail.sharedBy.split('{')[0].trim()
+const ACCOUNTS_SETTINGS_HREF = readFileSync(new URL('../components/settings/SettingsSidebar.tsx', import.meta.url), 'utf8')
+  .match(/ACCOUNTS_SETTINGS_HREF\s*=\s*'([^']+)'/)?.[1]
+if (!SHARED_BY_PREFIX || !ACCOUNTS_SETTINGS_HREF) {
+  console.error('HARNESS: could not read the sharedBy sentence or the accounts href from the shipped sources')
+  process.exit(2)
+}
 // ...and the ACTIVE account is not in it: it already heads the bar, so the list only
 // offers the accounts one can switch TO, none of them marked.
 // ...and those letters must stay INSIDE the circle. The inked box is measured with a
@@ -284,17 +297,37 @@ const probeAccountList = () => {
       .map(line => ({ text: (line.textContent ?? '').trim(), x: inkLeft(line) }))
       .filter(l => l.x !== null)
     const bubble = row.querySelector('[data-account-initial]')?.parentElement
+    // Lot H3b: the mark is a sibling of the button (a link inside a button is invalid
+    // HTML), so it is read from the row's wrapper, not from the button itself.
+    const mark = row.parentElement?.querySelector('[data-account-shared-mark]') ?? null
+    const markBox = mark?.getBoundingClientRect() ?? null
+    const rowBox = row.getBoundingClientRect()
     return {
       label: lines[0]?.text ?? '(no text)',
       lines,
       ring: bubble ? getComputedStyle(bubble).boxShadow : '',
       textAlign: getComputedStyle(row).textAlign,
       bubbleX: bubble ? bubble.getBoundingClientRect().left : null,
+      mark: markBox
+        ? {
+            href: mark.getAttribute('href'),
+            label: mark.getAttribute('aria-label') ?? '',
+            svgs: mark.querySelectorAll('svg').length,
+            x: markBox.left, right: markBox.right,
+            cy: markBox.top + markBox.height / 2,
+            inRow: markBox.right <= rowBox.right + 1 && markBox.left >= rowBox.left,
+          }
+        : null,
+      rowCy: rowBox.top + rowBox.height / 2,
     }
   })
   return {
     rows,
     headerLines,
+    // The whole popover's text, so a re-introduced "shared by" LINE is caught wherever
+    // it comes back — the target is one glyph, not one glyph plus the old sentence.
+    popoverText: (popover.textContent ?? '').trim(),
+    headerMarks: document.querySelectorAll('[data-sidebar] [data-account-shared-mark]').length,
     // Any lucide check, however it is classed, plus the raw glyph as a second net.
     checkGlyphs: popover.querySelectorAll('svg.lucide-check, [class*="lucide-check"]').length,
     checkChars: ((popover.textContent ?? '').match(/[✓✔]/g) ?? []).length,
@@ -1028,6 +1061,48 @@ try {
     failures.push(`account list: ${list.checkGlyphs} check icon(s) and ${list.checkChars} check character(s) left in the popover (expected none)`)
   }
 
+  // --- Lot H3b: a shared inbox is signalled by ONE glyph, never by a line of text ---
+  // The sentence is read from the shipped locale, never retyped here: a re-worded
+  // `sharedBy` must keep failing this check, and a check carrying its own copy of the
+  // sentence would silently stop matching the product the day the wording changes.
+  const sharedRows = list.rows.filter(r => r.mark)
+  const sharedSentence = SHARED_BY_PREFIX && list.popoverText.includes(SHARED_BY_PREFIX)
+  console.log(`shared inboxes: ${sharedRows.length} row(s) marked, header marks ${list.headerMarks}, "${SHARED_BY_PREFIX}" as a text line in the popover: ${sharedSentence}`)
+  if (!sharedRows.length) {
+    console.error('HARNESS: no shared inbox in the account list of this database — the H3b mark measured nothing (create a share between two local users first)')
+    process.exit(2)
+  }
+  if (sharedSentence) {
+    failures.push(`account list: the "${SHARED_BY_PREFIX}…" text line is still rendered — lot H3b replaces it with a single glyph`)
+  }
+  for (const r of sharedRows) {
+    const m = r.mark
+    console.log(`  shared "${r.label}": mark href=${m.href} svgs=${m.svgs} aria="${m.label}" x=${m.x.toFixed(2)} cy=${m.cy.toFixed(2)} (row cy ${r.rowCy.toFixed(2)})`)
+    if (m.href !== ACCOUNTS_SETTINGS_HREF) failures.push(`shared row "${r.label}": mark points to ${m.href}, expected ${ACCOUNTS_SETTINGS_HREF}`)
+    if (m.svgs !== 1) failures.push(`shared row "${r.label}": ${m.svgs} icon(s) in the mark, expected exactly 1`)
+    if (!m.label) failures.push(`shared row "${r.label}": the mark carries no aria-label`)
+    if (!m.inRow) failures.push(`shared row "${r.label}": the mark sits outside its own row box`)
+    if (Math.abs(m.cy - r.rowCy) > MAX_DRIFT_PX) {
+      failures.push(`shared row "${r.label}": mark centred at y=${m.cy.toFixed(2)}, row centre y=${r.rowCy.toFixed(2)} (max ${MAX_DRIFT_PX}px) — it must sit on the row's axis`)
+    }
+  }
+  // The x of the NAME must not move between a shared row and an ordinary one: the mark
+  // lives in its own right-hand gutter. This is the same-run reference — the unshared
+  // rows of this very list, not a constant measured elsewhere.
+  const plainRows = list.rows.filter(r => !r.mark)
+  if (plainRows.length) {
+    const nameX = r => r.lines[0]?.x ?? null
+    const sharedX = sharedRows.map(nameX).filter(x => x !== null)
+    const plainX = plainRows.map(nameX).filter(x => x !== null)
+    const gap = Math.abs(Math.max(...sharedX) - Math.max(...plainX))
+    console.log(`name x: shared ${sharedX.map(x => x.toFixed(2)).join('/')} vs plain ${plainX.map(x => x.toFixed(2)).join('/')} → ${gap.toFixed(2)}px apart`)
+    if (gap > MAX_DRIFT_PX) {
+      failures.push(`shared rows indent their name by ${gap.toFixed(2)}px versus an ordinary row (max ${MAX_DRIFT_PX}px) — the mark must not push the text`)
+    }
+  } else {
+    console.log('name x: every account of this list is shared — no same-run reference row, indent not judged')
+  }
+
   // --- Lot A12: the bar's accent IS the active account's colour, in both themes ---
   // Measured across TWO accounts in the SAME run: the bar's accent surfaces are compared
   // to the colour of the bubble heading the bar at that moment, never to a constant. The
@@ -1108,6 +1183,29 @@ try {
     console.error(`HARNESS: both arms landed on the same account colour (${armGap.toFixed(1)}deg apart) — the switch did not change the accent, nothing was discriminated`)
     process.exit(2)
   }
+  // Arm B left the bar on whichever account happened to carry a different colour — a
+  // SMALL mailbox on most databases. The scroll checks below need a folder list that
+  // actually overflows, so the bench is restored to the biggest mailbox first, by the
+  // same shipped click path. Without this the scrollbar checks measure nothing and the
+  // verdict depends on the order the accounts come back in, not on the product.
+  await page.evaluate(() => {
+    if (!document.querySelector('[data-account-popover]')) document.querySelector('[data-sidebar-row="account"]')?.click()
+  })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const restored = await page.evaluate(label => {
+    const row = [...document.querySelectorAll('[data-account-popover] button')]
+      .find(b => (b.textContent ?? '').includes(label))
+    if (!row) return false
+    row.click()
+    return true
+  }, biggest.label)
+  if (!restored) { console.error(`HARNESS: could not switch back to "${biggest.label}" — the scroll checks would measure an arbitrary mailbox`); process.exit(2) }
+  await page.waitForFunction(
+    n => document.querySelectorAll('[data-sidebar] [data-folder-glyph]').length === n,
+    { timeout: 60000 }, biggest.custom,
+  ).catch(() => {})
+  console.log(`bench restored to "${biggest.label}" (${biggest.custom} custom folders) before the scroll checks`)
+
   // Hand the page back in the state the later checks assume: an open popover overlays the
   // bar, and a `page.hover()` aimed at a folder row underneath it would land on the
   // popover instead — the row would never see the pointer and its hover check would read
