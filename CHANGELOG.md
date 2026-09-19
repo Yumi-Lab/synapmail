@@ -18,6 +18,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (Claude, OpenAI, Ollama) restent littéraux.
 
 ### Fixed
+- **Le titre, le sous-titre et le badge de Réglages → IA parlent la langue du visiteur**
+  (`app/(app)/settings/ai/AISettingsClient.tsx`, `locales/*.json`) : trois chaînes restaient écrites en
+  français dans la source et s'affichaient telles quelles à un visiteur lisant le site en anglais ou en
+  chinois. Le titre n'a pas reçu de clé à lui : l'écran relit `settings.nav.ai`, la chaîne que la
+  navigation des réglages affiche déjà dans les trois langues. Deux clés neuves seulement,
+  `settings.ai.pageDescription` et `settings.ai.configured`.
+
 - **La commande d'autorisation d'Ollama redémarre vraiment Ollama** (`lib/aiClient.ts`) : elle réglait bien
   `OLLAMA_ORIGINS`, mais le réglage ne prenait pas effet, parce que l'APPLICATION survivait à l'arrêt du
   SERVEUR et le relançait avec son ancien environnement. Sur macOS, `quit` par AppleScript est refusé par
@@ -26,6 +33,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `pgrep`, plus de `sleep` fixe), puis rouvre Ollama. Même correction sous Windows, où l'icône « ollama app »
   survivait à un `Stop-Process` sur « ollama ». Sous Linux, le fichier déposé s'appelle `zz-origins.conf`
   pour trier après un `override.conf` déjà présent, que systemd lit en dernier et qui l'emportait.
+  Portée de la mesure : la branche macOS a été exécutée sur une vraie machine avec un vrai Ollama (origine
+  passée de 403 à 200, application et serveur relancés, aucun doublon à la seconde exécution) ; la branche
+  Linux est vérifiée par lecture et par contrôle de syntaxe. **La branche Windows n'a été mesurée sur
+  AUCUNE machine** : elle est construite et vérifiée par un banc pur (commande produite, origine piégée
+  refusée), jamais exécutée.
 
 - **« Détecter » dit la vraie raison, et le réglage d'Ollama tient en un copier-coller**
   (`lib/aiClient.ts`, `app/(app)/settings/ai/AISettingsClient.tsx`) : un Ollama qui TOURNE mais refuse le
