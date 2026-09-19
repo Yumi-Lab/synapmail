@@ -532,6 +532,45 @@ export async function moveMessagesBulk(
   }
 }
 
+/**
+ * Source BRUTE de plusieurs messages d'un même dossier, pour les transférer
+ * en pièces jointes (lot M5). Une SEULE connexion pour toute la sélection :
+ * ouvrir puis fermer une session IMAP par message coûte cher sur les serveurs
+ * mesurés. L'objet vient de l'enveloppe, donc le message n'est pas réanalysé
+ * juste pour nommer le fichier.
+ *
+ * Les uid introuvables (message déplacé entre la sélection et l'envoi) sont
+ * simplement absents du résultat : l'appelant compare les longueurs.
+ */
+export async function getMessageSources(
+  account: AccountConfig,
+  folder: string,
+  uids: string[]
+): Promise<Array<{ uid: string; subject: string; source: Buffer }>> {
+  if (!uids.length) return []
+  const client = await createClient(account)
+  try {
+    await client.mailboxOpen(folder)
+    const byUid = new Map<string, { uid: string; subject: string; source: Buffer }>()
+    for await (const msg of client.fetch(uids.join(','), { uid: true, envelope: true, source: true }, { uid: true })) {
+      if (!msg.source) continue
+      byUid.set(String(msg.uid), {
+        uid: String(msg.uid),
+        subject: msg.envelope?.subject ?? '',
+        source: msg.source,
+      })
+    }
+    // IMAP rend les messages dans l'ordre des uid, pas dans celui de la
+    // sélection : on rétablit l'ordre demandé, pour que les pièces jointes
+    // suivent ce que l'oeil a coché.
+    return uids
+      .map(uid => byUid.get(uid))
+      .filter((m): m is { uid: string; subject: string; source: Buffer } => !!m)
+  } finally {
+    await client.logout()
+  }
+}
+
 export async function getAttachmentContent(
   account: AccountConfig,
   folder: string,

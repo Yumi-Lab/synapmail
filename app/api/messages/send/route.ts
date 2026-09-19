@@ -3,7 +3,8 @@ import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { sendMail } from '@/lib/smtp'
-import { appendToSentFolder } from '@/lib/imap'
+import { appendToSentFolder, getMessageSources } from '@/lib/imap'
+import { EML_CONTENT_TYPE, emlFilename } from '@/lib/eml'
 import { upsertContactsFromAddresses } from '@/lib/contacts'
 import { randomUUID } from 'crypto'
 
@@ -24,7 +25,20 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json()
-    const { accountId, to, cc, bcc, subject, html, text, inReplyTo, references, requestReadReceipt } = body
+    const { accountId, to, cc, bcc, subject, html, text, inReplyTo, references, requestReadReceipt, forwardedMessages } = body as {
+      accountId?: string
+      to?: string | string[]
+      cc?: string | string[]
+      bcc?: string | string[]
+      subject?: string
+      html?: string
+      text?: string
+      inReplyTo?: string
+      references?: string
+      requestReadReceipt?: boolean
+      /** Messages transférés ENTIERS, joints en `.eml` (lot M5). */
+      forwardedMessages?: { folder: string; uids: string[] }
+    }
 
     if (!accountId || !to || !subject) {
       return NextResponse.json({ error: 'accountId, to, and subject are required' }, { status: 400 })
@@ -44,6 +58,32 @@ export async function POST(req: Request) {
       const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
       trackedHtml = injectTrackingPixel(html, `${appUrl}/api/track/${token}`)
     }
+
+    // Transfert de messages entiers : la source brute est relue dans le dossier
+    // d'origine, sur le compte accessible — jamais un dossier fourni par le
+    // client sans ce contrôle, qui est celui de `getAccessibleAccount` ci-dessus.
+    const attachments = forwardedMessages?.uids?.length
+      ? (await getMessageSources(
+          {
+            id: account.id,
+            imapHost: account.imap_host,
+            imapPort: account.imap_port,
+            imapSecure: account.imap_secure,
+            username: account.username,
+            passwordEncrypted: account.password_encrypted,
+            oauthProvider: account.oauth_provider,
+            oauthAccessToken: account.oauth_access_token,
+            oauthRefreshToken: account.oauth_refresh_token,
+            oauthExpiresAt: account.oauth_expires_at,
+          },
+          forwardedMessages.folder,
+          forwardedMessages.uids
+        )).map(m => ({
+          filename: emlFilename(m.subject),
+          content: m.source,
+          contentType: EML_CONTENT_TYPE,
+        }))
+      : undefined
 
     const { messageId, raw } = await sendMail(
       {
@@ -69,6 +109,7 @@ export async function POST(req: Request) {
         inReplyTo,
         references,
         dispositionNotificationTo: requestReadReceipt ? account.email : undefined,
+        attachments,
       }
     )
 
