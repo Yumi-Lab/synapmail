@@ -3,6 +3,10 @@
  * Measures lot C4b in the browser: what the "Test connection" button actually PUTS ON THE
  * WIRE from the edit screen, and what the password field tells the browser about itself.
  *
+ * Also covers the refusal that protects the saved password: it only ever travels to the
+ * SAVED host, so pointing the form somewhere else with an empty field must be refused in a
+ * sentence rather than silently sending the secret to a server the request chose.
+ *
  * Also covers the CREATION wizard, which shares that route: since the route classifies every
  * failure into a cause instead of forwarding the driver's message, a screen that printed the
  * response verbatim would show the bare code `unreachable` to the reader. Section 5 drives
@@ -32,7 +36,7 @@ const TYPED = 'bench-typed-password'
  * The cause codes `lib/accountTest.ts` returns. They are keys, not sentences: seeing one of
  * them on screen means a result line was printed verbatim instead of being translated.
  */
-const FAILURE_CODES = ['credentials', 'unreachable', 'other']
+const FAILURE_CODES = ['credentials', 'unreachable', 'other', 'password_required']
 /** A host name that resolves nowhere, so the wizard's own fields stay realistic. */
 const DEAD_HOST = 'imap.invalid.bench.test'
 
@@ -76,8 +80,11 @@ try {
       sent.push(JSON.parse(req.postData() ?? '{}'))
       // Answered here, never forwarded: no mail host is contacted, so no failed login is
       // recorded anywhere.
+      // `reply` is either a plain body (answered 200) or an explicit { status, body }, so a
+      // refusal can be replayed with the status the real route returns.
+      const { status = 200, body = reply } = 'status' in reply ? reply : {}
       req.respond({
-        status: 200, contentType: 'application/json', body: JSON.stringify(reply),
+        status, contentType: 'application/json', body: JSON.stringify(body),
       }).catch(() => {})
       return
     }
@@ -95,10 +102,17 @@ try {
   }, { base: BASE, email: EMAIL, password: PASSWORD })
   if (!loggedIn) { console.error('HARNESS: credentials login failed'); process.exit(2) }
 
-  const accounts = (await page.evaluate(async base => {
+  const listed = await page.evaluate(async base => {
     const res = await fetch(`${base}/api/accounts`)
-    return res.ok ? (await res.json()).data ?? [] : []
-  }, BASE)).filter(a => !a.isShared)
+    return { status: res.status, body: await res.text() }
+  }, BASE)
+  let accounts = []
+  try {
+    accounts = (JSON.parse(listed.body).data ?? []).filter(a => !a.isShared)
+  } catch { /* reported below with the raw status */ }
+  if (accounts.length === 0) {
+    console.error(`HARNESS: /api/accounts returned ${listed.status} — ${listed.body.slice(0, 200)}`)
+  }
   if (accounts.length === 0) { console.error('HARNESS: this database has no owned mailbox'); process.exit(2) }
   const account = accounts[0]
 
@@ -266,6 +280,32 @@ try {
     check(!FAILURE_CODES.some(code => new RegExp(`(^|[^-\\w])${code}([^-\\w]|$)`).test(wizardLine)),
       'creation wizard: no raw cause CODE is shown to the reader')
   }
+  // ── 6. Aiming the form elsewhere with an empty field is refused, in words ──
+  // The saved password is only ever sent to the SAVED host: otherwise anyone holding a
+  // session could point this button at their own server and read it in the LOGIN command.
+  // The server decides that (measured alone by scripts/check-account-test.mjs); here we
+  // measure that its refusal reaches the reader as a sentence, not as a bare code.
+  await openEdit()
+  const retargeted = await page.evaluate(savedHost => {
+    const el = Array.from(document.querySelectorAll('input')).find(i => i.value === savedHost)
+    if (!el) return false
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    setter.call(el, 'imap.elsewhere.bench.test')
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  }, account.imapHost)
+  check(retargeted, 'the edit form exposes the saved IMAP host, so it can be pointed elsewhere')
+  reply = { status: 400, body: { error: 'password_required' } }
+  const retargetedSend = await clickTest()
+  check(retargetedSend !== null, 'host changed, field empty: the button still sends its request')
+  const refusedLine = await page.evaluate(() => document.body.innerText)
+  check(/saisissez le mot de passe|type the password|请输入密码/i.test(refusedLine),
+    'host changed, field empty: the screen asks for the password in a full sentence')
+  check(!FAILURE_CODES.some(code => new RegExp(`(^|[^-\\w])${code}([^-\\w]|$)`).test(refusedLine)),
+    'host changed, field empty: no raw cause CODE is shown to the reader')
+  check(!/✓|✗/.test(refusedLine),
+    'host changed, field empty: no connection result is shown — nothing was tried')
+
 } catch (e) {
   console.error(`HARNESS: ${e.stack}`)
   await browser.close().catch(() => {})
