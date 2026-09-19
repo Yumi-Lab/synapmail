@@ -17,6 +17,11 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 // is expected; anything a human could see is not. GOAL.md fixes this at 1 px.
 const MAX_DRIFT_PX = 1
 const VIEWPORT = { width: 1440, height: 900 }
+// Lot H3c2: clearance demanded between the share mark and the fold chevron of the
+// header row. Origin: GOAL.md's box for H3c2 ("écart >= 6 px"); the product lays the
+// two columns out 8 px apart (ACCOUNT_ROW_RIGHT.gap in components/layout/Sidebar.tsx),
+// so the floor is the spec's, not the implementation's. Bench: this file, 1440x900.
+const MIN_CONTROL_GAP_PX = 6
 // Lot H1 removed the round button that used to straddle the bar's edge: the bar now
 // folds from the application header's menu button. The old marker must be absent.
 const EDGE_TOGGLE = '[data-sidebar-edge-toggle]'
@@ -154,7 +159,7 @@ const HOVER_MIN_ALPHA = 0.01
 // Lot A12: the bar's accent must BE the active account's own colour, so that switching
 // mailbox repaints the whole bar rather than leaving one violet bar behind five coloured
 // bubbles. The gate is a same-run A/B across TWO accounts of different colours: for each,
-// the accent-bearing surfaces of the bar (active folder tint, compose control, selection
+// the accent-bearing surfaces of the bar (active folder tint, unread badge, selection
 // ring, shadows) are read back and compared to the colour of THAT account's own bubble,
 // measured in the same pass on the same page — never to a constant, so the check stays
 // true if the palette changes. Hue is the comparison axis: a tint keeps its accent's hue
@@ -328,6 +333,27 @@ const probeAccountList = () => {
     // it comes back — the target is one glyph, not one glyph plus the old sentence.
     popoverText: (popover.textContent ?? '').trim(),
     headerMarks: document.querySelectorAll('[data-sidebar] [data-account-shared-mark]').length,
+    // Lot H3c2: in the header row the mark and the fold chevron are two clickable
+    // boxes in two different flows (absolute link / in-flow span). Their overlap is
+    // measured, not assumed: the x-intersection of the two boxes, in pixels.
+    headerControls: (() => {
+      const mark = document.querySelector('[data-sidebar-row="account"]')
+        ?.parentElement?.querySelector('[data-account-shared-mark]')
+      const chevron = document.querySelector('[data-sidebar] [data-account-chevron]')
+      if (!mark || !chevron) return { mark: !!mark, chevron: !!chevron, overlapPx: null }
+      const m = mark.getBoundingClientRect()
+      const c = chevron.getBoundingClientRect()
+      const bar = document.querySelector('[data-sidebar]').getBoundingClientRect()
+      return {
+        mark: true, chevron: true,
+        markBox: { left: m.left, right: m.right },
+        chevronBox: { left: c.left, right: c.right },
+        overlapPx: Math.max(0, Math.min(m.right, c.right) - Math.max(m.left, c.left)),
+        gapPx: Math.max(m.left, c.left) - Math.min(m.right, c.right),
+        // Neither control may spill past the bar's own right edge.
+        overflowPx: Math.max(0, Math.max(m.right, c.right) - bar.right),
+      }
+    })(),
     // Any lucide check, however it is classed, plus the raw glyph as a second net.
     checkGlyphs: popover.querySelectorAll('svg.lucide-check, [class*="lucide-check"]').length,
     checkChars: ((popover.textContent ?? '').match(/[✓✔]/g) ?? []).length,
@@ -636,7 +662,7 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
 /**
  * The bar's accent, as the browser actually paints it, next to the colour of the account
  * bubble heading the bar — read in the SAME pass so the comparison is an A/B, not a
- * constant. Surfaces measured: the active folder row's tint, the compose control's fill
+ * constant. Surfaces measured: the active folder row's tint, the unread badge's fill
  * and the published `--synap-account` itself. Colours are
  * resolved through a canvas — the same technique probeCleanliness uses — because the
  * accent is a `color-mix()` whose serialisation no hand-rolled rgb parser reads.
@@ -695,17 +721,17 @@ const probeAccountAccent = () => {
   const activeRow = [...bar.querySelectorAll('[data-sidebar-row^="folder:"]')]
     .find(r => getComputedStyle(r).backgroundColor !== 'rgba(0, 0, 0, 0)')
   add('active folder tint', activeRow, 'backgroundColor', show(barBg))
-  const compose = bar.querySelector('[data-sidebar-row="compose"]')
-  add('compose fill', compose, 'backgroundColor', show(barBg))
 
   // The published property itself: read from the bar's root, painted alone.
   const published = getComputedStyle(bar).getPropertyValue('--synap-account').trim()
   const publishedPainted = published ? paint(published) : null
 
-  // The compose control carries white ink on the accent — the one contrast the palette
-  // has to hold at every account colour.
-  const composeInk = compose ? paint(getComputedStyle(compose).color, show(paint(getComputedStyle(compose).backgroundColor, show(barBg)))) : null
-  const composeBg = compose ? paint(getComputedStyle(compose).backgroundColor, show(barBg)) : null
+  // Lot H3c2 removed the compose row from the bar (the head bar carries it on every
+  // page), so the unread badge is now the bar's only white-ink-on-accent surface: it
+  // is the one that has to hold contrast at every account colour.
+  const badge = bar.querySelector('[data-unread-badge]')
+  const badgeBg = badge ? paint(getComputedStyle(badge).backgroundColor, show(barBg)) : null
+  const badgeInk = badge ? paint(getComputedStyle(badge).color, show(badgeBg)) : null
 
   return {
     theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
@@ -715,7 +741,7 @@ const probeAccountAccent = () => {
     published,
     publishedHue: publishedPainted ? hue(publishedPainted) : null,
     surfaces,
-    composeContrast: composeInk && composeBg ? contrast(composeInk, composeBg) : null,
+    badgeContrast: badgeInk && badgeBg ? contrast(badgeInk, badgeBg) : null,
   }
 }
 
@@ -1068,6 +1094,23 @@ try {
   const sharedRows = list.rows.filter(r => r.mark)
   const sharedSentence = SHARED_BY_PREFIX && list.popoverText.includes(SHARED_BY_PREFIX)
   console.log(`shared inboxes: ${sharedRows.length} row(s) marked, header marks ${list.headerMarks}, "${SHARED_BY_PREFIX}" as a text line in the popover: ${sharedSentence}`)
+
+  // --- Lot H3c2: the mark and the chevron of the header row never cover each other ---
+  const hc = list.headerControls
+  if (!hc.mark || !hc.chevron) {
+    console.log(`header controls: mark ${hc.mark}, chevron ${hc.chevron} — overlap not judged (needs a SHARED active account and several accounts)`)
+  } else {
+    console.log(`header controls: mark x ${hc.markBox.left.toFixed(2)}..${hc.markBox.right.toFixed(2)}, chevron x ${hc.chevronBox.left.toFixed(2)}..${hc.chevronBox.right.toFixed(2)} -> overlap ${hc.overlapPx.toFixed(2)}px, gap ${hc.gapPx.toFixed(2)}px, past the bar's edge ${hc.overflowPx.toFixed(2)}px`)
+    if (hc.overlapPx > 0) {
+      failures.push(`header row: the share mark and the fold chevron overlap by ${hc.overlapPx.toFixed(2)}px (expected 0) — one clickable box covers the other`)
+    }
+    if (hc.gapPx < MIN_CONTROL_GAP_PX) {
+      failures.push(`header row: only ${hc.gapPx.toFixed(2)}px between the share mark and the chevron (min ${MIN_CONTROL_GAP_PX}px)`)
+    }
+    if (hc.overflowPx > MAX_DRIFT_PX) {
+      failures.push(`header row: a right-hand control spills ${hc.overflowPx.toFixed(2)}px past the bar's own edge`)
+    }
+  }
   if (!sharedRows.length) {
     console.error('HARNESS: no shared inbox in the account list of this database — the H3b mark measured nothing (create a share between two local users first)')
     process.exit(2)
@@ -1152,7 +1195,7 @@ try {
   for (const [arm, measured] of [['A', accentA], ['B', accentB]]) {
     for (const theme of THEMES) {
       const m = measured[theme]
-      console.log(`accent arm ${arm} (${theme}), account "${m.account}": published ${m.published || 'MISSING'} hue ${m.publishedHue?.toFixed(1)}deg vs bubble ${m.reference} hue ${m.referenceHue?.toFixed(1)}deg; compose ink contrast ${m.composeContrast?.toFixed(2)}:1`)
+      console.log(`accent arm ${arm} (${theme}), account "${m.account}": published ${m.published || 'MISSING'} hue ${m.publishedHue?.toFixed(1)}deg vs bubble ${m.reference} hue ${m.referenceHue?.toFixed(1)}deg; unread badge ink contrast ${m.badgeContrast?.toFixed(2)}:1`)
       if (m.referenceHue == null) { console.error(`HARNESS: arm ${arm} (${theme}): the account bubble is neutral — no hue to compare against`); process.exit(2) }
       if (!m.published) failures.push(`arm ${arm} (${theme}): the bar publishes no --synap-account — nothing reads the account's colour`)
       if (m.publishedHue != null && hueGap(m.publishedHue, m.referenceHue) > MAX_ACCOUNT_ACCENT_HUE_DRIFT_DEG) {
@@ -1171,8 +1214,8 @@ try {
           failures.push(`arm ${arm} (${theme}): ${sf.name} is ${sf.painted} (hue ${sf.hue.toFixed(1)}deg), the account's bubble is ${m.reference} (hue ${m.referenceHue.toFixed(1)}deg) — ${gap.toFixed(1)}deg apart (max ${MAX_ACCOUNT_ACCENT_HUE_DRIFT_DEG})`)
         }
       }
-      if (m.composeContrast != null && m.composeContrast < MIN_CONTRAST) {
-        failures.push(`arm ${arm} (${theme}): the compose control's ink measures ${m.composeContrast.toFixed(2)}:1 on this account's colour (min ${MIN_CONTRAST}:1)`)
+      if (m.badgeContrast != null && m.badgeContrast < MIN_CONTRAST) {
+        failures.push(`arm ${arm} (${theme}): the unread badge's ink measures ${m.badgeContrast.toFixed(2)}:1 on this account's colour (min ${MIN_CONTRAST}:1)`)
       }
     }
   }
