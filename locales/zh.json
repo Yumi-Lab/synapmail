@@ -464,6 +464,8 @@
       "templates": "快速开始，模板"
     },
     "ai": {
+      "pageDescription": "摘要、建议回复和智能分类",
+      "configured": "已配置",
       "stepProvider": "1. 提供方",
       "stepAccess": "2. 访问",
       "tagline": {

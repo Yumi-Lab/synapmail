@@ -44,6 +44,7 @@ const REQUIRED_KEYS = [
   'settings.ai.soon.inlineCompletion', 'settings.ai.soon.priorityScore',
   'settings.ai.soon.taskExtraction', 'settings.ai.soon.mailboxChat',
   'settings.ai.soon.smartRules', 'settings.ai.soon.personas',
+  'settings.ai.pageDescription', 'settings.ai.configured', 'settings.nav.ai',
 ]
 
 /** The exact strings the 2026-09-19 gate found written in the source. */
@@ -57,11 +58,14 @@ const BANNED = [
   'Chat avec la boîte mail', 'Règles IA intelligentes', 'Personas par compte',
   'Répondre avec l', 'Améliorer / Ton', 'En français', 'In English',
   'Traduire', 'Traduction', 'Enregistré', 'Modèle',
+  // Seen still in French on the zh screenshot of the 2026-09-19 gate.
+  'IA Copilot', 'Résumés, réponses suggérées', 'Configuré',
 ]
 
 const BREAKAGES = {
   'label-in-source': 'the summarize button is written in the source again instead of read from locales',
   'locale-missing': 'a key exists in en but not in zh, so zh readers fall back to English',
+  'title-in-source': 'the screen title and its badge are written in French in the source again',
 }
 const BREAK = process.argv.find(a => a.startsWith('--break='))?.slice('--break='.length) ?? null
 if (BREAK && !BREAKAGES[BREAK]) {
@@ -79,6 +83,11 @@ const sources = Object.fromEntries(FILES.map(f => {
   let text = readFileSync(f, 'utf8')
   if (BREAK === 'label-in-source' && f.endsWith('AIToolbar.tsx')) {
     text = text.replace("{t('actions.summarize')}", 'TL;DR')
+  }
+  if (BREAK === 'title-in-source' && f.endsWith('AISettingsClient.tsx')) {
+    text = text
+      .replace("{tNav('ai')}", '"IA Copilot"')
+      .replace("{t('configured')}", 'Configuré')
   }
   return [f, text]
 }))
@@ -116,6 +125,12 @@ for (const name of shared) {
     .includes(`tAction('${name}')`)
   check(inSettings, `settings reuses mail.ai.actions.${name} instead of its own copy`)
 }
+
+// 3b. the title reuses the navigation entry instead of a copy of its own
+check(
+  sources['app/(app)/settings/ai/AISettingsClient.tsx'].includes("tNav('ai')"),
+  'settings title reuses settings.nav.ai instead of its own copy',
+)
 
 // 4. zh really is zh: the four action labels must not be the English ones
 for (const name of shared) {

@@ -237,6 +237,8 @@ export function AISettingsClient() {
   const t = useTranslations('settings.ai')
   // The four feature labels are the SAME strings as the reading pane toolbar.
   const tAction = useTranslations('mail.ai.actions')
+  // The screen title is the SAME string as its entry in the settings navigation.
+  const tNav = useTranslations('settings.nav')
   const { data } = useSWR<{ data: AISettingsData }>('/api/ai/settings', fetcher)
   const settings = data?.data
 
@@ -467,13 +469,13 @@ export function AISettingsClient() {
         <div className="flex-1">
           <SettingsHeader
             icon={<Bot className="h-4 w-4" />}
-            title="IA Copilot"
-            description="Résumés, réponses suggérées et tri intelligent"
+            title={tNav('ai')}
+            description={t('pageDescription')}
           />
         </div>
         {settings?.configured && (
           <span className="mt-1 flex shrink-0 items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
-            <CheckCircle2 className="w-3.5 h-3.5" /> Configuré
+            <CheckCircle2 className="w-3.5 h-3.5" /> {t('configured')}
           </span>
         )}
       </div>
