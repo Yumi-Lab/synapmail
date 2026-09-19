@@ -213,16 +213,30 @@ try {
   // Aucun `window.prompt` : la saisie est un champ DANS la barre.
   const inline = await page.$eval('[data-folder-name-input] input', el => ({ tag: el.tagName, focused: el === document.activeElement }))
   check(inline.tag === 'INPUT' && inline.focused, 'la saisie du nom doit être un champ en ligne, déjà actif')
-  await page.keyboard.down('Meta'); await page.keyboard.press('KeyA'); await page.keyboard.up('Meta')
+  // Le champ arrive PRÉ-REMPLI du nom actuel : il faut le VIDER, sinon la frappe s'ajoute
+  // et le dossier est renommé « <ancien><nouveau> ». `Meta+A` ne sélectionne rien ici
+  // (Chrome piloté, pas de couche clavier macOS) : on efface par autant de Backspace que
+  // le champ porte de caractères, et le banc VÉRIFIE qu'il est vide avant de taper.
+  const nameLength = await page.$eval('[data-folder-name-input] input', el => el.value.length)
+  for (let i = 0; i < nameLength; i++) await page.keyboard.press('Backspace')
+  check(await page.$eval('[data-folder-name-input] input', el => el.value) === '',
+    'renommer : le champ doit être vide avant la frappe, sinon le nom se concatène')
   await page.type('[data-folder-name-input] input', renamed)
   await page.keyboard.press('Enter')
+  // On compare le SEGMENT FINAL, pas la fin de la chaîne : `endsWith` accepte
+  // « enfantTests-lane-renomme », c'est-à-dire exactement le défaut de concaténation
+  // que cette section doit attraper — il est passé inaperçu sous `endsWith`.
+  const leafIs = (path, leaf) => path.slice(path.lastIndexOf(delimiter) + 1) === leaf
   await page.waitForFunction(
-    name => [...document.querySelectorAll('[data-sidebar-row^="folder:"]')].some(r => r.dataset.sidebarRow.endsWith(name)),
-    { timeout: IMAP_MS }, renamed,
+    ({ name, sep }) => [...document.querySelectorAll('[data-sidebar-row^="folder:"]')].some(r => {
+      const p = r.dataset.sidebarRow.slice('folder:'.length)
+      return p.slice(p.lastIndexOf(sep) + 1) === name
+    }),
+    { timeout: IMAP_MS }, { name: renamed, sep: delimiter },
   ).catch(() => {})
   const afterRename = await folders()
-  const renamedPath = afterRename.map(f => f.path).find(p => p.endsWith(renamed))
-  check(!!renamedPath, `renommer : aucun dossier ne porte « ${renamed} » (liste : ${afterRename.map(f => f.path).filter(p => p.startsWith(PREFIX)).join(', ')})`)
+  const renamedPath = afterRename.map(f => f.path).find(p => leafIs(p, renamed))
+  check(!!renamedPath, `renommer : aucun dossier ne s'appelle « ${renamed} » (liste : ${afterRename.map(f => f.path).filter(p => p.startsWith(PREFIX)).join(', ')})`)
 
   // Échap annule la saisie sans rien créer.
   const before = (await folders()).length
@@ -253,6 +267,66 @@ try {
   const left = (await folders()).filter(f => f.path.startsWith(PREFIX))
   check(left.length === 0, `supprimer : ${left.length} dossier(s) de test survivent (${left.map(f => f.path).join(', ')})`)
   check(!(await page.$(`[data-sidebar-row="folder:${rootPath}"]`)), 'supprimer : la ligne est encore dans la barre')
+
+  // ── 8. PERMISSION REFUSÉE → ENTRÉE GRISÉE ET SERVEUR QUI REFUSE ──────────────
+  // Une boîte PARTAGÉE dont le partage ne donne pas « supprimer ». La session est la
+  // même — c'est le compte visé qui change de droits, pas l'utilisateur. Le banc ne
+  // crée aucun partage : il mesure celui qui existe, et se tait s'il n'y en a pas.
+  const shared = (await page.evaluate(async base =>
+    ((await (await fetch(`${base}/api/accounts`)).json()).data ?? [])
+      .filter(a => a.isShared)
+      .map(a => ({ id: a.id, email: a.email, permissions: a.permissions })), BASE))
+    .find(a => a.permissions && a.permissions.canDelete === false)
+
+  if (!shared) {
+    console.log('permissions : aucune boîte partagée sans « supprimer » dans cette base — arm non mesuré')
+  } else {
+    await page.evaluate(async ({ base, id }) => {
+      await fetch(`${base}/api/settings`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active_account_id: id, sidebar_collapsed: false }),
+      })
+    }, { base: BASE, id: shared.id })
+    await land('/mail')
+
+    const sharedFolders = await page.evaluate(async ({ base, id }) =>
+      (await (await fetch(`${base}/api/folders?account=${id}`)).json()).data ?? [], { base: BASE, id: shared.id })
+    // Les dossiers du préfixe sont EXCLUS : ce sont ceux du banc, en cours de nettoyage,
+    // et une cible qui disparaît sous la mesure rendrait un 404 ambigu (« refusé » ou
+    // « plus là »). La cible est donc un dossier ORDINAIRE et RÉEL de la boîte partagée.
+    const ordinary = sharedFolders.find(f => !f.special && !f.path.startsWith(PREFIX))
+    if (!ordinary) {
+      console.log(`permissions : « ${shared.email} » ne montre aucun dossier ordinaire — arm non mesuré`)
+    } else {
+      await rightClick(ordinary.path)
+      const denied = await readMenu()
+      check(denied?.items.remove === false,
+        `sans la permission « supprimer », « supprimer » doit être grisé sur ${ordinary.path}`)
+      check(denied?.items.empty === false,
+        `sans la permission « supprimer », « vider » doit être grisé sur ${ordinary.path}`)
+      await page.keyboard.press('Escape')
+
+      // Le grisage n'est pas la barrière : le serveur refuse la même chose. Il répond 404,
+      // pas 403 — `getAccessibleAccount` rend `null` quand une permission EXIGÉE manque, et
+      // la route ne distingue pas ce cas de « ce compte n'existe pas » : une permission
+      // refusée ne doit rien révéler de l'existence de la boîte. Le 403 est réservé au cas
+      // où l'accès est acquis mais la RÈGLE du dossier refuse (renommer un dossier spécial).
+      const forbidden = await api(
+        `/api/folders?account=${shared.id}&path=${encodeURIComponent(ordinary.path)}`, { method: 'DELETE' })
+      check(forbidden.status === 404,
+        `supprimer sans la permission : attendu 404 (accès non révélé), reçu ${forbidden.status}`)
+      console.log(`permissions : mesuré sur « ${shared.email} » (partage sans « supprimer »), dossier « ${ordinary.path} »`)
+    }
+    // La boîte active est une préférence SERVEUR : la laisser sur la boîte partagée
+    // ferait démarrer la prochaine exécution ailleurs, et le nettoyage viserait alors
+    // une autre boîte que celle où le banc a créé ses dossiers.
+    await page.evaluate(async ({ base, id }) => {
+      await fetch(`${base}/api/settings`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active_account_id: id }),
+      })
+    }, { base: BASE, id: accountId })
+  }
 } finally {
   // Filet de sécurité : ce que le banc a créé ne reste JAMAIS derrière lui, même
   // sur un échec en cours de route. Aucun chemin hors préfixe n'est touché.
