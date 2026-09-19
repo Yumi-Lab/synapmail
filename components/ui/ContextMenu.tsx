@@ -293,9 +293,7 @@ function SubmenuPanel({ rowRef, ctx, itemKey, children }: {
     const box = ref.current?.getBoundingClientRect()
     if (!row || !box) return
     const right = row.right + SUBMENU_GAP
-    const x = right + box.width + EDGE_GAP <= window.innerWidth
-      ? right
-      : Math.max(EDGE_GAP, row.left - SUBMENU_GAP - box.width)
+    const x = right
     const y = Math.max(EDGE_GAP, Math.min(row.top, window.innerHeight - box.height - EDGE_GAP))
     setPos(prev => (prev && prev.x === x && prev.y === y ? prev : { x, y }))
   }, [rowRef])
