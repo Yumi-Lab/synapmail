@@ -177,6 +177,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   clé de test) et `scripts/check-ai-guard.mjs` (construction des invites, fournisseur simulé, avec contrôles négatifs).
   La garde est une DÉFENSE EN PROFONDEUR, pas une garantie : elle rend l'origine non fiable explicite et signale les
   dissimulations qu'elle connaît, elle n'empêche pas un modèle d'y désobéir. Documentée dans `docs/API.md`.
+- **Identité de l'instance réglable depuis l'interface** (`lib/branding.ts`, `lib/brandingStore.ts`,
+  `components/admin/BrandingSection.tsx`) : un administrateur choisit le NOM affiché dans l'onglet du navigateur et
+  l'ICÔNE de cet onglet, depuis une section « Identité » en tête de `/admin/users`. Le réglage vaut pour TOUT LE MONDE,
+  page de connexion déconnectée comprise ; l'onglet change sans recharger. Une table d'une ligne `instance_settings`,
+  tout à NULL par défaut : une instance qui ne règle rien ne change pas d'aspect à la mise à jour. La frontière de
+  confiance est posée sur les OCTETS : le type de l'icône est décidé sur ses octets magiques et jamais sur son extension
+  ni sur le type déclaré par le navigateur (PNG, ICO, JPEG, WebP acceptés ; **SVG refusé** — servi depuis notre origine
+  il exécuterait son script), la taille est plafonnée à 256 Kio et mesurée deux fois, le nom est replié, rogné et refusé
+  s'il porte un caractère de contrôle. Les refus sortent par un CODE traduit (`branding_too_large`, `branding_bad_type`,
+  `branding_bad_name`), jamais par une phrase anglaise. Deux remises à zéro, l'une pour le nom, l'autre pour l'icône.
+  Route publique `GET /api/branding/favicon?v=…` : octets rendus avec le type DÉTECTÉ, `nosniff`, cache long sans risque
+  puisque l'URL porte la version. Hors périmètre et assumé : les icônes PWA / apple-touch et le logo image.
+- `scripts/check-branding.mjs` (auto-contrôle PUR : ni serveur, ni base, ni navigateur — il importe le module que les
+  routes importent) et `scripts/check-branding-live.mjs` (banc navigateur de bout en bout : téléversement réel, titre et
+  `<link rel="icon">` qui changent sans recharger, octets rendus à l'identique, page de connexion déconnectée, 403 pour
+  un non-admin, les deux remises à zéro, et remise aux valeurs par défaut en sortant).
 - **Barre d'application (omnibar)** au-dessus de la zone de contenu, sur toutes les pages
   (`components/layout/Omnibar.tsx`) : Tableau de bord, Nouveau message et Réglages en icônes monochromes à gauche, puis
   la recherche globale dans un champ de 640 px centré sur la barre. La ligne « Tableau de bord » quitte la barre

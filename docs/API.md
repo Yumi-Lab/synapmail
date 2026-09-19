@@ -635,6 +635,22 @@ Change role. **Body** `{ role: 'admin' | 'user' }`. `400 Invalid role` for any o
 ### `DELETE /api/admin/users/[id]` — 👑 Admin
 `400 Cannot delete your own account` if `id` is the caller's own id. `{ success: true }`.
 
+### `GET /api/admin/branding` — 👑 Admin
+Current instance identity. `{ data: { appName: string; faviconVersion: number | null } }`. `appName` falls back to the built-in default when unset; `faviconVersion` is `null` when no icon has been uploaded (the bundled icons are served instead).
+
+### `PUT /api/admin/branding` — 👑 Admin
+Set the tab name and/or the tab icon for the **whole instance**, login page included. **Body** `multipart/form-data` with optional `appName` (1–60 chars, whitespace folded, control characters refused) and optional `favicon` (≤ 256 KiB). The icon's type is decided on its **magic bytes**, never on its extension or the browser-declared content type: PNG, ICO, JPEG and WebP are accepted, **SVG is refused** (served from our own origin it would execute its script). Refusals return `400 { error }` with a stable code — `branding_too_large`, `branding_bad_type`, `branding_bad_name` — that the UI translates. `{ data: Branding }`.
+
+### `DELETE /api/admin/branding?target=name|favicon` — 👑 Admin
+Restore one half of the identity to what ships with the app. `{ data: Branding }`.
+
+---
+
+## Instance identity (public)
+
+### `GET /api/branding/favicon?v=<version>` — public, no auth
+Serves the uploaded icon's raw bytes with its **detected** type, `X-Content-Type-Options: nosniff` and a long immutable cache (safe: the URL carries the version). `404` when no icon is set — the app then points at the bundled files. Public because the login page needs it while logged out (`lib/publicPaths.ts`).
+
 ---
 
 ## AI assist
