@@ -66,6 +66,8 @@
     "reply": "Répondre",
     "replyAll": "Répondre à tous",
     "forward": "Transférer",
+    "forwardedSubject": "Fwd : {count} messages",
+    "forwardedAttached": "{count} messages joints",
     "delete": "Supprimer",
     "archive2": "Archiver",
     "markRead": "Marquer comme lu",

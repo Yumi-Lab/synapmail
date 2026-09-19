@@ -23,6 +23,7 @@ import type { Attachment } from '@/types/email'
 import type { ComposeTemplate } from '@/types/template'
 import type { PgpContactKey, PgpIdentity } from '@/types/pgp'
 import { encryptText } from '@/lib/pgp'
+import { useTranslations } from 'next-intl'
 import { EmailTokenInput } from './EmailTokenInput'
 import { AICompose } from '@/components/ai/AICompose'
 
@@ -52,6 +53,14 @@ interface ComposeModalProps {
     accountId: string
     attachments?: ForwardedAtt[]
   }
+  /**
+   * Transfert de PLUSIEURS messages entiers (lot M5) : chacun part en pièce
+   * jointe `.eml`. Le serveur relit les sources brutes dans ce dossier, sur le
+   * compte d'envoi qu'il a lui-même contrôlé — voir `app/api/messages/send`.
+   * Sur un seul message, l'appelant laisse ce champ vide et passe `replyTo` :
+   * le comportement d'origine ne bouge pas.
+   */
+  forwardedMessages?: { folder: string; uids: string[] }
   accountEmail: string
   accountId: string
   initialBody?: string
@@ -101,7 +110,9 @@ const FIELD_ROW =
   'border-black/10 bg-black/[0.02] dark:border-white/10 dark:bg-white/[0.03] ' +
   'focus-within:border-violet-500 focus-within:bg-violet-500/[0.06] focus-within:ring-2 focus-within:ring-violet-500/40'
 
-export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBody, onClose, onSent, canSend = true }: ComposeModalProps) {
+export function ComposeModal({ mode, replyTo, forwardedMessages, accountEmail, accountId, initialBody, onClose, onSent, canSend = true }: ComposeModalProps) {
+  const t = useTranslations('mail')
+  const forwardedCount = mode === 'forward' ? forwardedMessages?.uids.length ?? 0 : 0
   const [toTokens, setToTokens] = useState<string[]>(() => {
     if ((mode === 'reply' || mode === 'replyAll') && replyTo) return [replyTo.from.address]
     return []
@@ -121,6 +132,7 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
   const [subject, setSubject] = useState(() => {
     if ((mode === 'reply' || mode === 'replyAll') && replyTo) return `Re: ${replyTo.subject.replace(/^(Re|Fwd):\s*/i, '')}`
     if (mode === 'forward' && replyTo) return `Fwd: ${replyTo.subject.replace(/^(Re|Fwd):\s*/i, '')}`
+    if (forwardedCount) return t('forwardedSubject', { count: forwardedCount })
     return ''
   })
   const [sending, setSending] = useState(false)
@@ -450,7 +462,7 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
       setError('Destinataire et sujet requis')
       return
     }
-    if (encrypted && mode === 'forward' && forwardedAtts.length) {
+    if (encrypted && mode === 'forward' && (forwardedAtts.length || forwardedCount)) {
       setError('Les pièces jointes ne sont pas prises en charge pour les messages chiffrés dans cette version')
       return
     }
@@ -486,6 +498,10 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
         html: bodyHtml,
         inReplyTo: (mode === 'reply' || mode === 'replyAll') && replyTo ? replyTo.uid : undefined,
         requestReadReceipt,
+      }
+
+      if (forwardedCount && forwardedMessages) {
+        payload.forwardedMessages = forwardedMessages
       }
 
       if (mode === 'forward' && forwardedAtts.length) {
@@ -767,6 +783,16 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
               className="h-7 text-sm border-0 rounded-none px-0 bg-transparent focus-visible:ring-0 shadow-none flex-1 font-semibold"
             />
           </div>
+
+          {/* Messages entiers transférés en pièce jointe (lot M5) */}
+          {forwardedCount > 0 && (
+            <div className={cn('flex items-center gap-1.5 py-2.5', FIELD_ROW)}>
+              <span className="flex items-center gap-1.5 bg-muted/50 rounded-md px-2 py-1 text-xs text-muted-foreground">
+                <Paperclip className="w-3 h-3 shrink-0" />
+                <span className="text-foreground">{t('forwardedAttached', { count: forwardedCount })}</span>
+              </span>
+            </div>
+          )}
 
           {/* Forwarded attachments */}
           {mode === 'forward' && forwardedAtts.length > 0 && (
@@ -1088,6 +1114,7 @@ export function ComposeModal({ mode, replyTo, accountEmail, accountId, initialBo
 
           {editor && (
             <AICompose
+              accountId={fromAccountId}
               getContent={() => editor.getHTML()}
               onResult={(text) => {
                 const sig = selectedSigId ? signatures.find(s => s.id === selectedSigId) : null

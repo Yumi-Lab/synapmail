@@ -288,6 +288,10 @@ export function MailClient() {
   // le message ouvert. Si elle n'est pas encore chargée (une ligne Cmd-cliquée sans
   // être ouverte), on l'ouvre et l'action part dès que le message arrive.
   const pendingCompose = useRef<ComposeKind | null>(null)
+  // Transfert d'une sélection MULTIPLE : chaque message part entier en pièce
+  // jointe. Aucun message n'est ouvert pour ça — on n'a besoin que du dossier
+  // et des uid cochés, que le serveur relit lui-même (lot M5).
+  const [forwardedMessages, setForwardedMessages] = useState<{ folder: string; uids: string[] } | null>(null)
   const composeHandlers = useMemo(
     () => ({ reply: handleReply, replyAll: handleReplyAll, forward: handleForward }),
     [handleReply, handleReplyAll, handleForward]
@@ -295,6 +299,12 @@ export function MailClient() {
 
   useEffect(() => {
     const composeFromToolbar = (kind: ComposeKind) => () => {
+      if (kind === 'forward' && mailTarget.selectedUids.length > 1 && mailTarget.folder) {
+        setForwardedMessages({ folder: mailTarget.folder, uids: mailTarget.selectedUids })
+        setComposeReplyTo(null)
+        setComposeMode('forward')
+        return
+      }
       const uid = mailTarget.selectedUids[0] ?? mailTarget.openUid
       if (!uid || !mailTarget.accountId) return
       if (currentMessage?.uid === uid) return composeHandlers[kind](currentMessage)
@@ -352,7 +362,7 @@ export function MailClient() {
     onFocusSearch: focusSearch,
     currentMessage,
     composeOpen: composeMode !== null,
-    onCloseCompose: () => { setComposeMode(null); setComposeReplyTo(null) },
+    onCloseCompose: () => { setComposeMode(null); setComposeReplyTo(null); setForwardedMessages(null) },
   })
 
   const listSelectedUid = selectionMode === 'single' ? selectedUid : null
@@ -443,11 +453,12 @@ export function MailClient() {
         <ComposeModal
           mode={composeMode}
           replyTo={composeReplyToProp}
+          forwardedMessages={forwardedMessages ?? undefined}
           accountEmail={accountEmail}
           accountId={accountId}
           initialBody={aiReplyDraft ?? undefined}
-          onClose={() => { setComposeMode(null); setComposeReplyTo(null); setAiReplyDraft(null) }}
-          onSent={() => { setComposeMode(null); setComposeReplyTo(null); setAiReplyDraft(null) }}
+          onClose={() => { setComposeMode(null); setComposeReplyTo(null); setForwardedMessages(null); setAiReplyDraft(null) }}
+          onSent={() => { setComposeMode(null); setComposeReplyTo(null); setForwardedMessages(null); setAiReplyDraft(null) }}
           canSend={permissions.canSend}
         />
       )}

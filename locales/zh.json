@@ -66,6 +66,8 @@
     "reply": "回复",
     "replyAll": "全部回复",
     "forward": "转发",
+    "forwardedSubject": "转发：{count} 封邮件",
+    "forwardedAttached": "已附加 {count} 封邮件",
     "delete": "删除",
     "archive2": "归档",
     "markRead": "标为已读",
