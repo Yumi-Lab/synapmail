@@ -167,6 +167,7 @@
     "folderEmpty": "Empty",
     "folderDelete": "Delete folder…",
     "folderNamePlaceholder": "Folder name",
+    "folderNameInvalid": "That name can’t be used — no “{delimiter}”, no blank name, 255 characters max.",
     "folderConfirmDelete": "Delete “{name}” and its {count} messages?",
     "folderConfirmEmpty": "Permanently delete the {count} messages in “{name}”?",
     "folderHasChildren": "This folder contains subfolders — delete them first.",

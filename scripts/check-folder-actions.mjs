@@ -2,7 +2,10 @@
 // Self-check of lib/folderActions.ts — la règle que la route ET le menu appliquent.
 // node --experimental-strip-types scripts/check-folder-actions.mjs
 import assert from 'node:assert/strict'
-import { folderCapabilities, sanitizeFolderName, joinFolderPath, renamedPath, isDescendant } from '../lib/folderActions.ts'
+import {
+  folderCapabilities, offeredActions, sanitizeFolderName, joinFolderPath, renamedPath,
+  isDescendant, rewritePath, samePath, accountDelimiter, FOLDER_ACTIONS,
+} from '../lib/folderActions.ts'
 
 const owner = { canOrganize: true, canDelete: true }
 const caps = (over) => folderCapabilities({ special: null, hasChildren: false, ...owner, ...over })
@@ -61,5 +64,44 @@ assert.equal(renamedPath('INBOX.Old', 'Neuf', '.'), 'INBOX.Neuf')
 assert.equal(isDescendant('Archive/Old', 'Archive', '/'), true)
 assert.equal(isDescendant('Archive', 'Archive', '/'), false)
 assert.equal(isDescendant('ArchiveBis', 'Archive', '/'), false)  // le préfixe seul ne suffit pas
+
+// ── Défaut 3 : « vider » n'est PAS affiché grisé sur les dossiers qu'on ne vide pas.
+// Grisé veut dire « ici, mais pas pour vous » ; sur vingt dossiers ordinaires, c'est du bruit.
+for (const special of [null, 'inbox', 'sent', 'drafts']) {
+  assert.equal(offeredActions(special).includes('empty'), false, `« vider » ne doit pas être proposé sur ${special}`)
+}
+for (const special of ['trash', 'spam']) {
+  assert.equal(offeredActions(special).includes('empty'), true, `« vider » doit être proposé sur ${special}`)
+}
+// Les autres entrées sont là partout, et dans l'ordre de la source unique.
+for (const special of [null, 'inbox', 'trash']) {
+  const offered = offeredActions(special)
+  assert.deepEqual(offered, FOLDER_ACTIONS.filter(a => offered.includes(a)), 'ordre du menu altéré')
+  for (const a of ['create', 'createChild', 'rename', 'markRead', 'remove']) {
+    assert.equal(offered.includes(a), true, `${a} doit rester proposé sur ${special}`)
+  }
+}
+
+// ── Défaut 4 : renommer un parent emmène TOUT son sous-arbre, pas seulement lui.
+assert.equal(rewritePath('Archive', 'Archive', 'Archives', '/'), 'Archives')
+assert.equal(rewritePath('Archive/2025', 'Archive', 'Archives', '/'), 'Archives/2025')
+assert.equal(rewritePath('Archive/2025/Q1', 'Archive', 'Archives', '/'), 'Archives/2025/Q1')
+assert.equal(rewritePath('INBOX.Vieux.Sous', 'INBOX.Vieux', 'INBOX.Neuf', '.'), 'INBOX.Neuf.Sous')
+// Un chemin étranger au sous-arbre ressort INTACT — un préfixe seul ne suffit pas.
+assert.equal(rewritePath('ArchiveBis', 'Archive', 'Archives', '/'), 'ArchiveBis')
+assert.equal(rewritePath('Autre/Archive', 'Archive', 'Archives', '/'), 'Autre/Archive')
+
+// ── À consigner : un chemin listé par le serveur peut être en Unicode DÉCOMPOSÉ (NFD).
+// Comparer des chaînes brutes laisserait créer un doublon invisible du même dossier.
+const nfd = 'Administratif socie\u0301te\u0301'   // « société » décomposé, tel qu'IMAP le liste
+const nfc = 'Administratif société'                 // le même nom tapé au clavier
+assert.notEqual(nfd, nfc, 'le banc doit bien comparer deux encodages DIFFÉRENTS')
+assert.equal(samePath(nfd, nfc), true, 'NFD et NFC désignent le même dossier')
+assert.equal(samePath('Archive', 'Archives'), false)
+
+// Le délimiteur vient des dossiers eux-mêmes, jamais supposé « / ».
+assert.equal(accountDelimiter([{ delimiter: '.' }, { delimiter: '.' }]), '.')
+assert.equal(accountDelimiter([{ delimiter: null }, { delimiter: '/' }]), '/')
+assert.equal(accountDelimiter([]), '/')
 
 console.log('check-folder-actions: OK')

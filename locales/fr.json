@@ -167,6 +167,7 @@
     "folderEmpty": "Vider",
     "folderDelete": "Supprimer le dossier…",
     "folderNamePlaceholder": "Nom du dossier",
+    "folderNameInvalid": "Ce nom ne peut pas être utilisé — pas de « {delimiter} », pas de nom vide, 255 caractères au plus.",
     "folderConfirmDelete": "Supprimer « {name} » et ses {count} messages ?",
     "folderConfirmEmpty": "Supprimer définitivement les {count} messages de « {name} » ?",
     "folderHasChildren": "Ce dossier contient des sous-dossiers — supprimez-les d’abord.",

@@ -15,7 +15,7 @@ import { useTranslations } from 'next-intl'
 import {
   ContextMenuSurface, ContextMenuItem, ContextMenuSeparator, MENU_ICON,
 } from '@/components/ui/ContextMenu'
-import { folderCapabilities, type FolderAction } from '@/lib/folderActions'
+import { folderCapabilities, offeredActions, type FolderAction } from '@/lib/folderActions'
 import type { SpecialType } from '@/lib/specialFolders'
 
 export interface FolderMenuState {
@@ -36,15 +36,16 @@ interface Props {
   onClose: () => void
 }
 
-/** L'ordre du menu et l'icône de chaque entrée — la seule chose que ce fichier décide. */
-const ENTRIES: Array<{ action: FolderAction; icon: React.ComponentType<{ className?: string }>; label: string; danger?: boolean }> = [
-  { action: 'create', icon: FolderPlus, label: 'folderNew' },
-  { action: 'createChild', icon: FolderTree, label: 'folderNewChild' },
-  { action: 'rename', icon: Pencil, label: 'folderRename' },
-  { action: 'markRead', icon: MailOpen, label: 'folderMarkRead' },
-  { action: 'empty', icon: Eraser, label: 'folderEmpty' },
-  { action: 'remove', icon: Trash2, label: 'folderDelete', danger: true },
-]
+/** L'icône et le libellé de chaque action — la seule chose que ce fichier décide.
+ *  QUELLES entrées s'affichent vient de `offeredActions`, l'ordre de `FOLDER_ACTIONS`. */
+const ENTRY: Record<FolderAction, { icon: React.ComponentType<{ className?: string }>; label: string; danger?: boolean }> = {
+  create: { icon: FolderPlus, label: 'folderNew' },
+  createChild: { icon: FolderTree, label: 'folderNewChild' },
+  rename: { icon: Pencil, label: 'folderRename' },
+  markRead: { icon: MailOpen, label: 'folderMarkRead' },
+  empty: { icon: Eraser, label: 'folderEmpty' },
+  remove: { icon: Trash2, label: 'folderDelete', danger: true },
+}
 
 export function FolderContextMenu({ menu, canOrganize, canDelete, onAction, onClose }: Props) {
   const t = useTranslations('mail')
@@ -57,7 +58,9 @@ export function FolderContextMenu({ menu, canOrganize, canDelete, onAction, onCl
 
   return (
     <ContextMenuSurface anchor={menu} onClose={onClose} data-folder-context-menu data-folder-path={menu.path}>
-      {ENTRIES.map(({ action, icon: Icon, label, danger }) => (
+      {offeredActions(menu.special).map(action => {
+        const { icon: Icon, label, danger } = ENTRY[action]
+        return (
         <div key={action}>
           {danger && <ContextMenuSeparator />}
           <ContextMenuItem
@@ -70,7 +73,8 @@ export function FolderContextMenu({ menu, canOrganize, canDelete, onAction, onCl
             danger={danger}
           />
         </div>
-      ))}
+        )
+      })}
     </ContextMenuSurface>
   )
 }

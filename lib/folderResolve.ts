@@ -9,7 +9,7 @@ import { getAccessibleAccount, type AccessibleAccount, type AccountPermission } 
 import { toImapConfig } from './accounts'
 import { listFolders } from './imap'
 import { detectSpecials, type SpecialType } from './specialFolders'
-import { folderCapabilities, isDescendant, type FolderCapabilities } from './folderActions'
+import { accountDelimiter, folderCapabilities, isDescendant, samePath, type FolderCapabilities } from './folderActions'
 import type { Folder } from '@/types/email'
 
 export interface ResolvedFolder {
@@ -22,11 +22,6 @@ export interface ResolvedFolder {
   delimiter: string
   hasChildren: boolean
   can: FolderCapabilities
-}
-
-/** Délimiteur du compte, pris sur les dossiers eux-mêmes — jamais supposé `/`. */
-export function accountDelimiter(folders: Folder[]): string {
-  return folders.find(f => f.delimiter)?.delimiter ?? '/'
 }
 
 /**
@@ -48,7 +43,7 @@ export async function resolveFolder(
   const folders = await listFolders(config)
   const delimiter = accountDelimiter(folders)
 
-  const folder = path ? folders.find(f => f.path === path) ?? null : null
+  const folder = path ? folders.find(f => samePath(f.path, path)) ?? null : null
   if (path && !folder) return null
 
   const specials = detectSpecials(folders)
@@ -65,3 +60,4 @@ export async function resolveFolder(
     }),
   }
 }
+

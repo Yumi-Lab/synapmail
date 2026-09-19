@@ -3,6 +3,7 @@ import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { markFolderRead, emptyFolder, folderMessageCount } from '@/lib/imap'
 import { resolveFolder } from '@/lib/folderResolve'
+import { refuse } from '@/lib/folderActions'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,7 +21,7 @@ const REQUIRED = { markRead: 'organize', empty: 'delete', count: undefined } as 
 
 export async function POST(req: Request) {
   const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!authCtx) return refuse('unauthorized')
 
   let body: Record<string, unknown> = {}
   try {
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
   } catch { /* corps absent ou illisible — traité comme une action inconnue */ }
 
   const action = body.action as Action
-  if (!ACTIONS.includes(action)) return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
+  if (!ACTIONS.includes(action)) return refuse('unknownAction')
 
   const accountId = typeof body.accountId === 'string' ? body.accountId : null
   const path = typeof body.path === 'string' ? body.path : null
@@ -37,13 +38,13 @@ export async function POST(req: Request) {
   try {
     const needed = REQUIRED[action]
     const ctx = await resolveFolder(accountId, authCtx.id, path, needed ? [needed] : [])
-    if (!ctx?.folder) return NextResponse.json({ error: 'Folder not found' }, { status: 404 })
+    if (!ctx?.folder) return refuse('notFound')
 
     if (action === 'count') {
       return NextResponse.json({ data: { count: await folderMessageCount(ctx.config, ctx.folder.path) } })
     }
 
-    if (!ctx.can[action]) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    if (!ctx.can[action]) return refuse('forbidden')
 
     if (action === 'markRead') {
       await markFolderRead(ctx.config, ctx.folder.path)

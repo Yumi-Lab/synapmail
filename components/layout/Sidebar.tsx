@@ -16,7 +16,7 @@ import { folderGlyph, folderInitials } from './FolderGlyph'
 import { ThinScroll } from './ThinScroll'
 import { ACCOUNTS_SETTINGS_HREF } from '@/components/settings/SettingsSidebar'
 import { FolderContextMenu, type FolderMenuState } from './FolderContextMenu'
-import { isDescendant, type FolderAction } from '@/lib/folderActions'
+import { accountDelimiter, isDescendant, sanitizeFolderName, type FolderAction } from '@/lib/folderActions'
 import type { EmailAccount } from '@/types/account'
 
 /**
@@ -443,8 +443,12 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
 
   const submitFolderName = async () => {
     if (!naming || !resolvedAccountId) return
-    const value = naming.value.trim()
-    if (!value) { setNaming(null); return }
+    if (!naming.value.trim()) { setNaming(null); return }
+    // La MÊME fonction que la route : on n'envoie pas un nom qu'on sait déjà refusé.
+    // Le serveur reste l'autorité — ses 400/409 s'affichent au même endroit.
+    const delimiter = accountDelimiter(folders)
+    const value = sanitizeFolderName(naming.value, delimiter)
+    if (!value) { setFolderError(t('folderNameInvalid', { delimiter })); return }
     const { action, parent, path } = naming
     setNaming(null)
     try {
@@ -685,7 +689,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                 onChange={e => setNaming({ ...naming, value: e.target.value })}
                 onKeyDown={e => {
                   if (e.key === 'Enter') submitFolderName()
-                  if (e.key === 'Escape') setNaming(null)
+                  if (e.key === 'Escape') { setFolderError(null); setNaming(null) }
                 }}
                 onBlur={() => setNaming(null)}
                 className="flex-1 min-w-0 bg-transparent text-sm outline-none border-b border-border focus:border-foreground"

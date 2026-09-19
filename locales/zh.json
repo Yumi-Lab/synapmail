@@ -167,6 +167,7 @@
     "folderEmpty": "清空",
     "folderDelete": "删除文件夹…",
     "folderNamePlaceholder": "文件夹名称",
+    "folderNameInvalid": "此名称不可用 — 不能含“{delimiter}”，不能为空，最多 255 个字符。",
     "folderConfirmDelete": "删除“{name}”及其 {count} 封邮件？",
     "folderConfirmEmpty": "永久删除“{name}”中的 {count} 封邮件？",
     "folderHasChildren": "该文件夹包含子文件夹，请先删除子文件夹。",
