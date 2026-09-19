@@ -310,7 +310,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       }
     })()
     return () => { if (!complete) controller.abort() }
-  }, [isStreamingScope, searchReady, search, folder, accountParam])
+  }, [isStreamingScope, searchReady, search, folder, accountParam, searchScope])
 
   // Tant que le compte n'est pas résolu, la recherche est EN COURS de démarrage :
   // le bandeau dit « Recherche… » plutôt que d'affirmer un résultat qu'il n'a pas.
