@@ -142,8 +142,11 @@ export async function listMessages(
   const client = await createClient(account)
   try {
     const mailbox = await client.mailboxOpen(folder)
-    // Size of the view being paged: the whole mailbox for "all", the MATCHES for a filter.
-    let total = mailbox.exists
+    // Two distinct sizes, never merged: `mailboxSize` is how many messages the folder holds
+    // (what the cache reconcile and the unread count reason about), `total` is the size of the
+    // VIEW being paged — the whole mailbox for "all", the MATCHES for a filter.
+    const mailboxSize = mailbox.exists
+    let total = mailboxSize
 
     // For "all" we derive the page range directly from mailbox.exists:
     // sequence numbers are 1..N, with N being the newest message.
@@ -152,7 +155,7 @@ export async function listMessages(
     // For filtered views (unread/starred) we still need SEARCH.
     let pageSeqs: number[]
     if (filter === 'all') {
-      const end = total - (page - 1) * perPage
+      const end = mailboxSize - (page - 1) * perPage
       const start = Math.max(1, end - perPage + 1)
       pageSeqs = []
       for (let seq = end; seq >= start; seq--) pageSeqs.push(seq)
@@ -232,8 +235,8 @@ export async function listMessages(
         const all = await client.search({ all: true }, { uid: true })
         if (Array.isArray(all)) {
           liveUids = all.map(String)
-        } else if (total === 0) {
-          liveUids = []          // genuinely empty mailbox
+        } else if (mailboxSize === 0) {
+          liveUids = []          // genuinely empty mailbox — NOT an empty filtered view
         }
         // a non-array result on a non-empty mailbox → leave null, skip pruning
       } catch {
@@ -242,7 +245,7 @@ export async function listMessages(
       // Authoritative unread count for this folder — server-side SEARCH UNSEEN,
       // not bounded by `perPage` like counting messages_cache rows would be.
       try {
-        if (total === 0) {
+        if (mailboxSize === 0) {
           unseenCount = 0
         } else {
           const unseen = await client.search({ seen: false }, { uid: true })
@@ -528,6 +531,82 @@ export async function moveMessagesBulk(
   try {
     await client.mailboxOpen(folder)
     await client.messageMove(uids.join(','), destination, { uid: true })
+  } finally {
+    await client.logout()
+  }
+}
+
+/**
+ * Source BRUTE de plusieurs messages d'un même dossier, pour les transférer
+ * en pièces jointes (lot M5). Une SEULE connexion pour toute la sélection :
+ * ouvrir puis fermer une session IMAP par message coûte cher sur les serveurs
+ * mesurés. L'objet vient de l'enveloppe, donc le message n'est pas réanalysé
+ * juste pour nommer le fichier.
+ *
+ * Deux passes, dans cet ordre : les TAILLES d'abord (`RFC822.SIZE`, aucun
+ * octet de corps), puis les sources seulement si le total tient sous le
+ * plafond — sinon une boîte volumineuse serait entièrement chargée en mémoire
+ * avant qu'on ait le droit de la refuser.
+ *
+ * Le résultat porte son propre verdict : `missing` liste les uid demandés que
+ * le dossier ne contient plus (message déplacé entre la sélection et l'envoi).
+ * L'appelant n'a rien à comparer — un transfert amputé ne peut pas partir par
+ * simple oubli.
+ */
+export interface MessageSourcesResult {
+  sources: Array<{ uid: string; subject: string; source: Buffer }>
+  /** uid demandés, absents du dossier au moment de la relecture. */
+  missing: string[]
+  /** Somme des tailles annoncées par le serveur, quand le plafond est dépassé. */
+  totalBytes: number
+  oversized: boolean
+}
+
+export async function getMessageSources(
+  account: AccountConfig,
+  folder: string,
+  uids: string[],
+  maxTotalBytes: number
+): Promise<MessageSourcesResult> {
+  const empty: MessageSourcesResult = { sources: [], missing: [], totalBytes: 0, oversized: false }
+  if (!uids.length) return empty
+  const client = await createClient(account)
+  try {
+    await client.mailboxOpen(folder)
+
+    // Passe 1 — tailles seules. `size` vient de RFC822.SIZE : le serveur
+    // l'annonce sans transmettre le message.
+    const sizeByUid = new Map<string, number>()
+    for await (const msg of client.fetch(uids.join(','), { uid: true, size: true }, { uid: true })) {
+      sizeByUid.set(String(msg.uid), msg.size ?? 0)
+    }
+    const missing = uids.filter(uid => !sizeByUid.has(uid))
+    if (missing.length) return { ...empty, missing }
+
+    const totalBytes = uids.reduce((sum, uid) => sum + (sizeByUid.get(uid) ?? 0), 0)
+    if (totalBytes > maxTotalBytes) return { ...empty, totalBytes, oversized: true }
+
+    // Passe 2 — les sources, maintenant qu'on sait qu'elles tiennent.
+    const byUid = new Map<string, { uid: string; subject: string; source: Buffer }>()
+    for await (const msg of client.fetch(uids.join(','), { uid: true, envelope: true, source: true }, { uid: true })) {
+      if (!msg.source) continue
+      byUid.set(String(msg.uid), {
+        uid: String(msg.uid),
+        subject: msg.envelope?.subject ?? '',
+        source: msg.source,
+      })
+    }
+    // IMAP rend les messages dans l'ordre des uid, pas dans celui de la
+    // sélection : on rétablit l'ordre demandé, pour que les pièces jointes
+    // suivent ce que l'oeil a coché.
+    return {
+      sources: uids
+        .map(uid => byUid.get(uid))
+        .filter((m): m is { uid: string; subject: string; source: Buffer } => !!m),
+      missing: uids.filter(uid => !byUid.has(uid)),
+      totalBytes,
+      oversized: false,
+    }
   } finally {
     await client.logout()
   }

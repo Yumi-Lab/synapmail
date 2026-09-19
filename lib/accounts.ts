@@ -1,6 +1,9 @@
 import { query } from './db'
 import { encrypt, decrypt } from './encrypt'
 import { getAccessibleAccount } from './accountAccess'
+import { accountOrderBy } from './accountColor'
+
+export { accountOrderBy }
 
 export interface DbEmailAccount {
   id: string
@@ -47,7 +50,7 @@ export async function listAccounts(userId: string): Promise<Omit<DbEmailAccount,
     `SELECT id, user_id, name, email, imap_host, imap_port, imap_secure,
             smtp_host, smtp_port, smtp_secure, username,
             is_default, color, prompt_guard, oauth_provider, created_at
-     FROM email_accounts WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC`,
+     FROM email_accounts WHERE user_id = $1 ${accountOrderBy()}`,
     [userId]
   )
 }

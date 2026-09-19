@@ -25,4 +25,19 @@ const courier = ['INBOX', 'INBOX.Sent', 'INBOX.Trash', 'INBOX.Trash.2019'].map(p
 assert.deepEqual(pick(courier, 'sent'), ['INBOX.Sent'])
 assert.deepEqual(pick(courier, 'trash'), ['INBOX.Trash'])
 
+// A role is claimed ONCE: a mailbox holding two candidate names still shows a single special row.
+const twins = [f('INBOX'), f('Trash'), f('Deleted Items'), f('Sent'), f('Envoyés'), f('Inbox')]
+assert.deepEqual(pick(twins, 'trash'), ['Trash'])
+assert.deepEqual(pick(twins, 'sent'), ['Sent'])
+assert.deepEqual(pick(twins, 'inbox'), ['INBOX'])
+
+// A sub-folder named like the inbox is a sub-folder — the depth test wins over every name match.
+assert.deepEqual(pick([f('INBOX'), f('Clients/Inbox'), f('Archive/INBOX')], 'inbox'), ['INBOX'])
+
+// A server declaring a role by flag never lets a homonym claim it again.
+assert.deepEqual(pick([f('INBOX', '\\Inbox'), f('Objets envoyés', '\\Sent'), f('Sent')], 'sent'), ['Objets envoyés'])
+
+// A mailbox without any flag nor any special name yields no special row at all.
+assert.deepEqual([...detectSpecials([f('Projets'), f('Projets/2026')])].filter(([, t]) => t), [])
+
 console.log('check-special-folders: OK')

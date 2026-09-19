@@ -5,6 +5,114 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — fork Yumi-Lab (branche `yumi`) — actions sur les mails — 2026-09-20
+
+### Added
+- **Sélection multiple façon explorateur** (`lib/mailSelection.tsx`, `components/layout/MessageList.tsx`) :
+  Cmd/Ctrl-clic ajoute ou retire une ligne, Maj-clic prend la plage depuis la dernière ligne cliquée,
+  Cmd/Ctrl+A prend tout le chargé, Échap vide, Suppr supprime (confirmation au-delà d'une ligne). La case
+  au survol de la bulle reste le chemin tactile. Glisser une ligne qui fait partie de la sélection emporte
+  TOUTE la sélection vers le dossier visé. La sélection vit dans un contexte monté au niveau de la page,
+  que la barre d'outils de l'en-tête lit sans dupliquer la moindre logique de mail.
+- **Rectangle de sélection à la souris** : les lignes étant `draggable` et pleine largeur, il n'existait
+  aucun vide où commencer un rectangle. Le geste est tranché à la direction — mouvement surtout vertical
+  → rectangle, surtout horizontal → glisser-déposer vers un dossier, inchangé. Défilement automatique aux
+  bords, Échap rétablit la sélection d'avant, un déplacement de moins de 4 px reste un clic qui ouvre.
+- **Drapeaux de couleur, convention Apple** (`lib/flags.ts`) : 7 couleurs (rouge, orange, jaune, vert,
+  bleu, violet, gris) écrites en IMAP comme Mail sur Mac — `\Flagged` plus les mots-clés `$MailFlagBit0/1/2`,
+  après une sonde du serveur consignée au Journal. `PATCH /api/messages/[id]` et `/api/messages/bulk`
+  acceptent `flag: <couleur> | null` ; l'ancien `isStarred` reste accepté et vaut rouge. L'étoile devient
+  un drapeau dans la liste et le volet de lecture, et un filtre « Avec drapeau » rejoint « Non lus ».
+- **Clic droit qui agit sur la SÉLECTION** (`components/ui/MessageContextMenu.tsx`) : Répondre, Répondre à
+  tous, Transférer, Drapeau ▸ (7 pastilles + retrait), lu / non lu, Archiver, Déplacer vers ▸, Reporter ▸,
+  Indésirable, Supprimer. Un clic droit dans une sélection agit sur toute la sélection (Répondre et
+  Répondre à tous grisés au-delà d'une ligne) ; hors sélection, il sélectionne la ligne visée puis ouvre.
+- **Temps réel par IMAP IDLE sur la boîte du compte actif** (`lib/idle.ts`, `/api/stream?account=`) : une
+  connexion écoute `exists` / `expunge` / `flags` et pousse l'événement dans le flux SSE existant ; la
+  liste et les compteurs se relisent à l'annonce. Mesuré sur une vraie boîte IONOS : la ligne apparaît à
+  10,0 s, dont **7,5 à 9,2 s d'annonce par le serveur lui-même** (bras de référence mesuré dans le même
+  passage) — la part ajoutée par l'application est d'environ 2 s. Les relectures périodiques (30 s / 60 s)
+  restent en filet de sécurité.
+- **Transfert de plusieurs messages en pièces jointes** (`lib/forward.ts`) : une sélection de N messages
+  ouvre la fenêtre de rédaction avec N pièces `.eml` (`message/rfc822`, source IMAP brute), objet
+  « Fwd : N messages ». Sur un seul message, le comportement est inchangé. La frontière de confiance
+  refuse par un CODE, jamais par une phrase : requête malformée, plus de 25 messages, plus de 25 Mio au
+  total (les TAILLES sont lues avant le moindre octet de corps), un uid disparu (409, rien ne part), boîte
+  d'origine inaccessible. Les uid sont validés un à un : un jeu de séquences IMAP (`1:*`) est refusé.
+
+### Changed
+- **Plus aucune icône d'action sur les lignes de la liste** : archiver, lu / non lu, supprimer et reporter
+  quittent les lignes, au repos comme au survol. À leur place, la date COMPLÈTE avec l'heure, dans la
+  langue de l'interface (`lib/dates.ts`, `Intl.DateTimeFormat`). Chaque action retirée reste atteignable
+  depuis l'en-tête et le clic droit ; « Reporter » a rejoint le clic droit pour cela.
+- **La liste et les volets ont la barre de défilement de la barre latérale** : le composant `ThinScroll`
+  est réutilisé tel quel (pouce de 6 px, visible pendant le défilement, fondu après 2 s), et son pouce se
+  SAISIT à la souris — appui sur le pouce, clic dans la bande, sans ouvrir de message ni toucher la
+  sélection.
+- **Le bouton Archiver mort du volet de lecture ne trompe plus personne** : il n'avait aucun gestionnaire
+  de clic et ne faisait rien. L'archivage est désormais une action du contexte partagé, atteignable depuis
+  la barre d'outils de l'en-tête et le clic droit, et n'est proposée que si un dossier d'archive existe
+  sur le compte.
+- **Les lignes de la liste s'annoncent** : `role="listbox"` / `role="option"` et `aria-selected`.
+
+### Fixed
+- **Un transfert ne lit plus les messages dans la mauvaise boîte** (`lib/forward.ts`) : la charge utile ne
+  portait qu'un dossier et des uid, et le serveur les relisait dans le compte EXPÉDITEUR — qu'on peut
+  changer dans « De » APRÈS avoir coché. Sur deux boîtes, des uid identiques désignent des messages
+  différents : le transfert aurait joint les messages d'une autre boîte. Le compte d'ORIGINE voyage
+  désormais dans la charge utile et son accès est contrôlé SÉPARÉMENT de celui de l'expéditeur ; origine
+  inaccessible → 404, rien ne part.
+- **Le refus « des messages ont disparu » s'accorde** : il annonçait « 1 des messages sélectionnés ne sont
+  plus » au singulier. Les trois langues passent en règle de pluriel ICU, et les libellés des cinq refus
+  sont désormais RENDUS par le banc, dans les trois langues, au singulier comme au pluriel.
+
+---
+
+## [Unreleased] — fork Yumi-Lab (branche `yumi`) — recherche — 2026-09-19
+
+### Changed
+- **La recherche cherche dans les bons champs** (`lib/search.ts`, `lib/imap.ts`) : expéditeur,
+  **destinataires**, **copie** et objet (`SEARCH_FIELDS`, source unique lue par le serveur et par
+  l'interface). Mesuré sur une vraie boîte IONOS : « bruno@3d-expert.fr » passe de **7 à 70 résultats**,
+  à durée égale (1,2 s). Le corps reste hors du `OR` — mesuré à 0 résultat sur IONOS, où l'y ajouter
+  annulait en plus tout le `OR`.
+- **Une requête à plusieurs mots est un ET de ses mots**, dans n'importe quel ordre (« 3d cpi » =
+  « cpi 3d ») ; une expression entre guillemets reste une sous-chaîne exacte ; casse et espaces
+  multiples ignorés. Fonction pure `parseQuery()` + `scripts/check-search-parse.mjs`.
+- **Plafond de résultats dit à voix haute** : `SEARCH_RESULT_LIMIT` (une seule source) passe de 50 à
+  **200**, et la bannière annonce « 2 406 résultats · 200 affichés » au lieu de tronquer en silence.
+- **« Tous les dossiers » devient utilisable** : les résultats sont **diffusés dossier par dossier**
+  (NDJSON), les dossiers sont visités par ordre d'utilité (réception, envoyés, puis par date du dernier
+  message connu), la bannière avance (« 5 dossiers sur 23 ») et un bouton **Arrêter** interrompt le flux
+  sans perdre les lignes déjà reçues. Premières lignes mesurées à **1,4-3,1 s** (staging, boîte réelle)
+  là où la version précédente demandait 30 à 50 s avant d'afficher quoi que ce soit.
+- **Bannière sur une seule ligne** : les champs cherchés et la portée passent en infobulle
+  (`components/ui/IconTooltip.tsx`, plus d'attribut `title` natif) ; la phrase « le corps n'est pas
+  cherché » n'apparaît que sur 0 résultat.
+- `mail.searchProgress` passe en pluriel ICU (en/fr) : la bannière affichait « 1 dossiers sur 23 ».
+
+### Fixed
+- **Un filtre sans correspondance ne détruit plus le cache d'un dossier** (`lib/imap.ts`) : `listMessages`
+  confondait la taille de la VUE paginée et la taille du DOSSIER. Ouvrir un filtre (« Non lus », « Suivis »)
+  qui ne correspondait à rien faisait croire au dossier qu'il était vide : tout son `messages_cache` était
+  supprimé et son compteur de non-lus réécrit à 0 — depuis une simple requête de lecture. Garde :
+  `scripts/check-list-total.mjs`.
+- **Un même rôle de dossier spécial n'est plus revendiqué deux fois** (`lib/specialFolders.ts`) : sur un
+  serveur qui ne déclare pas ses drapeaux, une boîte contenant `Trash` **et** `Deleted Items` (ou `Sent`
+  et `Envoyés`) affichait deux corbeilles ; et un sous-dossier nommé `Clients/Inbox` était promu boîte de
+  réception. Le test de profondeur tranche désormais avant tout test de nom, et le premier dossier à
+  prendre un rôle est le seul à le porter.
+- **Une réponse différée vise le message sur lequel elle a été déclenchée** (`app/(app)/mail/MailClient.tsx`) :
+  une action Répondre / Transférer lancée sur un message pas encore chargé ne retenait que le geste, pas sa
+  cible — si le message ouvert changeait entre-temps (autre ligne cliquée, notification de bureau), la
+  réponse partait sur le mauvais message, sans rien signaler. Garde : `scripts/check-deferred-compose.mjs`.
+
+### Added
+- `docs/SEARCH.md` : ce que la recherche cherche, comment elle découpe une requête, ses portées, ses
+  plafonds, et ce que les mesures ne permettent pas d'extrapoler.
+
+---
+
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — 2026-09-17
 
 ### Changed
@@ -89,6 +197,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `scripts/check-locales.mjs` (`npm run check:locales`) : parité stricte des clés entre `en`, `fr` et `zh`.
 - Clés `mail.collapseSidebar`, `mail.expandSidebar`, `mail.folders`, `mail.switchAccount`, `common.showPassword`,
   `common.hidePassword` (en/fr/zh).
+- **Couleur de chaque boîte choisie par l'utilisateur** (`lib/accountColor.ts`, source unique) : nouvelle colonne
+  `email_accounts.badge_color` (une ligne `ALTER TABLE … ADD COLUMN IF NOT EXISTS` dans `lib/db.ts`) — `NULL` garde la
+  couleur AUTOMATIQUE par rang (aucune boîte ne change d'aspect à la mise à jour), une valeur `#RRGGBB` fixe la couleur.
+  Exposée en `badgeColor` par `GET /api/accounts`, modifiable par `PATCH /api/accounts/[id]` (propriétaire seul,
+  validation serveur `^#[0-9a-fA-F]{6}$` ou `null`, 400 sinon ; une boîte reçue en partage garde la couleur de son
+  propriétaire). `accountColor(account, rank)` rend la couleur effective ET l'encre lisible dessus (contraste WCAG
+  calculé, ≥ 4,5:1 sur toute couleur, encre quasi-noire sur une couleur claire) : bulle en tête de barre, liste des
+  comptes, badges des réglages et `--synap-account` la lisent tous.
+- **Le VRAI badge dans Réglages → Comptes** (`components/settings/AccountColorPicker.tsx`) : la pastille de 10 px laisse
+  la place au badge de la barre (mêmes deux lettres, même couleur) ; un bouton « Couleur » ouvre un panneau ancré avec le
+  sélecteur natif du système (roue chromatique, aucune dépendance), un champ hexadécimal borné qui se signale
+  `aria-invalid` sur une saisie incomplète, les cinq couleurs de la palette en pastilles et « Automatique ». Le badge et
+  la barre changent EN DIRECT pendant le choix ; l'écriture part au relâchement, à la validation du champ ou au clic
+  dehors — jamais à chaque pixel de la roue —, et Échap revient à la couleur enregistrée sans rien écrire. Light-dismiss
+  en un clic qui atteint sa cible. i18n en/fr/zh.
+- `scripts/check-account-color.mjs` (puppeteer-core + requêtes directes en base) : PATCH par choix, égalité badge des
+  réglages = bulle de la barre = `--synap-account`, contraste ≥ 4,5:1 sur une couleur claire, valeur invalide refusée,
+  « Automatique » qui restaure la couleur de rang, et l'ordre des boîtes inchangé par un enregistrement — ce dernier
+  contrôle porte son propre bras de référence (le tri non total, qui lui se déplace bien).
 - **Barre de défilement qui s'efface** (`components/ui/ThinScroll.tsx`) : dans la barre, le curseur de défilement
   apparaît au défilement ou au survol puis s'estompe après 2 s d'inactivité, sur un rail sans flèches ni fond, cohérent
   clair/sombre (`prefers-reduced-motion` respecté).

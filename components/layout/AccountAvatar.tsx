@@ -3,20 +3,11 @@
 import { useEffect, useState } from 'react'
 import useSWR from 'swr'
 import { cn } from '@/lib/utils'
+import { accountColor, readableInk } from '@/lib/accountColor'
+import type { ColorableAccount } from '@/lib/accountColor'
 import type { EmailAccount } from '@/types/account'
 
-/**
- * Single palette for account bubbles — index with the account's rank in the list.
- * Shades are chosen so a white initial stays readable on every bubble: measured
- * WCAG contrast against #fff is 5.17 / 5.70 / 5.48 / 5.02 / 4.70, all above the
- * 4.5:1 floor for small bold text. The 500 shades this replaces fell as low as
- * 2.15 (amber) and 2.54 (emerald). `scripts/check-sidebar-collapse.mjs` recomputes
- * these ratios from the rendered bubbles, so the floor is enforced, not asserted.
- */
-const ACCOUNT_COLORS = ['#2563eb', '#7c3aed', '#047857', '#b45309', '#e11d48'] as const
-
-/** The colour of the account ranked `colorIndex` in the list — the palette's only reader. */
-export const accountColor = (colorIndex: number) => ACCOUNT_COLORS[colorIndex % ACCOUNT_COLORS.length]
+export { accountColor, readableInk } from '@/lib/accountColor'
 
 /**
  * Shades derived from the active account's colour, in ONE place: the percentages below
@@ -41,9 +32,11 @@ const ACCENT_MIXES = {
  * folder, the compose control, the rings and the shadows in one step, with no second
  * palette and nothing to keep in sync.
  */
-export const accentVars = (colorIndex: number): Record<string, string> => {
-  const colour = accountColor(colorIndex)
-  const vars: Record<string, string> = { '--synap-account': colour }
+export const accentVars = (account: ColorableAccount | null | undefined, rank: number): Record<string, string> => {
+  const colour = accountColor(account, rank)
+  // The ink every filled accent surface writes with — the compose control included, so a
+  // pale colour picked from the wheel keeps its label readable instead of losing it in white.
+  const vars: Record<string, string> = { '--synap-account': colour, '--synap-account-ink': readableInk(colour) }
   for (const [name, [amount, into]] of Object.entries(ACCENT_MIXES)) {
     vars[`--synap-account-${name}`] = `color-mix(in oklab, ${colour} ${amount}, ${into})`
   }
@@ -59,7 +52,7 @@ export const accentVars = (colorIndex: number): Record<string, string> => {
  * scans source text, so a class built by interpolation would never be emitted.
  */
 export const ACCENT = {
-  solid: 'bg-[color:var(--synap-account)] text-white',
+  solid: 'bg-[color:var(--synap-account)] text-[color:var(--synap-account-ink)]',
   tint: 'bg-[color:var(--synap-account-tint)]',
   tintStrong: 'bg-[color:var(--synap-account-tint-strong)]',
   ink: 'text-[color:var(--synap-account)] dark:text-[color:var(--synap-account-lift)]',
@@ -106,7 +99,7 @@ export function useAccountAccent() {
   const accounts = accountsData?.data ?? []
   const activeAccount = resolveActiveAccount(accounts, activeAccountId)
   const colorIndex = activeAccount ? accounts.indexOf(activeAccount) : 0
-  return { accounts, activeAccount, colorIndex, vars: accentVars(colorIndex), setActiveAccountId }
+  return { accounts, activeAccount, colorIndex, vars: accentVars(activeAccount, colorIndex), setActiveAccountId }
 }
 
 /** Above this the badge reads `99+`. Single source for every unread counter of the bar. */
@@ -209,8 +202,8 @@ export function UnreadBadge({ count }: { count: number }) {
 }
 
 interface AccountAvatarProps extends React.HTMLAttributes<HTMLSpanElement> {
-  account: Pick<EmailAccount, 'name' | 'email'>
-  /** Rank of the account in the list — resolved against ACCOUNT_COLORS. */
+  account: Pick<EmailAccount, 'name' | 'email'> & ColorableAccount
+  /** Rank of the account in the list — used only when its owner picked no colour. */
   colorIndex: number
   unread?: number
   size?: AvatarSize
@@ -225,15 +218,16 @@ interface AccountAvatarProps extends React.HTMLAttributes<HTMLSpanElement> {
  * even on a bubble that shares the accent colour.
  */
 export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', ...rest }: AccountAvatarProps) {
+  const bubble = accountColor(account, colorIndex)
   return (
     <span className="relative inline-flex shrink-0">
       <span
         {...rest}
         className={cn(
-          'rounded-full flex items-center justify-center font-semibold text-white select-none tracking-[0.02em]',
+          'rounded-full flex items-center justify-center font-semibold select-none tracking-[0.02em]',
           SIZES[size],
         )}
-        style={{ backgroundColor: accountColor(colorIndex) }}
+        style={{ backgroundColor: bubble, color: readableInk(bubble) }}
       >
         <span data-account-initial>{accountInitials(account)}</span>
       </span>

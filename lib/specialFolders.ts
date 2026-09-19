@@ -38,6 +38,7 @@ export interface FolderLike {
 }
 
 const INBOX = 'inbox'
+const INBOX_TYPE: NonNullable<SpecialType> = 'inbox'
 
 function byFlag(f: FolderLike): SpecialType | undefined {
   return f.specialUse && Object.prototype.hasOwnProperty.call(SPECIAL_USE_MAP, f.specialUse)
@@ -53,19 +54,27 @@ export function detectSpecials<T extends FolderLike>(folders: T[]): Map<string, 
     if (flagged) declared.add(flagged)
   }
 
-  return new Map(folders.map(f => {
+  const resolved = new Map<string, SpecialType>()
+  for (const f of folders) {
     const flagged = byFlag(f)
-    if (flagged !== undefined) return [f.path, flagged]
-
-    const name = f.name.toLowerCase()
-    if (f.path.toLowerCase() === INBOX || name === INBOX) return [f.path, declared.has('inbox') ? null : 'inbox']
+    if (flagged !== undefined) { resolved.set(f.path, flagged); continue }
 
     const delimiter = f.delimiter || '/'
     const cut = f.path.lastIndexOf(delimiter)
     const parent = cut < 0 ? '' : f.path.slice(0, cut).toLowerCase()
-    if (parent !== '' && parent !== INBOX) return [f.path, null] // a sub-folder keeps its own name
+    // A sub-folder keeps its own name — the depth test comes BEFORE any name match, including
+    // "inbox": "Clients/Inbox" is a client folder, not a second inbox.
+    if (parent !== '' && parent !== INBOX) { resolved.set(f.path, null); continue }
 
-    const guess = NAME_PATTERNS.find(([type, re]) => !declared.has(type) && re.test(name))
-    return [f.path, guess ? guess[0] : null]
-  }))
+    const name = f.name.toLowerCase()
+    const type = f.path.toLowerCase() === INBOX || name === INBOX
+      ? INBOX_TYPE
+      : NAME_PATTERNS.find(([, re]) => re.test(name))?.[0]
+    // A role is claimed ONCE: the first folder to take it wins, so a mailbox holding both
+    // "Trash" and "Deleted Items" (or "Sent" and "Envoyés") still shows a single special row.
+    if (!type || declared.has(type)) { resolved.set(f.path, null); continue }
+    declared.add(type)
+    resolved.set(f.path, type)
+  }
+  return resolved
 }
