@@ -181,7 +181,7 @@ try {
   await page.goto(`${BASE}/mail?folder=${encodeURIComponent(FOLDER)}`, { waitUntil: 'networkidle2' })
   await page.waitForSelector(`[data-mail-row="${uid}"]`, { timeout: 30000 })
   await (await page.$(`[data-mail-row="${uid}"]`)).click()
-  await page.waitForSelector('[data-reading-archive]', { timeout: 20000 })
+  await page.waitForSelector('[data-reading-flag]', { timeout: 20000 })
 
   const openMenu = async () => {
     await page.click('[data-reading-flag]')

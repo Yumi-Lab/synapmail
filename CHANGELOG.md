@@ -39,6 +39,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   refuse par un CODE, jamais par une phrase : requête malformée, plus de 25 messages, plus de 25 Mio au
   total (les TAILLES sont lues avant le moindre octet de corps), un uid disparu (409, rien ne part), boîte
   d'origine inaccessible. Les uid sont validés un à un : un jeu de séquences IMAP (`1:*`) est refusé.
+- **L'IA au choix : API avec clé, ou modèle LOCAL appelé par le navigateur** (`lib/aiClient.ts`,
+  `components/ai/LocalAccessNotice.tsx`) : un cinquième fournisseur, « Local, sur cet appareil », fait
+  partir l'appel du NAVIGATEUR. Le serveur prépare l'invite exactement comme pour un fournisseur hébergé,
+  garde anti-injection et délimiteurs à usage unique compris, puis répond `mode: 'local'` sans contacter
+  personne ; le navigateur porte ces messages à `{baseUrl}/chat/completions`. Seule une adresse de boucle
+  locale est acceptée, par une fonction PURE partagée par l'écran et l'API, et les libellés des quatre
+  fournisseurs existants disent désormais D'OÙ part l'appel. Corrige le cas rapporté en production : un
+  Ollama qui tournait bel et bien sur le poste était annoncé « non trouvé », parce que `127.0.0.1` désigne
+  le conteneur pour le serveur.
+- **La panne est nommée, pas devinée** : le navigateur rapporte de la même façon une autorisation refusée,
+  une adresse muette et un refus CORS. L'autorisation d'accès aux applications de l'appareil est lue
+  AVANT la sonde (elle bloque aussi la sonde), si bien qu'un refus n'est plus annoncé comme une adresse
+  muette ; l'aide affichée cite l'origine RÉELLE du site, jamais une adresse écrite en dur, et rappelle
+  que Safari bloque cet appel. « Détecter automatiquement » est offert à tout fournisseur qui a une
+  adresse, le fournisseur local compris, et remplit les pastilles de modèles.
 
 ### Changed
 - **Plus aucune icône d'action sur les lignes de la liste** : archiver, lu / non lu, supprimer et reporter

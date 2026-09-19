@@ -421,7 +421,30 @@
     },
     "ai": {
       "stepProvider": "1. Provider",
-      "stepAccess": "2. Access"
+      "stepAccess": "2. Access",
+      "tagline": {
+        "serverKey": "API key (called from the server)",
+        "ollamaServer": "Ollama reachable from the server",
+        "local": "Called from your browser, nothing leaves your machine"
+      },
+      "provider": {
+        "local": "Local, on this device"
+      },
+      "detectOllamaMissing": "Ollama was not found FROM THE SERVER. If it runs on your computer, pick \"Local, on this device\": the call will leave from the browser.",
+      "testOk": "Connection OK. Answer: \"{answer}\"",
+      "local": {
+        "urlLabel": "Local address",
+        "modelHint": "Ollama, LM Studio or llama.cpp running on your computer",
+        "remoteRefused": "Remote address: for a remote address, pick the API key option.",
+        "detectFound": "{label} found at {url}",
+        "startModel": "Start the model on this computer (ollama serve, LM Studio, llama.cpp).",
+        "checkAddress": "Check the address: {url} for Ollama.",
+        "remoteNeedsKey": "The model must run on THIS machine: a remote address needs an API key.",
+        "corsMac": "macOS: launchctl setenv OLLAMA_ORIGINS \"{origin}\" then restart Ollama.",
+        "corsLinux": "Linux: add Environment=\"OLLAMA_ORIGINS={origin}\" to the service, then reload it.",
+        "corsLmStudio": "LM Studio: enable CORS in the local server, with the origin {origin}.",
+        "corsSafari": "Safari blocks this call: use Chrome, Edge or Firefox."
+      }
     }
   },
   "admin": {
