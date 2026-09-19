@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useLocale, useTranslations } from 'next-intl'
 import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag, Info } from 'lucide-react'
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
-import { MAIL_ORIGIN_ATTR, groupByOrigin, originKey, type MessageOrigin } from '@/lib/mailOrigin'
+import { MAIL_ORIGIN_ATTR, groupByOrigin, groupsToMove, originKey, type MessageOrigin } from '@/lib/mailOrigin'
 import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } from '@/lib/flags'
 import { cn } from '@/lib/utils'
 import { formatRowDate } from '@/lib/dates'
@@ -551,7 +551,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     origins: MessageOrigin[],
     body: (group: { accountId: string; folder: string; uids: string[] }) => Record<string, unknown>,
     method: 'PATCH' | 'DELETE' = 'PATCH',
-  ) => Promise.all(groupByOrigin(origins).map(group =>
+    groups = groupByOrigin(origins),
+  ) => Promise.all(groups.map(group =>
     fetch('/api/messages/bulk', {
       method,
       headers: { 'Content-Type': 'application/json' },
@@ -585,10 +586,13 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     mutate()
   }
 
+  // Un groupe déjà dans la destination n'émet AUCUNE requête (`groupsToMove`), et
+  // ses lignes restent affichées : elles n'ont pas bougé.
   const moveUids = async (origins: MessageOrigin[], destination: string) => {
-    if (!origins.length) return
-    const uids = uidsOf(origins)
-    await bulkByOrigin(origins, g => ({ ...g, action: 'move', destination }))
+    const groups = groupsToMove(origins, destination)
+    if (!groups.length) return
+    const uids = new Set(groups.flatMap(g => g.uids))
+    await bulkByOrigin(origins, g => ({ ...g, action: 'move', destination }), 'PATCH', groups)
     setAccumulated(prev => prev.filter(m => !uids.has(m.uid)))
     clearSelection()
     mutate()
