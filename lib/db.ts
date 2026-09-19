@@ -387,6 +387,26 @@ export async function initDb(): Promise<void> {
     WHERE status IN ('pending', 'active')
   `)
 
+  // Désabonnements effectués — pour qu'un agent ne recommence pas une lettre déjà quittée.
+  // La clé de regroupement (List-Id ou adresse d'expéditeur) est stockée telle quelle :
+  // c'est elle qui relie une ligne au groupe listé par `GET /api/subscriptions`.
+  await query(`
+    CREATE TABLE IF NOT EXISTS unsubscriptions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      group_key TEXT NOT NULL,
+      method VARCHAR(20) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(account_id, group_key)
+    )
+  `)
+  // L'historique survit au rangement : une fois les messages déplacés, le groupe
+  // disparaît de `GET /api/subscriptions` mais la ligne reste, avec de quoi la
+  // lire sans la boîte (expéditeur, List-Id, résultat).
+  await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS sender_address TEXT`)
+  await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS sender_name TEXT`)
+  await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS list_id TEXT`)
+
   // Identité de l'instance — UNE seule ligne, forcée par `id BOOLEAN PRIMARY KEY DEFAULT TRUE`
   // contraint à TRUE : une deuxième insertion viole la clé primaire. Tout à NULL = apparence
   // d'origine, donc aucune instance ne change d'aspect à la mise à jour.

@@ -17,6 +17,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `mail.ai.actions.*`, que les deux écrans relisent au lieu d'en garder chacun sa copie. Les noms de marque
   (Claude, OpenAI, Ollama) restent littéraux.
 
+- **API des abonnements** (`lib/subscriptions.ts`, `GET /api/subscriptions`, `POST /api/subscriptions/unsubscribe`) :
+  la liste des lettres d'information d'une boîte, regroupées par liste (`List-Id`, sinon adresse de
+  l'expéditeur), lue sur les EN-TÊTES seulement des 400 messages les plus récents — aucun corps de message
+  n'est lu ni journalisé. Chaque groupe porte un identifiant opaque et stable, le nombre de messages, la
+  méthode disponible (`one-click` RFC 8058, `mailto`, sinon `link`) et la date d'un désabonnement déjà fait.
+  Le désabonnement prend des IDENTIFIANTS, jamais une URL ni une adresse : le serveur relit l'en-tête du
+  message le plus récent du groupe et décide seul. Un lien https sans RFC 8058 n'est JAMAIS appelé
+  automatiquement (la page peut poser une question ou compter la visite comme une confirmation) : il revient
+  en `manual` avec le lien.
+  Frontière de sortie : https seulement, l'hôte est résolu et refusé si UNE des adresses est privée ou
+  spéciale, la connexion va vers l'adresse VÉRIFIÉE sans seconde résolution (rebinding DNS), aucune
+  redirection suivie, délai court, corps de réponse jamais lu ni journalisé. Dépliage RFC 5322 des en-têtes
+  pliés (`lib/imap.ts` n'en lit que la première ligne et perd l'URI de la ligne suivante — signalé, pas
+  corrigé ici : ce fichier appartient à une autre lane). L'ancienne `POST /api/unsubscribe` reste en place
+  pour le bandeau du volet de lecture. Aucune interface dans ce lot.
+
 ### Fixed
 - **Le titre, le sous-titre et le badge de Réglages → IA parlent la langue du visiteur**
   (`app/(app)/settings/ai/AISettingsClient.tsx`, `locales/*.json`) : trois chaînes restaient écrites en
