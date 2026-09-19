@@ -26,9 +26,9 @@ Two ways in, both handled transparently by route handlers that call `authenticat
 Only routes explicitly marked **🔑 Bearer** accept an API key — everything else requires the session cookie (some additionally require the `admin` role, marked **👑 Admin**). `middleware.ts` runs at the Edge and only checks that *some* credential (cookie or `Authorization` header) is present; the actual key lookup and hashing happens server-side in each route via `authenticate()`. A key stops working immediately on revoke (`DELETE /api/api-keys/[id]`, soft — sets `revoked_at`). Keys have no per-scope restriction beyond the fixed Bearer-eligible route list below — a key grants full read/write on every 🔑 route for that user's data.
 
 **Bearer-eligible routes** (the complete list — nothing else accepts a key):
-`GET /api/accounts`, `GET /api/folders`, `GET /api/messages`, `GET /api/messages/[id]`, `PATCH /api/messages/[id]`, `DELETE /api/messages/[id]`, `PATCH /api/messages/bulk`, `DELETE /api/messages/bulk`, `GET /api/messages/search`, `GET /api/messages/thread`, `POST /api/messages/send`, `GET /api/contacts`.
+`GET /api/accounts`, `GET /api/folders`, `GET /api/messages`, `GET /api/messages/[id]`, `PATCH /api/messages/[id]`, `DELETE /api/messages/[id]`, `PATCH /api/messages/bulk`, `DELETE /api/messages/bulk`, `GET /api/messages/search`, `GET /api/messages/thread`, `POST /api/messages/send`, `GET /api/contacts`, `GET /api/subscriptions`, `POST /api/subscriptions/unsubscribe`.
 
-Every other route — account/rule/template/signature/PGP/settings CRUD, admin, AI, OAuth, SSE, tracking, unsubscribe, and the account-mutation routes (`POST`/`PATCH`/`DELETE /api/accounts...`) — is **session-only**, even where the underlying resource is otherwise Bearer-eligible for reads.
+Every other route — account/rule/template/signature/PGP/settings CRUD, admin, AI, OAuth, SSE, tracking, the older `POST /api/unsubscribe`, and the account-mutation routes (`POST`/`PATCH`/`DELETE /api/accounts...`) — is **session-only**, even where the underlying resource is otherwise Bearer-eligible for reads.
 
 ## Errors
 
@@ -707,6 +707,75 @@ The read-receipt pixel target, embedded as an `<img>` in sent HTML mail when `re
 Batch lookup of tracking state by subject (not message id — works around Outlook's message-ID rewriting), `|||`-separated. Only the most recent tracking row per subject is returned.
 
 **Response** `{ data: Record<string, { opened: boolean; openedAt: string | null; openCount: number }> }` — keyed by subject; subjects with no matching record are simply absent from the map.
+
+## Subscriptions
+
+Two routes so an agent can work in two steps: list what a mailbox is subscribed to, let the human or the model choose, then leave the chosen lists in one call. Both accept a Bearer key or a session. The older `POST /api/unsubscribe` (below) stays: the reading pane's banner uses it.
+
+### `GET /api/subscriptions?account=<id>[&folder=INBOX]` — Bearer or session
+Lists the newsletters of a mailbox, grouped per list. Same access rule as `GET /api/messages` (ownership or an active share). **Reads headers only** — `From`, `List-Id`, `List-Unsubscribe`, `List-Unsubscribe-Post`, `Date`, `Subject` — of the 400 most recent messages of the folder; a message body is never read and never logged. A message with no `List-Unsubscribe` is not a subscription and is absent from the list.
+
+Grouping key: `List-Id` when the sender declares one (stable across the address rotations a large sender uses), else the `From` address. Folded headers are unfolded (RFC 5322 §2.2.3), and every URI between angle brackets is read (RFC 2369) — not just the first line.
+
+**Response** `{ data: Subscription[] }`, sorted by decreasing `count`:
+
+```ts
+interface Subscription {
+  id: string            // opaque, stable per mailbox; carries no address and no account id
+  sender: { name: string; address: string }
+  listId?: string
+  count: number         // messages of this list inside the scan window
+  lastDate: string
+  lastSubject: string
+  lastUid: string
+  method: 'one-click' | 'mailto' | 'link'
+  unsubscribedAt: string | null   // set once this list was left through the route below
+}
+```
+
+`method` is `one-click` when the sender offers RFC 8058 (`List-Unsubscribe-Post: List-Unsubscribe=One-Click` **and** an https URI), else `mailto` when a mailto URI exists, else `link`.
+
+A sender's name and a subject are content written by a third party, so a Bearer response carries the same `aiSafety` wrapper as the message routes when the mailbox's guard is on (see [Prompt-injection guard](#prompt-injection-guard)).
+
+### `POST /api/subscriptions/unsubscribe` — Bearer or session
+Leaves the named lists. Same access rule as sending a message (`send` permission), since it either posts to the sender's endpoint or sends mail from this mailbox.
+
+**Body** `{ account: string; ids: string[]; folder?: string /* default 'INBOX' */ }` — at most **50** ids per call. The client **never** sends a URL or an address: it names ids and nothing else. The server re-reads the headers of each group's most recent message and decides from them alone, so an id cannot be used to make the server call an arbitrary address.
+
+**Response** `{ data: UnsubscribeReport[] }`, one entry per requested id:
+
+```ts
+interface UnsubscribeReport {
+  id: string
+  outcome: 'done' | 'manual' | 'failed' | 'not_found'
+  method?: 'one-click' | 'mailto' | 'link'
+  url?: string      // on `manual`: the page a human has to open
+  reason?: string   // on `failed`: 'not-https' | 'no-address' | 'private-address' | 'unresolvable'
+                    //   | 'redirect-not-followed' | 'http-status' | 'transport' | 'timeout' | 'no-target'
+}
+```
+
+- `one-click` → `POST` of the body `List-Unsubscribe=One-Click` (`application/x-www-form-urlencoded`) to the header's https URL.
+- `mailto` → one mail through this mailbox's own SMTP, to the single validated address of the URI.
+- `link` alone (an https page, no RFC 8058) → **nothing automatic**: `manual`, with the link. That page may ask the human a question, or count a visit as a confirmation.
+- `not_found` → no group of this mailbox produces that id.
+
+Each `done` is recorded (per mailbox and grouping key) and comes back as `unsubscribedAt` in the list above, so an agent does not start over.
+
+**Outgoing-request boundary.** This route makes the server call a URL written by a stranger, so: https only; the host is resolved and the request is refused if **any** resolved address is private or special (`0/8`, `10/8`, `100.64/10`, `127/8`, `169.254/16`, `172.16/12`, `192.168/16`, multicast and above, `::`, `::1`, `fc00::/7`, `fe80::/10`, `ff00::/8`, and IPv4 smuggled inside IPv6); the connection goes to the **verified** address with no second resolution (DNS rebinding); no redirect is ever followed (a 3xx is reported, not chased); the deadline is short; and the response body is never read, returned or logged.
+
+**Agent example, in two steps**
+
+```bash
+# 1. what is this mailbox subscribed to?
+curl -s -H "Authorization: Bearer $SYN_KEY" \
+  "$BASE/api/subscriptions?account=$ACCOUNT" | jq '.data[] | {id, sender: .sender.address, count, method}'
+
+# 2. leave the two the model picked
+curl -s -X POST -H "Authorization: Bearer $SYN_KEY" -H 'Content-Type: application/json' \
+  -d '{"account":"'$ACCOUNT'","ids":["3f2a…","9c11…"]}' \
+  "$BASE/api/subscriptions/unsubscribe" | jq '.data'
+```
 
 ### `POST /api/unsubscribe` — session only
 Sends a `mailto:` unsubscribe email via the account's own SMTP (for `List-Unsubscribe` headers that specify a mailto target). **Body** `{ accountId: string; to: string; subject?: string /* default 'unsubscribe' */ }`. **Response** `{ data: { success: true } }`.
