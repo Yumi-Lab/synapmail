@@ -120,7 +120,10 @@ try {
   // Warm the route up: a dev server compiles /api/messages/search on its first
   // hit, which would otherwise be counted as search latency (and could push the
   // first row past the sampling window).
-  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  // `networkidle2` would never fire on /mail: the page holds an SSE connection
+  // open for the lifetime of the document.
+  await page.goto(`${BASE}/mail`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('[data-mail-row]', { timeout: 60000 })
   await page.evaluate(async (args) => {
     const [q, qp, sp] = args
     await fetch(`/api/messages/search?${qp}=${encodeURIComponent(q)}&folder=INBOX&${sp}=folder`).catch(() => {})

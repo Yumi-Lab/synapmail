@@ -199,8 +199,14 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   // le bandeau les dit plutôt que de les retaper (source unique : lib/search.ts).
   // La portée « ce dossier » tient en une réponse : un seul dossier, rien à étaler.
   const isStreamingScope = isSearchMode && searchScope === SCOPE_ALL
+  // Le compte actif arrive APRÈS le premier rendu (il vient de /api/accounts) :
+  // partir sans lui balaierait la boîte PAR DÉFAUT et non celle affichée, ouvrirait
+  // des connexions IMAP pour rien, et pourrait afficher un instant les résultats
+  // d'une autre boîte. Une SEULE condition retient les deux portées, et le bandeau
+  // reste « en attente » au lieu d'annoncer un « 0 résultat » définitif.
+  const searchReady = isSearchMode && !!activeAccountId
   const { data: searchData, isValidating: isSearchingOne } = useSWR<{ messages: Message[]; total: number; fields: SearchField[] }>(
-    isSearchMode && !isStreamingScope
+    searchReady && !isStreamingScope
       ? `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}&folder=${encodeURIComponent(folder)}` +
         `&${SCOPE_PARAM}=${searchScope}${accountParam}`
       : null,
@@ -216,13 +222,18 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   const stopStream = useCallback(() => { streamAbort.current?.abort() }, [])
 
   useEffect(() => {
-    if (!isStreamingScope) { setStreamed(EMPTY_SEARCH_STREAM); return }
+    if (!isStreamingScope || !searchReady) { setStreamed(EMPTY_SEARCH_STREAM); return }
     const controller = new AbortController()
     streamAbort.current = controller
     setStreamed(EMPTY_SEARCH_STREAM)
     setStreaming(true)
     const url = `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}` +
       `&folder=${encodeURIComponent(folder)}&${SCOPE_PARAM}=${SCOPE_ALL}&${STREAM_PARAM}=1${accountParam}`
+    // Un flux lu JUSQU'AU BOUT n'a plus rien à abandonner : l'interrompre quand même
+    // au démontage faisait conclure le navigateur à `net::ERR_ABORTED` sur une
+    // réponse pourtant complète — trompeur dans les outils réseau, et indissociable
+    // d'un vrai abandon.
+    let complete = false
     ;(async () => {
       try {
         const res = await fetch(url, { signal: controller.signal })
@@ -240,17 +251,26 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
           if (items.length === 0) continue
           setStreamed(prev => accumulateSearchStream(prev, items))
         }
+        complete = true
       } catch {
         // Une interruption volontaire n'est pas une panne : les résultats déjà
         // reçus restent affichés, et le bandeau cesse simplement de progresser.
       } finally {
-        setStreaming(false)
+        // SEULE la recherche COURANTE éteint le drapeau. Une recherche abandonnée
+        // termine APRÈS que la suivante a démarré : sans ce test, son `finally`
+        // éteignait la progression de celle qui court — plus de bouton Arrêter, plus
+        // de « N dossiers sur M », et un « 0 résultat » présenté comme définitif.
+        if (streamAbort.current === controller) setStreaming(false)
       }
     })()
-    return () => controller.abort()
-  }, [isStreamingScope, search, folder, accountParam])
+    return () => { if (!complete) controller.abort() }
+  }, [isStreamingScope, searchReady, search, folder, accountParam])
 
-  const isSearching = isStreamingScope ? streaming : isSearchingOne
+  // Tant que le compte n'est pas résolu, la recherche est EN COURS de démarrage :
+  // le bandeau dit « Recherche… » plutôt que d'affirmer un résultat qu'il n'a pas.
+  const isSearching = isSearchMode && !searchReady
+    ? true
+    : (isStreamingScope ? streaming : isSearchingOne)
 
   // Folders — needed for the move menu, the context menu AND the row "Archive"
   // quick action, so it is fetched whenever an account is active. The key is
@@ -890,7 +910,10 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
                 ` · ${t('searchProgress', { searched: streamed.searched, folders: streamed.folders })}`}
               {isSearching && streamed.folders === 0 && ` · ${t('searching')}`}
             </p>
-            {isSearching && isStreamingScope && (
+            {/* Gardé sur `streaming` et non sur `isSearching` : avant que le compte
+                soit résolu, aucun flux ne court encore — un bouton Arrêter n'aurait
+                rien à arrêter. */}
+            {streaming && isStreamingScope && (
               <button
                 onClick={stopStream}
                 className="shrink-0 text-xs text-muted-foreground hover:text-foreground transition-colors"
