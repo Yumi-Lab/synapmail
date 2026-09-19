@@ -159,7 +159,19 @@
       "gray": "Grey"
     },
     "noFolders": "No folder",
-    "messageList": "Message list"
+    "messageList": "Message list",
+    "folderNew": "New folder…",
+    "folderNewChild": "New subfolder…",
+    "folderRename": "Rename…",
+    "folderMarkRead": "Mark all as read",
+    "folderEmpty": "Empty",
+    "folderDelete": "Delete folder…",
+    "folderNamePlaceholder": "Folder name",
+    "folderNameInvalid": "That name can’t be used — no “{delimiter}”, no blank name, 255 characters max.",
+    "folderConfirmDelete": "Delete “{name}” and its {count} messages?",
+    "folderConfirmEmpty": "Permanently delete the {count} messages in “{name}”?",
+    "folderHasChildren": "This folder contains subfolders — delete them first.",
+    "folderActionFailed": "Couldn't apply that to the folder"
   },
   "compose": {
     "newMessage": "New message",

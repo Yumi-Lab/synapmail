@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
-import { listFolders } from '@/lib/imap'
+import { listFolders, createFolder, renameFolder, deleteFolder } from '@/lib/imap'
+import { sanitizeFolderName, joinFolderPath, renamedPath, rewritePath, samePath, isDescendant, refuse } from '@/lib/folderActions'
+import { resolveFolder } from '@/lib/folderResolve'
 import { detectSpecials } from '@/lib/specialFolders'
 
 export const dynamic = 'force-dynamic'
@@ -72,6 +74,9 @@ export async function GET(req: Request) {
       .map(f => ({
         name: f.name,
         path: f.path,
+        // Le délimiteur du serveur : sans lui le client ne peut pas savoir quel dossier
+        // est rangé SOUS quel autre — et « supprimer » doit se refuser sur un parent.
+        delimiter: f.delimiter ?? '/',
         special: specials.get(f.path) ?? null,
       }))
 
@@ -105,6 +110,102 @@ export async function GET(req: Request) {
     }))
 
     return NextResponse.json({ data: withCounts })
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
+}
+
+/**
+ * Mutations de dossier (lot H3e). Le DROIT de faire ne se décide pas ici : `resolveFolder`
+ * évalue `lib/folderActions.ts` sur les faits du serveur IMAP, la route ne fait que
+ * refuser (403) ce qu'il a refusé et exécuter le reste. Un chemin que le serveur ne
+ * connaît pas n'atteint jamais IMAP.
+ */
+async function readBody(req: Request): Promise<Record<string, unknown>> {
+  try {
+    const body = await req.json()
+    return body && typeof body === 'object' ? body as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+const asString = (v: unknown) => (typeof v === 'string' && v ? v : null)
+
+// POST — crée un dossier à la racine, ou sous `parent` quand il est fourni.
+export async function POST(req: Request) {
+  const authCtx = await authenticate(req)
+  if (!authCtx) return refuse('unauthorized')
+
+  const body = await readBody(req)
+  const parent = asString(body.parent)
+
+  try {
+    const ctx = await resolveFolder(asString(body.accountId), authCtx.id, parent, ['organize'])
+    if (!ctx) return refuse('notFound')
+    if (!(parent ? ctx.can.createChild : ctx.can.create)) return refuse('forbidden')
+
+    const name = sanitizeFolderName(body.name, ctx.delimiter)
+    if (!name) return refuse('badName')
+    const path = joinFolderPath(parent ?? '', name, ctx.delimiter)
+    if (ctx.folders.some(f => samePath(f.path, path))) return refuse('exists')
+
+    await createFolder(ctx.config, path)
+    return NextResponse.json({ data: { path, name } })
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
+}
+
+// PATCH — renomme un dossier sur place (il reste chez son parent).
+export async function PATCH(req: Request) {
+  const authCtx = await authenticate(req)
+  if (!authCtx) return refuse('unauthorized')
+
+  const body = await readBody(req)
+
+  try {
+    const ctx = await resolveFolder(asString(body.accountId), authCtx.id, asString(body.path), ['organize'])
+    if (!ctx?.folder) return refuse('notFound')
+    if (!ctx.can.rename) return refuse('forbidden')
+
+    const name = sanitizeFolderName(body.name, ctx.delimiter)
+    if (!name) return refuse('badName')
+    const from = ctx.folder.path
+    const path = renamedPath(from, name, ctx.delimiter)
+    if (path === from) return NextResponse.json({ data: { path, name } })
+    if (ctx.folders.some(f => samePath(f.path, path))) return refuse('exists')
+
+    await renameFolder(ctx.config, from, path)
+    // IMAP renomme TOUT le sous-arbre : le cache suit le même chemin, sinon les lignes
+    // des sous-dossiers restent orphelines sous l'ancien préfixe (non-lus faux).
+    for (const moved of ctx.folders.filter(f => f.path === from || isDescendant(f.path, from, ctx.delimiter))) {
+      const to = rewritePath(moved.path, from, path, ctx.delimiter)
+      await query('UPDATE messages_cache SET folder = $1 WHERE account_id = $2 AND folder = $3', [to, ctx.account.id, moved.path])
+      await query('UPDATE mailbox_stats SET folder = $1 WHERE account_id = $2 AND folder = $3', [to, ctx.account.id, moved.path])
+    }
+    return NextResponse.json({ data: { path, name } })
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
+}
+
+// DELETE — supprime un dossier (jamais un spécial, jamais un parent).
+export async function DELETE(req: Request) {
+  const authCtx = await authenticate(req)
+  if (!authCtx) return refuse('unauthorized')
+
+  const { searchParams } = new URL(req.url)
+
+  try {
+    const ctx = await resolveFolder(searchParams.get('account'), authCtx.id, searchParams.get('path'), ['delete'])
+    if (!ctx?.folder) return refuse('notFound')
+    if (!ctx.can.remove) return refuse('forbidden')
+
+    await deleteFolder(ctx.config, ctx.folder.path)
+    await query('DELETE FROM messages_cache WHERE account_id = $1 AND folder = $2', [ctx.account.id, ctx.folder.path])
+    await query('DELETE FROM mailbox_stats WHERE account_id = $1 AND folder = $2', [ctx.account.id, ctx.folder.path])
+    return NextResponse.json({ data: { path: ctx.folder.path } })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

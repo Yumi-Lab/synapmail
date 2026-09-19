@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import {
   Mail, Send, FileText, AlertTriangle, Trash2,
-  Folder, Archive, ChevronDown, RefreshCw, Share2,
+  Folder, FolderPlus, Archive, ChevronDown, RefreshCw, Share2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import useSWR from 'swr'
@@ -15,6 +15,8 @@ import { IconTooltip } from '@/components/ui/IconTooltip'
 import { folderGlyph, folderInitials } from './FolderGlyph'
 import { ThinScroll } from './ThinScroll'
 import { ACCOUNTS_SETTINGS_HREF } from '@/components/settings/SettingsSidebar'
+import { FolderContextMenu, type FolderMenuState } from './FolderContextMenu'
+import { accountDelimiter, isDescendant, sanitizeFolderName, type FolderAction } from '@/lib/folderActions'
 import type { EmailAccount } from '@/types/account'
 
 /**
@@ -64,7 +66,7 @@ const SPECIAL_LABELS: Record<NonNullable<SpecialKey>, string> = {
   archive: 'archive',
 }
 
-type FolderItem = { name: string; path: string; special: SpecialKey; unreadCount?: number }
+type FolderItem = { name: string; path: string; delimiter: string; special: SpecialKey; unreadCount?: number }
 
 
 /** Rows drawn while the folder list loads — static placeholders, never a pulse. */
@@ -204,6 +206,10 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const [accountFilter, setAccountFilter] = useState('')
   const accountBoxRef = useRef<HTMLDivElement>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
+  const [folderMenu, setFolderMenu] = useState<FolderMenuState | null>(null)
+  /** Saisie EN LIGNE d'un nom de dossier — jamais `window.prompt`. `path` vide = création à la racine. */
+  const [naming, setNaming] = useState<{ action: 'create' | 'createChild' | 'rename'; parent: string; path: string; value: string } | null>(null)
+  const [folderError, setFolderError] = useState<string | null>(null)
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -354,6 +360,112 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     )
   }
 
+  // Permissions du compte actif — le menu grise ce que le serveur refusera.
+  const canOrganize = activeAccount?.permissions?.canOrganize ?? true
+  const canDelete = activeAccount?.permissions?.canDelete ?? true
+
+  const openFolderMenu = (e: React.MouseEvent, folder: FolderItem) => {
+    e.preventDefault()
+    setFolderError(null)
+    setFolderMenu({
+      x: e.clientX,
+      y: e.clientY,
+      path: folder.path,
+      name: folder.name,
+      special: folder.special === 'archive' ? null : folder.special,
+      hasChildren: folders.some(f => isDescendant(f.path, folder.path, folder.delimiter)),
+    })
+  }
+
+  /** Le serveur a la dernière décision : son message remplace tout optimisme de l'IHM. */
+  const callFolderApi = async (input: string, init: RequestInit) => {
+    const res = await fetch(input, init)
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(body?.error || t('folderActionFailed'))
+    await mutateFolders()
+    return body?.data
+  }
+
+  const runFolderAction = async (action: FolderAction, menu: FolderMenuState) => {
+    if (!resolvedAccountId) return
+    setFolderError(null)
+
+    // Les trois actions qui demandent un NOM ouvrent le champ en ligne, elles n'appellent rien.
+    if (action === 'create' || action === 'createChild' || action === 'rename') {
+      setNaming({
+        action,
+        parent: action === 'createChild' ? menu.path : '',
+        path: action === 'rename' ? menu.path : '',
+        value: action === 'rename' ? menu.name : '',
+      })
+      return
+    }
+
+    try {
+      if (action === 'markRead') {
+        await callFolderApi('/api/folders/actions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'markRead', accountId: resolvedAccountId, path: menu.path }),
+        })
+        return
+      }
+
+      // Supprimer et vider se confirment sur des faits : le dossier NOMMÉ et son nombre
+      // réel de messages, demandé au serveur — pas le compteur de non-lus de la barre.
+      const counted = await fetch('/api/folders/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'count', accountId: resolvedAccountId, path: menu.path }),
+      }).then(r => r.json()).catch(() => null)
+      const count = counted?.data?.count ?? 0
+
+      if (action === 'empty') {
+        if (!confirm(t('folderConfirmEmpty', { name: menu.name, count }))) return
+        await callFolderApi('/api/folders/actions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'empty', accountId: resolvedAccountId, path: menu.path }),
+        })
+        return
+      }
+
+      if (menu.hasChildren) { setFolderError(t('folderHasChildren')); return }
+      if (!confirm(t('folderConfirmDelete', { name: menu.name, count }))) return
+      await callFolderApi(
+        `/api/folders?account=${encodeURIComponent(resolvedAccountId)}&path=${encodeURIComponent(menu.path)}`,
+        { method: 'DELETE' },
+      )
+    } catch (err) {
+      setFolderError(err instanceof Error ? err.message : t('folderActionFailed'))
+    }
+  }
+
+  const submitFolderName = async () => {
+    if (!naming || !resolvedAccountId) return
+    if (!naming.value.trim()) { setNaming(null); return }
+    // La MÊME fonction que la route : on n'envoie pas un nom qu'on sait déjà refusé.
+    // Le serveur reste l'autorité — ses 400/409 s'affichent au même endroit.
+    const delimiter = accountDelimiter(folders)
+    const value = sanitizeFolderName(naming.value, delimiter)
+    if (!value) { setFolderError(t('folderNameInvalid', { delimiter })); return }
+    const { action, parent, path } = naming
+    setNaming(null)
+    try {
+      await callFolderApi('/api/folders', {
+        method: action === 'rename' ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          action === 'rename'
+            ? { accountId: resolvedAccountId, path, name: value }
+            : { accountId: resolvedAccountId, parent: parent || undefined, name: value },
+        ),
+      })
+    } catch (err) {
+      setFolderError(err instanceof Error ? err.message : t('folderActionFailed'))
+    }
+  }
+
   const folderRow = (
     folder: FolderItem,
     icon: React.ComponentType<{ className?: string }>,
@@ -372,6 +484,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
         onDragOver={e => handleDragOver(e, folder.path)}
         onDragLeave={handleDragLeave}
         onDrop={e => handleDrop(e, folder.path)}
+        onContextMenu={e => openFolderMenu(e, folder)}
         title={title}
         data-sidebar-row={`folder:${folder.path}`}
         className={cn(ROW, isDragOver ? ROW_DRAG : isActive ? ROW_ACTIVE : ROW_IDLE)}
@@ -565,8 +678,40 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
             )}
           </>
         )}
+        {naming && !collapsed && (
+          <div className={cn(ROW, 'text-foreground')} data-folder-name-input>
+            <span className={ICON_COL}><FolderPlus className="w-4 h-4" /></span>
+            <span className={ROW_LABEL}>
+              <input
+                autoFocus
+                value={naming.value}
+                placeholder={t('folderNamePlaceholder')}
+                onChange={e => setNaming({ ...naming, value: e.target.value })}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') submitFolderName()
+                  if (e.key === 'Escape') { setFolderError(null); setNaming(null) }
+                }}
+                onBlur={() => setNaming(null)}
+                className="flex-1 min-w-0 bg-transparent text-sm outline-none border-b border-border focus:border-foreground"
+              />
+            </span>
+          </div>
+        )}
+        {folderError && !collapsed && (
+          <p className="px-3 py-1 text-[11px] text-destructive" data-folder-error>{folderError}</p>
+        )}
         </nav>
       </ThinScroll>
+
+      {folderMenu && (
+        <FolderContextMenu
+          menu={folderMenu}
+          canOrganize={canOrganize}
+          canDelete={canDelete}
+          onAction={runFolderAction}
+          onClose={() => setFolderMenu(null)}
+        />
+      )}
 
     </div>
   )
