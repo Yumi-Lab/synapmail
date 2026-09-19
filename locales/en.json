@@ -253,7 +253,6 @@
       "title": "Email accounts",
       "add": "Add account",
       "edit": "Edit",
-      "delete": "Delete",
       "setDefault": "Set as default",
       "name": "Account name",
       "email": "Email address",
@@ -285,8 +284,6 @@
         "expiryLabel": "Expiration (optional)",
         "sendInvite": "Send invitation",
         "inviteFailed": "Failed to send invitation",
-        "revoke": "Revoke",
-        "revokeConfirm": "Revoke this invitee's access?",
         "emailSendFailedWarning": "The invitation was created but the email could not be sent.",
         "expiresOn": "Expires on {date}",
         "status": {
@@ -301,16 +298,24 @@
           "canOrganize": "Organize (mark, move, snooze)",
           "canManageRules": "Manage rules",
           "canManageSignatures": "Manage signatures"
-        }
+        },
+        "rowMenu": "Actions for {name}",
+        "revokeLabel": "Remove access...",
+        "revokeNamed": "Remove {email}’s access to this mailbox? They lose it immediately; you can invite them again later."
       },
       "receivedShares": {
         "title": "Inboxes shared with me",
         "empty": "No one has shared an inbox with you",
         "sharedBy": "Shared by {name}",
-        "leave": "Remove this share",
-        "leaveConfirm": "Remove this share? You will lose access to this inbox.",
-        "leaveFailed": "Failed to remove the share"
-      }
+        "leaveFailed": "Failed to remove the share",
+        "rowMenu": "Actions for {name}",
+        "leaveLabel": "Leave this share...",
+        "leaveNamed": "Leave the mailbox \"{email}\" shared by {owner}? You lose access to it; the owner can share it again."
+      },
+      "rowMenu": "Actions for {name}",
+      "deleteAccount": "Delete account...",
+      "deleteConfirm": "Delete the account \"{email}\" from this webmail? Your messages stay with your provider, only the access from here is removed.",
+      "share": "Share"
     },
     "profile": {
       "title": "Profile",
