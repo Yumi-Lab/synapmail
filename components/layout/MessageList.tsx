@@ -114,7 +114,11 @@ interface Props {
   permissions?: MailPermissions
 }
 
-interface AppSettings { thread_view: boolean; messages_per_page: number; mail_density: DensityMode }
+interface AppSettings {
+  thread_view: boolean; messages_per_page: number; mail_density: DensityMode
+  /** Boîte affichée, telle qu'enregistrée : ce qui dit si le compte reçu est le bon. */
+  active_account_id: string | null
+}
 
 export function MessageList({ folder, selectedUid, onSelect, onSelectThread, activeAccountId, search = '', searchScope = SCOPE_FOLDER, permissions }: Props) {
   const perms = permissions ?? DEFAULT_PERMISSIONS
@@ -199,12 +203,21 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   // le bandeau les dit plutôt que de les retaper (source unique : lib/search.ts).
   // La portée « ce dossier » tient en une réponse : un seul dossier, rien à étaler.
   const isStreamingScope = isSearchMode && searchScope === SCOPE_ALL
-  // Le compte actif arrive APRÈS le premier rendu (il vient de /api/accounts) :
-  // partir sans lui balaierait la boîte PAR DÉFAUT et non celle affichée, ouvrirait
-  // des connexions IMAP pour rien, et pourrait afficher un instant les résultats
-  // d'une autre boîte. Une SEULE condition retient les deux portées, et le bandeau
-  // reste « en attente » au lieu d'annoncer un « 0 résultat » définitif.
-  const searchReady = isSearchMode && !!activeAccountId
+  // Le compte actif arrive APRÈS le premier rendu, et en DEUX temps : /api/accounts
+  // donne la liste, /api/settings dit lequel est affiché. Tant que les réglages
+  // manquent, le compte reçu n'est qu'un repli sur la boîte PAR DÉFAUT : chercher
+  // là balaierait une autre boîte que celle affichée, ouvrirait des connexions IMAP
+  // pour rien, et pourrait montrer un instant les résultats du mauvais compte.
+  // Une SEULE condition retient les deux portées, et le bandeau reste « en attente »
+  // au lieu d'annoncer un « 0 résultat » définitif.
+  //
+  // La présence des réglages ne suffit PAS : les effets d'un enfant s'exécutent AVANT
+  // ceux du parent, donc la liste verrait les réglages arrivés un rendu avant que le
+  // parent n'ait appliqué le compte qu'ils désignent. On exige donc l'ACCORD des deux
+  // sources — le compte affiché est bien celui que les réglages nomment.
+  const savedAccountId = settingsData?.data?.active_account_id
+  const searchReady = isSearchMode && !!activeAccountId && !!settingsData?.data &&
+    (!savedAccountId || savedAccountId === activeAccountId)
   const { data: searchData, isValidating: isSearchingOne } = useSWR<{ messages: Message[]; total: number; fields: SearchField[] }>(
     searchReady && !isStreamingScope
       ? `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}&folder=${encodeURIComponent(folder)}` +

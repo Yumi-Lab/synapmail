@@ -20,8 +20,20 @@
  *  B. When the FIRST result row appears, the Stop button is present.
  *  C. While the stream runs, the progress "x / y folders" is shown, and the
  *     banner never presents a final "0 result" before the stream ends.
- *  D. Reading the stream to its end does not leave a request in an aborted state
- *     (a fully-read response must be `finished`, not `net::ERR_ABORTED`).
+ *  D. The stream DELIVERS EVERY FOLDER and ends on `done`: the last NDJSON line
+ *     says `searched === folders`, no line carries an error, and the reader is
+ *     told the body is over.
+ *
+ *     What D deliberately does NOT assert: Chrome's own `finished` / `aborted`
+ *     label on the request. Measured 2026-09-19 on this route, five arms, same
+ *     query / account / server: an incrementally-delivered body read through
+ *     `getReader()` is labelled `net::ERR_ABORTED` by Chrome even when the reader
+ *     reaches `done` and every byte arrived (1 173 655 B, 23/23 folders), with or
+ *     without `releaseLock()`. The same body read with `res.text()` → `finished`;
+ *     the non-streamed branch read with `getReader()` → `finished`; curl → rc=0;
+ *     node/undici → clean end. The label tracks Chrome's bookkeeping for a
+ *     reader-consumed incremental body, not the response's integrity, so
+ *     asserting on it would measure the browser rather than the product.
  *
  * READ ONLY: every non-GET request to /api/messages is refused by the bench, so
  * no message can be created, moved, flagged or deleted.
@@ -84,12 +96,12 @@ try {
     if (/\/api\/messages\/search\?/.test(url)) searchRequests.push({ url, at: Date.now() })
     req.continue()
   })
-  const finishedSearch = []
-  const failedSearch = []
-  page.on('requestfinished', (req) => { if (/\/api\/messages\/search\?/.test(req.url())) finishedSearch.push(req.url()) })
+  // Chrome's own label is RECORDED but not asserted on — see arm D's note above.
+  const chromeVerdicts = []
+  page.on('requestfinished', (req) => { if (/\/api\/messages\/search\?/.test(req.url())) chromeVerdicts.push('finished') })
   page.on('requestfailed', (req) => {
     if (!/\/api\/messages\/search\?/.test(req.url())) return
-    failedSearch.push({ url: req.url(), reason: req.failure()?.errorText ?? 'unknown' })
+    chromeVerdicts.push(req.failure()?.errorText ?? 'failed')
   })
 
   await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2' })
@@ -131,8 +143,7 @@ try {
 
   // ── THE COLD PATH: a direct load of the search URL, in a fresh document. ──
   searchRequests.length = 0
-  finishedSearch.length = 0
-  failedSearch.length = 0
+  chromeVerdicts.length = 0
   const href = `${BASE}/mail?${Q_PARAM}=${encodeURIComponent(domain)}&${SCOPE_P}=${SCOPE_A}`
   const t0 = Date.now()
   await page.goto(href, { waitUntil: 'domcontentloaded' })
@@ -146,8 +157,14 @@ try {
       rows: document.querySelectorAll('[data-mail-row]').length,
       stop: [...box.querySelectorAll('button')].some(b => /Arr[êe]ter|Stop|停止/.test(b.textContent ?? '')),
       hint: !!document.querySelector('[data-search-hint]'),
+      scrollTop: document.querySelector('[role="listbox"]')?.scrollTop ?? null,
     }
   })
+  // The list is re-sorted by date on every folder that comes back, so rows are
+  // re-inserted mid-stream. That is accepted (the human recorded it as an
+  // observation for S3) on ONE condition: the reader's own scroll must not be
+  // thrown back to the top under them.
+  const SCROLL_PROBE_PX = 300
 
   const trail = []
   let atFirstRow = null   // banner state at the instant the first result row appeared
@@ -155,10 +172,25 @@ try {
   let finalZeroMs = 0     // how long the banner showed a FINAL "0 result" mid-stream
   let zeroSince = null
   let ended = null
+  let scrolledAt = null   // when the bench scrolled the list down, mid-stream
+  let scrollLow = null    // lowest scrollTop observed after that, while streaming
   for (;;) {
     const s = await snap()
     const t = Date.now() - t0
     if (s) {
+      // Scroll ONCE, as soon as there is something to scroll, then watch the
+      // position for the rest of the sweep.
+      if (scrolledAt === null && s.rows > 0 && s.stop) {
+        const applied = await page.evaluate((px) => {
+          const el = document.querySelector('[role="listbox"]')
+          if (!el || el.scrollHeight <= el.clientHeight + px) return null
+          el.scrollTop = px
+          return el.scrollTop
+        }, SCROLL_PROBE_PX)
+        if (applied !== null) { scrolledAt = t; scrollLow = applied }
+      } else if (scrolledAt !== null && s.stop && s.scrollTop !== null) {
+        scrollLow = Math.min(scrollLow, s.scrollTop)
+      }
       if (!trail.length || trail[trail.length - 1].text !== s.text || trail[trail.length - 1].stop !== s.stop) {
         trail.push({ t, text: s.text, rows: s.rows, stop: s.stop })
       }
@@ -188,7 +220,11 @@ try {
     accountless.length ? `${accountless.length} request(s) without account=, first at +${accountless[0].at - t0} ms` : `${searchRequests.length} request(s), all scoped`)
   const wrongAccount = searchRequests.filter(r => /[?&]account=/.test(r.url) && !r.url.includes(`account=${account.id}`))
   check('every search targets the DISPLAYED mailbox', wrongAccount.length === 0,
-    wrongAccount.length ? `${wrongAccount.length} request(s) on another account` : `all on ${account.email}`)
+    wrongAccount.length
+      ? `${wrongAccount.length} of ${searchRequests.length} on another account: ` +
+        wrongAccount.map(r => `+${r.at - t0} ms acct=${r.url.match(/account=([^&]+)/)?.[1]} stream=${/[?&]stream=/.test(r.url)}`).join(' | ') +
+        ` (expected ${account.id})`
+      : `all on ${account.email}`)
 
   console.log('\nB. the Stop button exists when the first result appears')
   check('Stop is present at the instant the first row is shown', atFirstRow.stop === true,
@@ -201,10 +237,43 @@ try {
     finalZeroMs === 0 ? 'never' : `shown as final for ${finalZeroMs} ms`)
   check('the "body not searched" hint stays hidden while results exist', atFirstRow.hint === false,
     `hint=${atFirstRow.hint}`)
+  if (scrolledAt === null) {
+    // No arm without a reference: with a list too short to scroll, this mailbox
+    // cannot show whether the reader's position survives the re-sorting.
+    console.log(`  skip the list never exceeded ${SCROLL_PROBE_PX} px of scrollable height — scroll retention cannot be observed here`)
+  } else {
+    check('the reader\'s scroll position is not thrown back to the top mid-stream',
+      scrollLow >= SCROLL_PROBE_PX / 2,
+      `scrolled to ${SCROLL_PROBE_PX} px at +${scrolledAt} ms, lowest seen afterwards ${scrollLow} px`)
+  }
 
-  console.log('\nD. a stream read to its end is not left aborted')
-  check('no search request ends in a network failure', failedSearch.length === 0,
-    failedSearch.length ? failedSearch.map(f => f.reason).join(' | ') : `${finishedSearch.length} finished`)
+  console.log('\nD. the stream covers every folder and ends on `done`')
+  // Read once more, directly: the UI keeps only the capped top of the results, so
+  // the coverage claim has to be read off the NDJSON lines themselves.
+  const streamRead = await page.evaluate(async (args) => {
+    const [id, q, qp, sp, sa, stp] = args
+    const res = await fetch(`/api/messages/search?${qp}=${encodeURIComponent(q)}&folder=INBOX&${sp}=${sa}&${stp}=1&account=${id}`)
+    const rd = res.body.getReader(); const dec = new TextDecoder()
+    let buf = ''; const lines = []; let doneSeen = false
+    for (;;) {
+      const { done, value } = await rd.read()
+      if (done) { doneSeen = true; break }
+      buf += dec.decode(value, { stream: true })
+      const parts = buf.split('\n'); buf = parts.pop()
+      for (const x of parts) if (x.trim()) lines.push(JSON.parse(x))
+    }
+    const last = lines[lines.length - 1]
+    return { status: res.status, lines: lines.length, doneSeen,
+      searched: last?.searched ?? null, folders: last?.folders ?? null,
+      errorLines: lines.filter(l => l.error).length }
+  }, [account.id, domain, Q_PARAM, SCOPE_P, SCOPE_A, 'stream'])
+  check('the reader reaches the end of the body', streamRead.doneSeen === true, `status ${streamRead.status}, ${streamRead.lines} NDJSON line(s)`)
+  check('every folder announced is covered',
+    streamRead.searched !== null && streamRead.searched === streamRead.folders,
+    `${streamRead.searched} / ${streamRead.folders} folders`)
+  check('no folder reports an error', streamRead.errorLines === 0, `${streamRead.errorLines} error line(s)`)
+  // Recorded, deliberately NOT asserted on — see arm D's note in the header.
+  console.log(`  note Chrome labelled the streamed request(s): ${chromeVerdicts.join(', ') || '(none)'} — not a criterion, see header`)
 
   console.log('\nE. read-only guarantee')
   check('the bench issued no mutating request on the messages API', blockedWrites.length === 0,
