@@ -253,6 +253,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Barre de défilement qui s'efface** (`components/ui/ThinScroll.tsx`) : dans la barre, le curseur de défilement
   apparaît au défilement ou au survol puis s'estompe après 2 s d'inactivité, sur un rail sans flèches ni fond, cohérent
   clair/sombre (`prefers-reduced-motion` respecté).
+- **Menu « … » à la place de la corbeille, sur les sept écrans de réglages** (Comptes, Clés API, Contacts,
+  Signatures, Modèles, PGP, Règles) : une action destructive ne s'offre plus sous le curseur à chaque ligne.
+  Le bouton réutilise `components/ui/ContextMenu.tsx` tel quel et s'affiche dans un PORTAIL, si bien qu'un
+  menu ouvert sur la dernière ligne d'un écran court ne sort plus de la fenêtre. La confirmation NOMME
+  l'objet visé (l'adresse de la boîte, le nom de la clé, l'empreinte PGP) et, quand l'objet ne se récupère
+  pas — une clé API révoquée, une clé PGP supprimée —, elle le dit. Annuler n'envoie aucune requête.
+  i18n en/fr/zh.
 
 ### Fixed
 - **La croix de la fenêtre des réglages revenait à l'onglet précédent au lieu de fermer** (`components/settings/SettingsModal.tsx`) :
@@ -274,8 +281,42 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 - `mail.searchResults` passe en pluriel ICU (en/fr) : la bannière affichait « 1 résultats ».
+- **« Tester la connexion » d'une boîte EXISTANTE testait un mot de passe que personne n'avait choisi**
+  (`lib/accountTest.ts`, `app/api/accounts/test/route.ts`) : l'écran d'édition n'affiche jamais le mot de
+  passe enregistré (il ne quitte pas le serveur), donc le champ partait vide — et le test envoyait quand
+  même le CONTENU du champ. Vide, l'hébergeur répondait « Missing fields » ; rempli à l'insu de la personne
+  par le gestionnaire de mots de passe du navigateur, c'est le mot de passe du WEBMAIL qui partait chez
+  l'hébergeur, deux authentifications ratées par essai, jusqu'au verrouillage. Le champ laissé vide veut
+  désormais dire « inchangé » : le serveur teste le mot de passe ENREGISTRÉ, déchiffré côté serveur après
+  contrôle de propriété (un invité d'une boîte partagée reçoit la même réponse qu'un compte inconnu) ; un
+  champ rempli teste CE mot de passe, pour vérifier un changement avant de l'enregistrer ; une boîte à jeton
+  répond « rien à tester ici » au lieu d'une erreur rouge. Le résultat dit lequel des deux a été essayé, et
+  les deux échecs courants sont traduits en une cause (identifiants refusés, serveur injoignable) au lieu de
+  la ligne brute du serveur. Le champ porte `autoComplete="new-password"` et une aide « laisser vide pour ne
+  pas changer ». La route ne renvoie jamais le mot de passe, ni en clair ni chiffré, et ne le journalise pas.
+- **Le mot de passe enregistré ne part plus que vers le serveur enregistré** (`lib/accountTest.ts`) : sur une
+  boîte existante avec le champ laissé vide, la route déchiffrait le mot de passe enregistré puis se
+  connectait aux hôtes venus du CORPS DE LA REQUÊTE. Une session volée suffisait donc à faire lire chaque mot
+  de passe de boîte, en clair, par un serveur choisi par l'attaquant, dans la commande LOGIN. L'hôte IMAP,
+  l'hôte SMTP et l'identifiant du formulaire sont désormais comparés aux valeurs enregistrées avant tout
+  déchiffrement ; s'ils désignent un autre serveur, la réponse demande le mot de passe et le secret n'est même
+  pas lu. Le port et l'option TLS restent libres de changer : ils ne changent pas à qui le secret est confié.
+- **Ce qui est COMPARÉ est ce qui est JOINT** (`lib/accountTest.ts`) : la comparaison ci-dessus ignore la casse
+  et les blancs de bord, mais la connexion partait ensuite avec la chaîne BRUTE du formulaire — un hôte SMTP
+  enregistré suivi d'une espace était accepté comme le même serveur, puis joint sous un nom qui ne résout pas
+  (`tested: "stored"` avec un SMTP « injoignable », là où les réglages exacts donnaient IMAP et SMTP ok).
+  Quand c'est le mot de passe enregistré qui part, la DESTINATION vient désormais du compte — hôtes IMAP et
+  SMTP, identifiant — et non de la chaîne brute du formulaire.
+- **Le port et le TLS testés sont ceux du FORMULAIRE, même avec le mot de passe enregistré**
+  (`lib/accountTest.ts`) : c'est l'usage même du bouton, essayer un réglage AVANT de l'enregistrer (passer un
+  SMTP de 587 à 465, cocher TLS pour réparer une boîte). Le correctif précédent joignait l'ANCIEN port, sans
+  le dire à l'écran. Une seule fabrique construit maintenant la connexion à partir de deux sources : la
+  destination (hôtes, identifiant), qui est la frontière de sécurité et reste celle du compte, et le réglage
+  (ports, TLS), qui dit seulement comment frapper à cette porte-là et suit le formulaire. Changer l'HÔTE
+  demande toujours le mot de passe ; aucune connexion n'est tentée sans lui.
 
 ### Removed
+- La corbeille de chaque ligne des sept écrans de réglages (remplacée par le menu « … » décrit plus haut).
 - Dépendance `next-themes` ; police `next/font/google` (pile système, aucune ressource Google chargée).
 - `components/ui/ThemeToggle.tsx` (point d'import de compatibilité devenu inutile).
 
