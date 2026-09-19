@@ -175,14 +175,19 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   // Close the account dropdown on outside click / Escape
   useEffect(() => {
     if (!accountOpen) return
-    const onDown = (e: MouseEvent) => {
+    // On `click`, NOT on `mousedown`: the list is in the bar's flow, so folding it pulls
+    // every row underneath it upwards. Dismissing on mousedown moves the row out from
+    // under the cursor before mouseup, and the browser then resolves the click on
+    // whatever slid into its place — the "the dismiss ate my click" bug the design rule
+    // forbids. By the click phase the target is already settled on the unshifted layout.
+    const onClick = (e: MouseEvent) => {
       if (accountBoxRef.current && !accountBoxRef.current.contains(e.target as Node)) setAccountOpen(false)
     }
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setAccountOpen(false) }
-    document.addEventListener('mousedown', onDown)
+    document.addEventListener('click', onClick)
     document.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('click', onClick)
       document.removeEventListener('keydown', onKey)
     }
   }, [accountOpen])
@@ -424,7 +429,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
               <div
                 className="border-b border-border"
                 style={{ ['--synap-badge-pad' as string]: `${BADGE_OFFSET_PX}px` }}
-                data-account-popover
+                data-account-list
                 data-account-list-open={accountOpen ? 'true' : 'false'}
               >
                 {otherAccounts.length > SIDEBAR.accountFilterFrom && (

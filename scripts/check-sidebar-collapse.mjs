@@ -202,7 +202,7 @@ for (const [k, v] of Object.entries({ SYNAPMAIL_TEST_URL: BASE, SYNAPMAIL_TEST_E
 const probe = strayToggle => {
   const bar = document.querySelector('[data-sidebar]')
   if (!bar) return null
-  const rows = [...bar.querySelectorAll('[data-sidebar-row]')]
+  const rows = [...bar.querySelectorAll('[data-sidebar-row]')].filter(r => !r.closest('[data-account-list]'))
   const aside = bar.closest('aside')
   const asideRect = aside?.getBoundingClientRect()
   return {
@@ -569,6 +569,10 @@ const probeScrollbars = () => {
         scrollHeight: vp?.scrollHeight ?? 0,
         scrollTop: vp?.scrollTop ?? 0,
         overflowing: vp ? vp.scrollHeight - vp.clientHeight : 0,
+        // A folded accordion keeps its scrollable viewport in the DOM at zero height:
+        // it overflows, but no wheel can reach it. Only a painted container is a
+        // candidate for the fade check below.
+        onScreen: !!(hostBox.width && hostBox.height) && getComputedStyle(el).visibility !== 'hidden',
         hasThumb: !!thumb,
         opacity: st ? Number(st.opacity) : null,
         thumbBg: st ? st.backgroundColor : null,
@@ -632,7 +636,7 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
 
   const bar = document.querySelector('[data-sidebar]')
   const barBg = paint(getComputedStyle(bar).backgroundColor)
-  const rows = [...bar.querySelectorAll('[data-sidebar-row]')]
+  const rows = [...bar.querySelectorAll('[data-sidebar-row]')].filter(r => !r.closest('[data-account-list]'))
   const accents = new Map()
   const animated = []
   for (const el of bar.querySelectorAll('*')) {
@@ -1358,15 +1362,15 @@ try {
   console.log(`ThinScroll containers in the bar: ${sb.containers.length}`)
   if (!sb.containers.length) { console.error('HARNESS: no [data-thin-scroll] container found — nothing to measure'); process.exit(2) }
   for (const c of sb.containers) {
-    console.log(`  <${c.tag}>: viewport scrollbar-width=${c.viewportHidden} gutter=${c.gutter}px overflowing=${c.overflowing}px thumb=${c.hasThumb}`)
+    console.log(`  <${c.tag}>: viewport scrollbar-width=${c.viewportHidden} gutter=${c.gutter}px overflowing=${c.overflowing}px onScreen=${c.onScreen} thumb=${c.hasThumb}`)
     if (c.viewportHidden !== 'none') failures.push(`<${c.tag}> viewport resolves scrollbar-width=${c.viewportHidden}, expected none — the native bar is showing`)
     if (c.gutter > sb.bare.gutter) failures.push(`<${c.tag}> viewport reserves ${c.gutter}px, more than the native reference (${sb.bare.gutter}px)`)
   }
   // The fade can only be measured on a container that actually scrolls. The folder nav is
   // the one that overflows in the bar; if none does, the check measured nothing — harness
   // failure, not a product verdict.
-  const scroller = sb.containers.findIndex(c => c.overflowing > 0)
-  if (scroller < 0) { console.error('HARNESS: no ThinScroll container overflows — the thumb was never exercised'); process.exit(2) }
+  const scroller = sb.containers.findIndex(c => c.overflowing > 0 && c.onScreen)
+  if (scroller < 0) { console.error('HARNESS: no ThinScroll container both overflows and is on screen — the thumb was never exercised'); process.exit(2) }
 
   // Real wheel input over the scrolling viewport, then read the thumb DURING the scroll.
   // Run in BOTH themes: the ink is derived from `currentColor`, so a value that paints on
