@@ -464,6 +464,8 @@
       "templates": "Quick start, templates"
     },
     "ai": {
+      "pageDescription": "Summaries, suggested replies and smart sorting",
+      "configured": "Configured",
       "stepProvider": "1. Provider",
       "stepAccess": "2. Access",
       "tagline": {

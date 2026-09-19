@@ -464,6 +464,8 @@
       "templates": "Démarrage rapide, modèles"
     },
     "ai": {
+      "pageDescription": "Résumés, réponses suggérées et tri intelligent",
+      "configured": "Configuré",
       "stepProvider": "1. Fournisseur",
       "stepAccess": "2. Accès",
       "tagline": {
