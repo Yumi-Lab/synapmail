@@ -30,7 +30,7 @@
       "submit": "Accepter l'invitation",
       "passwordMismatch": "Les mots de passe ne correspondent pas",
       "invalidToken": "Cette invitation est invalide ou a expiré",
-      "success": "Compte créé — redirection vers la connexion…",
+      "success": "Compte créé. Redirection vers la connexion…",
       "backToLogin": "Retour à la connexion"
     }
   },
@@ -167,10 +167,10 @@
     "folderEmpty": "Vider",
     "folderDelete": "Supprimer le dossier…",
     "folderNamePlaceholder": "Nom du dossier",
-    "folderNameInvalid": "Ce nom ne peut pas être utilisé — pas de « {delimiter} », pas de nom vide, 255 caractères au plus.",
+    "folderNameInvalid": "Ce nom ne peut pas être utilisé. Pas de « {delimiter} », pas de nom vide, 255 caractères au plus.",
     "folderConfirmDelete": "Supprimer « {name} » et ses {count} messages ?",
     "folderConfirmEmpty": "Supprimer définitivement les {count} messages de « {name} » ?",
-    "folderHasChildren": "Ce dossier contient des sous-dossiers — supprimez-les d’abord.",
+    "folderHasChildren": "Ce dossier contient des sous-dossiers. Supprimez-les d’abord.",
     "folderActionFailed": "Action impossible sur le dossier"
   },
   "compose": {
@@ -398,7 +398,7 @@
       "runNow": "Exécuter maintenant",
       "noRules": "Aucune règle configurée",
       "noRulesDesc": "Les règles s'appliquent automatiquement aux nouveaux emails.",
-      "templates": "Démarrage rapide — Modèles"
+      "templates": "Démarrage rapide, modèles"
     }
   },
   "admin": {
@@ -451,7 +451,7 @@
     "available": "Synapmail {version} est disponible",
     "moreInfo": "Plus d'informations",
     "dismiss": "Ignorer",
-    "modalTitle": "Mise à jour disponible — {version}",
+    "modalTitle": "Mise à jour disponible, {version}",
     "tabReleases": "Nouveautés",
     "tabHowTo": "Comment mettre à jour",
     "noNotes": "Aucune note de version.",
@@ -468,7 +468,7 @@
       "step4Title": "Vérifier que tout démarre correctement",
       "step4Desc": "Attendez de voir \"Ready\" dans les logs. Ctrl+C pour quitter le suivi.",
       "dataTitle": "Vos données sont en sécurité.",
-      "dataDesc": "La base de données PostgreSQL est dans un volume Docker séparé — elle n'est jamais supprimée lors d'un rebuild."
+      "dataDesc": "La base de données PostgreSQL est dans un volume Docker séparé. Elle n'est jamais supprimée lors d'un rebuild."
     }
   },
   "dashboard": {
@@ -493,7 +493,7 @@
     "noneScheduled": "aucun en attente",
     "focusTitle": "Focus",
     "focusSubtitle": "priorisé automatiquement",
-    "focusEmpty": "Rien d’urgent — boîte sous contrôle.",
+    "focusEmpty": "Rien d’urgent. Boîte sous contrôle.",
     "viewAll": "Tout voir",
     "reasonInvoice": "Facture",
     "reasonDeadline": "Échéance",
@@ -584,7 +584,7 @@
       "add": "Ajouter"
     },
     "compose": {
-      "encryptToggleOn": "Message chiffré — cliquer pour désactiver",
+      "encryptToggleOn": "Message chiffré, cliquer pour désactiver",
       "encryptToggleAvailable": "Chiffrer ce message (PGP)",
       "readReceiptDisabled": "Accusé de lecture indisponible pour un message chiffré",
       "attachmentsBlocked": "Les pièces jointes ne sont pas prises en charge pour les messages chiffrés dans cette version",
@@ -619,5 +619,37 @@
     "noResults": "Aucun résultat trouvé",
     "showPassword": "Afficher le mot de passe",
     "hidePassword": "Masquer le mot de passe"
+  },
+  "omnibar": {
+    "sectionAccounts": "Boîtes",
+    "sectionActions": "Actions",
+    "sectionSettings": "Réglages",
+    "searchMailFor": "Rechercher « {query} » dans le courrier",
+    "themeLight": "Thème clair",
+    "themeDark": "Thème sombre",
+    "themeSystem": "Thème système",
+    "themeLightKeywords": "clair, light, jour, thème",
+    "themeDarkKeywords": "sombre, dark, nuit, thème",
+    "themeSystemKeywords": "système, system, auto, automatique, thème",
+    "languageAction": "Langue : {name}",
+    "languageKeywords": "langue, language, traduction, i18n, locale",
+    "language": "Langue",
+    "dashboardKeywords": "tableau de bord, accueil, statistiques, dashboard",
+    "composeKeywords": "nouveau message, écrire, rédiger, compose",
+    "keywords": {
+      "profile": "profil, nom, mot de passe, compte, identite",
+      "appearance": "apparence, theme, sombre, clair, systeme, langue, affichage",
+      "reading": "lecture, volet de lecture, apercu",
+      "notifications": "notifications, bureau, alertes, son",
+      "composition": "composition, redaction, annuler envoi, delai",
+      "accounts": "comptes, boite, imap, smtp, ajouter un compte, partage, couleur",
+      "signatures": "signature, pied de message",
+      "templates": "modeles, gabarits, extraits",
+      "contacts": "contacts, carnet d adresses, personnes",
+      "rules": "regles, filtres, sieve, automatisation",
+      "ai": "ia, copilote, assistant, modele",
+      "pgp": "pgp, chiffrement, gpg, cle, confidentialite",
+      "apiKeys": "api, cle, jeton, token, bearer, mcp, agent, integration"
+    }
   }
 }

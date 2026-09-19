@@ -30,7 +30,7 @@
       "submit": "Accept invitation",
       "passwordMismatch": "Passwords do not match",
       "invalidToken": "This invitation is invalid or has expired",
-      "success": "Account created — redirecting to sign in…",
+      "success": "Account created. Redirecting to sign in…",
       "backToLogin": "Back to sign in"
     }
   },
@@ -167,10 +167,10 @@
     "folderEmpty": "Empty",
     "folderDelete": "Delete folder…",
     "folderNamePlaceholder": "Folder name",
-    "folderNameInvalid": "That name can’t be used — no “{delimiter}”, no blank name, 255 characters max.",
+    "folderNameInvalid": "That name can’t be used. No “{delimiter}”, no blank name, 255 characters max.",
     "folderConfirmDelete": "Delete “{name}” and its {count} messages?",
     "folderConfirmEmpty": "Permanently delete the {count} messages in “{name}”?",
-    "folderHasChildren": "This folder contains subfolders — delete them first.",
+    "folderHasChildren": "This folder contains subfolders. Delete them first.",
     "folderActionFailed": "Couldn't apply that to the folder"
   },
   "compose": {
@@ -398,7 +398,7 @@
       "runNow": "Run now",
       "noRules": "No rules configured",
       "noRulesDesc": "Rules are automatically applied to new emails.",
-      "templates": "Quick start — Templates"
+      "templates": "Quick start, templates"
     }
   },
   "admin": {
@@ -451,7 +451,7 @@
     "available": "Synapmail {version} is available",
     "moreInfo": "Learn more",
     "dismiss": "Dismiss",
-    "modalTitle": "Update available — {version}",
+    "modalTitle": "Update available, {version}",
     "tabReleases": "What's new",
     "tabHowTo": "How to update",
     "noNotes": "No release notes.",
@@ -468,7 +468,7 @@
       "step4Title": "Verify startup",
       "step4Desc": "Wait until you see \"Ready\" in the logs. Press Ctrl+C to stop following.",
       "dataTitle": "Your data is safe.",
-      "dataDesc": "The PostgreSQL database lives in a separate Docker volume — it is never removed during a rebuild."
+      "dataDesc": "The PostgreSQL database lives in a separate Docker volume. It is never removed during a rebuild."
     }
   },
   "dashboard": {
@@ -493,7 +493,7 @@
     "noneScheduled": "none pending",
     "focusTitle": "Focus",
     "focusSubtitle": "prioritised automatically",
-    "focusEmpty": "Nothing urgent — inbox under control.",
+    "focusEmpty": "Nothing urgent. Inbox under control.",
     "viewAll": "View all",
     "reasonInvoice": "Invoice",
     "reasonDeadline": "Deadline",
@@ -584,7 +584,7 @@
       "add": "Add"
     },
     "compose": {
-      "encryptToggleOn": "Encrypted message — click to disable",
+      "encryptToggleOn": "Encrypted message, click to disable",
       "encryptToggleAvailable": "Encrypt this message (PGP)",
       "readReceiptDisabled": "Read receipts aren't available for an encrypted message",
       "attachmentsBlocked": "Attachments aren't supported for encrypted messages in this version",
@@ -619,5 +619,37 @@
     "noResults": "No results found",
     "showPassword": "Show password",
     "hidePassword": "Hide password"
+  },
+  "omnibar": {
+    "sectionAccounts": "Mailboxes",
+    "sectionActions": "Actions",
+    "sectionSettings": "Settings",
+    "searchMailFor": "Search \"{query}\" in mail",
+    "themeLight": "Light theme",
+    "themeDark": "Dark theme",
+    "themeSystem": "System theme",
+    "themeLightKeywords": "light, day, bright, clair, theme",
+    "themeDarkKeywords": "dark, night, sombre, theme",
+    "themeSystemKeywords": "system, auto, automatic, os, systeme, theme",
+    "languageAction": "Language: {name}",
+    "languageKeywords": "language, locale, translation, i18n",
+    "language": "Language",
+    "dashboardKeywords": "dashboard, overview, home, stats",
+    "composeKeywords": "compose, new message, write, mail",
+    "keywords": {
+      "profile": "profile, name, password, account, identity",
+      "appearance": "appearance, theme, dark, light, system, language, locale, display",
+      "reading": "reading, reading pane, preview",
+      "notifications": "notifications, desktop, alerts, sound",
+      "composition": "composition, compose, undo send, delay, writing",
+      "accounts": "accounts, mailbox, imap, smtp, add account, sharing, color",
+      "signatures": "signature, footer, sign off",
+      "templates": "templates, canned, snippets, boilerplate",
+      "contacts": "contacts, address book, people",
+      "rules": "rules, filters, sieve, automation",
+      "ai": "ai, copilot, assistant, llm, model",
+      "pgp": "pgp, encryption, gpg, key, privacy",
+      "apiKeys": "api, key, token, bearer, mcp, agent, integration"
+    }
   }
 }

@@ -246,7 +246,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
 
   // Active account + the accent it publishes — the same hook the shell's edge toggle
   // subscribes to, so the bar and the button straddling its edge can never disagree.
-  const { accounts, activeAccount, colorIndex: accountColorIdx, vars: accentStyle, setActiveAccountId } = useAccountAccent()
+  const { accounts, activeAccount, colorIndex: accountColorIdx, vars: accentStyle, switchAccount } = useAccountAccent()
   const hasMultipleAccounts = accounts.length > 1
   const resolvedAccountId = activeAccount?.id ?? null
 
@@ -273,16 +273,10 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   // Resolved once per list: a folder grows to two letters only when a sibling shares its first.
   const customInitials = folderInitials(customFolders)
 
-  const switchAccount = (id: string) => {
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('synapmail:account-change', { detail: id }))
-    }
-    fetch('/api/settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ active_account_id: id }),
-    })
-    setActiveAccountId(id)
+  // La bascule elle-meme vit dans `useAccountAccent` (source unique, partagee avec
+  // l'omnibar) ; ici on ne lui ajoute que la fermeture de la liste depliee.
+  const pickAccount = (id: string) => {
+    switchAccount(id)
     setAccountOpen(false)
   }
 
@@ -332,7 +326,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
       // reserves for the mark alone.
       <div key={acc.id} className="relative">
         <button
-          onClick={() => switchAccount(acc.id)}
+          onClick={() => pickAccount(acc.id)}
           data-sidebar-row={`account:${acc.id}`}
           className={cn(ROW, ROW_IDLE, 'text-left')}
         >

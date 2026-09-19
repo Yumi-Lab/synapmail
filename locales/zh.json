@@ -167,7 +167,7 @@
     "folderEmpty": "清空",
     "folderDelete": "删除文件夹…",
     "folderNamePlaceholder": "文件夹名称",
-    "folderNameInvalid": "此名称不可用 — 不能含“{delimiter}”，不能为空，最多 255 个字符。",
+    "folderNameInvalid": "此名称不可用。不能含“{delimiter}”，不能为空，最多 255 个字符。",
     "folderConfirmDelete": "删除“{name}”及其 {count} 封邮件？",
     "folderConfirmEmpty": "永久删除“{name}”中的 {count} 封邮件？",
     "folderHasChildren": "该文件夹包含子文件夹，请先删除子文件夹。",
@@ -398,7 +398,7 @@
       "runNow": "立即运行",
       "noRules": "尚未配置规则",
       "noRulesDesc": "规则会自动应用于新邮件。",
-      "templates": "快速开始 — 模板"
+      "templates": "快速开始，模板"
     }
   },
   "admin": {
@@ -451,7 +451,7 @@
     "available": "Synapmail {version} 已发布",
     "moreInfo": "了解更多",
     "dismiss": "忽略",
-    "modalTitle": "有可用更新 — {version}",
+    "modalTitle": "有可用更新，{version}",
     "tabReleases": "更新内容",
     "tabHowTo": "如何更新",
     "noNotes": "没有发行说明。",
@@ -584,7 +584,7 @@
       "add": "添加"
     },
     "compose": {
-      "encryptToggleOn": "邮件已加密 — 点击可关闭",
+      "encryptToggleOn": "邮件已加密，点击可关闭",
       "encryptToggleAvailable": "加密这封邮件（PGP）",
       "readReceiptDisabled": "加密邮件无法使用已读回执",
       "attachmentsBlocked": "此版本的加密邮件暂不支持附件",
@@ -619,5 +619,37 @@
     "noResults": "没有找到结果",
     "showPassword": "显示密码",
     "hidePassword": "隐藏密码"
+  },
+  "omnibar": {
+    "sectionAccounts": "邮箱",
+    "sectionActions": "操作",
+    "sectionSettings": "设置",
+    "searchMailFor": "在邮件中搜索「{query}」",
+    "themeLight": "浅色主题",
+    "themeDark": "深色主题",
+    "themeSystem": "跟随系统",
+    "themeLightKeywords": "浅色, 明亮, 白天, light, 主题",
+    "themeDarkKeywords": "深色, 暗色, 夜间, dark, 主题",
+    "themeSystemKeywords": "系统, 跟随系统, 自动, system, auto, 主题",
+    "languageAction": "语言：{name}",
+    "languageKeywords": "语言, 翻译, language, locale, i18n",
+    "language": "语言",
+    "dashboardKeywords": "仪表板, 概览, 首页, dashboard",
+    "composeKeywords": "写邮件, 新邮件, 撰写, compose",
+    "keywords": {
+      "profile": "个人资料, 姓名, 密码, 账户, profile",
+      "appearance": "外观, 主题, 深色, 浅色, 系统, 语言, theme, dark, light, language",
+      "reading": "阅读, 阅读窗格, 预览, reading",
+      "notifications": "通知, 桌面, 提醒, notifications",
+      "composition": "撰写, 撰写邮件, 撤销发送, 延迟, compose",
+      "accounts": "账户, 邮箱, imap, smtp, 共享, 颜色, accounts",
+      "signatures": "签名, signature",
+      "templates": "模板, 片段, templates",
+      "contacts": "联系人, 通讯录, contacts",
+      "rules": "规则, 过滤器, sieve, 自动化, rules",
+      "ai": "人工智能, 智能助手, 助手, 模型, ai, copilot",
+      "pgp": "pgp, 加密, gpg, 密钥, 隐私",
+      "apiKeys": "api, 密钥, 令牌, token, bearer, mcp, 代理"
+    }
   }
 }

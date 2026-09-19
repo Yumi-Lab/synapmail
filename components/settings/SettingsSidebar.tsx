@@ -12,7 +12,14 @@ import { cn } from '@/lib/utils'
 /** Where an account's sharing is managed — the one place the bar's shared mark points to. */
 export const ACCOUNTS_SETTINGS_HREF = '/settings/accounts'
 
-const NAV_ITEMS = [
+/**
+ * Source UNIQUE des entrees de reglages : cette barre les rend, et l'omnibar
+ * (lot H3f) les propose a la saisie. Ajouter un reglage ici le rend trouvable
+ * dans les deux endroits, sans seconde table a tenir a jour ; `key` sert de cle
+ * i18n pour le libelle (`settings.nav.<key>`) ET pour les mots-cles de recherche
+ * (`omnibar.keywords.<key>`), tous deux controles par check-omnibar-commands.
+ */
+export const SETTINGS_NAV = [
   { href: '/settings/profile',       key: 'profile',       icon: User },
   { href: '/settings/appearance',    key: 'appearance',    icon: Palette },
   { href: '/settings/reading',       key: 'reading',       icon: BookOpen },
@@ -55,7 +62,7 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
 
       {/* Nav */}
       <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-3">
-        {NAV_ITEMS.map(({ href, key, icon: Icon }) => {
+        {SETTINGS_NAV.map(({ href, key, icon: Icon }) => {
           const active = pathname.startsWith(href)
           return (
             <Link key={href} href={href} className={linkClass(active)}>

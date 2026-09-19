@@ -7,7 +7,7 @@ import { Palette } from 'lucide-react'
 import {
   SettingsPage, SettingsHeader, SettingsSection, Chips, SaveBar,
 } from '@/components/settings/primitives'
-import { DEFAULT_LOCALE, LOCALES, LOCALE_COOKIE } from '@/lib/locales'
+import { DEFAULT_LOCALE, LOCALES, setLocale, type Locale } from '@/lib/locales'
 import { ThemeToggle } from '@/components/ThemeToggle'
 
 interface UserSettings {
@@ -16,18 +16,14 @@ interface UserSettings {
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
-/** One year, in seconds — the locale choice should outlive the session. */
-const COOKIE_MAX_AGE = 365 * 24 * 60 * 60
-
 export default function AppearancePage() {
   const t = useTranslations('settings.appearance')
   const tc = useTranslations('settings.common')
-  const { data, mutate } = useSWR<{ data: UserSettings }>('/api/settings', fetcher)
+  const { data } = useSWR<{ data: UserSettings }>('/api/settings', fetcher)
   const settings = data?.data
 
   const [selectedLang, setSelectedLang] = useState<string>(DEFAULT_LOCALE)
   const [saving, setSaving] = useState(false)
-  const [success, setSuccess] = useState(false)
 
   useEffect(() => {
     if (settings) {
@@ -40,21 +36,10 @@ export default function AppearancePage() {
   const handleSave = async () => {
     setSaving(true)
     try {
-      document.cookie = `${LOCALE_COOKIE}=${selectedLang}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`
-
-      await fetch('/api/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language: selectedLang }),
-      })
-      await mutate()
-
-      if (selectedLang !== (settings?.language ?? DEFAULT_LOCALE)) {
-        window.location.reload()
-      } else {
-        setSuccess(true)
-        setTimeout(() => setSuccess(false), 2000)
-      }
+      // Meme mecanisme que l'omnibar : cookie + preference + rechargement, une
+      // seule fois ecrit (lib/locales.ts). Il ne rend pas la main (la page se
+      // recharge), donc l'etat « enregistre » n'a plus lieu d'etre ici.
+      await setLocale(selectedLang as Locale)
     } finally {
       setSaving(false)
     }
@@ -80,7 +65,7 @@ export default function AppearancePage() {
         <SaveBar
           dirty={dirty}
           saving={saving}
-          saved={success}
+          saved={false}
           onSave={handleSave}
           labels={{ save: tc('save'), saving: tc('saving'), saved: tc('saved'), unsaved: tc('unsaved') }}
         />
