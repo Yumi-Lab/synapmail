@@ -72,6 +72,19 @@ const SHARED_BY_PREFIX = JSON.parse(readFileSync(new URL('../locales/fr.json', i
   .mail.sharedBy.split('{')[0].trim()
 const ACCOUNTS_SETTINGS_HREF = readFileSync(new URL('../components/settings/SettingsSidebar.tsx', import.meta.url), 'utf8')
   .match(/ACCOUNTS_SETTINGS_HREF\s*=\s*'([^']+)'/)?.[1]
+/**
+ * Lot A15 — the separator the collapsed account tooltip must use between a name and an
+ * address. House rule: no em dash in product copy. Read out of the shipped `accountTooltip`
+ * sentence (placeholders stripped) so this check follows the locale instead of carrying its
+ * own copy of the glyph; the em dash below is the character the rule forbids, not a target.
+ */
+const ACCOUNT_TOOLTIP_SEPARATOR = JSON.parse(readFileSync(new URL('../locales/fr.json', import.meta.url), 'utf8'))
+  .mail.accountTooltip.replace(/\{\w+\}/g, '').trim()
+const FORBIDDEN_DASH = '\u2014'
+if (!ACCOUNT_TOOLTIP_SEPARATOR || ACCOUNT_TOOLTIP_SEPARATOR.includes(FORBIDDEN_DASH)) {
+  console.error(`HARNESS: locales/fr.json accountTooltip separates with "${ACCOUNT_TOOLTIP_SEPARATOR}" — unusable as the expected separator`)
+  process.exit(2)
+}
 if (!SHARED_BY_PREFIX || !ACCOUNTS_SETTINGS_HREF) {
   console.error('HARNESS: could not read the sharedBy sentence or the accounts href from the shipped sources')
   process.exit(2)
@@ -471,6 +484,9 @@ const probeAccountListBox = () => {
     insideBar: br ? lr.left >= br.left - 1 && lr.right <= br.right + 1 : false,
     rows: list.querySelectorAll('button').length,
     badges,
+    // Rendered tooltip copy of the list's rows — the collapsed bar shows the name and
+    // the address here, so this is where a forbidden separator would reach a user.
+    tooltips: [...list.querySelectorAll('[data-icon-tooltip]')].map(t => (t.textContent ?? '').trim()),
   }
 }
 
@@ -925,16 +941,18 @@ const setTheme = theme => {
   document.documentElement.style.colorScheme = theme
 }
 
+// A page-level navigation/settle budget. The 30s puppeteer default is a machine-load
+// threshold, not a product one: under heavy load a `goto` times out and the script used to
+// die with a raw stack and rc=1 — indistinguishable from a product FAIL. Navigation is
+// never what this script measures: a slow hop delays the run instead of aborting it.
+const NAV_SETTLE_MS = 120000
+
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] })
 let failures = []
 try {
   const page = await browser.newPage()
+  page.setDefaultNavigationTimeout(NAV_SETTLE_MS)
   await page.setViewport(VIEWPORT)
-  // A dev server compiling a route on first hit, and an IMAP fetch behind it, both take
-  // longer than puppeteer's 30 s default. A slow hop must delay the run, never abort it
-  // as a failure that says nothing about the product.
-  page.setDefaultNavigationTimeout(120000)
-
   // /mail holds an SSE connection open (`/api/stream`), so `networkidle2` can never be
   // reached there: the wait has to be the marker the bar itself renders, not the network
   // going quiet. `domcontentloaded` + waitForSelector is the pair used for every hop.
@@ -945,7 +963,7 @@ try {
     await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' })
     // The folder list is fetched from the real IMAP server, so the wait is generous:
     // a slow mailbox must delay the measurement, never abort the run as a false failure.
-    await page.waitForSelector('[data-sidebar] [data-sidebar-row^="folder:"]', { timeout: 120000 })
+    await page.waitForSelector('[data-sidebar] [data-sidebar-row^="folder:"]', { timeout: NAV_SETTLE_MS })
   }
 
   // Sign in through the credentials endpoint, then land on /mail.
@@ -987,9 +1005,13 @@ try {
   if (!Number.isFinite(smallest.custom)) { console.error('HARNESS: this database has fewer than two mailboxes carrying custom folders — the switch cannot be measured'); process.exit(2) }
   // Switching mailbox goes through the app's own settings endpoint, then a reload: the
   // one way the bench puts a chosen account at the head of the bar.
+  // sidebar_collapsed is a server-side preference too, and it survives between runs: every
+  // toggle() below counts from the state the PREVIOUS run left behind, so an odd number of
+  // folds would leave the next run starting collapsed. Pinned expanded here, alongside the
+  // active account, so the sequence of folds always starts from a known state.
   const activate = async id => {
     await page.evaluate(async ({ base, id }) => {
-      await fetch(`${base}/api/settings`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active_account_id: id }) })
+      await fetch(`${base}/api/settings`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active_account_id: id, sidebar_collapsed: false }) })
     }, { base: BASE, id })
     await land('/mail')
     await new Promise(r => setTimeout(r, SETTLE_MS))
@@ -997,9 +1019,6 @@ try {
   await activate(smallest.id)
   const signedInAs = smallest.label
   console.log(`accounts in this database: ${inventory.map(a => `${a.label}=${a.custom}`).join(', ')} — starting on "${signedInAs}" (${smallest.custom}), biggest is "${biggest.label}" (${biggest.custom})`)
-  // Let the folder list settle so both states measure the same set of rows.
-  await new Promise(r => setTimeout(r, 2500))
-
   // The bar folds from the application header's menu button (lot H1) — a REAL click on
   // the shipped control, not a programmatic state change.
   const toggle = async () => {
@@ -1007,15 +1026,40 @@ try {
     await new Promise(r => setTimeout(r, SETTLE_MS))
   }
 
+  /**
+   * Reads the folder tiles ONLY once the bar shows the number of them this mailbox is
+   * known to have. The list re-renders on its own (the accounts SWR refreshes on an
+   * interval, and a fold re-lays out 100 rows), so probing straight after a toggle can
+   * catch it mid-render: observed as "96 expanded vs 3 collapsed" and as a tile whose
+   * letters changed with the fold — both read as product failures while the product had
+   * not changed. A count that never arrives is a HARNESS failure, never a verdict.
+   */
+  const glyphsWhenSettled = async (expected, where) => {
+    await page.waitForFunction(
+      n => document.querySelectorAll('[data-sidebar] [data-folder-glyph]').length === n,
+      { timeout: 60000 }, expected,
+    ).catch(() => {})
+    const seen = await page.evaluate(() => document.querySelectorAll('[data-sidebar] [data-folder-glyph]').length)
+    if (seen !== expected) {
+      console.error(`HARNESS: ${where}: the bar shows ${seen} folder tiles, this mailbox has ${expected} — the list never settled, nothing measured`)
+      process.exit(2)
+    }
+    return page.evaluate(probeFolderGlyphs)
+  }
+
+  // Nothing is clicked until the folder list has finished arriving: a toggle fired while
+  // the bar is still mounting rows resolves against a layout that is about to change, and
+  // the bar can come back reporting the state it started from.
+  await glyphsWhenSettled(smallest.custom, `"${signedInAs}" before the first fold`)
   let before = await page.evaluate(probe, EDGE_TOGGLE)
   if (before.collapsed === 'true') { await toggle(); before = await page.evaluate(probe, EDGE_TOGGLE) }
   if (before.collapsed !== 'false') { console.error('HARNESS: could not reach the expanded state'); process.exit(2) }
-  const glyphsExpanded = await page.evaluate(probeFolderGlyphs)
+  const glyphsExpanded = await glyphsWhenSettled(smallest.custom, `"${signedInAs}" expanded`)
 
   await toggle()
   const after = await page.evaluate(probe, EDGE_TOGGLE)
   if (after.collapsed !== 'true') { console.error('HARNESS: could not reach the collapsed state'); process.exit(2) }
-  const glyphsCollapsed = await page.evaluate(probeFolderGlyphs)
+  const glyphsCollapsed = await glyphsWhenSettled(smallest.custom, `"${signedInAs}" collapsed`)
 
   const withIcon = s => s.rows.filter(r => r.iconX != null).length
   console.log(`rows measured: expanded=${before.rows.length} collapsed=${after.rows.length}`)
@@ -1147,18 +1191,9 @@ try {
     // The folder list is re-fetched over IMAP on the switch: wait for the count the
     // inventory promised rather than for a fixed delay, so a slow fetch is not read as a
     // product failure. A count that never arrives is a harness failure, not a verdict.
-    await page.waitForFunction(
-      n => document.querySelectorAll('[data-sidebar] [data-folder-glyph]').length === n,
-      { timeout: 60000 }, biggest.custom,
-    ).catch(() => {})
-    const arrived = await page.evaluate(() => document.querySelectorAll('[data-sidebar] [data-folder-glyph]').length)
-    if (arrived !== biggest.custom) {
-      console.error(`HARNESS: after switching to "${biggest.label}" the bar shows ${arrived} tiles, the API promised ${biggest.custom} — the list never settled, nothing measured`)
-      process.exit(2)
-    }
-    const bigExpanded = await page.evaluate(probeFolderGlyphs)
+    const bigExpanded = await glyphsWhenSettled(biggest.custom, `after switching to "${biggest.label}", expanded`)
     await toggle()
-    const bigCollapsed = await page.evaluate(probeFolderGlyphs)
+    const bigCollapsed = await glyphsWhenSettled(biggest.custom, `"${biggest.label}" collapsed`)
     checkGlyphs(biggest.label, bigExpanded, bigCollapsed)
     // The fold must not drift on a list this long either: same contract, more rows.
     const bigState = await page.evaluate(probe, EDGE_TOGGLE)
@@ -1375,6 +1410,19 @@ try {
         failures.push(`account list (${state}): badge "${b.text}" is ${(b.visible * 100).toFixed(1)}% visible (min ${(MIN_BADGE_VISIBLE * 100).toFixed(0)}%) — something crops it`)
       }
     }
+    // Lot A15: collapsed, the name and the address live in the tooltip — and they are
+    // joined by the house separator, never an em dash. Only judged in that state: the
+    // expanded list prints them as rows and renders no tooltip at all.
+    if (state === 'collapsed') {
+      if (!box.tooltips.length) { console.error('HARNESS: collapsed: the account list renders no tooltip — the separator check measured nothing'); process.exit(2) }
+      console.log(`  tooltips: ${box.tooltips.map(t => `"${t}"`).join(', ')}`)
+      for (const tip of box.tooltips) {
+        if (tip.includes(FORBIDDEN_DASH)) failures.push(`account list (collapsed): tooltip "${tip}" joins with an em dash — the house separator is "${ACCOUNT_TOOLTIP_SEPARATOR}"`)
+      }
+      if (!box.tooltips.some(t => t.includes(ACCOUNT_TOOLTIP_SEPARATOR))) {
+        failures.push(`account list (collapsed): no tooltip uses the shipped separator "${ACCOUNT_TOOLTIP_SEPARATOR}" — got ${box.tooltips.map(t => `"${t}"`).join(', ')}`)
+      }
+    }
   }
   // Escape folds it, and the folding is what the user sees — not a node left on screen.
   await page.keyboard.press('Escape')
@@ -1396,9 +1444,28 @@ try {
   })
   if (!outsideTarget) { console.error('HARNESS: no second folder row to click outside onto — light-dismiss measured nothing'); process.exit(2) }
   const urlBefore = page.url()
+  // The coordinates above were read one evaluate ago, and the bar re-renders on its own
+  // (the account SWR refreshes on an interval): if anything shifted the rows since, the
+  // point now covers a DIFFERENT row and the click would be judged against a target it
+  // never aimed at. Re-read what the point actually covers, immediately before clicking —
+  // a mismatch is a harness failure, and says nothing about the product's dismiss.
+  const under = await page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y)
+    return el?.closest('[data-sidebar-row]')?.getAttribute('data-sidebar-row') ?? null
+  }, outsideTarget)
+  if (under !== outsideTarget.path) {
+    console.error(`HARNESS: the point aimed at ${outsideTarget.path} now covers ${under ?? 'nothing'} — the bar shifted between measuring and clicking, light-dismiss measured nothing`)
+    process.exit(2)
+  }
   await page.mouse.click(outsideTarget.x, outsideTarget.y)
   await new Promise(r => setTimeout(r, SETTLE_MS))
   const dismissed = await page.evaluate(probeAccountListBox)
+  // The navigation this click triggers is a soft one, and on a loaded machine it can land
+  // well after SETTLE_MS: sampling the URL on a fixed sleep reports UNCHANGED for a click
+  // that DID get through. Poll for the change instead. A swallowed click never navigates
+  // at all, so waiting longer cannot turn a real dismiss bug into a pass — it only removes
+  // the timing race. Still UNCHANGED when the poll expires = the product failure below.
+  await page.waitForFunction(before => location.href !== before, { timeout: NAV_SETTLE_MS }, urlBefore).catch(() => {})
   const urlAfter = page.url()
   console.log(`outside click on ${outsideTarget.path}: list ${dismissed ? 'STILL OPEN' : 'folded'}, url ${urlBefore === urlAfter ? 'UNCHANGED' : 'changed'} -> ${urlAfter}`)
   if (dismissed) failures.push('account list: a click outside did not fold it')

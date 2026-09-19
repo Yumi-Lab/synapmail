@@ -331,7 +331,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
           className={cn(ROW, ROW_IDLE, 'text-left')}
         >
           <span className={ICON_COL}>
-            {collapsed ? <IconTooltip label={acc.name ? `${acc.name} — ${acc.email}` : acc.email} align="start">{bubble}</IconTooltip> : bubble}
+            {collapsed ? <IconTooltip label={acc.name ? t('accountTooltip', { name: acc.name, email: acc.email }) : acc.email} align="start">{bubble}</IconTooltip> : bubble}
           </span>
           <span
             className={cn(ROW_LABEL, collapsed && 'opacity-0')}

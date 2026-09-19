@@ -89,6 +89,7 @@
     "searchAccounts": "Search accounts…",
     "searchMail": "Search mail",
     "noAccountMatch": "No matching account",
+    "accountTooltip": "{name} · {email}",
     "unreadOtherAccounts": "{count} unread in other accounts",
     "grpToday": "Today",
     "grpYesterday": "Yesterday",

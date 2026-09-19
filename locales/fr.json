@@ -89,6 +89,7 @@
     "searchAccounts": "Rechercher un compte…",
     "searchMail": "Rechercher dans le courrier",
     "noAccountMatch": "Aucun compte correspondant",
+    "accountTooltip": "{name} · {email}",
     "unreadOtherAccounts": "{count} non lus sur les autres comptes",
     "grpToday": "Aujourd'hui",
     "grpYesterday": "Hier",
