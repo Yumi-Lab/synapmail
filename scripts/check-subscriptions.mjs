@@ -21,7 +21,9 @@
  * decision and EXPECTS the run to fail — a battery that cannot fail proves nothing.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
+  MAILTO_SUBJECT,
   MAX_UNSUBSCRIBE_BATCH,
   ONE_CLICK_BODY,
   ONE_CLICK_CONTENT_TYPE,
@@ -36,6 +38,7 @@ import {
   mailtoSubject,
   methodOf,
   parseAddress,
+  planUnsubscribe,
   parseSubscriptionHeaders,
   parseUnsubscribeUris,
   subscriptionId,
@@ -297,11 +300,104 @@ assert.equal((await unsubscribeOneClick('https://lists.example/u', { resolve, re
 ok('a timeout and a transport error are told apart, neither leaks a body')
 
 // ---------------------------------------------------------------------------
+console.log('plan — what each requested id leads to, before any effect')
+
+const PLANNED = [
+  headerFor('10', {
+    from: 'One Click <news@oneclick.example>',
+    date: 'Tue, 15 Sep 2026 09:00:00 +0200',
+    subject: 'weekly',
+    https: ['https://oneclick.example/u/xyz'],
+    post: 'List-Unsubscribe=One-Click',
+  }),
+  headerFor('11', {
+    from: 'By Mail <news@bymail.example>',
+    date: 'Tue, 15 Sep 2026 09:00:00 +0200',
+    subject: 'digest',
+    mailto: ['mailto:leave@bymail.example?subject=stop%20me'],
+  }),
+  headerFor('12', {
+    from: 'Page Only <news@pageonly.example>',
+    date: 'Tue, 15 Sep 2026 09:00:00 +0200',
+    subject: 'offers',
+    https: ['https://pageonly.example/manage'],
+  }),
+  headerFor('13', {
+    from: 'Bad Target <news@badtarget.example>',
+    date: 'Tue, 15 Sep 2026 09:00:00 +0200',
+    subject: 'broken',
+    mailto: ['mailto:not-an-address'],
+  }),
+]
+const idOfSender = address =>
+  groupSubscriptions('acc-1', PLANNED).find(s => s.sender.address === address).id
+
+const plans = planUnsubscribe('acc-1', PLANNED, [
+  idOfSender('news@oneclick.example'),
+  idOfSender('news@bymail.example'),
+  idOfSender('news@pageonly.example'),
+  idOfSender('news@badtarget.example'),
+  'f'.repeat(24),
+])
+
+assert.equal(plans[0].action, 'one-click')
+assert.equal(plans[0].url, 'https://oneclick.example/u/xyz')
+ok('a one-click group is planned as a POST to its own https URL')
+
+assert.equal(plans[1].action, 'mailto')
+assert.equal(plans[1].address, 'leave@bymail.example')
+assert.equal(plans[1].subject, 'stop me')
+ok('a mailto group is planned to its validated address, with the asked subject')
+
+// The point of the rule: an https page without RFC 8058 is NEVER called by the server.
+assert.equal(plans[2].action, 'manual')
+assert.equal(plans[2].url, 'https://pageonly.example/manage')
+ok('a bare link is returned as manual, never requested by the server')
+
+assert.equal(plans[3].action, 'failed')
+assert.equal(plans[3].reason, 'no-target')
+ok('a mailto whose target is not an address fails instead of guessing one')
+
+assert.equal(plans[4].action, 'not_found')
+ok('an id no group in this mailbox produces is not_found')
+
+// The client sends ids only: a URL it makes up cannot become a plan.
+const forged = planUnsubscribe('acc-1', PLANNED, ['https://attacker.example/u'])
+assert.equal(forged[0].action, 'not_found')
+ok('an id shaped like a URL is just an unknown id — the client never names a target')
+
+// The same mailbox, another account id: the ids of one mailbox mean nothing in another.
+assert.equal(planUnsubscribe('acc-2', PLANNED, [idOfSender('news@oneclick.example')])[0].action, 'not_found')
+ok("another mailbox's ids do not resolve here")
+
+// Without a subject parameter, the default is the one constant, not a copy.
+const plain = planUnsubscribe('acc-1', [headerFor('14', {
+  from: 'Plain <n@plain.example>', date: 'Tue, 15 Sep 2026 09:00:00 +0200', subject: 'x',
+  mailto: ['mailto:leave@plain.example'],
+})], [subscriptionId('acc-1', 'from:n@plain.example')])
+assert.equal(plain[0].subject, MAILTO_SUBJECT)
+ok(`a mailto with no subject parameter uses the single default ("${MAILTO_SUBJECT}")`)
+
+// ---------------------------------------------------------------------------
 console.log('constants — one source, no copy in the routes')
 assert.equal(typeof RECENT_MESSAGES_SCANNED, 'number')
 assert.ok(RECENT_MESSAGES_SCANNED > 0)
 assert.equal(MAX_UNSUBSCRIBE_BATCH, 50)
 ok(`scan window = ${RECENT_MESSAGES_SCANNED} messages, batch ceiling = ${MAX_UNSUBSCRIBE_BATCH} ids`)
+
+// The ceiling the route enforces must be the module's, not a number retyped there.
+const routeSource = readFileSync(new URL('../app/api/subscriptions/unsubscribe/route.ts', import.meta.url), 'utf8')
+assert.match(routeSource, /MAX_UNSUBSCRIBE_BATCH/)
+assert.doesNotMatch(routeSource, /\b50\b/)
+ok('the unsubscribe route reads the ceiling from the module, no copied number')
+
+// Neither route may hold parsing, grouping or boundary logic of its own.
+const listSource = readFileSync(new URL('../app/api/subscriptions/route.ts', import.meta.url), 'utf8')
+for (const [name, source] of [['list', listSource], ['unsubscribe', routeSource]]) {
+  assert.doesNotMatch(source, /List-Unsubscribe/i, `${name} route must not parse headers itself`)
+  assert.doesNotMatch(source, /127\.|192\.168|https\.request/, `${name} route must not hold the boundary itself`)
+}
+ok('both routes only call the module: no header parsing, no boundary, no copy')
 
 // ---------------------------------------------------------------------------
 // Negative control: with the boundary's private-address rule removed, the

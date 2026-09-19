@@ -487,3 +487,221 @@ export async function readSubscriptionHeaders(
   }
   return found
 }
+
+// ---------------------------------------------------------------------------
+// Service layer — what the two routes call, so neither holds any logic
+// ---------------------------------------------------------------------------
+
+/** The columns of an account row these functions read. */
+export interface AccountRowLike {
+  id: string
+  email: string
+  imap_host: string
+  imap_port: number
+  imap_secure: boolean
+  smtp_host: string
+  smtp_port: number
+  smtp_secure: boolean
+  username: string
+  password_encrypted: string
+  oauth_provider: string | null
+  oauth_access_token: string | null
+  oauth_refresh_token: string | null
+  oauth_expires_at: number | null
+}
+
+/** Row → IMAP config. Mapped here once instead of in each route. */
+export function imapConfigOf(a: AccountRowLike): AccountConfig {
+  return {
+    id: a.id,
+    imapHost: a.imap_host,
+    imapPort: a.imap_port,
+    imapSecure: a.imap_secure,
+    username: a.username,
+    passwordEncrypted: a.password_encrypted,
+    oauthProvider: a.oauth_provider,
+    oauthAccessToken: a.oauth_access_token,
+    oauthRefreshToken: a.oauth_refresh_token,
+    oauthExpiresAt: a.oauth_expires_at,
+  }
+}
+
+/** Row → SMTP config, for the mailto branch. */
+export function smtpConfigOf(a: AccountRowLike) {
+  return {
+    id: a.id,
+    smtpHost: a.smtp_host,
+    smtpPort: a.smtp_port,
+    smtpSecure: a.smtp_secure,
+    username: a.username,
+    passwordEncrypted: a.password_encrypted,
+    oauthProvider: a.oauth_provider,
+    oauthAccessToken: a.oauth_access_token,
+    oauthRefreshToken: a.oauth_refresh_token,
+    oauthExpiresAt: a.oauth_expires_at,
+  }
+}
+
+/** Past unsubscribes of a mailbox, keyed by grouping key. */
+async function recordedUnsubscriptions(accountId: string): Promise<Map<string, string>> {
+  const { query } = await import('./db')
+  const rows = await query<{ group_key: string; created_at: string }>(
+    'SELECT group_key, created_at FROM unsubscriptions WHERE account_id = $1',
+    [accountId]
+  )
+  return new Map(rows.map(r => [r.group_key, new Date(r.created_at).toISOString()]))
+}
+
+/** The list served by `GET /api/subscriptions`. */
+export async function listSubscriptions(
+  account: AccountConfig,
+  accountId: string,
+  folder: string
+): Promise<Subscription[]> {
+  const [headers, already] = await Promise.all([
+    readSubscriptionHeaders(account, folder),
+    recordedUnsubscriptions(accountId),
+  ])
+  return groupSubscriptions(accountId, headers, already)
+}
+
+export interface UnsubscribeReport {
+  id: string
+  outcome: UnsubscribeOutcome
+  method?: UnsubscribeMethod
+  /** Set on `manual`: the page the human has to open themselves. */
+  url?: string
+  /** Set on `failed`: which boundary or transport rule stopped it. */
+  reason?: RefusalReason | 'no-target'
+}
+
+export interface UnsubscribeRequest {
+  imap: AccountConfig
+  smtp: Parameters<typeof import('./smtp')['sendMail']>[0]
+  accountId: string
+  from: string
+  folder: string
+  ids: string[]
+  /** Injected in the bench so no real list is ever left. */
+  resolve?: AddressResolver
+  request?: HttpsRequester
+}
+
+/** What must be DONE for one requested id, decided without any effect. */
+export type UnsubscribePlan =
+  | { id: string; action: 'not_found' }
+  | { id: string; action: 'manual'; method: 'link'; url: string }
+  | { id: string; action: 'one-click'; method: 'one-click'; key: string; url: string }
+  | { id: string; action: 'mailto'; method: 'mailto'; key: string; address: string; subject: string }
+  | { id: string; action: 'failed'; method: UnsubscribeMethod; reason: 'no-target' }
+
+/** Default subject of a mailto unsubscribe, when the list does not ask for one. */
+export const MAILTO_SUBJECT = 'unsubscribe'
+export const MAILTO_BODY = 'unsubscribe'
+
+/**
+ * Decides what each requested id leads to, from a read of the folder's headers.
+ * PURE: no network, no mailbox, no database — so the whole decision, including
+ * the refusal to automate a bare link, is measurable on its own.
+ *
+ * An id that no group in this mailbox produces is `not_found`: the client can
+ * neither name a URL nor reach a group that is not here.
+ *
+ * `link` alone (an https page without RFC 8058 one-click) is never automated:
+ * that page may ask the human a question, or be a tracker that counts a visit
+ * as a confirmation. It is planned as `manual`, with the link.
+ */
+export function planUnsubscribe(
+  accountId: string,
+  headers: SubscriptionHeaders[],
+  ids: string[]
+): UnsubscribePlan[] {
+  const newest = new Map<string, SubscriptionHeaders>()
+  for (const h of headers) {
+    const key = groupingKey(h)
+    const current = newest.get(key)
+    if (!current || dateRank(h.date) > dateRank(current.date)) newest.set(key, h)
+  }
+  const byId = new Map(
+    Array.from(newest.entries()).map(([key, h]) => [subscriptionId(accountId, key), { key, h }])
+  )
+
+  return ids.map((id): UnsubscribePlan => {
+    const group = byId.get(id)
+    if (!group) return { id, action: 'not_found' }
+    const { key, h } = group
+    const method = methodOf(h)
+    if (method === 'one-click') return { id, action: 'one-click', method, key, url: h.uris.https[0] }
+    if (method === 'mailto') {
+      const address = h.uris.mailto.map(mailtoAddress).find((a): a is string => !!a)
+      if (!address) return { id, action: 'failed', method, reason: 'no-target' }
+      return {
+        id,
+        action: 'mailto',
+        method,
+        key,
+        address,
+        subject: mailtoSubject(h.uris.mailto[0]) ?? MAILTO_SUBJECT,
+      }
+    }
+    return { id, action: 'manual', method: 'link', url: h.uris.https[0] }
+  })
+}
+
+/**
+ * Carries out the plan above: one-click through the network boundary, mailto
+ * through this mailbox's own SMTP, and each completed unsubscribe recorded so a
+ * later list says so and an agent does not start over.
+ */
+export async function unsubscribeGroups(req: UnsubscribeRequest): Promise<UnsubscribeReport[]> {
+  const headers = await readSubscriptionHeaders(req.imap, req.folder)
+  const reports: UnsubscribeReport[] = []
+  for (const plan of planUnsubscribe(req.accountId, headers, req.ids)) {
+    if (plan.action === 'not_found') {
+      reports.push({ id: plan.id, outcome: 'not_found' })
+      continue
+    }
+    if (plan.action === 'failed') {
+      reports.push({ id: plan.id, outcome: 'failed', method: plan.method, reason: plan.reason })
+      continue
+    }
+    if (plan.action === 'manual') {
+      reports.push({ id: plan.id, outcome: 'manual', method: plan.method, url: plan.url })
+      continue
+    }
+    if (plan.action === 'one-click') {
+      const result = await unsubscribeOneClick(plan.url, { resolve: req.resolve, request: req.request })
+      if (!result.ok) {
+        reports.push({ id: plan.id, outcome: 'failed', method: plan.method, reason: result.reason })
+        continue
+      }
+    } else {
+      const { sendMail } = await import('./smtp')
+      try {
+        await sendMail(req.smtp, {
+          from: req.from,
+          to: [plan.address],
+          subject: plan.subject,
+          text: MAILTO_BODY,
+        })
+      } catch {
+        // An error text can carry the remote server's answer: only the kind is kept.
+        reports.push({ id: plan.id, outcome: 'failed', method: plan.method, reason: 'transport' })
+        continue
+      }
+    }
+    await recordUnsubscription(req.accountId, plan.key, plan.method)
+    reports.push({ id: plan.id, outcome: 'done', method: plan.method })
+  }
+  return reports
+}
+
+/** Remembers a completed unsubscribe, so a later list can say so. */
+async function recordUnsubscription(accountId: string, key: string, method: UnsubscribeMethod): Promise<void> {
+  const { query } = await import('./db')
+  await query(
+    `INSERT INTO unsubscriptions (account_id, group_key, method) VALUES ($1, $2, $3)
+     ON CONFLICT (account_id, group_key) DO UPDATE SET method = EXCLUDED.method, created_at = NOW()`,
+    [accountId, key, method]
+  )
+}
