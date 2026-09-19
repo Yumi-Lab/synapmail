@@ -12,6 +12,8 @@ import type { EmailAccount } from '@/types/account'
 import { AccountWizard } from './AccountWizard'
 import type { AccountFormData } from './AccountWizard'
 import { AccountSharesPanel } from './AccountSharesPanel'
+import { AccountAvatar } from '@/components/layout/AccountAvatar'
+import { AccountColorPicker } from '@/components/settings/AccountColorPicker'
 import { SettingsPage, SettingsHeader, Toggle } from '@/components/settings/primitives'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -42,7 +44,12 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
   const { data: accountsData, mutate } = useSWR<{ data: EmailAccount[] }>('/api/accounts', fetcher)
   // Credentials/sharing management is owner-only — accounts shared with this user
   // are visible in the Sidebar account switcher, not editable from this page.
+  const allAccounts = accountsData?.data ?? []
   const accounts = accountsData?.data?.filter(a => !a.isShared)
+  // A mailbox's automatic colour comes from its rank in the WHOLE list, the one the bar
+  // ranks against — ranking against this page's owner-only subset would paint a different
+  // bubble here than in the bar for anyone who also has a mailbox shared with them.
+  const rankOf = (account: EmailAccount) => allAccounts.indexOf(account)
   // ...and the inboxes shared WITH this user get their own read-only section below:
   // they cannot be edited, only given back.
   const receivedShares = accountsData?.data?.filter(a => a.isShared) ?? []
@@ -79,18 +86,23 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
     setMode('edit')
   }
 
-  // Optimistic: the switch answers the click, the account row is the source of truth.
-  const handlePromptGuard = async (account: EmailAccount, promptGuard: boolean) => {
+  // Optimistic: the control answers the gesture, the account row is the source of truth.
+  // The SWR key is the one the sidebar subscribes to, so repainting the cache repaints
+  // the bar's bubble and accent in the same frame, with no event and no second request.
+  const patchAccount = (account: EmailAccount, patch: Partial<EmailAccount>) =>
     mutate(
       current => current && {
-        data: current.data.map(a => (a.id === account.id ? { ...a, promptGuard } : a)),
+        data: current.data.map(a => (a.id === account.id ? { ...a, ...patch } : a)),
       },
       false
     )
+
+  const saveAccount = async (account: EmailAccount, patch: Partial<EmailAccount>) => {
+    patchAccount(account, patch)
     await fetch(`/api/accounts/${account.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ promptGuard }),
+      body: JSON.stringify(patch),
     })
     mutate()
   }
@@ -245,7 +257,12 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
             <div key={account.id}>
               <div className="rounded-xl border border-border bg-card shadow-sm">
                 <div className="flex items-center gap-3 p-4">
-                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: account.color }} />
+                  <AccountAvatar
+                    account={account}
+                    colorIndex={rankOf(account)}
+                    size="md"
+                    data-account-badge={account.id}
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-sm">{account.name}</div>
                     <div className="text-xs text-muted-foreground">{account.email}</div>
@@ -253,6 +270,12 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
                   {account.isDefault && (
                     <span className="text-xs bg-violet-500/10 text-violet-600 dark:text-violet-400 px-2 py-0.5 rounded-full font-medium">{t('setDefault')}</span>
                   )}
+                  <AccountColorPicker
+                    value={account.badgeColor ?? null}
+                    rank={rankOf(account)}
+                    onPreview={colour => patchAccount(account, { badgeColor: colour })}
+                    onCommit={colour => saveAccount(account, { badgeColor: colour })}
+                  />
                   <Button
                     variant="ghost" size="sm" className="h-8 w-8 p-0"
                     onClick={() => setExpandedShareId(id => id === account.id ? null : account.id)}
@@ -271,7 +294,7 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
                   <span className="shrink-0" data-prompt-guard={account.id}>
                     <Toggle
                       checked={account.promptGuard}
-                      onChange={v => handlePromptGuard(account, v)}
+                      onChange={v => saveAccount(account, { promptGuard: v })}
                       label={t('promptGuard')}
                     />
                   </span>
