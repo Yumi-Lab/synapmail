@@ -1009,9 +1009,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
               </button>
             ))}
           </div>
-          <button onClick={handleRefresh} disabled={isValidating} className="ml-auto w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-            <RefreshCw className={cn('w-3.5 h-3.5', isValidating && 'animate-spin')} />
-          </button>
+          <div className="ml-auto" />
           <ScheduledPopover />
           <SnoozePopover activeAccountId={activeAccountId} />
         </div>
