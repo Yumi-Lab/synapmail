@@ -26,9 +26,11 @@ Two ways in, both handled transparently by route handlers that call `authenticat
 Only routes explicitly marked **🔑 Bearer** accept an API key — everything else requires the session cookie (some additionally require the `admin` role, marked **👑 Admin**). `middleware.ts` runs at the Edge and only checks that *some* credential (cookie or `Authorization` header) is present; the actual key lookup and hashing happens server-side in each route via `authenticate()`. A key stops working immediately on revoke (`DELETE /api/api-keys/[id]`, soft — sets `revoked_at`). Keys have no per-scope restriction beyond the fixed Bearer-eligible route list below — a key grants full read/write on every 🔑 route for that user's data.
 
 **Bearer-eligible routes** (the complete list — nothing else accepts a key):
-`GET /api/accounts`, `GET /api/folders`, `GET /api/messages`, `GET /api/messages/[id]`, `PATCH /api/messages/[id]`, `DELETE /api/messages/[id]`, `PATCH /api/messages/bulk`, `DELETE /api/messages/bulk`, `GET /api/messages/search`, `GET /api/messages/thread`, `POST /api/messages/send`, `GET /api/contacts`, `GET /api/subscriptions`, `POST /api/subscriptions/unsubscribe`, `GET /api/subscriptions/unsubscribed`.
+`GET /api/accounts`, `GET /api/folders`, `POST /api/folders`, `PATCH /api/folders`, `DELETE /api/folders`, `POST /api/folders/actions`, `GET /api/messages`, `GET /api/messages/[id]`, `PATCH /api/messages/[id]`, `DELETE /api/messages/[id]`, `PATCH /api/messages/bulk`, `DELETE /api/messages/bulk`, `GET /api/messages/search`, `GET /api/messages/thread`, `POST /api/messages/send`, `GET /api/contacts`, `GET /api/subscriptions`, `POST /api/subscriptions/unsubscribe`, `GET /api/subscriptions/unsubscribed`, `POST /api/ai/action`.
 
-Every other route — account/rule/template/signature/PGP/settings CRUD, admin, AI, OAuth, SSE, tracking, the older `POST /api/unsubscribe`, and the account-mutation routes (`POST`/`PATCH`/`DELETE /api/accounts...`) — is **session-only**, even where the underlying resource is otherwise Bearer-eligible for reads.
+That list is not maintained by hand: `scripts/check-api-docs.mjs` reads the access mode each method's own body enforces and refuses any heading the code contradicts.
+
+Every other route — account/rule/template/signature/PGP/settings CRUD, admin, the rest of the AI routes, OAuth, SSE, tracking, the older `POST /api/unsubscribe`, and the account-mutation and sharing routes (`POST`/`PATCH`/`DELETE /api/accounts...`) — is **session-only**, even where the underlying resource is otherwise Bearer-eligible for reads.
 
 ## Errors
 
@@ -106,6 +108,57 @@ Connectivity check, used by the account wizard before saving. Doesn't touch the 
 
 ---
 
+## Account sharing
+
+An owner lends one of their mailboxes to another user, action by action. The three routes below are **owner-only and session-only, always** — never reachable with a Bearer key, whatever permissions a share grants: a delegate can never read credentials, and can never hand the mailbox on to someone else.
+
+The five permissions are independent booleans: `canSend`, `canDelete`, `canOrganize` (read/star/move/snooze), `canManageRules`, `canManageSignatures`. There is no `canRead` — an active, unexpired share IS read access. Contacts and templates are never shared: neither belongs to a mailbox.
+
+### `GET /api/accounts/[id]/shares` — session only
+Every share of that mailbox, newest first, including the revoked and expired ones — it is the owner's history, not just the live list.
+
+**Response** `{ data: Share[] }`
+```ts
+interface Share {
+  id: string
+  inviteeEmail: string; inviteeName: string
+  status: 'pending' | 'active' | 'revoked' | 'expired'
+  canSend: boolean; canDelete: boolean; canOrganize: boolean
+  canManageRules: boolean; canManageSignatures: boolean
+  expiresAt: string | null; acceptedAt: string | null
+  revokedAt: string | null; createdAt: string
+}
+```
+`404` if the mailbox is not yours — a mailbox you do not own reads as absent, not as forbidden.
+
+### `POST /api/accounts/[id]/shares` — session only
+Invites someone by email address.
+
+**Body** `{ email: string; canSend?, canDelete?, canOrganize?, canManageRules?, canManageSignatures?: boolean; expiresAt?: string }` — every permission defaults to `false`.
+
+If that address already has an account, the share is **active at once** and a notice goes out. If not, a `pending` user and a `pending` share are created together, and the invitation carries a single-use token by mail; only its hash is stored. Either way the mail leaves through **the shared mailbox's own SMTP** — this instance has no system-wide sender.
+
+Re-inviting someone who already holds a pending or active share updates that share's permissions in place rather than making a second one. `400` on a missing address, on your own address, or on an unreadable `expiresAt`; `404` if the mailbox is not yours.
+
+### `DELETE /api/accounts/[id]/shares/[shareId]` — session only
+Revokes a share. Soft: the row stays, `revoked_at` is set, and access stops on the next request. → `{ success: true }` ⚠ non-standard envelope.
+
+`404` if the share is not yours to revoke.
+
+### `GET /api/invites/[token]` — public, no auth
+Previews an invitation, so the page can name what is being offered before asking for a password. Public by necessity: the invited person has no account yet.
+
+**Response** `{ data: { accountEmail, ownerName, inviteeEmail, permissions: { canSend, canDelete, canOrganize, canManageRules, canManageSignatures } } }`. `404` on an unknown, already-used or expired token — one answer for all three, so the route never confirms that a token existed.
+
+### `POST /api/invites/[token]` — public, no auth
+Accepts the invitation and sets the new user's real name and password.
+
+**Body** `{ name: string; password: string }` (8 characters minimum) → `{ data: { success: true } }`.
+
+Flips the user and the share to `active` and clears the token: single use. Until that happens, login is refused for that user — a pending account is not a way in. `400` on a missing name or a short password, `404` on a token that no longer opens anything.
+
+---
+
 ## OAuth (Microsoft)
 
 ### `GET /api/oauth/microsoft` — session only
@@ -130,6 +183,36 @@ interface FolderInfo {
 }
 ```
 Returns `{ data: [] }` (not an error) if the account has no folders synced yet or doesn't exist.
+
+### `POST /api/folders` 🔑 Bearer
+Creates a folder. With `parent`, it is created underneath that folder, using the server's own hierarchy delimiter — never a slash written by the caller.
+
+**Body** `{ accountId?: string; name: string; parent?: string }` → `{ data: { path, name } }`.
+
+Requires the `organize` permission on the mailbox. Refusals share one shape with the two routes below: `{ error: '<code>' }`, where the code is one of `unauthorized` (401), `notFound` (404), `forbidden` (403), `badName` (400 — empty, or carrying the delimiter), `exists` (409).
+
+### `PATCH /api/folders` 🔑 Bearer
+Renames a folder in place: it keeps its parent, only the last segment changes.
+
+**Body** `{ accountId?: string; path: string; name: string }` → `{ data: { path, name } }`.
+
+Requires `organize`. A special-use folder (inbox, sent, drafts, spam, trash) is never renamable — the whole client assumes its role. IMAP renames the entire subtree, so `messages_cache` and `mailbox_stats` are rewritten along the same prefix; without that, descendants keep rows under the old path and their unread counts read false.
+
+### `DELETE /api/folders?account=<id>&path=<path>` 🔑 Bearer
+Deletes a folder, and its cached rows with it. → `{ data: { path } }`.
+
+Requires `delete`. Never a special-use folder, and never a folder that has children — a parent takes its subtree with it.
+
+### `POST /api/folders/actions` 🔑 Bearer
+The actions that touch a folder's CONTENT rather than its place in the tree.
+
+**Body** `{ accountId?: string; path: string; action: 'markRead' | 'empty' | 'count' }`
+
+- `markRead` (needs `organize`) → `{ data: { path, unreadCount: 0 } }`
+- `empty` (needs `delete`) → `{ data: { path, removed: number } }` — only ever the trash or the junk folder, whatever the caller asks: emptying is those folders' purpose, and no other's.
+- `count` (no permission beyond read) → `{ data: { count: number } }`, meant for the confirmation that names how many messages are about to go.
+
+An unknown action is `unknownAction` (400). Same refusal shape as above.
 
 ---
 
@@ -668,7 +751,7 @@ Probes common local network locations (`localhost`, `host.docker.internal`, `oll
 
 **Response** `{ data: { found: boolean; url: string | null; models: string[] } }`.
 
-### `POST /api/ai/action` — session only
+### `POST /api/ai/action` 🔑 Bearer
 Runs one AI transformation against arbitrary text, using the caller's configured provider. `400 AI not configured` if `ai_settings` has no row for the user yet.
 
 **Body**
