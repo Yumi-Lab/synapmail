@@ -58,6 +58,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `--break=session`, `--break=ref`) : neuf en tout, neuf attrapés.
 
 ### Fixed
+- **Le contrat servi porte l'adresse à laquelle l'instance répond** (`app/openapi.json/route.ts`,
+  `lib/apiDocs.ts`, `docs/openapi.json`, `scripts/check-api-docs.mjs`) : le fichier annonçait une
+  adresse « remplacée à l'exécution » alors que la route le servait tel quel — la description était
+  fausse et l'entrée `servers` restait `/`. Plusieurs importeurs d'outils d'agents refusent un contrat
+  dont ils ne peuvent pas résoudre l'adresse de base. La route pose maintenant `servers` au moment de
+  servir, depuis la même `appOrigin()` que `/llms.txt` : adresse configurée d'abord, en-têtes
+  transférés à défaut, hôte du conteneur jamais. Le fichier sur disque garde `/` comme repli, pour le
+  cas où rien ne dit à l'instance comment elle s'appelle. Quatre contrôles de plus, dont un contrôle
+  négatif `--break=servers` : servir ne change QUE l'entrée `servers`, et la route passe par cet unique
+  assistant au lieu d'en recopier la logique.
+
+### Documentation
+- **La doc dit d'où viennent les liens servis** (`docs/API.md`, `README.md`) : l'entrée `GET /llms.txt`
+  affirmait encore que les liens sont construits « depuis l'origine de la requête », ce qui est faux
+  depuis `appOrigin()`. Elle nomme désormais l'adresse configurée puis les en-têtes transférés, et
+  l'entrée `GET /openapi.json` dit que son `servers` est posé au moment de servir. Le README gagne une
+  sous-section « Reading the API from the outside » qui liste en une ligne chacun les trois points
+  publics — `/api/docs`, `/llms.txt`, `/openapi.json` — qu'un agent lit avant d'avoir une clé.
+
+### Fixed
 - **Les liens publics portent l'adresse de l'instance, jamais l'hôte du conteneur**
   (`lib/appOrigin.ts`, `app/llms.txt/route.ts`, `app/api/messages/send/route.ts`,
   `app/api/accounts/[id]/shares/route.ts`, `lib/msOAuth.ts`, `lib/publicPaths.ts`, `package.json`) :
