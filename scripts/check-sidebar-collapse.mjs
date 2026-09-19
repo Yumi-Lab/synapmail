@@ -923,8 +923,13 @@ try {
   const smallest = inventory.filter(a => a.custom > 0 && a.id !== biggest.id)
     .reduce((least, a) => (a.custom < least.custom ? a : least), { custom: Infinity })
   if (!Number.isFinite(smallest.custom)) { console.error('HARNESS: this database has fewer than two mailboxes carrying custom folders — the switch cannot be measured'); process.exit(2) }
+  // sidebar_collapsed is a server-side preference too, and it survives between runs the
+  // same way: every toggle() below counts from the state the PREVIOUS run left behind, so
+  // an odd number of folds leaves the next run starting collapsed and reading every
+  // "expanded" probe in the wrong state. Pinned expanded here, alongside the active
+  // account, so the sequence of folds below always starts from a known state.
   await page.evaluate(async ({ base, id }) => {
-    await fetch(`${base}/api/settings`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active_account_id: id }) })
+    await fetch(`${base}/api/settings`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active_account_id: id, sidebar_collapsed: false }) })
   }, { base: BASE, id: smallest.id })
   await gotoOrHarness(`${BASE}/mail`)
   await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
