@@ -27,6 +27,8 @@ import puppeteer from 'puppeteer-core'
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const VIEWPORT = { width: 1440, height: 900 }
 const FAKE_PORT = 11499
+/** Ports `detectLocal` probes, in order, see LOCAL_DETECT_PORTS in lib/ai.ts. */
+const DETECT_PORTS = [11434, 1234, 8080]
 const FAKE_REPLY = 'reponse du modele local'
 const REMOTE_URL = 'http://192.168.1.20:11434/v1'
 
@@ -171,6 +173,74 @@ try {
   check(blocked.blocked, 'without its CORS header, the browser blocks the local model')
   check(blocked.origin === new URL(BASE).origin, `the help quotes the site's real origin (${blocked.origin})`)
   corsEnabled = true
+
+  // ── 4. "Detect automatically" reaches a local server and shows its models ──
+  // Gate of 2026-09-20 (a): the button was not rendered for this provider, so
+  // the model chips were unreachable and the model had to be typed by hand.
+  //
+  // `detectLocal` probes fixed ports in order and stops at the FIRST that
+  // answers, so the chips can only be attributed to a known server. This bench
+  // therefore finds that first answering port itself, from node: if one is
+  // already taken on this machine (a real Ollama, say), it is the one detect
+  // will reach, and the expected models are read from it rather than assumed.
+  // Nothing running on this machine is ever stopped by this bench.
+  const detectTarget = await (async () => {
+    for (const port of DETECT_PORTS) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/v1/models`, { signal: AbortSignal.timeout(2000) })
+        if (!res.ok) continue
+        const json = await res.json()
+        return { port, models: (json.data ?? []).map(m => m.id), fake: false }
+      } catch {
+        // Nothing there: try the next one.
+      }
+    }
+    return null
+  })()
+
+  let detectFake = null
+  let target = detectTarget
+  if (!target) {
+    // No local server at all on this machine: serve the fake on the first
+    // probed port so the detect path still has something to find.
+    detectFake = createServer(fake.listeners('request')[0])
+    await new Promise(r => detectFake.listen(DETECT_PORTS[0], '127.0.0.1', r))
+    target = { port: DETECT_PORTS[0], models: ['fake-local-model'], fake: true }
+  }
+  console.log(`detect leg: expecting the models of 127.0.0.1:${target.port} (${target.fake ? 'fake started by this bench' : 'already running on this machine'}): ${JSON.stringify(target.models)}`)
+
+  try {
+    await page.goto(`${BASE}/settings/ai`, { waitUntil: 'networkidle2' })
+    await page.waitForSelector('button', { timeout: 15000 })
+    const localLabel = JSON.parse(readFileSync(new URL('../locales/fr.json', import.meta.url), 'utf8'))
+      .settings.ai.provider.local
+    const picked = await page.evaluate(label => {
+      const card = [...document.querySelectorAll('button')]
+        .find(b => b.querySelector('p.text-sm.font-semibold')?.textContent?.trim() === label)
+      if (!card) return false
+      card.click()
+      return true
+    }, localLabel)
+    check(picked, `the local provider card was clicked (${JSON.stringify(localLabel)})`)
+
+    const clicked = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('button')].find(b => b.querySelector('svg.lucide-scan-search'))
+      if (!btn) return false
+      btn.click()
+      return true
+    })
+    check(clicked, 'the detect button is rendered for the local provider and was clicked')
+
+    const chips = await page.waitForFunction(() => {
+      const found = [...document.querySelectorAll('button.font-mono')].map(b => b.textContent.trim())
+      return found.length > 0 ? found : false
+    }, { timeout: 15000 }).then(h => h.jsonValue()).catch(() => [])
+    const missing = target.models.filter(m => !chips.includes(m))
+    check(chips.length > 0 && missing.length === 0,
+      `the detected models are shown as chips (missing ${JSON.stringify(missing)}, got ${JSON.stringify(chips)})`)
+  } finally {
+    if (detectFake) await new Promise(r => detectFake.close(r))
+  }
 } finally {
   if (restore) {
     const page = (await browser.pages())[0]

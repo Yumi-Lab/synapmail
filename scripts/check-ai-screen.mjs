@@ -25,6 +25,8 @@ const EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{1F1E6}-\u{1F1FF}]
 const BREAKAGES = {
   'emoji-in-screen': 'an emoji in the rendered screen goes unnoticed',
   'em-dash-in-screen': 'an em dash in the rendered screen goes unnoticed',
+  'detect-hidden-for-local': 'the local provider losing its detect button goes unnoticed',
+  'permission-said-twice': 'the permission sentence printed twice goes unnoticed',
 }
 const BREAK = process.argv.find(a => a.startsWith('--break='))?.slice('--break='.length) ?? null
 if (BREAK && !BREAKAGES[BREAK]) {
@@ -95,6 +97,49 @@ try {
       .map(b => !!b.querySelector('svg')))
   check(cardsWithIcon.length >= 5, `the five provider cards are on screen (found ${cardsWithIcon.length})`)
   check(cardsWithIcon.every(Boolean), 'every provider card carries an icon')
+
+  // ── the local provider, picked with a real click ──────────────────────────
+  // Gate of 2026-09-20 (a): with "Local, on this device" the detect button was
+  // not rendered at all, so the model chips were never reachable and the model
+  // had to be typed by hand.
+  const localLabel = locales[served[0] ?? 'fr'].settings.ai.provider.local
+  const picked = await page.evaluate(label => {
+    const card = [...document.querySelectorAll('button')]
+      .find(b => b.querySelector('p.text-sm.font-semibold')?.textContent?.trim() === label)
+    if (!card) return false
+    card.click()
+    return true
+  }, localLabel)
+  check(picked, `the local provider card is on screen and clickable (${JSON.stringify(localLabel)})`)
+  await new Promise(r => setTimeout(r, 500))
+
+  const detectVisible = await page.evaluate(breakIt => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.querySelector('svg.lucide-scan-search'))
+    if (breakIt && btn) btn.remove()
+    const shown = [...document.querySelectorAll('button')].some(b => b.querySelector('svg.lucide-scan-search'))
+    return shown
+  }, BREAK === 'detect-hidden-for-local')
+  check(detectVisible, 'the local provider offers the detect button')
+
+  // Gate of 2026-09-20 (c): the refused-permission sentence was printed twice,
+  // once inline and once in its own box. It must be said exactly once.
+  const permissionSentence = locales[served[0] ?? 'fr'].mail.ai.errors.permission
+  // The denied state is NOT reachable from this bench: a loopback origin is
+  // exempt from the browser permission, so the baseline count here is 0 and
+  // only the human gate on an HTTPS origin sees the sentence for real. The
+  // control therefore injects the defect exactly as the gate read it, twice.
+  const saidTimes = await page.evaluate(({ sentence, breakIt }) => {
+    const body = document.body
+    if (breakIt) {
+      for (let i = 0; i < 2; i++) {
+        const extra = document.createElement('p')
+        extra.textContent = sentence
+        body.appendChild(extra)
+      }
+    }
+    return body.innerText.split(sentence).length - 1
+  }, { sentence: permissionSentence, breakIt: BREAK === 'permission-said-twice' })
+  check(saidTimes <= 1, `the refused-permission sentence is never repeated (found ${saidTimes} time(s))`)
 } finally {
   await browser.close()
 }
