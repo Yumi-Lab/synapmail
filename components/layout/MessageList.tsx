@@ -16,6 +16,7 @@ import useSWR, { mutate as globalMutate } from 'swr'
 import type { Message, Folder, ReadReceipt } from '@/types/email'
 import type { EmailAccount } from '@/types/account'
 import { MessageContextMenu, type ContextMenuState } from '@/components/ui/MessageContextMenu'
+import { IconTooltip } from '@/components/ui/IconTooltip'
 import { ThinScroll } from './ThinScroll'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
@@ -1121,15 +1122,19 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
                 {t('searchStop')}
               </button>
             )}
-            <span
-              className="ml-auto shrink-0 text-muted-foreground/60"
-              title={t('searchDetails', {
-                fields: t('searchFieldsLabel'),
-                scope: searchScope === SCOPE_ALL ? t('searchAllFolders') : t('searchThisFolder'),
-              })}
-              data-search-details
-            >
-              <Info className="w-3.5 h-3.5" />
+            {/* `IconTooltip` et non l'attribut `title` natif : une seule bulle, au style de
+                l'application, posée sous l'icône. `align="end"` — l'icône est collée au
+                bord droit de la liste, une bulle centrée en sortirait. */}
+            <span className="ml-auto flex shrink-0 text-muted-foreground/60">
+              <IconTooltip
+                align="end"
+                label={t('searchDetails', {
+                  fields: t('searchFieldsLabel'),
+                  scope: searchScope === SCOPE_ALL ? t('searchAllFolders') : t('searchThisFolder'),
+                })}
+              >
+                <Info className="w-3.5 h-3.5" data-search-details />
+              </IconTooltip>
             </span>
           </div>
           {!isSearching && messages.length === 0 && (

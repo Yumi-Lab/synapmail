@@ -142,8 +142,11 @@ export async function listMessages(
   const client = await createClient(account)
   try {
     const mailbox = await client.mailboxOpen(folder)
-    // Size of the view being paged: the whole mailbox for "all", the MATCHES for a filter.
-    let total = mailbox.exists
+    // Two distinct sizes, never merged: `mailboxSize` is how many messages the folder holds
+    // (what the cache reconcile and the unread count reason about), `total` is the size of the
+    // VIEW being paged — the whole mailbox for "all", the MATCHES for a filter.
+    const mailboxSize = mailbox.exists
+    let total = mailboxSize
 
     // For "all" we derive the page range directly from mailbox.exists:
     // sequence numbers are 1..N, with N being the newest message.
@@ -152,7 +155,7 @@ export async function listMessages(
     // For filtered views (unread/starred) we still need SEARCH.
     let pageSeqs: number[]
     if (filter === 'all') {
-      const end = total - (page - 1) * perPage
+      const end = mailboxSize - (page - 1) * perPage
       const start = Math.max(1, end - perPage + 1)
       pageSeqs = []
       for (let seq = end; seq >= start; seq--) pageSeqs.push(seq)
@@ -232,8 +235,8 @@ export async function listMessages(
         const all = await client.search({ all: true }, { uid: true })
         if (Array.isArray(all)) {
           liveUids = all.map(String)
-        } else if (total === 0) {
-          liveUids = []          // genuinely empty mailbox
+        } else if (mailboxSize === 0) {
+          liveUids = []          // genuinely empty mailbox — NOT an empty filtered view
         }
         // a non-array result on a non-empty mailbox → leave null, skip pruning
       } catch {
@@ -242,7 +245,7 @@ export async function listMessages(
       // Authoritative unread count for this folder — server-side SEARCH UNSEEN,
       // not bounded by `perPage` like counting messages_cache rows would be.
       try {
-        if (total === 0) {
+        if (mailboxSize === 0) {
           unseenCount = 0
         } else {
           const unseen = await client.search({ seen: false }, { uid: true })

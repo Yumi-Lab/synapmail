@@ -131,7 +131,7 @@
     "searchCount": "{count, plural, one {# résultat} other {# résultats}}",
     "searchShown": "{shown} affichés",
     "searchDetails": "Cherché dans : {fields} · {scope}",
-    "searchProgress": "{searched} dossiers sur {folders}",
+    "searchProgress": "{searched, plural, one {# dossier} other {# dossiers}} sur {folders}",
     "searchStop": "Arrêter",
     "searchNoBodyHint": "Le corps des messages n’est pas cherché (limite du serveur de messagerie). Essayez un mot de l’objet ou une adresse.",
     "refresh": "Relever",
