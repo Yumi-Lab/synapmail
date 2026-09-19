@@ -182,7 +182,7 @@ check(/buildMessages\(\s*\n?\s*action,/.test(route),
   'route: the prompt is built by the shared builder, not rebuilt inline')
 check(/callAI\([^)]*\{\s*promptGuard\s*\}\s*\)/.test(route),
   'route: the mailbox flag is passed to callAI')
-check(/promptGuardApplies\(session\.user\.id, accountId\)/.test(route),
+check(/promptGuardApplies\(user\.id, accountId\)/.test(route),
   'route: the flag comes from the mailbox, not from the caller')
 
 // ── the callers ─────────────────────────────────────────────────────────────

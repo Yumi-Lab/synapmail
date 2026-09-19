@@ -1,4 +1,4 @@
-import { auth } from '@/lib/auth'
+import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import {
   callAI, buildMessages, isLoopbackUrl,
@@ -8,8 +8,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { promptGuardApplies } from '@/lib/accounts'
 
 export async function POST(req: NextRequest) {
-  const session = await auth()
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const user = await authenticate(req)
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json() as {
     action: AIAction
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   }>(
     `SELECT provider, api_key_encrypted, base_url, model, system_prompt
      FROM ai_settings WHERE user_id = $1`,
-    [session.user.id]
+    [user.id]
   )
 
   if (!rows[0]) {
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
   }
 
   // The mailbox the content belongs to decides — see lib/accounts.ts.
-  const promptGuard = await promptGuardApplies(session.user.id, accountId)
+  const promptGuard = await promptGuardApplies(user.id, accountId)
 
   try {
     const messages = buildMessages(
