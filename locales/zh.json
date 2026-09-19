@@ -253,7 +253,6 @@
       "title": "邮件账户",
       "add": "添加账户",
       "edit": "编辑",
-      "delete": "删除",
       "setDefault": "设为默认",
       "name": "账户名称",
       "email": "邮箱地址",
@@ -285,8 +284,6 @@
         "expiryLabel": "有效期（可选）",
         "sendInvite": "发送邀请",
         "inviteFailed": "邀请发送失败",
-        "revoke": "撤销",
-        "revokeConfirm": "撤销该受邀人的访问权限？",
         "emailSendFailedWarning": "邀请已创建，但邮件未能发送。",
         "expiresOn": "{date} 到期",
         "status": {
@@ -301,16 +298,24 @@
           "canOrganize": "整理（标记、移动、稍后处理）",
           "canManageRules": "管理规则",
           "canManageSignatures": "管理签名"
-        }
+        },
+        "rowMenu": "{name} 的操作",
+        "revokeLabel": "撤销访问权限…",
+        "revokeNamed": "撤销 {email} 对此邮箱的访问权限？将立即生效，之后仍可重新邀请。"
       },
       "receivedShares": {
         "title": "共享给我的邮箱",
         "empty": "暂无他人共享给你的邮箱",
         "sharedBy": "由 {name} 共享",
-        "leave": "移除此共享",
-        "leaveConfirm": "确定移除此共享？你将失去对该邮箱的访问权限。",
-        "leaveFailed": "移除共享失败"
-      }
+        "leaveFailed": "移除共享失败",
+        "rowMenu": "{name} 的操作",
+        "leaveLabel": "退出此共享…",
+        "leaveNamed": "退出由 {owner} 共享的邮箱“{email}”？您将失去访问权限；所有者可以再次共享。"
+      },
+      "rowMenu": "{name} 的操作",
+      "deleteAccount": "删除账户…",
+      "deleteConfirm": "从本邮箱客户端删除账户“{email}”？邮件仍保存在您的服务商处，仅移除此处的访问权限。",
+      "share": "共享"
     },
     "profile": {
       "title": "个人资料",

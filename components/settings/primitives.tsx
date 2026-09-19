@@ -28,6 +28,11 @@ export function SettingsPage({
 }) {
   return (
     <div
+      // Délimite le panneau des réglages, et LUI SEUL : la barre latérale garde sa
+      // corbeille (le DOSSIER Corbeille), qui n'a rien à voir avec une suppression de
+      // ligne. Sans cette borne, un banc qui cherche « une corbeille à l'écran » compte
+      // celle de la barre et accuse l'écran de réglages à tort.
+      data-settings-page
       className={cn(
         'mx-auto p-6 sm:p-8 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300',
         MAX_WIDTH[width],
