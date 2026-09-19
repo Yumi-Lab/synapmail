@@ -172,6 +172,17 @@ try {
   }, { base: BASE, email: EMAIL, password: PASSWORD })
   if (!loggedIn) harness('credentials login failed')
 
+  // Une execution TUEE (plafond de tours, Ctrl-C) n'atteint jamais son `finally` :
+  // sa boite trou-noir reste et fait attendre chaque balayage suivant. Le banc se
+  // nettoie donc a l'ENTREE, pas seulement a la sortie.
+  const leaked = await page.evaluate(async host => {
+    const all = (await (await fetch('/api/accounts')).json()).data ?? []
+    const stale = all.filter(a => a.imapHost === host)
+    for (const a of stale) await fetch(`/api/accounts/${a.id}`, { method: 'DELETE' }).catch(() => {})
+    return stale.length
+  }, BLACKHOLE_HOST)
+  if (leaked) console.log(`cleanup: removed ${leaked} leaked bench mailbox(es) from a killed run`)
+
   const accounts = await page.evaluate(async () =>
     (await (await fetch('/api/accounts')).json()).data ?? [])
   if (accounts.length < 2) harness(`the \"all mailboxes\" scope needs at least 2 mailboxes, the test user has ${accounts.length}`)
