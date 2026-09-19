@@ -16,6 +16,7 @@ import type { EmailAccount } from '@/types/account'
 import { useMailSelection } from '@/lib/mailSelection'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { FlagPicker } from '@/components/mail/FlagPicker'
+import { ThinScroll } from './ThinScroll'
 
 const fetcher = async (url: string) => {
   const r = await fetch(url)
@@ -859,7 +860,7 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
 
   if (!uid) {
     return (
-      <div className="h-full overflow-y-auto flex items-center justify-center px-6 py-10 select-none">
+      <ThinScroll className="h-full" viewportClassName="flex items-center justify-center px-6 py-10 select-none">
         <div className="w-full max-w-md">
           <div className="flex items-center gap-2 mb-4">
             <span className="h-[2px] w-9 rounded-full bg-gradient-to-r from-violet-500 to-blue-500" />
@@ -900,7 +901,7 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
             <span className="flex items-center gap-1.5"><kbd className="font-mono font-bold text-foreground/50 text-[10px]">#</kbd> {t('delete')}</span>
           </div>
         </div>
-      </div>
+      </ThinScroll>
     )
   }
 
@@ -1064,9 +1065,9 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
       )}
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <ThinScroll className="flex-1">
         <EmailBody message={message} />
-      </div>
+      </ThinScroll>
     </div>
   )
 }
