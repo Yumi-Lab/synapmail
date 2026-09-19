@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { accountOrderBy } from '@/lib/accounts'
+import { ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
 import { encrypt } from '@/lib/encrypt'
 
 export const dynamic = 'force-dynamic'
@@ -61,8 +62,7 @@ export async function GET(req: Request) {
          WHERE is_read = false AND folder ILIKE 'INBOX'
          GROUP BY account_id
        ) um ON um.account_id = a.id
-       WHERE sh.invitee_user_id = $1 AND sh.status = 'active'
-         AND (sh.expires_at IS NULL OR sh.expires_at > NOW())
+       WHERE sh.invitee_user_id = $1 AND ${ACTIVE_SHARE_SQL}
 
        ${accountOrderBy({ isDefault: '"isDefault"', createdAt: '"createdAt"', id: 'id' })}`,
       [authCtx.id]

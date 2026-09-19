@@ -811,23 +811,14 @@ export interface UnsubscribedEntry {
 }
 
 /**
- * Every mailbox id this user may READ: their own, plus the ones an active,
- * non-expired share gives them. Same rule as `getAccessibleAccount(id, user, [])`,
- * asked for the whole set instead of one id — the history route needs the set
- * when no mailbox is named.
+ * Every mailbox id this user may READ. The RULE itself is not spelled here: it
+ * lives once in `lib/accountAccess.ts`, so a share gaining a state or a date is
+ * a one-line change. The history route needs the set of ids, nothing more.
  */
 export async function accessibleAccountIds(userId: string): Promise<string[]> {
-  const { query } = await import('./db')
-  const rows = await query<{ id: string }>(
-    `SELECT a.id FROM email_accounts a WHERE a.user_id = $1
-     UNION
-     SELECT a.id FROM account_shares sh
-     JOIN email_accounts a ON a.id = sh.account_id
-     WHERE sh.invitee_user_id = $1 AND sh.status = 'active'
-       AND (sh.expires_at IS NULL OR sh.expires_at > NOW())`,
-    [userId]
-  )
-  return rows.map(r => r.id)
+  const { listAccessibleAccounts } = await import('./accountAccess')
+  const accounts = await listAccessibleAccounts(userId)
+  return accounts.map(a => a.id)
 }
 
 /**

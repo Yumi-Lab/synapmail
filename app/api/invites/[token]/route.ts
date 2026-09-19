@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
+import { SHARE_NOT_EXPIRED_SQL } from '@/lib/accountAccess'
 import { schedulerEvents } from '@/lib/schedulerEvents'
 
 export const dynamic = 'force-dynamic'
@@ -24,16 +25,16 @@ type PendingShare = {
 async function findPendingShare(token: string): Promise<PendingShare | null> {
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex')
   const rows = await query<PendingShare>(
-    `SELECT s.id, s.account_id, s.invitee_user_id, s.can_send, s.can_delete, s.can_organize,
-            s.can_manage_rules, s.can_manage_signatures,
+    `SELECT sh.id, sh.account_id, sh.invitee_user_id, sh.can_send, sh.can_delete, sh.can_organize,
+            sh.can_manage_rules, sh.can_manage_signatures,
             a.email AS account_email, owner.id AS owner_id, owner.name AS owner_name,
             invitee.email AS invitee_email
-     FROM account_shares s
-     JOIN email_accounts a ON a.id = s.account_id
-     JOIN users owner ON owner.id = s.invited_by
-     JOIN users invitee ON invitee.id = s.invitee_user_id
-     WHERE s.invite_token_hash = $1 AND s.status = 'pending'
-       AND (s.expires_at IS NULL OR s.expires_at > NOW())
+     FROM account_shares sh
+     JOIN email_accounts a ON a.id = sh.account_id
+     JOIN users owner ON owner.id = sh.invited_by
+     JOIN users invitee ON invitee.id = sh.invitee_user_id
+     WHERE sh.invite_token_hash = $1 AND sh.status = 'pending'
+       AND ${SHARE_NOT_EXPIRED_SQL}
      LIMIT 1`,
     [tokenHash]
   )
