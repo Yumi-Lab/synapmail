@@ -93,6 +93,9 @@ const constOf = (src, name) => src.match(new RegExp(`export const ${name} = '([^
 const Q_PARAM = constOf(SEARCH_SRC, 'SEARCH_PARAM')
 const SCOPE_P = constOf(SEARCH_SRC, 'SCOPE_PARAM')
 const SCOPE_ACC = constOf(SEARCH_SRC, 'SCOPE_ACCOUNTS')
+/** Lot H3g : la puce de portée dans le champ, et le menu qu'elle ouvre. */
+const SCOPE_TRIGGER = '[data-omnibar-scope-trigger]'
+const SCOPE_MENU = '[data-omnibar-scope-menu]'
 const ORIGIN_SRC = readFileSync(new URL('../lib/mailOrigin.ts', import.meta.url), 'utf8')
 const ORIGIN_ATTR = ORIGIN_SRC.match(/MAIL_ORIGIN_ATTR = '([^']+)'/)?.[1]
 // L'attribut que la LISTE pose sur son propre conteneur : il sert ici à trouver le
@@ -575,8 +578,10 @@ try {
   check('a real click on the chip opens the scope menu', await openScopeMenu(), 'menu present')
   const scopeState = () => page.evaluate(scopeParam => ({
     scope: new URLSearchParams(location.search).get(scopeParam),
+    // Lot H3g : la coche vit sur l'entrée du menu (`aria-checked`). Menu fermé, il
+    // n'y a rien à lire — c'est pourquoi la lecture se fait menu OUVERT.
     pressed: [...document.querySelectorAll('[data-omnibar-scope]')]
-      .filter(el => el.getAttribute('aria-pressed') === 'true')
+      .filter(el => el.getAttribute('aria-checked') === 'true')
       .map(el => el.dataset.omnibarScope),
   }), SCOPE_P)
   // L'ordre du geste : élargir d'abord, puis revenir au dossier — revenir en
@@ -596,7 +601,7 @@ try {
     }, value)
     if (!target) { console.log(`  note scope "${value}" is not offered (single mailbox, or folded away) — nothing to click`)
       continue }
-    check(`the "${value}" segment is what a click at its centre would hit`, target.hit === 'self', target.hit)
+    check(`the "${value}" menu entry is what a click at its centre would hit`, target.hit === 'self', target.hit)
     searchRequests.length = 0
     const t = Date.now()
     await page.mouse.click(target.cx, target.cy)
@@ -605,15 +610,21 @@ try {
     let got = null
     while (Date.now() - t < SCOPE_CLICK_TIMEOUT_MS) {
       got = await scopeState()
-      if (got.scope === wanted && got.pressed.length === 1 && got.pressed[0] === value) break
+      if (got.scope === wanted) break
       await new Promise(r => setTimeout(r, 100))
     }
     const waited = Date.now() - t
     check(`a real mouse click on "${value}" puts it in the URL`, got?.scope === wanted,
       `${SCOPE_P}=${got?.scope ?? '(absent)'} after ${waited} ms, wanted ${wanted ?? '(absent)'}`)
-    check(`a real mouse click on "${value}" presses that segment alone`,
-      got?.pressed.length === 1 && got.pressed[0] === value,
-      `pressed: ${got?.pressed.join(', ') || 'none'}`)
+    // Choisir FERME le menu : c'est la demande (« choisir une portée ferme le menu »).
+    check(`choosing "${value}" closes the scope menu`, (await page.$(SCOPE_MENU)) === null, 'menu closed')
+    // La coche se lit menu ROUVERT — elle n'existe que là, sur l'entrée choisie.
+    const checked = (await openScopeMenu()) ? (await scopeState()).pressed : []
+    check(`the "${value}" entry alone carries the check mark`,
+      checked.length === 1 && checked[0] === value, `checked: ${checked.join(', ') || 'none'}`)
+    // Refermer proprement avant la mesure de la liste : le menu ne doit pas rester
+    // ouvert par-dessus les résultats qu'on s'apprête à compter.
+    await page.keyboard.press('Escape')
     // La navigation ne suffit pas : la LISTE doit effectivement passer dans cette
     // portée. Mesuré sur le rendu, pas sur le réseau — une clé déjà chargée est
     // servie par le cache SWR sans requête, et compter les requêtes déclarerait
