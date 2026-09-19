@@ -400,6 +400,12 @@ export async function initDb(): Promise<void> {
       UNIQUE(account_id, group_key)
     )
   `)
+  // L'historique survit au rangement : une fois les messages déplacés, le groupe
+  // disparaît de `GET /api/subscriptions` mais la ligne reste, avec de quoi la
+  // lire sans la boîte (expéditeur, List-Id, résultat).
+  await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS sender_address TEXT`)
+  await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS sender_name TEXT`)
+  await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS list_id TEXT`)
 
   // Identité de l'instance — UNE seule ligne, forcée par `id BOOLEAN PRIMARY KEY DEFAULT TRUE`
   // contraint à TRUE : une deuxième insertion viole la clé primaire. Tout à NULL = apparence

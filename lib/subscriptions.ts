@@ -95,6 +95,14 @@ export interface Subscription {
   lastUid: string
   method: UnsubscribeMethod
   unsubscribedAt: string | null
+  /** The folder these UIDs belong to — an UID means nothing without it. */
+  folder: string
+  /**
+   * Every UID of this group INSIDE the window that was read. An agent files or
+   * deletes them with the existing `PATCH`/`DELETE /api/messages/bulk`: there is
+   * no cleaning route here and no copy of their logic.
+   */
+  uids: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -273,30 +281,34 @@ export function manualUrl(h: Pick<SubscriptionHeaders, 'uris'>): string | undefi
 export function groupSubscriptions(
   accountId: string,
   headers: SubscriptionHeaders[],
-  unsubscribedAt: Map<string, string> = new Map()
+  unsubscribedAt: Map<string, string> = new Map(),
+  folder = 'INBOX'
 ): Subscription[] {
-  const groups = new Map<string, { key: string; newest: SubscriptionHeaders; count: number }>()
+  const groups = new Map<string, { key: string; newest: SubscriptionHeaders; uids: string[] }>()
   for (const h of headers) {
     const key = groupingKey(h)
     const existing = groups.get(key)
     if (!existing) {
-      groups.set(key, { key, newest: h, count: 1 })
+      groups.set(key, { key, newest: h, uids: [h.uid] })
       continue
     }
-    existing.count += 1
+    existing.uids.push(h.uid)
     if (dateRank(h.date) > dateRank(existing.newest.date)) existing.newest = h
   }
   return Array.from(groups.values())
-    .map(({ key, newest, count }) => ({
+    .map(({ key, newest, uids }) => ({
       id: subscriptionId(accountId, key),
       sender: newest.from,
       ...(newest.listId ? { listId: newest.listId } : {}),
-      count,
+      // `count` is exactly `uids.length`: one number, one list, never two truths.
+      count: uids.length,
       lastDate: newest.date,
       lastSubject: newest.subject,
       lastUid: newest.uid,
       method: methodOf(newest),
       unsubscribedAt: unsubscribedAt.get(key) ?? null,
+      folder,
+      uids,
     }))
     .sort((a, b) => b.count - a.count || a.sender.address.localeCompare(b.sender.address))
 }
@@ -618,7 +630,7 @@ export async function listSubscriptions(
     readSubscriptionHeaders(account, folder),
     recordedUnsubscriptions(accountId),
   ])
-  return groupSubscriptions(accountId, headers, already)
+  return groupSubscriptions(accountId, headers, already, folder)
 }
 
 export interface UnsubscribeReport {
@@ -646,11 +658,17 @@ export interface UnsubscribeRequest {
 }
 
 /** What must be DONE for one requested id, decided without any effect. */
+/** What a carried-out plan records about who was left. */
+interface PlannedSender {
+  sender: EmailAddress
+  listId: string | undefined
+}
+
 export type UnsubscribePlan =
   | { id: string; action: 'not_found' }
   | { id: string; action: 'manual'; method: 'link'; url: string }
-  | { id: string; action: 'one-click'; method: 'one-click'; key: string; url: string }
-  | { id: string; action: 'mailto'; method: 'mailto'; key: string; address: string; subject: string }
+  | ({ id: string; action: 'one-click'; method: 'one-click'; key: string; url: string } & PlannedSender)
+  | ({ id: string; action: 'mailto'; method: 'mailto'; key: string; address: string; subject: string } & PlannedSender)
   | { id: string; action: 'failed'; method: UnsubscribeMethod; reason: 'no-target' }
 
 /** Default subject of a mailto unsubscribe, when the list does not ask for one. */
@@ -689,7 +707,8 @@ export function planUnsubscribe(
     if (!group) return { id, action: 'not_found' }
     const { key, h } = group
     const method = methodOf(h)
-    if (method === 'one-click') return { id, action: 'one-click', method, key, url: h.uris.https[0] }
+    const who: PlannedSender = { sender: h.from, listId: h.listId }
+    if (method === 'one-click') return { id, action: 'one-click', method, key, url: h.uris.https[0], ...who }
     if (method === 'mailto') {
       const address = h.uris.mailto.map(mailtoAddress).find((a): a is string => !!a)
       if (!address) return { id, action: 'failed', method, reason: 'no-target' }
@@ -700,6 +719,7 @@ export function planUnsubscribe(
         key,
         address,
         subject: mailtoSubject(h.uris.mailto[0]) ?? MAILTO_SUBJECT,
+        ...who,
       }
     }
     const page = manualUrl(h)
@@ -737,7 +757,7 @@ async function carryOut(plan: UnsubscribePlan, req: UnsubscribeRequest): Promise
       return { id: plan.id, outcome: 'failed', method: plan.method, reason: 'transport' }
     }
   }
-  await recordUnsubscription(req.accountId, plan.key, plan.method)
+  await recordUnsubscription(req.accountId, plan.key, plan.method, plan.sender, plan.listId)
   return { id: plan.id, outcome: 'done', method: plan.method }
 }
 
@@ -756,12 +776,91 @@ async function mapBounded<T, R>(items: T[], limit: number, work: (item: T) => Pr
   return out
 }
 
-/** Remembers a completed unsubscribe, so a later list can say so. */
-async function recordUnsubscription(accountId: string, key: string, method: UnsubscribeMethod): Promise<void> {
+/**
+ * Remembers a completed unsubscribe, so a later list can say so. The sender is
+ * stored WITH the row: once the messages are filed away, the group is gone from
+ * the list and the key alone would no longer name anyone.
+ */
+async function recordUnsubscription(
+  accountId: string,
+  key: string,
+  method: UnsubscribeMethod,
+  sender: EmailAddress,
+  listId: string | undefined
+): Promise<void> {
   const { query } = await import('./db')
   await query(
-    `INSERT INTO unsubscriptions (account_id, group_key, method) VALUES ($1, $2, $3)
-     ON CONFLICT (account_id, group_key) DO UPDATE SET method = EXCLUDED.method, created_at = NOW()`,
-    [accountId, key, method]
+    `INSERT INTO unsubscriptions (account_id, group_key, method, sender_address, sender_name, list_id)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (account_id, group_key) DO UPDATE
+       SET method = EXCLUDED.method, created_at = NOW(),
+           sender_address = EXCLUDED.sender_address,
+           sender_name = EXCLUDED.sender_name,
+           list_id = EXCLUDED.list_id`,
+    [accountId, key, method, sender.address, sender.name, listId ?? null]
   )
+}
+
+/** One past unsubscribe, as `GET /api/subscriptions/unsubscribed` serves it. */
+export interface UnsubscribedEntry {
+  accountId: string
+  sender: EmailAddress
+  listId: string | null
+  method: UnsubscribeMethod
+  unsubscribedAt: string
+}
+
+/**
+ * Every mailbox id this user may READ: their own, plus the ones an active,
+ * non-expired share gives them. Same rule as `getAccessibleAccount(id, user, [])`,
+ * asked for the whole set instead of one id — the history route needs the set
+ * when no mailbox is named.
+ */
+export async function accessibleAccountIds(userId: string): Promise<string[]> {
+  const { query } = await import('./db')
+  const rows = await query<{ id: string }>(
+    `SELECT a.id FROM email_accounts a WHERE a.user_id = $1
+     UNION
+     SELECT a.id FROM account_shares sh
+     JOIN email_accounts a ON a.id = sh.account_id
+     WHERE sh.invitee_user_id = $1 AND sh.status = 'active'
+       AND (sh.expires_at IS NULL OR sh.expires_at > NOW())`,
+    [userId]
+  )
+  return rows.map(r => r.id)
+}
+
+/**
+ * The history of the mailboxes given, newest first. It OUTLIVES the cleaning:
+ * the caller passes the ids it may read, so a mailbox that is not accessible
+ * can never appear — the filter is the id list, not a flag on the row.
+ */
+export async function listUnsubscribed(accountIds: string[]): Promise<UnsubscribedEntry[]> {
+  if (!accountIds.length) return []
+  const { query } = await import('./db')
+  const rows = await query<{
+    account_id: string
+    sender_address: string | null
+    sender_name: string | null
+    list_id: string | null
+    group_key: string
+    method: UnsubscribeMethod
+    created_at: string
+  }>(
+    `SELECT account_id, sender_address, sender_name, list_id, group_key, method, created_at
+     FROM unsubscriptions WHERE account_id = ANY($1::uuid[]) ORDER BY created_at DESC`,
+    [accountIds]
+  )
+  return rows.map(r => ({
+    accountId: r.account_id,
+    // Rows written before the sender was stored still read: the key holds the
+    // address (`from:…`) or the list (`list:…`) it was built from.
+    sender: {
+      name: r.sender_name ?? '',
+      address: r.sender_address ?? r.group_key.replace(/^(from|list):/, ''),
+    },
+    listId: r.list_id ?? (r.group_key.startsWith('list:') ? r.group_key.slice('list:'.length) : null),
+    method: r.method,
+    unsubscribedAt: new Date(r.created_at).toISOString(),
+  }))
 }

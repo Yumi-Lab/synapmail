@@ -209,6 +209,18 @@ ok('without a List-Id the sender address is the grouping key')
 assert.ok(grouped[0].count >= grouped[1].count)
 ok('groups are sorted by decreasing count')
 
+// A group carries the UIDs an agent files away with PATCH/DELETE
+// /api/messages/bulk — exactly its own messages, in the folder that was read.
+assert.deepEqual(grouped[0].uids, rotated.filter(h => h.listId).map(h => h.uid))
+assert.equal(grouped[0].uids.length, grouped[0].count, 'count and uids disagree')
+assert.deepEqual(grouped[1].uids, ['3'])
+const everyUid = grouped.flatMap(g => g.uids)
+assert.equal(new Set(everyUid).size, everyUid.length, 'a uid appears in two groups')
+assert.deepEqual([...everyUid].sort(), rotated.map(h => h.uid).sort(), 'the groups lose or invent a uid')
+assert.ok(grouped.every(g => g.folder === 'INBOX'))
+assert.equal(groupSubscriptions('acc-1', rotated, new Map(), 'Archive')[0].folder, 'Archive')
+ok('each group carries its own uids and the folder they belong to — nothing lost, nothing shared')
+
 // The id must survive a re-list (an agent stores it between two calls) and must
 // be different in another mailbox — it carries no address, no account id.
 assert.equal(groupSubscriptions('acc-1', rotated)[0].id, grouped[0].id)
@@ -579,6 +591,94 @@ if (process.argv.includes('--transport')) {
   ok('negative control: the pre-fix lookup convention IS caught here (transport)')
 }
 
+// ---------------------------------------------------------------------------
+// HISTORY ARM (--live). The history lives in the database and is served by a
+// route, so it is measured THROUGH THAT ROUTE — not by calling the module,
+// which would skip the access rule that is the whole point here. Rows are
+// written for two mailboxes of two DIFFERENT users and read back as each of
+// them; they are removed in the finally block. No unsubscribe is ever sent.
+const HISTORY_KEY = 'from:bench-history@example.invalid'
+const HISTORY_SENDER = 'bench-history@example.invalid'
+
+async function checkHistory(BASE, pool, ownAccountId, ownKey, makeKeyFor) {
+  console.log('\nhistory — survives the cleaning, never crosses a mailbox')
+  let failures = 0
+  const bad = msg => { console.error(`  KO  ${msg}`); failures += 1 }
+  const history = (key, account) =>
+    fetch(`${BASE}/api/subscriptions/unsubscribed${account ? `?account=${account}` : ''}`, {
+      headers: { authorization: `Bearer ${key}` },
+    }).then(async r => ({ status: r.status, body: await r.json() }))
+
+  // A mailbox belonging to SOMEBODY ELSE, and a key of theirs — the control.
+  const { rows: others } = await pool.query(
+    `SELECT a.id, a.user_id FROM email_accounts a
+     WHERE a.user_id <> (SELECT user_id FROM email_accounts WHERE id = $1) LIMIT 1`,
+    [ownAccountId]
+  )
+  const written = [ownAccountId, ...(others[0] ? [others[0].id] : [])]
+  let theirKey = null
+  try {
+    for (const id of written) {
+      await pool.query(
+        `INSERT INTO unsubscriptions (account_id, group_key, method, sender_address, sender_name)
+         VALUES ($1, $2, 'one-click', $3, 'Bench History')
+         ON CONFLICT (account_id, group_key) DO NOTHING`,
+        [id, HISTORY_KEY, HISTORY_SENDER]
+      )
+    }
+
+    const mine = await history(ownKey, ownAccountId)
+    const entry = mine.body.data?.find(e => e.sender?.address === HISTORY_SENDER)
+    if (mine.status !== 200 || !entry) bad(`a written entry is not read back: ${JSON.stringify(mine).slice(0, 200)}`)
+    else if (entry.method !== 'one-click' || !entry.unsubscribedAt) bad(`entry incomplete: ${JSON.stringify(entry)}`)
+    else console.log(`  ok  the history reads back the entry (sender, method, date) for its own mailbox`)
+
+    // No message of that sender is in the folder — the entry comes from the
+    // database, which is exactly what "outlives the cleaning" means.
+    const listed = await fetch(`${BASE}/api/subscriptions?account=${ownAccountId}&folder=INBOX`, {
+      headers: { authorization: `Bearer ${ownKey}` },
+    }).then(r => r.json())
+    if ((listed.data ?? []).some(g => g.sender?.address === HISTORY_SENDER)) {
+      bad('the bench sender is actually in the mailbox — the check below would prove nothing')
+    } else {
+      console.log('  ok  that sender has NO message in the folder, yet the history still holds it')
+    }
+
+    if (!others[0]) {
+      console.log('  --  only one user has a mailbox here: the crossing control could not run')
+    } else {
+      const theirId = others[0].id
+      // Unscoped: every mailbox this user may read, and nothing else.
+      const all = await history(ownKey)
+      if (all.status !== 200) bad(`the unscoped history answered ${all.status}`)
+      else if (all.body.data.some(e => e.accountId === theirId)) {
+        bad("another user's mailbox appeared in the unscoped history")
+      } else console.log(`  ok  the unscoped history holds ${all.body.data.length} entry(ies), none of the other user's`)
+
+      const denied = await history(ownKey, theirId)
+      if (denied.status !== 404) bad(`another user's mailbox answered ${denied.status}, expected 404`)
+      else console.log("  ok  naming another user's mailbox answers 404, leaking nothing")
+
+      // NEGATIVE CONTROL: that same row IS readable by the user who owns it.
+      // Without this, the absence above could just mean nothing was written.
+      theirKey = await makeKeyFor(others[0].user_id)
+      const theirs = await history(theirKey.raw, theirId)
+      if (theirs.status !== 200 || !theirs.body.data?.some(e => e.sender?.address === HISTORY_SENDER)) {
+        bad(`NEGATIVE CONTROL FAILED: the other entry is not readable by its own owner either ` +
+          `(${theirs.status}) — its absence above proves nothing`)
+      } else {
+        console.log("  ok  negative control: that same entry IS readable by the mailbox's own owner")
+      }
+    }
+  } finally {
+    for (const id of written) {
+      await pool.query('DELETE FROM unsubscriptions WHERE account_id = $1 AND group_key = $2', [id, HISTORY_KEY])
+    }
+    if (theirKey) await theirKey.drop()
+  }
+  return failures
+}
+
 console.log('\nsubscriptions: all checks passed')
 
 // ---------------------------------------------------------------------------
@@ -616,13 +716,26 @@ if (process.argv.includes('--live')) {
   if (!acc) { await pool.end(); console.error(`HARNESS: no email account for ${EMAIL}`); process.exit(2) }
 
   // A key of the bench's own, deleted in the finally block; never logged.
-  const RAW_KEY = 'syn_' + crypto.randomBytes(32).toString('hex')
-  const { rows: keyRows } = await pool.query(
-    `INSERT INTO api_keys (user_id, name, key_prefix, key_hash) VALUES ($1, $2, $3, $4) RETURNING id`,
-    [acc.owner_id, 'check-subscriptions bench', RAW_KEY.slice(0, 12),
-     crypto.createHash('sha256').update(RAW_KEY).digest('hex')]
-  )
-  const apiKeyId = keyRows[0].id
+  // One maker, reused for the control key of the other user in checkHistory.
+  const makeKeyFor = async userId => {
+    const raw = 'syn_' + crypto.randomBytes(32).toString('hex')
+    const { rows } = await pool.query(
+      `INSERT INTO api_keys (user_id, name, key_prefix, key_hash) VALUES ($1, $2, $3, $4) RETURNING id`,
+      [userId, 'check-subscriptions bench', raw.slice(0, 12),
+       crypto.createHash('sha256').update(raw).digest('hex')]
+    )
+    const id = rows[0].id
+    return {
+      raw,
+      id,
+      drop: async () => {
+        await pool.query('DELETE FROM api_key_requests WHERE api_key_id = $1', [id])
+        await pool.query('DELETE FROM api_keys WHERE id = $1', [id])
+      },
+    }
+  }
+  const ownKey = await makeKeyFor(acc.owner_id)
+  const RAW_KEY = ownKey.raw
   let liveFailures = 0
   const bad = msg => { console.error(`  KO  ${msg}`); liveFailures += 1 }
 
@@ -691,9 +804,41 @@ if (process.argv.includes('--live')) {
     } else {
       console.log('  ok  a forged id is not_found — no unsubscribe was sent for it')
     }
+    // The list an agent reads must carry what it needs to FILE the messages away.
+    if (res.status === 200 && Array.isArray(payload.data) && payload.data.length) {
+      for (const g of payload.data) {
+        if (g.folder !== 'INBOX') bad(`a group reports folder ${g.folder}, expected the one that was read`)
+        if (!Array.isArray(g.uids) || g.uids.length !== g.count) {
+          bad(`a group's uids do not match its count: ${JSON.stringify({ count: g.count, uids: g.uids }).slice(0, 120)}`)
+        }
+      }
+      const allUids = payload.data.flatMap(g => g.uids ?? [])
+      if (new Set(allUids).size !== allUids.length) bad('a uid is claimed by two groups')
+      else console.log(`  ok  ${allUids.length} uid(s) across ${payload.data.length} group(s), folder carried, none shared`)
+    }
+
+    // The history route, on the same real mailbox and through the same Bearer key.
+    const histRes = await fetch(`${BASE}/api/subscriptions/unsubscribed?account=${acc.id}`, {
+      headers: { authorization: `Bearer ${RAW_KEY}` },
+    })
+    const histBody = await histRes.json()
+    if (histRes.status !== 200 || !Array.isArray(histBody.data)) {
+      bad(`the history route answered ${histRes.status} — ${JSON.stringify(histBody).slice(0, 160)}`)
+    } else {
+      console.log(`  ok  the history route answers 200 with ${histBody.data.length} entry(ies)`)
+    }
+    const histAnon = await fetch(`${BASE}/api/subscriptions/unsubscribed`)
+    if (histAnon.status !== 401) bad(`the history without a credential answered ${histAnon.status}, expected 401`)
+    else console.log('  ok  the history without a credential answers 401')
+    const histUnknown = await fetch(`${BASE}/api/subscriptions/unsubscribed?account=${'0'.repeat(8)}-0000-0000-0000-000000000000`, {
+      headers: { authorization: `Bearer ${RAW_KEY}` },
+    })
+    if (histUnknown.status !== 404) bad(`the history on an unknown account answered ${histUnknown.status}, expected 404`)
+    else console.log('  ok  the history on an unknown account answers 404')
+
+    liveFailures += await checkHistory(BASE, pool, acc.id, RAW_KEY, makeKeyFor)
   } finally {
-    await pool.query('DELETE FROM api_key_requests WHERE api_key_id = $1', [apiKeyId])
-    await pool.query('DELETE FROM api_keys WHERE id = $1', [apiKeyId])
+    await ownKey.drop()
     await pool.end()
   }
   if (liveFailures) {
