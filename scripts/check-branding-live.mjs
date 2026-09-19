@@ -18,7 +18,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { deflateSync } from 'node:zlib'
 import pg from 'pg'
 import puppeteer from 'puppeteer-core'
-import { DEFAULT_APP_NAME, FAVICON_PATH, detectImageType } from '../lib/branding.ts'
+import { BUNDLED_FAVICONS, DEFAULT_APP_NAME, FAVICON_PATH, detectImageType } from '../lib/branding.ts'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const VIEWPORT = { width: 1440, height: 900 }
@@ -125,6 +125,16 @@ const readIcon = (session, url) => session.evaluate(async target => {
 
 const iconHref = session => session.evaluate(() =>
   document.querySelector('link[rel~="icon"]')?.getAttribute('href') ?? null)
+
+/** EVERY icon link the page currently declares, in order -- a reset must restore them all. */
+const iconHrefs = session => session.evaluate(() =>
+  [...document.querySelectorAll('link[rel~="icon"]')].map(l => l.getAttribute('href') ?? ''))
+
+/** The admin screen's own button, found by its marker so the bench does not depend on a language. */
+const clickReset = async (session, target) => {
+  await session.click(`[data-branding-reset="${target}"]`)
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+}
 
 const login = async (session, email, password) => {
   await session.goto(`${BASE}/login`, { waitUntil: 'networkidle2' })
@@ -233,6 +243,27 @@ try {
   check(stillReadable.status === 200, `the icon stays readable for everyone (got ${stillReadable.status})`)
   await plain.close()
   await db.query("UPDATE users SET role = 'admin' WHERE id = $1", [benchId])
+
+  console.log('== the screen\'s own reset buttons restore EVERY bundled link, without a reload ==')
+  // Nicolas' F1 gate: after "restore the default icon" the page kept only ONE of the two
+  // bundled links until a reload. The bench now drives the BUTTON, not the route, and reads
+  // the links the page really declares -- compared against the shipped list itself.
+  await page.goto(`${BASE}/admin/users`, { waitUntil: 'networkidle2' })
+  await page.waitForSelector('[data-branding-reset="favicon"]')
+  const set = await put(page, { appName: CHOSEN_NAME, bytes: PNG })
+  check(set.status === 200, `the bench re-sets an identity to reset from (status ${set.status})`)
+  await page.reload({ waitUntil: 'networkidle2' })
+  await page.waitForSelector('[data-branding-reset="favicon"]')
+  await clickReset(page, 'favicon')
+  const restored = await iconHrefs(page)
+  const expected = BUNDLED_FAVICONS.map(i => i.url)
+  check(
+    JSON.stringify(restored) === JSON.stringify(expected),
+    `after the icon reset, and WITHOUT a reload, the page declares every bundled link (got ${JSON.stringify(restored)}, want ${JSON.stringify(expected)})`
+  )
+  await clickReset(page, 'name')
+  const titleAfterButton = await page.title()
+  check(titleAfterButton === DEFAULT_APP_NAME, `after the name reset, and WITHOUT a reload, the tab reads "${DEFAULT_APP_NAME}" (got "${titleAfterButton}")`)
 
   console.log('== both resets put the original look back ==')
   const afterName = await reset(page, 'name')

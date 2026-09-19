@@ -139,6 +139,7 @@ export function BrandingSection() {
           />
           <button
             type="button"
+            data-branding-reset="name"
             onClick={() => reset('name')}
             disabled={busy}
             className="mt-2 text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
@@ -174,6 +175,7 @@ export function BrandingSection() {
           <p className="mt-1 text-[11px] text-muted-foreground">{t('iconHint')}</p>
           <button
             type="button"
+            data-branding-reset="favicon"
             onClick={() => reset('favicon')}
             disabled={busy}
             className="mt-2 text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
