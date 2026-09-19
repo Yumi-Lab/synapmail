@@ -253,7 +253,6 @@
       "title": "Comptes email",
       "add": "Ajouter un compte",
       "edit": "Modifier",
-      "delete": "Supprimer",
       "setDefault": "Définir par défaut",
       "name": "Nom du compte",
       "email": "Adresse email",
@@ -285,8 +284,6 @@
         "expiryLabel": "Expiration (optionnel)",
         "sendInvite": "Envoyer l'invitation",
         "inviteFailed": "Échec de l'envoi de l'invitation",
-        "revoke": "Révoquer",
-        "revokeConfirm": "Révoquer l'accès de cet invité ?",
         "emailSendFailedWarning": "L'invitation a été créée mais l'email n'a pas pu être envoyé.",
         "expiresOn": "Expire le {date}",
         "status": {
@@ -301,16 +298,24 @@
           "canOrganize": "Organiser (marquer, déplacer, reporter)",
           "canManageRules": "Gérer les règles",
           "canManageSignatures": "Gérer les signatures"
-        }
+        },
+        "rowMenu": "Actions pour {name}",
+        "revokeLabel": "Retirer l’accès...",
+        "revokeNamed": "Retirer l’accès de {email} à cette boîte ? Il le perd immédiatement ; vous pourrez l’inviter à nouveau."
       },
       "receivedShares": {
         "title": "Boîtes partagées avec moi",
         "empty": "Personne ne vous a partagé de boîte",
         "sharedBy": "Partagée par {name}",
-        "leave": "Retirer ce partage",
-        "leaveConfirm": "Retirer ce partage ? Vous perdrez l'accès à cette boîte.",
-        "leaveFailed": "Le retrait du partage a échoué"
-      }
+        "leaveFailed": "Le retrait du partage a échoué",
+        "rowMenu": "Actions pour {name}",
+        "leaveLabel": "Quitter ce partage...",
+        "leaveNamed": "Quitter la boîte « {email} » partagée par {owner} ? Vous en perdez l’accès ; le propriétaire pourra la repartager."
+      },
+      "rowMenu": "Actions pour {name}",
+      "deleteAccount": "Supprimer le compte...",
+      "deleteConfirm": "Supprimer le compte « {email} » de ce webmail ? Les mails restent chez votre hébergeur, seul l’accès depuis ici est retiré.",
+      "share": "Partager"
     },
     "profile": {
       "title": "Profil",

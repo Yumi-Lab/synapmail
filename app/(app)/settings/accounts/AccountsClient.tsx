@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/PasswordInput'
 import { Label } from '@/components/ui/label'
 import { Plus, Pencil, Trash2, Wifi, Mail, Share2 } from 'lucide-react'
+import { RowMenu, ContextMenuItem, ContextMenuSeparator, MENU_ICON } from '@/components/ui/ContextMenu'
 import type { EmailAccount } from '@/types/account'
 import { AccountWizard } from './AccountWizard'
 import type { AccountFormData } from './AccountWizard'
@@ -107,16 +108,20 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
     mutate()
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm(t('delete') + ' ?')) return
-    await fetch(`/api/accounts/${id}`, { method: 'DELETE' })
+  // La confirmation NOMME la boîte et dit la conséquence : « supprimer » sur un écran
+  // de comptes peut se lire « effacer mes mails », ce qui est faux — ils restent chez
+  // l'hébergeur. Annuler ne part pas en requête.
+  const handleDelete = async (account: EmailAccount) => {
+    if (!confirm(t('deleteConfirm', { email: account.email }))) return
+    await fetch(`/api/accounts/${account.id}`, { method: 'DELETE' })
     mutate()
   }
 
   // Giving an inbox back writes the same `account_shares` row the owner's revoke does,
   // through the same route — a share ends one way, whoever ends it.
   const handleLeaveShare = async (account: EmailAccount) => {
-    if (!account.shareId || !confirm(tShared('leaveConfirm'))) return
+    if (!account.shareId) return
+    if (!confirm(tShared('leaveNamed', { email: account.email, owner: account.ownerName ?? account.email }))) return
     setLeavingId(account.id)
     try {
       const res = await fetch(`/api/accounts/${account.id}/shares/${account.shareId}`, { method: 'DELETE' })
@@ -256,7 +261,18 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
           {accounts?.map(account => (
             <div key={account.id}>
               <div className="rounded-xl border border-border bg-card shadow-sm">
-                <div className="flex items-center gap-3 p-4">
+                {/* Cliquer la ligne ouvre « Modifier » : c'est l'action évidente d'une boîte.
+                    Le geste part du fond de la ligne seul (`e.target === e.currentTarget` ne
+                    tiendrait pas : le nom et l'adresse en font partie), donc un clic sur la
+                    pastille de couleur, l'interrupteur ou « … » garde SON action. */}
+                <div
+                  className="flex items-center gap-3 p-4 cursor-pointer"
+                  data-account-row={account.id}
+                  onClick={e => {
+                    if ((e.target as HTMLElement).closest('button,input,a,[role="menu"]')) return
+                    openEdit(account)
+                  }}
+                >
                   <AccountAvatar
                     account={account}
                     colorIndex={rankOf(account)}
@@ -277,18 +293,24 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
                     onPreview={colour => patchAccount(account, { badgeColor: colour })}
                     onCommit={colour => saveAccount(account, { badgeColor: colour })}
                   />
-                  <Button
-                    variant="ghost" size="sm" className="h-8 w-8 p-0"
-                    onClick={() => setExpandedShareId(id => id === account.id ? null : account.id)}
-                  >
-                    <Share2 className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEdit(account)}>
-                    <Pencil className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={() => handleDelete(account.id)}>
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
+                  <RowMenu label={t('rowMenu', { name: account.name || account.email })} itemsKey={account.id}>
+                    {close => (<>
+                      <ContextMenuItem
+                        itemKey="share" icon={<Share2 className={MENU_ICON} />} label={t('share')}
+                        onClick={() => setExpandedShareId(id => id === account.id ? null : account.id)}
+                        onClose={close} enabled
+                      />
+                      <ContextMenuItem
+                        itemKey="edit" icon={<Pencil className={MENU_ICON} />} label={t('edit')}
+                        onClick={() => openEdit(account)} onClose={close} enabled
+                      />
+                      <ContextMenuSeparator />
+                      <ContextMenuItem
+                        itemKey="delete" icon={<Trash2 className={MENU_ICON} />} label={t('deleteAccount')}
+                        onClick={() => handleDelete(account)} onClose={close} enabled danger
+                      />
+                    </>)}
+                  </RowMenu>
                 </div>
                 <div className="flex items-center justify-between gap-4 border-t border-border px-4 py-2.5">
                   <span className="text-sm">{t('promptGuard')}</span>
@@ -325,15 +347,15 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
                       {tShared('sharedBy', { name: account.ownerName ?? account.email })}
                     </div>
                   </div>
-                  <Button
-                    variant="ghost" size="sm"
-                    className="h-8 gap-1.5 text-destructive hover:text-destructive"
-                    disabled={leavingId === account.id}
-                    onClick={() => handleLeaveShare(account)}
-                    data-leave-share
-                  >
-                    <Trash2 className="w-3.5 h-3.5" /> {tShared('leave')}
-                  </Button>
+                  <RowMenu label={tShared('rowMenu', { name: account.name || account.email })} itemsKey={account.id}>
+                    {close => (
+                      <ContextMenuItem
+                        itemKey="leave" icon={<Trash2 className={MENU_ICON} />} label={tShared('leaveLabel')}
+                        onClick={() => handleLeaveShare(account)} onClose={close}
+                        enabled={leavingId !== account.id} danger
+                      />
+                    )}
+                  </RowMenu>
                 </div>
               ))}
             </div>
