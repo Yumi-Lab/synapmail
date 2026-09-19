@@ -115,12 +115,23 @@ try {
     return el ? el.getBoundingClientRect().top : null
   }, ROW, index)
   const PROBE_ROW = 1
+  // The infinite scroll fetches a second page on its own, a few hundred ms in, and the
+  // rows move up by the height of what was below them (measured: 648px). Reading the
+  // "before" on one side of that arrival and the "after" on the other attributes the
+  // pagination to the selection. Wait for the row count to hold still first.
+  let settled = -1
+  for (let i = 0; i < 20; i++) {
+    const n = await page.$$eval(ROW, els => els.length)
+    if (n === settled) break
+    settled = n
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+  }
   const topBefore = await rowTop(PROBE_ROW)
   if (topBefore === null) { console.error(`HARNESS: row ${PROBE_ROW} is missing before the geometry probe`); process.exit(2) }
   await clickRow(0, ACCEL)
   const topAfter = await rowTop(PROBE_ROW)
   if (topAfter === null) { console.error(`HARNESS: row ${PROBE_ROW} vanished during the geometry probe`); process.exit(2) }
-  console.log(`row ${PROBE_ROW} top: before=${topBefore} after first selection=${topAfter} (expected identical)`)
+  console.log(`row ${PROBE_ROW} top (list settled at ${settled} rows): before=${topBefore} after first selection=${topAfter} (expected identical)`)
   if (Math.abs(topAfter - topBefore) > 0.5) failures.push(`the list shifts by ${(topAfter - topBefore).toFixed(1)}px when the first row is selected: the rectangle can no longer cut the rows under the pointer`)
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
