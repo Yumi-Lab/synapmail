@@ -79,7 +79,7 @@ interface ThreadGroup {
   count: number
 }
 
-const groupIntoThreads = (messages: Message[]): ThreadGroup[] => {
+const groupIntoThreads = (messages: readonly Message[]): ThreadGroup[] => {
   const map = new Map<string, Message[]>()
   for (const msg of messages) {
     const key = normalizeSubject(msg.subject) || msg.uid
@@ -105,6 +105,17 @@ const groupIntoThreads = (messages: Message[]): ThreadGroup[] => {
 
 // ─── time bucketing (Direction B — grouped list) ──────────────────────────
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
+
+/**
+ * « Pas encore de résultats » doit être LE MÊME tableau d'un rendu à l'autre. Un
+ * `?? []` écrit dans le corps en fabrique un neuf à chaque rendu : `threads` puis
+ * `checkedOrigins` changeaient alors d'identité sans que rien ne bouge, l'effet
+ * qui PUBLIE l'état de la boîte se rejouait, son nettoyage publiait `null`, le
+ * fournisseur re-rendait la liste — et la boucle repartait. Mesuré le 20/09/2026 :
+ * 478 « Maximum update depth exceeded » sur `/mail?q=facture`, au point qu'un clic
+ * sur le sélecteur de portée n'obtenait plus sa navigation.
+ */
+const NO_MESSAGES: readonly Message[] = []
 
 type DensityMode = 'comfortable' | 'compact'
 
@@ -366,7 +377,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     }
   }, [data, page, refreshKey])
 
-  const searchMessages = isStreamingScope ? streamed.messages : (searchData?.messages ?? [])
+  const searchMessages = isStreamingScope ? streamed.messages : (searchData?.messages ?? NO_MESSAGES)
   const messages = isSearchMode ? searchMessages : accumulated
   const total = data?.total ?? 0
   // Le serveur peut avoir trouvé plus que ce qu'il rend (plafond SEARCH_RESULT_LIMIT) :
