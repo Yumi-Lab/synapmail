@@ -40,6 +40,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   prouvent que la batterie rougit vraiment.
   Le `Dockerfile` copie `docs/` dans l'image : la sortie `standalone` ne l'emporte pas, et sans elle la
   référence servie répondrait 404.
+  Réglages → Clés API porte une ligne « Documentation de l'API » qui ouvre cette référence, en / fr / zh :
+  l'écran qui délivre une clé est celui où l'on cherche ce qu'elle ouvre.
 
 - **API des abonnements** (`lib/subscriptions.ts`, `GET /api/subscriptions`,
   `POST /api/subscriptions/unsubscribe`, `GET /api/subscriptions/unsubscribed`) : la liste des lettres
