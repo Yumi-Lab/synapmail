@@ -122,30 +122,46 @@ export function ThinScroll({ className, viewportClassName, viewportRef: outerVie
     el.scrollTop = ratio * (el.scrollHeight - el.clientHeight)
   }, [])
 
-  const onBandPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    // Mouse only, left button only: a finger keeps the platform's own scrolling, and the
-    // right button belongs to whatever context menu the caller put on the viewport.
-    if (e.pointerType !== 'mouse' || e.button !== 0) return
-    const el = viewportRef.current
-    if (!el || !thumb) return
-    // Stops the press from reaching the viewport underneath: no marquee, no row drag, no
-    // message opened — and no text selected while the thumb travels.
+  /**
+   * The band is a REGION of the host, not an element of its own. An overlay element
+   * would sit on top of the last 14px of every row and eat the right-clicks landing
+   * there — the context menu simply stopped opening near the right edge (measured by
+   * scripts/check-mail-context.mjs). A region tested in the CAPTURE phase intercepts
+   * exactly the left-button press that starts a drag and lets everything else — right
+   * click, touch, a click on the row underneath — reach its target untouched.
+   */
+  const inBand = (e: React.PointerEvent<HTMLDivElement>, host: DOMRect) =>
+    e.pointerType === 'mouse' && host.right - e.clientX <= THIN_SCROLL.bandWidth
+
+  const onPointerDownCapture = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    // Left button only: the right one belongs to whatever context menu the caller put
+    // on the viewport, and the middle one is not ours.
+    if (e.button !== 0 || !thumb) return
+    const host = e.currentTarget.getBoundingClientRect()
+    if (!inBand(e, host)) return
+    // Stops the press from reaching the viewport underneath: no marquee, no row drag,
+    // no message opened — and no text selected while the thumb travels.
     e.preventDefault()
     e.stopPropagation()
-    const y = e.clientY - e.currentTarget.getBoundingClientRect().top
+    const y = e.clientY - host.top
     const onThumb = y >= thumb.top && y <= thumb.top + thumb.height
-    // Pressing the bare band puts the thumb under the pointer and keeps dragging from there.
+    // Pressing the bare band puts the thumb under the pointer and drags on from there.
     grabOffset.current = onThumb ? y - thumb.top : thumb.height / 2
     if (!onThumb) scrollToThumbTop(y - grabOffset.current, thumb.height)
     e.currentTarget.setPointerCapture(e.pointerId)
     setDragging(true)
   }, [thumb, scrollToThumbTop])
 
-  const onBandPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragging || !thumb) return
-    const y = e.clientY - e.currentTarget.getBoundingClientRect().top
-    scrollToThumbTop(y - grabOffset.current, thumb.height)
+  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const host = e.currentTarget.getBoundingClientRect()
+    if (dragging && thumb) {
+      scrollToThumbTop(e.clientY - host.top - grabOffset.current, thumb.height)
+      return
+    }
+    setOverBand(inBand(e, host))
   }, [dragging, thumb, scrollToThumbTop])
+
+  const onPointerLeave = useCallback(() => setOverBand(false), [])
 
   const endDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!dragging) return
@@ -158,6 +174,11 @@ export function ThinScroll({ className, viewportClassName, viewportRef: outerVie
       {...rest}
       className={cn('relative flex flex-col min-h-0', className)}
       data-thin-scroll
+      onPointerDownCapture={onPointerDownCapture}
+      onPointerMove={onPointerMove}
+      onPointerLeave={onPointerLeave}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
     >
       <div
         {...viewportProps}
@@ -168,20 +189,6 @@ export function ThinScroll({ className, viewportClassName, viewportRef: outerVie
       >
         {children}
       </div>
-      {thumb && (
-        <div
-          aria-hidden
-          data-thin-scroll-band
-          className="absolute top-0 bottom-0 right-0"
-          style={{ width: THIN_SCROLL.bandWidth, touchAction: 'none' }}
-          onPointerEnter={e => { if (e.pointerType === 'mouse') setOverBand(true) }}
-          onPointerLeave={e => { if (e.pointerType === 'mouse') setOverBand(false) }}
-          onPointerDown={onBandPointerDown}
-          onPointerMove={onBandPointerMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-        />
-      )}
       {thumb && (
         <div
           aria-hidden

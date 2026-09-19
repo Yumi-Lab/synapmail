@@ -14,6 +14,8 @@
  *  - the pointer leaving the band lets the thumb fade back to 0;
  *  - the pointer parked in the MIDDLE of the list, without scrolling, keeps the
  *    thumb invisible (the hover rule must stay confined to the band);
+ *  - a right-click landing in the band still reaches the row underneath (the band is
+ *    a REGION tested on the press, not an overlay element that would eat the click);
  *  - the side bar's own scroll area gets the same band, from the same component.
  *
  * Every geometry and timing is READ from the shipped module (THIN_SCROLL): a rename
@@ -61,7 +63,7 @@ if (!IDLE_MS || !FADE_MS || !BAND_W || !MIN_THUMB) {
 
 const VIEWPORT_SEL = '[data-thin-scroll-viewport]'
 const THUMB_SEL = '[data-thin-scroll-thumb]'
-const BAND_SEL = '[data-thin-scroll-band]'
+const HOST_SEL = '[data-thin-scroll]'
 const MARQUEE_SEL = '[data-mail-marquee]'
 const ROW = '[data-mail-row]'
 // The rows carry no "checked" flag of their own: `aria-selected` is what the list
@@ -69,6 +71,7 @@ const ROW = '[data-mail-row]'
 const SELECTED = '[data-mail-row][aria-selected="true"]'
 const PANE_ACTION = '[data-reading-flag]'
 const SIDEBAR_SEL = 'aside'
+const MENU_SEL = '[data-mail-context-menu]'
 
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split('\n')) {
   const m = line.match(/^([A-Z_]+)=(.*)$/)
@@ -106,31 +109,31 @@ try {
   if (rowCount < MIN_ROWS) { console.error(`HARNESS: only ${rowCount} rows loaded, need ${MIN_ROWS} to overflow the list`); process.exit(2) }
 
   // Geometry of the list: the scrolling box, its band and its thumb, in page coords.
-  const geom = () => page.evaluate((rowSel, vpSel, bandSel, thumbSel) => {
+  // The band is a REGION of the host box, not an element: it is the last `bandWidth`
+  // px of the host's width. The bench aims at its middle, from the host's own rect.
+  const geom = () => page.evaluate((rowSel, vpSel, hostSel, thumbSel, bandW) => {
     const vp = document.querySelector(rowSel)?.closest(vpSel)
     if (!vp) return null
-    const host = vp.parentElement
-    const band = host?.querySelector(bandSel)
+    const host = vp.closest(hostSel)
     const thumb = host?.querySelector(thumbSel)
     const vr = vp.getBoundingClientRect()
-    const br = band?.getBoundingClientRect()
+    const hr = host?.getBoundingClientRect()
     const tr = thumb?.getBoundingClientRect()
     return {
       viewport: { left: vr.left, top: vr.top, width: vr.width, height: vr.height },
-      band: br ? { x: br.left + br.width / 2, top: br.top, width: Math.round(br.width), height: br.height } : null,
+      band: hr ? { x: hr.right - bandW / 2, top: hr.top, width: bandW, height: hr.height, right: hr.right } : null,
       thumb: tr ? { top: tr.top, height: tr.height, opacity: Number(getComputedStyle(thumb).opacity) } : null,
       scrollTop: vp.scrollTop,
       run: vp.scrollHeight - vp.clientHeight,
       clientHeight: vp.clientHeight,
     }
-  }, ROW, VIEWPORT_SEL, BAND_SEL, THUMB_SEL)
+  }, ROW, VIEWPORT_SEL, HOST_SEL, THUMB_SEL, BAND_W)
 
   let g = await geom()
   if (!g) { console.error('HARNESS: no ThinScroll viewport contains the list rows'); process.exit(2) }
-  if (!g.band) { console.error('HARNESS: no band element next to the list viewport'); process.exit(2) }
+  if (!g.band) { console.error('HARNESS: the list viewport is not inside a ThinScroll host'); process.exit(2) }
   if (g.run < DRAG_PX) { console.error(`HARNESS: the list only has ${Math.round(g.run)}px of run, need >= ${DRAG_PX}`); process.exit(2) }
-  console.log(`band width: ${g.band.width}px (module says ${BAND_W})`)
-  if (g.band.width !== BAND_W) failures.push(`the band is ${g.band.width}px wide, the module declares ${BAND_W}px`)
+  console.log(`band region: ${BAND_W}px along the host's right edge (x=${g.band.x.toFixed(1)}, host right=${g.band.right.toFixed(1)})`)
   console.log(`thumb height: ${g.thumb.height.toFixed(1)}px (module floor ${MIN_THUMB}px)`)
   if (g.thumb.height < MIN_THUMB - 0.5) failures.push(`the thumb is ${g.thumb.height.toFixed(1)}px tall, below the ${MIN_THUMB}px floor: it is not grabbable on a big mailbox`)
 
@@ -220,16 +223,30 @@ try {
   if (faded !== 0) failures.push(`the thumb stays visible (opacity ${faded}) once the pointer left the band`)
 
   // --- the side bar gets the same band, from the same component ---
-  const sidebar = await page.evaluate((asideSel, vpSel, bandSel) => {
+  // --- a right-click in the band still reaches the row underneath ---
+  // An overlay band would swallow it and the context menu would stop opening near the
+  // right edge — measured for real, not assumed from the implementation.
+  g = await geom()
+  const rowBox = await page.$eval(ROW, el => { const r = el.getBoundingClientRect(); return { y: Math.round(r.top + r.height / 2) } })
+  await page.mouse.click(Math.round(g.band.x), rowBox.y, { button: 'right' })
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const menus = await page.$$eval(MENU_SEL, els => els.length)
+  console.log(`right-click inside the band, on a row: menus open=${menus} (expected 1)`)
+  if (menus !== 1) failures.push(`a right-click landing in the band opened ${menus} menu(s): the band is eating the click instead of only answering the left button`)
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // --- the side bar drags through the same component ---
+  const sidebar = await page.evaluate((asideSel, vpSel, hostSel, thumbSel) => {
     const vp = document.querySelector(asideSel)?.querySelector(vpSel)
     if (!vp) return null
-    const band = vp.parentElement?.querySelector(bandSel)
-    return { overflows: vp.scrollHeight - vp.clientHeight, band: band ? Math.round(band.getBoundingClientRect().width) : null }
-  }, SIDEBAR_SEL, VIEWPORT_SEL, BAND_SEL)
+    const host = vp.closest(hostSel)
+    return { overflows: vp.scrollHeight - vp.clientHeight, host: !!host, thumb: !!host?.querySelector(thumbSel) }
+  }, SIDEBAR_SEL, VIEWPORT_SEL, HOST_SEL, THUMB_SEL)
   if (!sidebar) { console.error('HARNESS: no ThinScroll viewport in the side bar'); process.exit(2) }
-  console.log(`side bar: overflow=${sidebar.overflows}px band=${sidebar.band === null ? 'none' : `${sidebar.band}px`}`)
-  if (sidebar.overflows >= 1 && sidebar.band !== BAND_W) failures.push(`the side bar overflows by ${sidebar.overflows}px but its band is ${sidebar.band === null ? 'absent' : `${sidebar.band}px`}, expected ${BAND_W}px`)
-  if (sidebar.overflows < 1 && sidebar.band !== null) failures.push('the side bar does not overflow but still paints a band')
+  console.log(`side bar: overflow=${sidebar.overflows}px inside a ThinScroll host=${sidebar.host} thumb painted=${sidebar.thumb}`)
+  if (!sidebar.host) failures.push('the side bar scroll area is not inside a ThinScroll host: it cannot get the band')
+  if (sidebar.overflows >= 1 && !sidebar.thumb) failures.push(`the side bar overflows by ${sidebar.overflows}px but paints no thumb`)
 } finally {
   await browser.close()
 }
