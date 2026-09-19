@@ -36,6 +36,21 @@ export const TEST_DECISION = {
 
 export type TestDecision = (typeof TEST_DECISION)[keyof typeof TEST_DECISION]
 
+/** Ports par défaut, quand ni le compte ni le formulaire n'en donnent un utilisable. */
+export const DEFAULT_IMAP_PORT = 993
+export const DEFAULT_SMTP_PORT = 587
+
+/** Où et comment se connecter. Le mot de passe voyage à part : il n'est pas un réglage. */
+export interface TestConnection {
+  imapHost: string
+  imapPort: number
+  imapSecure: boolean
+  smtpHost: string
+  smtpPort: number
+  smtpSecure: boolean
+  username: string
+}
+
 /** Le strict minimum que la décision lit d'un compte. Jamais le mot de passe lui-même. */
 export interface TestableAccount {
   isOwner: boolean
@@ -43,7 +58,11 @@ export interface TestableAccount {
   hasStoredPassword: boolean
   /** Les réglages ENREGISTRÉS : les seules destinations du mot de passe enregistré. */
   imapHost: string | null
+  imapPort?: number | null
+  imapSecure?: boolean | null
   smtpHost: string | null
+  smtpPort?: number | null
+  smtpSecure?: boolean | null
   username: string | null
 }
 
@@ -54,7 +73,11 @@ export interface TestRequest {
   password?: string | null
   /** Ce que vise le FORMULAIRE. Comparé à l'enregistré avant d'envoyer un secret. */
   imapHost?: string | null
+  imapPort?: number | string | null
+  imapSecure?: boolean | null
   smtpHost?: string | null
+  smtpPort?: number | string | null
+  smtpSecure?: boolean | null
   username?: string | null
 }
 
@@ -128,17 +151,60 @@ export async function decideTestPassword(
  * demande. Le mot de passe enregistré n'est déchiffré que sur un `STORED` ; tout autre
  * verdict laisse le chargeur au repos, et l'auto-contrôle le vérifie.
  */
+const port = (value: number | string | null | undefined, fallback: number): number =>
+  Number(value) || fallback
+
+const text = (value: string | null | undefined): string => (value ?? '').trim()
+
+/** Les réglages du FORMULAIRE : ce qu'on essaie quand la personne a tapé son mot de passe. */
+export const formConnection = (req: TestRequest): TestConnection => ({
+  imapHost: text(req.imapHost),
+  imapPort: port(req.imapPort, DEFAULT_IMAP_PORT),
+  imapSecure: req.imapSecure ?? true,
+  smtpHost: text(req.smtpHost),
+  smtpPort: port(req.smtpPort, DEFAULT_SMTP_PORT),
+  smtpSecure: req.smtpSecure ?? false,
+  username: text(req.username),
+})
+
+/**
+ * Les réglages ENREGISTRÉS : ce qu'on essaie quand c'est le mot de passe enregistré qui
+ * part. `targetsSavedServer` a déjà établi que le formulaire désigne ce serveur-là ; s'y
+ * connecter avec les valeurs du compte supprime la dernière différence entre ce qui est
+ * COMPARÉ et ce qui est JOINT (une espace de bord, une majuscule, suffisaient à joindre un
+ * hôte que la comparaison avait accepté sous une autre écriture).
+ */
+export const savedConnection = (account: TestableAccount): TestConnection => ({
+  imapHost: text(account.imapHost),
+  imapPort: port(account.imapPort, DEFAULT_IMAP_PORT),
+  imapSecure: account.imapSecure ?? true,
+  smtpHost: text(account.smtpHost),
+  smtpPort: port(account.smtpPort, DEFAULT_SMTP_PORT),
+  smtpSecure: account.smtpSecure ?? false,
+  username: text(account.username),
+})
+
 export async function resolveTestPassword(
   req: TestRequest,
   loadAccount: AccountLoader,
   loadStoredPassword: StoredPasswordLoader
-): Promise<{ decision: TestDecision; password: string | null }> {
-  const decision = await decideTestPassword(req, loadAccount)
-  if (decision === TEST_DECISION.STORED) {
-    return { decision, password: await loadStoredPassword() }
+): Promise<{ decision: TestDecision; password: string | null; connection: TestConnection | null }> {
+  let loaded: TestableAccount | null = null
+  const decision = await decideTestPassword(req, async id => {
+    loaded = await loadAccount(id)
+    return loaded
+  })
+  if (decision === TEST_DECISION.STORED && loaded) {
+    return {
+      decision,
+      password: await loadStoredPassword(),
+      connection: savedConnection(loaded),
+    }
   }
-  if (decision === TEST_DECISION.SUBMITTED) return { decision, password: req.password ?? null }
-  return { decision, password: null }
+  if (decision === TEST_DECISION.SUBMITTED) {
+    return { decision, password: req.password ?? null, connection: formConnection(req) }
+  }
+  return { decision, password: null, connection: null }
 }
 
 /** Les deux échecs courants, traduits en une CAUSE au lieu de l'erreur brute du serveur. */

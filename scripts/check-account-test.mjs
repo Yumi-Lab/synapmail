@@ -16,6 +16,8 @@
  */
 import assert from 'node:assert/strict'
 import {
+  DEFAULT_IMAP_PORT,
+  DEFAULT_SMTP_PORT,
   TEST_DECISION,
   TEST_FAILURE,
   classifyTestFailure,
@@ -33,7 +35,11 @@ const loaderFor = (account, asked = []) => Object.assign(
 )
 
 /** The mailbox as SAVED: the only place its saved password is ever allowed to travel. */
-const SAVED = { imapHost: 'imap.example.com', smtpHost: 'smtp.example.com', username: 'me@example.com' }
+const SAVED = {
+  imapHost: 'imap.example.com', imapPort: 993, imapSecure: true,
+  smtpHost: 'smtp.example.com', smtpPort: 587, smtpSecure: false,
+  username: 'me@example.com',
+}
 const OWNED = { isOwner: true, oauthProvider: null, hasStoredPassword: true, ...SAVED }
 /** A request whose form still points at the saved server — the ordinary case. */
 const atSavedServer = extra => ({ accountId: 'acc-1', ...SAVED, ...extra })
@@ -212,6 +218,91 @@ ok('negative control: the unchanged form DOES reach the saved password (the rule
 assert.notEqual(TEST_DECISION.PASSWORD_REQUIRED, TEST_DECISION.MISSING)
 assert.notEqual(TEST_DECISION.PASSWORD_REQUIRED, TEST_DECISION.DENIED)
 ok('"password required" is its own answer, distinct from "nothing to try" and "not yours"')
+
+console.log('what is COMPARED is what is JOINED')
+
+// Measured by the human on staging, 19/09: the comparison trims and lowercases, but the
+// route then connected with the form's RAW string. A saved SMTP host followed by one space
+// was accepted as the same server, then joined as "smtp.example.com " — a name that does
+// not resolve, so the probe read tested=stored with smtp unreachable while the exact
+// settings gave imap ok + smtp ok. On a STORED verdict the SAVED values are what travel.
+const connectionOf = async form => {
+  const { decision, connection } = await resolveTestPassword(
+    atSavedServer(form), loaderFor(OWNED), async () => 'the-saved-secret'
+  )
+  return { decision, connection }
+}
+
+const exact = await connectionOf({ password: '' })
+assert.equal(exact.decision, TEST_DECISION.STORED)
+assert.deepEqual(exact.connection, {
+  imapHost: 'imap.example.com', imapPort: 993, imapSecure: true,
+  smtpHost: 'smtp.example.com', smtpPort: 587, smtpSecure: false,
+  username: 'me@example.com',
+})
+ok('the exact saved settings join the saved host, port, TLS and username')
+
+// The human's own probe, replayed: stray spaces and a different case must give EXACTLY the
+// same connection as the exact settings — not a host with a space glued to it.
+for (const [label, form] of [
+  ['a trailing space on the SMTP host', { smtpHost: 'smtp.example.com ' }],
+  ['a leading space on the IMAP host', { imapHost: ' imap.example.com' }],
+  ['a different case everywhere', {
+    imapHost: 'IMAP.Example.COM', smtpHost: 'SMTP.Example.COM', username: 'ME@Example.com',
+  }],
+  ['spaces and case together', {
+    imapHost: '  IMAP.Example.COM ', smtpHost: ' smtp.EXAMPLE.com  ', username: ' Me@Example.COM ',
+  }],
+]) {
+  const got = await connectionOf({ password: '', ...form })
+  assert.equal(got.decision, TEST_DECISION.STORED, label)
+  assert.deepEqual(got.connection, exact.connection, label)
+  ok(`${label}: same connection as the exact settings, not the raw form string`)
+}
+
+// A port or a TLS box typed in the form is NOT applied on a stored test: the secret goes to
+// the saved endpoint as a whole. Correcting a port is a change to SAVE, then to test.
+const retyped = await connectionOf({ password: '', imapPort: 143, imapSecure: false, smtpPort: 465 })
+assert.equal(retyped.decision, TEST_DECISION.STORED)
+assert.deepEqual(retyped.connection, exact.connection)
+ok('a port or TLS box retyped in the form does not divert the saved password elsewhere')
+
+// A TYPED password is the person's own: it goes exactly where the FORM says, ports included.
+const typed = await resolveTestPassword(
+  atSavedServer({ password: 'typed-by-me', imapHost: 'imap.newhost.example', imapPort: '143', imapSecure: false }),
+  loaderFor(OWNED),
+  async () => { throw new Error('the saved password must not be read on a typed password') }
+)
+assert.equal(typed.decision, TEST_DECISION.SUBMITTED)
+assert.equal(typed.password, 'typed-by-me')
+assert.equal(typed.connection.imapHost, 'imap.newhost.example')
+assert.equal(typed.connection.imapPort, 143)
+assert.equal(typed.connection.imapSecure, false)
+ok('a typed password travels to the FORM settings, ports and TLS included')
+
+// A refusal joins nothing at all: there is no connection to hand the route.
+for (const form of [
+  { password: '', imapHost: 'attacker.example.net' },
+  { password: '', username: 'someone-else@example.com' },
+]) {
+  const refused = await connectionOf(form)
+  assert.equal(refused.decision, TEST_DECISION.PASSWORD_REQUIRED)
+  assert.equal(refused.connection, null)
+}
+ok('a refused test carries no connection: nothing is joined')
+
+// Defaults exist so a blank port never becomes port 0 — a connection that fails for the
+// wrong reason and reads as "unreachable" to the person.
+const noPorts = await resolveTestPassword(
+  atSavedServer({ password: '' }),
+  loaderFor({ ...OWNED, imapPort: null, smtpPort: null, imapSecure: null, smtpSecure: null }),
+  async () => 'the-saved-secret'
+)
+assert.equal(noPorts.connection.imapPort, DEFAULT_IMAP_PORT)
+assert.equal(noPorts.connection.smtpPort, DEFAULT_SMTP_PORT)
+assert.equal(noPorts.connection.imapSecure, true)
+assert.equal(noPorts.connection.smtpSecure, false)
+ok('a mailbox row with no port falls back to the usual ports, never to port 0')
 
 console.log('classifyTestFailure — the cause, not the raw server line')
 

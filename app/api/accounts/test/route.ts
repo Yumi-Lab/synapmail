@@ -33,8 +33,12 @@ export async function POST(req: Request) {
     // seulement vers les hôtes ENREGISTRÉS : le formulaire vient du navigateur, et une
     // session volée ne doit pas pouvoir le faire lire par un serveur qu'elle a choisi.
     let storedEncrypted: string | null = null
-    const { decision, password: pass } = await resolveTestPassword(
-      { accountId, password, imapHost, smtpHost, username },
+    const { decision, password: pass, connection } = await resolveTestPassword(
+      {
+        accountId, password, username,
+        imapHost, imapPort, imapSecure,
+        smtpHost, smtpPort, smtpSecure,
+      },
       async id => {
         const account = await getAccountById(id, userId)
         if (!account) return null
@@ -44,7 +48,11 @@ export async function POST(req: Request) {
           oauthProvider: account.oauth_provider,
           hasStoredPassword: Boolean(account.password_encrypted),
           imapHost: account.imap_host,
+          imapPort: account.imap_port,
+          imapSecure: account.imap_secure,
           smtpHost: account.smtp_host,
+          smtpPort: account.smtp_port,
+          smtpSecure: account.smtp_secure,
           username: account.username,
         }
       },
@@ -62,7 +70,7 @@ export async function POST(req: Request) {
     }
     // Aucune connexion n'est tentée : le formulaire vise un autre serveur, il faut le mot
     // de passe de qui le demande.
-    if (decision === TEST_DECISION.PASSWORD_REQUIRED || pass === null) {
+    if (decision === TEST_DECISION.PASSWORD_REQUIRED || pass === null || !connection) {
       return NextResponse.json({ error: TEST_DECISION.PASSWORD_REQUIRED }, { status: 400 })
     }
 
@@ -71,10 +79,10 @@ export async function POST(req: Request) {
     let imapError = ''
     try {
       const client = new ImapFlow({
-        host: imapHost,
-        port: Number(imapPort) || 993,
-        secure: imapSecure ?? true,
-        auth: { user: username, pass },
+        host: connection.imapHost,
+        port: connection.imapPort,
+        secure: connection.imapSecure,
+        auth: { user: connection.username, pass },
         logger: false,
         tls: { rejectUnauthorized: false },
       })
@@ -90,10 +98,10 @@ export async function POST(req: Request) {
     let smtpError = ''
     try {
       const transport = nodemailer.createTransport({
-        host: smtpHost,
-        port: Number(smtpPort) || 587,
-        secure: smtpSecure ?? false,
-        auth: { user: username, pass },
+        host: connection.smtpHost,
+        port: connection.smtpPort,
+        secure: connection.smtpSecure,
+        auth: { user: connection.username, pass },
         tls: { rejectUnauthorized: false },
       })
       await transport.verify()
