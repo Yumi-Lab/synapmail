@@ -127,6 +127,9 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS update_dismissed_version VARCHAR(50)`)
   // Garde contre l'injection d'instructions, par boîte. Activée par défaut : la sécurité est le défaut.
   await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS prompt_guard BOOLEAN NOT NULL DEFAULT true`)
+  // Couleur de badge choisie par l'utilisateur. NULL = couleur automatique par rang :
+  // aucune boîte existante ne change d'apparence à la mise à jour.
+  await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS badge_color VARCHAR(7)`)
 
   await query(`
     CREATE TABLE IF NOT EXISTS contacts (
