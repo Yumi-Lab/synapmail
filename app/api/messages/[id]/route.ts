@@ -1,12 +1,33 @@
 import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
-import { toImapConfig } from '@/lib/accounts'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { getMessage, deleteMessage, markRead, setFlagBulk } from '@/lib/imap'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 
 export const dynamic = 'force-dynamic'
+
+type AccountRow = {
+  id: string; imap_host: string; imap_port: number; imap_secure: boolean;
+  username: string; password_encrypted: string; prompt_guard: boolean;
+  oauth_provider: string | null; oauth_access_token: string | null;
+  oauth_refresh_token: string | null; oauth_expires_at: number | null;
+}
+
+function accountConfig(account: AccountRow) {
+  return {
+    id: account.id,
+    imapHost: account.imap_host,
+    imapPort: account.imap_port,
+    imapSecure: account.imap_secure,
+    username: account.username,
+    passwordEncrypted: account.password_encrypted,
+    oauthProvider: account.oauth_provider,
+    oauthAccessToken: account.oauth_access_token,
+    oauthRefreshToken: account.oauth_refresh_token,
+    oauthExpiresAt: account.oauth_expires_at,
+  }
+}
 
 export async function GET(
   req: Request,
@@ -25,7 +46,7 @@ export async function GET(
     const account = await getAccessibleAccount(accountId, authCtx.id, [])
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
-    const message = await getMessage(toImapConfig(account), folder, params.id)
+    const message = await getMessage(accountConfig(account), folder, params.id)
     if (!message) return NextResponse.json({ error: 'Message not found' }, { status: 404 })
 
     return NextResponse.json(guardApiPayload({ ...message, accountId }, {
@@ -59,7 +80,7 @@ export async function PATCH(
     const account = await getAccessibleAccount(accountId, authCtx.id, ['organize'])
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
-    const config = toImapConfig(account)
+    const config = accountConfig(account)
 
     if (isRead !== undefined) {
       await markRead(config, folder, params.id, isRead)
@@ -96,7 +117,7 @@ export async function DELETE(
     const account = await getAccessibleAccount(accountId, authCtx.id, ['delete'])
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
-    await deleteMessage(toImapConfig(account), folder, params.id)
+    await deleteMessage(accountConfig(account), folder, params.id)
     return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
