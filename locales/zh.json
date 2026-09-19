@@ -141,6 +141,8 @@
     "searchShown": "显示 {shown} 条",
     "searchDetails": "搜索范围：{fields} · {scope}",
     "searchProgress": "已搜索 {searched} / {folders} 个文件夹",
+    "searchAccountProgress": "已搜索 {swept} / {accounts} 个邮箱",
+    "searchUnreachable": "{count} 个邮箱无法访问",
     "searchStop": "停止",
     "searchNoBodyHint": "不搜索邮件正文（邮件服务器限制）。请尝试主题中的词语或电子邮件地址。",
     "refresh": "收取邮件",

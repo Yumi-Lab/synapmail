@@ -141,6 +141,8 @@
     "searchShown": "{shown} shown",
     "searchDetails": "Searched in {fields} · {scope}",
     "searchProgress": "{searched} of {folders, plural, one {# folder} other {# folders}}",
+    "searchAccountProgress": "{swept} of {accounts, plural, one {# mailbox} other {# mailboxes}}",
+    "searchUnreachable": "{count, plural, one {# mailbox unreachable} other {# mailboxes unreachable}}",
     "searchStop": "Stop",
     "searchNoBodyHint": "Message bodies are not searched (mail server limitation). Try a word from the subject or an address.",
     "refresh": "Refresh",

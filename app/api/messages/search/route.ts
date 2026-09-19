@@ -148,6 +148,10 @@ export async function GET(req: Request) {
                   accountEmail: row.email,
                   searched,
                   folders,
+                  // Le nombre de boîtes est connu dès le départ (celles qui sont
+                  // accessibles) : le bandeau annonce « sur 8 » au premier morceau,
+                  // sans attendre la fin du balayage.
+                  accounts: accounts.length,
                 }, guard)
               }
             }

@@ -141,6 +141,8 @@
     "searchShown": "{shown} affichés",
     "searchDetails": "Cherché dans : {fields} · {scope}",
     "searchProgress": "{searched, plural, one {# dossier} other {# dossiers}} sur {folders}",
+    "searchAccountProgress": "{swept, plural, one {# boîte} other {# boîtes}} sur {accounts}",
+    "searchUnreachable": "{count, plural, one {# boîte injoignable} other {# boîtes injoignables}}",
     "searchStop": "Arrêter",
     "searchNoBodyHint": "Le corps des messages n’est pas cherché (limite du serveur de messagerie). Essayez un mot de l’objet ou une adresse.",
     "refresh": "Relever",

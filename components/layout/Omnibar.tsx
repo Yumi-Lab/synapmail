@@ -17,7 +17,7 @@ import { LOCALES, setLocale } from '@/lib/locales'
 import { OMNIBAR_SECTIONS, matchOmnibar, type OmnibarEntry, type OmnibarSection } from '@/lib/omnibarCommands'
 import { MAIL_PATH, openCompose } from '@/lib/compose'
 import {
-  SCOPE_ACCOUNTS, SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT,
+  SCOPE_ACCOUNTS, SCOPE_LABEL, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT,
   SEARCH_PARAM, SEARCH_SCOPES, buildSearchHref, readScope, type SearchScope,
 } from '@/lib/search'
 
@@ -77,12 +77,6 @@ const SECTION_LABEL: Record<OmnibarSection, 'sectionAccounts' | 'sectionActions'
 /** L'icone d'un mode de theme, meme table que le selecteur de `ThemeToggle`. */
 const THEME_ICONS = { light: Sun, dark: Moon, system: Monitor } as const
 /** Une portée, son libellé : la seule table qui les relie (en/fr/zh). */
-const SCOPE_LABEL: Record<SearchScope, 'searchThisFolder' | 'searchAllFolders' | 'searchAllAccounts'> = {
-  [SCOPE_FOLDER]: 'searchThisFolder',
-  [SCOPE_ALL]: 'searchAllFolders',
-  [SCOPE_ACCOUNTS]: 'searchAllAccounts',
-}
-
 function ThemeGlyph({ theme }: { theme: Theme }) {
   const Icon = THEME_ICONS[theme]
   return <Icon className={ICON} />

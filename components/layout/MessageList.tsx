@@ -9,7 +9,7 @@ import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } f
 import { cn } from '@/lib/utils'
 import { formatRowDate } from '@/lib/dates'
 import {
-  EMPTY_SEARCH_STREAM, SCOPE_ACCOUNTS, SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, STREAM_PARAM, isWideScope,
+  EMPTY_SEARCH_STREAM, SCOPE_ACCOUNTS, SCOPE_FOLDER, SCOPE_LABEL, SCOPE_PARAM, SEARCH_PARAM, STREAM_PARAM, isWideScope,
   accumulateSearchStream, isSearchQuery, parseNdjsonChunk,
   type SearchField, type SearchScope, type SearchStreamChunk, type SearchStreamState,
 } from '@/lib/search'
@@ -1182,6 +1182,13 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
               {searchTruncated && ` · ${t('searchShown', { shown: messages.length })}`}
               {isSearching && streamed.folders > 0 &&
                 ` · ${t('searchProgress', { searched: streamed.searched, folders: streamed.folders })}`}
+              {/* Portée « toutes les boîtes » : combien de BOÎTES ont rapporté, en plus
+                  des dossiers — « 3 boîtes sur 8 ». Les boîtes injoignables sont dites
+                  plutôt que tues : un total plus court a sinon l'air d'un vrai résultat. */}
+              {streamed.accounts > 0 &&
+                ` · ${t('searchAccountProgress', { swept: streamed.sweptIds.length, accounts: streamed.accounts })}`}
+              {streamed.unreachable.length > 0 &&
+                ` · ${t('searchUnreachable', { count: streamed.unreachable.length })}`}
               {isSearching && streamed.folders === 0 && ` · ${t('searching')}`}
             </p>
             {/* Gardé sur `streaming` et non sur `isSearching` : avant que le compte
@@ -1203,7 +1210,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
                 align="end"
                 label={t('searchDetails', {
                   fields: t('searchFieldsLabel'),
-                  scope: searchScope === SCOPE_ALL ? t('searchAllFolders') : t('searchThisFolder'),
+                  scope: t(SCOPE_LABEL[searchScope]),
                 })}
               >
                 <Info className="w-3.5 h-3.5" data-search-details />

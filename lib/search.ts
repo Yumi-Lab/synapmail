@@ -22,6 +22,17 @@ export const SEARCH_SCOPES = [SCOPE_FOLDER, SCOPE_ALL, SCOPE_ACCOUNTS] as const
 export type SearchScope = typeof SEARCH_SCOPES[number]
 
 /**
+ * Clé i18n (espace `mail`) du libellé d'une portée. Source unique : le sélecteur
+ * de l'omnibar ET l'infobulle du bandeau de résultats lisent CETTE table — elles
+ * ne peuvent donc pas nommer autrement la même portée.
+ */
+export const SCOPE_LABEL: Record<SearchScope, 'searchThisFolder' | 'searchAllFolders' | 'searchAllAccounts'> = {
+  [SCOPE_FOLDER]: 'searchThisFolder',
+  [SCOPE_ALL]: 'searchAllFolders',
+  [SCOPE_ACCOUNTS]: 'searchAllAccounts',
+}
+
+/**
  * Boîtes balayées EN PARALLÈLE par la portée « toutes les boîtes ». Ce plafond
  * s'ajoute à celui des dossiers par boîte (lot S2) : au pic, au plus
  * ACCOUNT_CONCURRENCY × (dossiers en parallèle) connexions IMAP ouvertes.
@@ -319,6 +330,13 @@ export type SearchStreamChunk<TMessage> = {
   /** Dossiers couverts jusqu'ici / dossiers à couvrir — « 312 sur 1 226 ». */
   searched: number
   folders: number
+  /**
+   * Portée « toutes les boîtes » : la boîte d'où vient ce morceau, et le nombre
+   * total de boîtes à balayer. Le bandeau en tire « 3 boîtes sur 8 ». Absents sur
+   * les portées à une seule boîte, qui n'ont rien à compter.
+   */
+  accountId?: string
+  accounts?: number
 }
 
 /**
@@ -346,13 +364,21 @@ export type SearchStreamState<TMessage> = {
   total: number
   searched: number
   folders: number
+  /**
+   * Boîtes ayant déjà rapporté (leurs identifiants, donc jamais deux fois la même)
+   * et boîtes à balayer : « 3 boîtes sur 8 ». Vides hors portée « toutes les boîtes ».
+   */
+  sweptIds: string[]
+  accounts: number
+  /** Boîtes injoignables signalées en fin de flux — jamais une panne silencieuse. */
+  unreachable: string[]
 }
 
 /** Un message rendu par la recherche, réduit à ce dont l'accumulation a besoin. */
 type StreamedMessage = { folder: string; uid: number | string; date: string }
 
 export const EMPTY_SEARCH_STREAM: SearchStreamState<never> = {
-  messages: [], total: 0, searched: 0, folders: 0,
+  messages: [], total: 0, searched: 0, folders: 0, sweptIds: [], accounts: 0, unreachable: [],
 }
 
 /**
@@ -369,12 +395,19 @@ export const EMPTY_SEARCH_STREAM: SearchStreamState<never> = {
  */
 export function accumulateSearchStream<TMessage extends StreamedMessage>(
   prev: SearchStreamState<TMessage>,
-  items: (Partial<SearchStreamChunk<TMessage>> & { error?: string })[]
+  items: (Partial<SearchStreamChunk<TMessage>> & { error?: string; unreachable?: string[] })[]
 ): SearchStreamState<TMessage> {
   const seen = new Set(prev.messages.map(m => `${m.folder}#${m.uid}`))
   const next = [...prev.messages]
-  let { total, searched, folders } = prev
+  // Une boîte est comptée à son PREMIER morceau, jamais à chaque dossier : le
+  // compteur dit combien de boîtes ont rapporté, pas combien de lignes sont arrivées.
+  const swept = new Set(prev.sweptIds)
+  const unreachable = [...prev.unreachable]
+  let { total, searched, folders, accounts } = prev
   for (const item of items) {
+    for (const email of item.unreachable ?? []) {
+      if (!unreachable.includes(email)) unreachable.push(email)
+    }
     if (item.error) continue
     for (const m of item.messages ?? []) {
       const key = `${m.folder}#${m.uid}`
@@ -385,7 +418,13 @@ export function accumulateSearchStream<TMessage extends StreamedMessage>(
     total += item.total ?? 0
     searched = Math.max(searched, item.searched ?? 0)
     folders = Math.max(folders, item.folders ?? 0)
+    accounts = Math.max(accounts, item.accounts ?? 0)
+    if (item.accountId) swept.add(item.accountId)
   }
   next.sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
-  return { messages: next.slice(0, SEARCH_RESULT_LIMIT), total, searched, folders }
+  return {
+    messages: next.slice(0, SEARCH_RESULT_LIMIT),
+    total, searched, folders, accounts, unreachable,
+    sweptIds: Array.from(swept),
+  }
 }
