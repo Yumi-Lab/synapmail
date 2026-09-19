@@ -699,6 +699,7 @@ export function ComposeModal({ mode, replyTo, forwardedMessages, accountEmail, a
                   onClick={() => setShowFromDropdown(v => !v)}
                   aria-haspopup="listbox"
                   aria-expanded={showFromDropdown}
+                  data-compose-from
                   className="w-full flex items-center gap-2 bg-transparent text-sm text-foreground py-1 outline-none"
                 >
                   <span className="truncate">
@@ -707,7 +708,7 @@ export function ComposeModal({ mode, replyTo, forwardedMessages, accountEmail, a
                   <ChevronDown className={cn('w-3.5 h-3.5 shrink-0 ml-auto text-muted-foreground transition-transform', showFromDropdown && 'rotate-180')} />
                 </button>
                 {showFromDropdown && (
-                  <div role="listbox" className="absolute top-full mt-2 left-0 right-0 z-20 bg-popover border border-border rounded-xl shadow-lg py-1 overflow-hidden">
+                  <div role="listbox" data-compose-from-list className="absolute top-full mt-2 left-0 right-0 z-20 bg-popover border border-border rounded-xl shadow-lg py-1 overflow-hidden">
                     {accounts.map(a => {
                       const active = a.id === fromAccountId
                       return (

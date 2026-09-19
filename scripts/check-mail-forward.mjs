@@ -49,6 +49,14 @@ const ROW = '[data-mail-row]'
 const MENU = '[data-mail-context-menu]'
 const FORWARD_ITEM = `${MENU} [data-menu-item="forward"]`
 const COMPOSE_CHIP = '[data-forwarded-count]'
+// The "From" picker: a real listbox of buttons, one per account. Scoped by its
+// own attribute — the message list's rows are `role="option"` too, and a bare
+// role selector picks a mail row instead of an account.
+const FROM_TRIGGER = '[data-compose-from]'
+const FROM_OPTION = '[data-compose-from-list] [role="option"]'
+// Budget for the accounts round-trip the compose window makes on mount.
+// Measured on the lane's dev server (:3106): the picker appears well under 1 s.
+const FROM_PICKER_TIMEOUT_MS = 5000
 
 for (const file of ['../.env', '../.env.local']) {
   for (const line of readFileSync(new URL(file, import.meta.url), 'utf8').split('\n')) {
@@ -164,7 +172,32 @@ try {
   console.log(`compose subject: ${JSON.stringify(subject)}`)
   if (!subject || !subject.includes(String(FORWARD_N))) fail(`the subject ${JSON.stringify(subject)} does not name the ${FORWARD_N} forwarded messages`)
 
-  // --- 4. What the window WOULD send names those uids, in the selection's order ---
+  // --- 4. The sender is switched to ANOTHER mailbox ---
+  // This is the defect review caught: the selection was clicked in mailbox A,
+  // the user then picks mailbox B in "From". The uids of an inbox are small
+  // integers and exist in BOTH, so a payload that names only a folder would
+  // make the server attach B's messages — three mails the user never saw.
+  // The request must keep naming A.
+  let switchedFrom = null
+  // The picker only exists once the window knows the user's accounts (one SWR
+  // round-trip after it mounts), and only when there are several — probing it
+  // the instant the window opens would read "single account" on a multi-account
+  // user and quietly skip the very case under test.
+  const fromTrigger = await page.waitForSelector(FROM_TRIGGER, { timeout: FROM_PICKER_TIMEOUT_MS }).catch(() => null)
+  if (fromTrigger) {
+    await fromTrigger.click()
+    await settle()
+    switchedFrom = await page.$$eval(FROM_OPTION, (els) => {
+      const other = els.find(el => el.getAttribute('aria-selected') !== 'true')
+      if (!other) return null
+      other.click()
+      return (other.textContent ?? '').trim()
+    })
+    await settle()
+  }
+  console.log(`sender switched to another mailbox: ${switchedFrom ? JSON.stringify(switchedFrom) : 'NO (single account)'}`)
+
+  // --- 5. What the window WOULD send names those uids, in the selection's order ---
   await page.type('input[placeholder="destinataire@exemple.com"]', `${EMAIL}\n`)
   await settle()
   await page.$$eval('button', (els) => {
@@ -185,12 +218,23 @@ try {
   if (!sentPayload) fail('the window built no send request (nothing could be read, and nothing was sent)')
   else {
     const fw = sentPayload.forwardedMessages
-    console.log(`payload.forwardedMessages: folder=${fw?.folder} uids=${fw?.uids?.join(',')}`)
+    console.log(`payload.forwardedMessages: accountId=${fw?.accountId} folder=${fw?.folder} uids=${fw?.uids?.join(',')}`)
+    console.log(`payload.accountId (the SENDER): ${sentPayload.accountId}`)
     if (!fw) fail('the send payload carries no forwardedMessages')
     else {
       if (!fw.folder) fail('the send payload names no folder for the forwarded messages')
       if (fw.uids?.join(',') !== selectedUids.join(',')) {
         fail(`the payload forwards [${fw.uids?.join(',')}] while the selection was [${selectedUids.join(',')}]`)
+      }
+      // The origin travels with the selection, not with the "From" picker.
+      if (fw.accountId !== acc.id) {
+        fail(`the payload reads the sources in ${fw.accountId}, while the selection was clicked in ${acc.id}`)
+      }
+      if (switchedFrom && sentPayload.accountId === fw.accountId) {
+        fail('the sender was switched to another mailbox, yet sender and origin are still the same account')
+      }
+      if (switchedFrom) {
+        console.log(`origin ${fw.accountId} != sender ${sentPayload.accountId}: sources stay in the selected mailbox`)
       }
     }
   }
@@ -198,7 +242,7 @@ try {
   await browser.close()
 }
 
-// --- 5. Those uids really yield N non-empty message sources ---
+// --- 6. Those uids really yield N non-empty message sources ---
 // READ ONLY: the mailbox is opened read-only, nothing is written, moved or flagged.
 if (sentPayload?.forwardedMessages?.uids?.length) {
   const { folder, uids } = sentPayload.forwardedMessages
