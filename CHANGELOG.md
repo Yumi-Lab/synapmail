@@ -89,6 +89,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `scripts/check-locales.mjs` (`npm run check:locales`) : parité stricte des clés entre `en`, `fr` et `zh`.
 - Clés `mail.collapseSidebar`, `mail.expandSidebar`, `mail.folders`, `mail.switchAccount`, `common.showPassword`,
   `common.hidePassword` (en/fr/zh).
+- **Couleur de chaque boîte choisie par l'utilisateur** (`lib/accountColor.ts`, source unique) : nouvelle colonne
+  `email_accounts.badge_color` (une ligne `ALTER TABLE … ADD COLUMN IF NOT EXISTS` dans `lib/db.ts`) — `NULL` garde la
+  couleur AUTOMATIQUE par rang (aucune boîte ne change d'aspect à la mise à jour), une valeur `#RRGGBB` fixe la couleur.
+  Exposée en `badgeColor` par `GET /api/accounts`, modifiable par `PATCH /api/accounts/[id]` (propriétaire seul,
+  validation serveur `^#[0-9a-fA-F]{6}$` ou `null`, 400 sinon ; une boîte reçue en partage garde la couleur de son
+  propriétaire). `accountColor(account, rank)` rend la couleur effective ET l'encre lisible dessus (contraste WCAG
+  calculé, ≥ 4,5:1 sur toute couleur, encre quasi-noire sur une couleur claire) : bulle en tête de barre, liste des
+  comptes, badges des réglages et `--synap-account` la lisent tous.
+- **Le VRAI badge dans Réglages → Comptes** (`components/settings/AccountColorPicker.tsx`) : la pastille de 10 px laisse
+  la place au badge de la barre (mêmes deux lettres, même couleur) ; un bouton « Couleur » ouvre un panneau ancré avec le
+  sélecteur natif du système (roue chromatique, aucune dépendance), un champ hexadécimal borné qui se signale
+  `aria-invalid` sur une saisie incomplète, les cinq couleurs de la palette en pastilles et « Automatique ». Le badge et
+  la barre changent EN DIRECT pendant le choix ; l'écriture part au relâchement, à la validation du champ ou au clic
+  dehors — jamais à chaque pixel de la roue —, et Échap revient à la couleur enregistrée sans rien écrire. Light-dismiss
+  en un clic qui atteint sa cible. i18n en/fr/zh.
+- `scripts/check-account-color.mjs` (puppeteer-core + requêtes directes en base) : PATCH par choix, égalité badge des
+  réglages = bulle de la barre = `--synap-account`, contraste ≥ 4,5:1 sur une couleur claire, valeur invalide refusée,
+  « Automatique » qui restaure la couleur de rang, et l'ordre des boîtes inchangé par un enregistrement — ce dernier
+  contrôle porte son propre bras de référence (le tri non total, qui lui se déplace bien).
 - **Barre de défilement qui s'efface** (`components/ui/ThinScroll.tsx`) : dans la barre, le curseur de défilement
   apparaît au défilement ou au survol puis s'estompe après 2 s d'inactivité, sur un rail sans flèches ni fond, cohérent
   clair/sombre (`prefers-reduced-motion` respecté).
