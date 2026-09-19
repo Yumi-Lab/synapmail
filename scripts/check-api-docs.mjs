@@ -17,6 +17,7 @@
  *   node scripts/check-api-docs.mjs --break=mode      (a mode the code contradicts)
  *   node scripts/check-api-docs.mjs --break=origin    (links built from the request host)
  *   node scripts/check-api-docs.mjs --break=prefix    (a public entry matched by prefix)
+ *   node scripts/check-api-docs.mjs --break=inline    (the address frozen at build time)
  * The `--break` forms damage a COPY of one input and EXPECT the run to fail: a
  * battery that cannot fail proves nothing.
  */
@@ -321,6 +322,20 @@ const readers = routeFiles(APP_DIR)
   .filter(file => /NEXT_PUBLIC_APP_URL/.test(readFileSync(file, 'utf8')))
   .map(file => relative(ROOT, file))
 check(readers.length === 0, 'the public origin is read in ONE module', readers.join(', '))
+
+// That one module must read the address at RUN time. Spelled literally,
+// `process.env.NEXT_PUBLIC_APP_URL` is replaced by its build-time value, so an
+// image built without it would serve an empty origin whatever the deployment sets.
+const withoutComments = text => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+const originModule = withoutComments(
+  BREAK === 'inline'
+    ? 'const configured = process.env.NEXT_PUBLIC_APP_URL'
+    : source(join('lib', 'appOrigin.ts')),
+)
+check(
+  !/process\.env\s*\.\s*NEXT_PUBLIC_APP_URL/.test(originModule),
+  'the address is read at run time, not frozen into the image at build time',
+)
 
 if (BREAK) {
   if (fail.length === 0) {
