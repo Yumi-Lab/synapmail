@@ -300,7 +300,7 @@
           "canManageSignatures": "Gérer les signatures"
         },
         "rowMenu": "Actions pour {name}",
-        "revokeLabel": "Retirer l’accès...",
+        "revokeLabel": "Retirer l’accès…",
         "revokeNamed": "Retirer l’accès de {email} à cette boîte ? Il le perd immédiatement ; vous pourrez l’inviter à nouveau."
       },
       "receivedShares": {
@@ -309,11 +309,11 @@
         "sharedBy": "Partagée par {name}",
         "leaveFailed": "Le retrait du partage a échoué",
         "rowMenu": "Actions pour {name}",
-        "leaveLabel": "Quitter ce partage...",
+        "leaveLabel": "Quitter ce partage…",
         "leaveNamed": "Quitter la boîte « {email} » partagée par {owner} ? Vous en perdez l’accès ; le propriétaire pourra la repartager."
       },
       "rowMenu": "Actions pour {name}",
-      "deleteAccount": "Supprimer le compte...",
+      "deleteAccount": "Supprimer le compte…",
       "deleteConfirm": "Supprimer le compte « {email} » de ce webmail ? Les mails restent chez votre hébergeur, seul l’accès depuis ici est retiré.",
       "share": "Partager"
     },

@@ -300,7 +300,7 @@
           "canManageSignatures": "Manage signatures"
         },
         "rowMenu": "Actions for {name}",
-        "revokeLabel": "Remove access...",
+        "revokeLabel": "Remove access…",
         "revokeNamed": "Remove {email}’s access to this mailbox? They lose it immediately; you can invite them again later."
       },
       "receivedShares": {
@@ -309,11 +309,11 @@
         "sharedBy": "Shared by {name}",
         "leaveFailed": "Failed to remove the share",
         "rowMenu": "Actions for {name}",
-        "leaveLabel": "Leave this share...",
+        "leaveLabel": "Leave this share…",
         "leaveNamed": "Leave the mailbox \"{email}\" shared by {owner}? You lose access to it; the owner can share it again."
       },
       "rowMenu": "Actions for {name}",
-      "deleteAccount": "Delete account...",
+      "deleteAccount": "Delete account…",
       "deleteConfirm": "Delete the account \"{email}\" from this webmail? Your messages stay with your provider, only the access from here is removed.",
       "share": "Share"
     },
