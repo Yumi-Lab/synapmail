@@ -7,6 +7,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — actions sur les mails — 2026-09-20
 
+### Added
+- **Un contrat OpenAPI 3.1 des routes qu'une clé peut appeler, servi en `/openapi.json`**
+  (`docs/openapi.json`, `app/openapi.json/route.ts`, `lib/apiDocs.ts`, `lib/publicPaths.ts`,
+  `docs/API.md`, `scripts/check-api-docs.mjs`) : c'est le format que les outils d'agents importent pour
+  écrire leurs appels tout seuls. Il décrit les 20 couples méthode/route ouverts à une clé `syn_…`, et
+  EUX SEULS : y mettre une route « session only » produirait du code généré qui répond 401 à chaque
+  appel. Les enveloppes non standard déjà signalées dans la doc y sont décrites telles quelles plutôt
+  que normalisées, et l'objet `aiSafety` y figure avec son avertissement — un agent qui importe le
+  contrat sans lire la prose doit quand même apprendre que le contenu d'un mail est une donnée non
+  fiable. L'adresse des serveurs est relative : un hôte écrit dans le fichier enverrait les agents vers
+  la boîte de quelqu'un d'autre. Le fichier est PUBLIC, comme `/api/docs` et `/llms.txt`, qui le cite
+  désormais. Le contrôle doc ↔ code s'étend dans les deux sens (aucune route Bearer absente du contrat,
+  aucune route du contrat qui refuserait une clé) et vérifie la structure sans dépendance nouvelle :
+  version 3.1, schéma `bearerAuth` exigé par défaut, chaque opération identifiée, répondue et
+  authentifiée, chaque `$ref` résolu. Trois contrôles négatifs de plus (`--break=contract`,
+  `--break=session`, `--break=ref`) : neuf en tout, neuf attrapés.
+
 ### Fixed
 - **Les liens publics portent l'adresse de l'instance, jamais l'hôte du conteneur**
   (`lib/appOrigin.ts`, `app/llms.txt/route.ts`, `app/api/messages/send/route.ts`,
