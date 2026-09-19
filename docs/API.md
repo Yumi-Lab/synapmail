@@ -34,7 +34,7 @@ Every other route — account/rule/template/signature/PGP/settings CRUD, admin, 
 
 ## This document, served
 
-The reference you are reading is served by the instance itself, so an agent can find out what it may call **before** it has a key. Both routes are public, and both carry nothing but this document.
+The reference you are reading is served by the instance itself, so an agent can find out what it may call **before** it has a key. All three routes below are public, and none carries anything but this repository's own documents.
 
 ### `GET /api/docs` — public, no auth
 This file, as `text/markdown; charset=utf-8`.
@@ -45,6 +45,15 @@ This file, as `text/markdown; charset=utf-8`.
 The [llmstxt.org](https://llmstxt.org) entry point: what this instance is, the warning that mail content is untrusted input, and a link to the reference above. Links are built from the origin of the request — an instance answers under whatever name its owner gave it, so no host is written into the file.
 
 It is `text/plain; charset=utf-8`, as that convention expects.
+
+### `GET /openapi.json` — public, no auth
+The OpenAPI 3.1 contract of the **Bearer-eligible routes only** — the ones an agent can actually call. Session-only routes are deliberately absent: a contract that describes calls a key cannot make generates code that 401s.
+
+It is `application/json; charset=utf-8`. Each operation carries its parameters, its request body, its responses and the `bearerAuth` scheme; the non-standard envelopes flagged in this document are described as they really are, not normalised into `{ data }`.
+
+`scripts/check-api-docs.mjs` compares it to the code both ways: every Bearer route of the code is an operation, and no operation names a route that does not accept a key.
+
+The prose here stays the reference for the side effects and the error cases a contract cannot express.
 
 ## Errors
 
