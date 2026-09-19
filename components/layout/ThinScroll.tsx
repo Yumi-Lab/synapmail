@@ -4,7 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 
 /**
- * Single source for the bar's scrollbar. A native scrollbar cannot fade: neither
+ * Single source for the app's scrollbar — the side bar, the message list, the reading
+ * pane and the thread column all scroll through this one component. A native scrollbar
+ * cannot fade: neither
  * `::-webkit-scrollbar` nor `scrollbar-color` animates, so a bar that is only visible
  * while scrolling has to be drawn. The native one is hidden (`.scroll-hidden`) and a
  * thumb is painted over the viewport, tracking `scrollTop/scrollHeight`.
@@ -35,10 +37,28 @@ type Props = React.HTMLAttributes<HTMLDivElement> & {
   className?: string
   /** Padding / scroll behaviour of the scrolling viewport itself. */
   viewportClassName?: string
+  /**
+   * Handed the element that actually scrolls. A caller that measures the scroll box
+   * (`scrollTop`, `getBoundingClientRect`, an IntersectionObserver `root`) needs THAT
+   * element, not the outer layout box — the outer one never scrolls.
+   */
+  viewportRef?: React.MutableRefObject<HTMLDivElement | null>
+  /**
+   * Attributes for the scrolling element itself. A role a screen reader scrolls
+   * (`listbox`) has to sit on the box that scrolls, so it cannot go through `...rest`,
+   * which lands on the outer box. Plain events still ride `...rest`: they bubble up
+   * from the viewport, which is the same visual box.
+   */
+  viewportProps?: React.HTMLAttributes<HTMLDivElement>
 }
 
-export function ThinScroll({ className, viewportClassName, children, ...rest }: Props) {
-  const viewportRef = useRef<HTMLDivElement>(null)
+export function ThinScroll({ className, viewportClassName, viewportRef: outerViewportRef, viewportProps, children, ...rest }: Props) {
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+
+  const setViewport = useCallback((node: HTMLDivElement | null) => {
+    viewportRef.current = node
+    if (outerViewportRef) outerViewportRef.current = node
+  }, [outerViewportRef])
   const idleTimer = useRef<ReturnType<typeof setTimeout>>()
   const [thumb, setThumb] = useState<Thumb | null>(null)
   const [scrolling, setScrolling] = useState(false)
@@ -86,7 +106,8 @@ export function ThinScroll({ className, viewportClassName, children, ...rest }: 
       data-thin-scroll
     >
       <div
-        ref={viewportRef}
+        {...viewportProps}
+        ref={setViewport}
         onScroll={onScroll}
         className={cn('flex-1 min-h-0 overflow-y-auto overflow-x-hidden scroll-hidden', viewportClassName)}
         data-thin-scroll-viewport

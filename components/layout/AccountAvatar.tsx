@@ -180,7 +180,7 @@ export const accountInitials = (account: Pick<EmailAccount, 'name' | 'email'>) =
  * that bubble and 0 % of the initial's own text box; the previous `-4px` / 16 px-tall
  * badge covered 37 % of the bubble and 40 % of the glyph, hiding the letter.
  */
-const BADGE_OFFSET_PX = 9
+export const BADGE_OFFSET_PX = 9
 
 /**
  * The bar's ONE unread counter: a badge pinned on the top-right corner of whatever it

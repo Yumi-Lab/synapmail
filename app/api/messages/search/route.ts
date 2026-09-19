@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
-import { listFolders, searchMessagesIn } from '@/lib/imap'
+import { listFolders, listFoldersRanked, searchMessagesByFolder, searchMessagesIn } from '@/lib/imap'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
-import { MIN_QUERY_LENGTH, SCOPE_ALL, SCOPE_PARAM, SEARCH_FIELDS, SEARCH_PARAM, SEARCH_RESULT_LIMIT, parseQuery, readScope } from '@/lib/search'
+import { MIN_QUERY_LENGTH, SCOPE_ALL, SCOPE_PARAM, SEARCH_FIELDS, SEARCH_PARAM, SEARCH_RESULT_LIMIT, STREAM_PARAM, parseQuery, readScope } from '@/lib/search'
 
 export const dynamic = 'force-dynamic'
 
@@ -59,9 +59,64 @@ export async function GET(req: Request) {
       oauthExpiresAt: account.oauth_expires_at,
     }
 
-    // `scope=all` élargit au compte entier : tous les dossiers sont interrogés sur
-    // UNE connexion (cf. searchMessagesIn), les résultats fusionnés par date
-    // décroissante. Un dossier illisible ne fait pas échouer la recherche entière.
+    // `scope=all` + `stream=1` : la réponse part dossier par dossier (NDJSON), dans
+    // l'ordre d'utilité rendu par listFoldersRanked — les premiers résultats
+    // s'affichent en une seconde au lieu d'attendre la couverture complète (mesuré
+    // sur la plus grosse boîte de test : 101 dossiers, ~300 ms l'un).
+    if (scope === SCOPE_ALL && searchParams.get(STREAM_PARAM)) {
+      const ranked = await listFoldersRanked(config)
+      const guard = { enabled: isMachineRequest(req) && account.prompt_guard }
+      const accountId = account.id
+      const encoder = new TextEncoder()
+      // Un seul signal d'abandon pour les DEUX façons dont une recherche s'arrête :
+      // la requête coupée (`req.signal`) et le flux abandonné par le client, qui
+      // n'est annoncé QUE par `cancel()`. Sans lui, quitter la recherche laissait
+      // les ouvriers IMAP ouvrir les 1 226 dossiers restants pour personne.
+      const sweep = new AbortController()
+      req.signal.addEventListener('abort', () => sweep.abort(), { once: true })
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          try {
+            for await (const chunk of searchMessagesByFolder(config, ranked, terms, sweep.signal)) {
+              if (sweep.signal.aborted) break
+              const payload = guardApiPayload({
+                messages: chunk.messages
+                  .slice()
+                  .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
+                  .slice(0, SEARCH_RESULT_LIMIT)
+                  .map(m => ({ ...m, accountId })),
+                total: chunk.total,
+                fields: SEARCH_FIELDS,
+                folder: chunk.folder,
+                searched: chunk.searched,
+                folders: chunk.folders,
+              }, guard)
+              controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`))
+            }
+          } catch (err) {
+            // Un flux déjà abandonné n'a plus de destinataire : signaler l'erreur
+            // sur un contrôleur fermé lèverait une seconde panne, sans lecteur.
+            if (!sweep.signal.aborted) {
+              controller.enqueue(encoder.encode(`${JSON.stringify({ error: String(err) })}\n`))
+            }
+          } finally {
+            controller.close()
+          }
+        },
+        // Le client s'est détourné (requête changée, page quittée, bouton Arrêter) :
+        // les dossiers restants ne sont pas ouverts et les connexions IMAP se ferment.
+        cancel() { sweep.abort() },
+      })
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Cache-Control': 'no-store, no-transform',
+        },
+      })
+    }
+
+    // Réponse d'un seul tenant : la portée « ce dossier » (un seul dossier, donc
+    // rien à étaler) et tout appel machine, dont le contrat ne change pas.
     const folders = scope === SCOPE_ALL
       ? (await listFolders(config)).map(f => f.path)
       : [folder]

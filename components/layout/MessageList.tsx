@@ -2,18 +2,21 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useLocale, useTranslations } from 'next-intl'
-import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag } from 'lucide-react'
+import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag, Info } from 'lucide-react'
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
 import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } from '@/lib/flags'
 import { cn } from '@/lib/utils'
 import { formatRowDate } from '@/lib/dates'
 import {
-  SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, isSearchQuery, type SearchField, type SearchScope,
+  EMPTY_SEARCH_STREAM, SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, STREAM_PARAM,
+  accumulateSearchStream, isSearchQuery, parseNdjsonChunk,
+  type SearchField, type SearchScope, type SearchStreamChunk, type SearchStreamState,
 } from '@/lib/search'
 import useSWR, { mutate as globalMutate } from 'swr'
 import type { Message, Folder, ReadReceipt } from '@/types/email'
 import type { EmailAccount } from '@/types/account'
 import { MessageContextMenu, type ContextMenuState } from '@/components/ui/MessageContextMenu'
+import { ThinScroll } from './ThinScroll'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
 
@@ -22,6 +25,16 @@ const fetcher = async (url: string) => {
   if (!res.ok) throw new Error(`Request failed: ${res.status}`)
   return res.json()
 }
+
+// Rectangle de sélection (lot M3c). Sous ce seuil, le geste reste un clic —
+// c'est aussi le seuil qu'utilise l'explorateur du système.
+const MARQUEE_MIN_PX = 4
+// Bande sensible le long des bords du conteneur, pas et cadence du défilement
+// automatique pendant le geste : mesurés à la main sur le banc, assez lents pour
+// rester visés, assez vifs pour traverser une page.
+const MARQUEE_EDGE_PX = 40
+const MARQUEE_SCROLL_PX = 24
+const MARQUEE_SCROLL_MS = 50
 
 const AVATAR_COLORS = [
   'bg-blue-500', 'bg-violet-500', 'bg-emerald-500', 'bg-amber-500',
@@ -112,7 +125,11 @@ interface Props {
   permissions?: MailPermissions
 }
 
-interface AppSettings { thread_view: boolean; messages_per_page: number; mail_density: DensityMode }
+interface AppSettings {
+  thread_view: boolean; messages_per_page: number; mail_density: DensityMode
+  /** Boîte affichée, telle qu'enregistrée : ce qui dit si le compte reçu est le bon. */
+  active_account_id: string | null
+}
 
 export function MessageList({ folder, selectedUid, onSelect, onSelectThread, activeAccountId, search = '', searchScope = SCOPE_FOLDER, permissions }: Props) {
   const perms = permissions ?? DEFAULT_PERMISSIONS
@@ -153,12 +170,25 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   // Drag state
   const [draggingUid, setDraggingUid] = useState<string | null>(null)
 
+  // Rectangle de sélection (lot M3c) — seul l'état DESSINÉ vit dans le rendu ;
+  // le geste lui-même (origine, sélection d'avant, mode additif) reste en
+  // référence : il change à chaque pixel et ne doit rien re-rendre.
+  const [marquee, setMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
+  const marqueeRef = useRef<{
+    startX: number; startY: number; startScroll: number
+    /** Dernière position connue du pointeur — c'est elle qui donne la DIRECTION. */
+    lastX: number; lastY: number
+    additive: boolean; before: Set<string>; armed: boolean
+    /** Un rectangle a-t-il vraiment été tracé ? Armé ne suffit pas : un simple clic arme aussi. */
+    drew: boolean
+  } | null>(null)
+
   // Sélection façon explorateur : la dernière ligne cliquée est l'ancre d'une
   // plage Maj-clic. Une référence suffit — elle ne pilote aucun rendu.
   const rangeAnchorUid = useRef<string | null>(null)
 
   // Infinite scroll — sentinel + observer replace the "load more" button
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const loadingLockRef = useRef(0) // last page auto-requested — prevents re-firing while in flight
 
@@ -195,13 +225,89 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
 
   // `total` = correspondances réelles côté serveur, `fields` = champs interrogés :
   // le bandeau les dit plutôt que de les retaper (source unique : lib/search.ts).
-  const { data: searchData, isValidating: isSearching } = useSWR<{ messages: Message[]; total: number; fields: SearchField[] }>(
-    isSearchMode
+  // La portée « ce dossier » tient en une réponse : un seul dossier, rien à étaler.
+  const isStreamingScope = isSearchMode && searchScope === SCOPE_ALL
+  // Le compte actif arrive APRÈS le premier rendu, et en DEUX temps : /api/accounts
+  // donne la liste, /api/settings dit lequel est affiché. Tant que les réglages
+  // manquent, le compte reçu n'est qu'un repli sur la boîte PAR DÉFAUT : chercher
+  // là balaierait une autre boîte que celle affichée, ouvrirait des connexions IMAP
+  // pour rien, et pourrait montrer un instant les résultats du mauvais compte.
+  // Une SEULE condition retient les deux portées, et le bandeau reste « en attente »
+  // au lieu d'annoncer un « 0 résultat » définitif.
+  //
+  // La présence des réglages ne suffit PAS : les effets d'un enfant s'exécutent AVANT
+  // ceux du parent, donc la liste verrait les réglages arrivés un rendu avant que le
+  // parent n'ait appliqué le compte qu'ils désignent. On exige donc l'ACCORD des deux
+  // sources — le compte affiché est bien celui que les réglages nomment.
+  const savedAccountId = settingsData?.data?.active_account_id
+  const searchReady = isSearchMode && !!activeAccountId && !!settingsData?.data &&
+    (!savedAccountId || savedAccountId === activeAccountId)
+  const { data: searchData, isValidating: isSearchingOne } = useSWR<{ messages: Message[]; total: number; fields: SearchField[] }>(
+    searchReady && !isStreamingScope
       ? `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}&folder=${encodeURIComponent(folder)}` +
         `&${SCOPE_PARAM}=${searchScope}${accountParam}`
       : null,
     fetcher
   )
+
+  // Portée « tous les dossiers » : la réponse arrive dossier par dossier (NDJSON).
+  // Les résultats s'accumulent au fil de l'eau, la progression est affichée, et
+  // changer de requête interrompt la précédente au lieu de la laisser courir.
+  const [streamed, setStreamed] = useState<SearchStreamState<Message>>(EMPTY_SEARCH_STREAM)
+  const [streaming, setStreaming] = useState(false)
+  const streamAbort = useRef<AbortController | null>(null)
+  const stopStream = useCallback(() => { streamAbort.current?.abort() }, [])
+
+  useEffect(() => {
+    if (!isStreamingScope || !searchReady) { setStreamed(EMPTY_SEARCH_STREAM); return }
+    const controller = new AbortController()
+    streamAbort.current = controller
+    setStreamed(EMPTY_SEARCH_STREAM)
+    setStreaming(true)
+    const url = `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}` +
+      `&folder=${encodeURIComponent(folder)}&${SCOPE_PARAM}=${SCOPE_ALL}&${STREAM_PARAM}=1${accountParam}`
+    // Un flux lu JUSQU'AU BOUT n'a plus rien à abandonner : l'interrompre quand même
+    // au démontage faisait conclure le navigateur à `net::ERR_ABORTED` sur une
+    // réponse pourtant complète — trompeur dans les outils réseau, et indissociable
+    // d'un vrai abandon.
+    let complete = false
+    ;(async () => {
+      try {
+        const res = await fetch(url, { signal: controller.signal })
+        const body = res.body
+        if (!body) return
+        const reader = body.getReader()
+        const decoder = new TextDecoder()
+        let pending = ''
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          const { items, pending: rest } =
+            parseNdjsonChunk<SearchStreamChunk<Message> & { error?: string }>(pending, decoder.decode(value, { stream: true }))
+          pending = rest
+          if (items.length === 0) continue
+          setStreamed(prev => accumulateSearchStream(prev, items))
+        }
+        complete = true
+      } catch {
+        // Une interruption volontaire n'est pas une panne : les résultats déjà
+        // reçus restent affichés, et le bandeau cesse simplement de progresser.
+      } finally {
+        // SEULE la recherche COURANTE éteint le drapeau. Une recherche abandonnée
+        // termine APRÈS que la suivante a démarré : sans ce test, son `finally`
+        // éteignait la progression de celle qui court — plus de bouton Arrêter, plus
+        // de « N dossiers sur M », et un « 0 résultat » présenté comme définitif.
+        if (streamAbort.current === controller) setStreaming(false)
+      }
+    })()
+    return () => { if (!complete) controller.abort() }
+  }, [isStreamingScope, searchReady, search, folder, accountParam])
+
+  // Tant que le compte n'est pas résolu, la recherche est EN COURS de démarrage :
+  // le bandeau dit « Recherche… » plutôt que d'affirmer un résultat qu'il n'a pas.
+  const isSearching = isSearchMode && !searchReady
+    ? true
+    : (isStreamingScope ? streaming : isSearchingOne)
 
   // Folders — needed for the move menu, the context menu AND the row "Archive"
   // quick action, so it is fetched whenever an account is active. The key is
@@ -251,15 +357,16 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     }
   }, [data, page, refreshKey])
 
-  const messages = isSearchMode ? (searchData?.messages ?? []) : accumulated
+  const searchMessages = isStreamingScope ? streamed.messages : (searchData?.messages ?? [])
+  const messages = isSearchMode ? searchMessages : accumulated
   const total = data?.total ?? 0
   // Le serveur peut avoir trouvé plus que ce qu'il rend (plafond SEARCH_RESULT_LIMIT) :
   // le bandeau annonce alors « X premiers sur N » au lieu de laisser croire à N = X.
-  const searchTotal = searchData?.total ?? messages.length
+  const searchTotal = isStreamingScope ? streamed.total : (searchData?.total ?? messages.length)
   const searchTruncated = searchTotal > messages.length
   const showResultFolder = isSearchMode && searchScope === SCOPE_ALL
   const loadError = !isSearchMode && !!error && accumulated.length === 0
-  const loading = isSearchMode ? (!searchData && isSearching) : (!data && !error)
+  const loading = isSearchMode ? (messages.length === 0 && isSearching) : (!data && !error)
 
   // Infinite scroll — a failed page > 1 keeps the list but shows a retry button
   const morePageError = !isSearchMode && !!error && accumulated.length > 0
@@ -482,6 +589,19 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
 
   // Drag handlers
   const handleDragStart = useCallback((e: React.DragEvent, thread: ThreadGroup) => {
+    // Arbitrage de direction (lot M3c) : un geste surtout VERTICAL depuis une
+    // ligne est un rectangle de sélection, pas un glisser vers un dossier.
+    const pending = marqueeRef.current
+    if (pending && !pending.armed) {
+      // La direction se lit sur la trace du pointeur, pas sur les coordonnées de
+      // l'événement de glisser : celles-ci ne sont pas fiables d'un moteur à l'autre.
+      if (Math.abs(pending.lastY - pending.startY) >= Math.abs(pending.lastX - pending.startX)) {
+        e.preventDefault()
+        pending.armed = true
+        return
+      }
+      marqueeRef.current = null
+    }
     const msg = thread.lastMessage
     const accId = msg.accountId || activeAccountId || ''
     const uidsToMove = checkedUids.has(msg.uid) ? checkedThreadUids : thread.messages.map(m => m.uid)
@@ -497,6 +617,147 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
   const handleDragEnd = useCallback(() => setDraggingUid(null), [])
 
   /**
+   * Rectangle de sélection à la souris (lot M3c).
+   *
+   * Les lignes sont `draggable` et occupent toute la largeur : il n'y a pas de
+   * vide où commencer un rectangle. La direction du geste tranche donc, au
+   * `dragstart` : surtout VERTICAL (|dy| >= |dx|) → le glisser natif est annulé
+   * et le rectangle commence ; surtout HORIZONTAL → on part vers la barre
+   * latérale, le glisser-déposer reste ce qu'il était. Un appui hors d'une ligne
+   * (en-tête de date, marge basse) n'a pas de glisser natif à arbitrer : le
+   * rectangle démarre dès que le pointeur a bougé.
+   *
+   * Tout passe par la sélection de M1 : la barre d'outils et le clic droit
+   * voient le résultat sans une ligne de code en plus.
+   */
+
+  /** Sélectionne les lignes que le rectangle COUPE, dans les coordonnées de l'écran. */
+  const selectIntersecting = useCallback((top: number, bottom: number) => {
+    const state = marqueeRef.current
+    if (!state) return
+    const hit: string[] = []
+    document.querySelectorAll<HTMLElement>('[data-mail-row]').forEach(el => {
+      const r = el.getBoundingClientRect()
+      if (r.bottom >= top && r.top <= bottom) {
+        const uid = el.getAttribute('data-mail-row')
+        if (uid) hit.push(uid)
+      }
+    })
+    if (!state.additive) { setCheckedUids(new Set(hit)); return }
+    const next = new Set(state.before)
+    hit.forEach(uid => next.add(uid))
+    setCheckedUids(next)
+  }, [])
+
+  // Un rectangle relâché sur une ligne fait suivre un `click` : sans ce drapeau,
+  // il ouvrirait le message et effacerait la sélection qu'on vient de tracer.
+  const marqueeDrewRef = useRef(false)
+
+  const endMarquee = useCallback((restore: boolean) => {
+    const state = marqueeRef.current
+    if (!state) return
+    marqueeRef.current = null
+    if (state.drew) marqueeDrewRef.current = true
+    setMarquee(null)
+    if (restore) setCheckedUids(new Set(state.before))
+  }, [])
+
+  const beginMarquee = useCallback((e: React.MouseEvent) => {
+    // Bouton gauche seul : le clic droit ouvre le menu, le milieu ne nous regarde pas.
+    if (e.button !== 0) return
+    // Un rectangle tracé d'une ligne à une AUTRE ne produit aucun `click` (les
+    // deux extrémités n'ont pas le même élément) : le drapeau ne peut pas
+    // compter sur un clic pour se vider, c'est l'appui suivant qui le fait.
+    marqueeDrewRef.current = false
+    const box = scrollRef.current
+    if (!box) return
+    const target = e.target as HTMLElement | null
+    // La bulle porte déjà la case à cocher : un appui dessus n'est pas un rectangle.
+    if (target?.closest('.group\\/avatar')) return
+    marqueeRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      lastX: e.clientX,
+      lastY: e.clientY,
+      startScroll: box.scrollTop,
+      additive: e.metaKey || e.ctrlKey || e.shiftKey,
+      before: new Set(checkedUids),
+      drew: false,
+      // Sur une ligne, le rectangle attend l'arbitrage du `dragstart` ; ailleurs,
+      // il n'y a rien à arbitrer.
+      armed: !target?.closest('[data-mail-row]'),
+    }
+  }, [checkedUids])
+
+  /**
+   * Le geste vit sur la FENÊTRE, pas sur le conteneur : le pointeur sort de la
+   * liste sans que le rectangle se fige, et un relâchement dehors le termine.
+   * Un seul jeu d'écouteurs, posé une fois — il sort tout de suite quand aucun
+   * geste n'est en cours.
+   */
+  useEffect(() => {
+    let pointer: { x: number; y: number } | null = null
+    let scroller: ReturnType<typeof setInterval> | null = null
+
+    const stopScroller = () => {
+      if (scroller) { clearInterval(scroller); scroller = null }
+    }
+
+    /** Redessine et re-sélectionne à partir de la dernière position connue. */
+    const paint = () => {
+      const state = marqueeRef.current
+      const box = scrollRef.current
+      if (!state || !box || !pointer) return
+      const r = box.getBoundingClientRect()
+      const anchorY = state.startY - r.top + state.startScroll
+      const nowY = pointer.y - r.top + box.scrollTop
+      const anchorX = state.startX - r.left
+      const nowX = pointer.x - r.left
+      const top = Math.min(anchorY, nowY)
+      const height = Math.abs(nowY - anchorY)
+      setMarquee({ left: Math.min(anchorX, nowX), top, width: Math.abs(nowX - anchorX), height })
+      selectIntersecting(top - box.scrollTop + r.top, top + height - box.scrollTop + r.top)
+    }
+
+    const onMove = (e: MouseEvent) => {
+      const state = marqueeRef.current
+      const box = scrollRef.current
+      if (!state || !box) return
+      pointer = { x: e.clientX, y: e.clientY }
+      state.lastX = e.clientX
+      state.lastY = e.clientY
+      // Sur une ligne, le rectangle n'est armé qu'une fois le glisser natif écarté.
+      if (!state.armed) return
+      if (Math.abs(e.clientX - state.startX) < MARQUEE_MIN_PX && Math.abs(e.clientY - state.startY) < MARQUEE_MIN_PX) return
+      // Le rectangle remplace la sélection du texte que le navigateur ferait.
+      e.preventDefault()
+      state.drew = true
+      paint()
+      const r = box.getBoundingClientRect()
+      const step = e.clientY < r.top + MARQUEE_EDGE_PX ? -MARQUEE_SCROLL_PX
+        : e.clientY > r.bottom - MARQUEE_EDGE_PX ? MARQUEE_SCROLL_PX
+        : 0
+      stopScroller()
+      if (step !== 0) scroller = setInterval(() => { box.scrollTop += step; paint() }, MARQUEE_SCROLL_MS)
+    }
+
+    const onUp = () => { stopScroller(); endMarquee(false) }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && marqueeRef.current) { stopScroller(); endMarquee(true) }
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      stopScroller()
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [selectIntersecting, endMarquee])
+
+  /**
    * Clic sur une ligne, façon explorateur : Cmd/Ctrl bascule la ligne, Maj
    * étend la plage depuis la dernière ligne cliquée, un clic simple VIDE la
    * sélection et ouvre cette ligne — même quand une sélection est en cours
@@ -504,6 +765,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
    * La case au survol de la bulle (`toggleUid`) reste le chemin qui accumule.
    */
   const handleRowClick = (thread: ThreadGroup, e: React.MouseEvent) => {
+    if (marqueeDrewRef.current) { marqueeDrewRef.current = false; return }
     const uid = thread.lastMessage.uid
     if (e.metaKey || e.ctrlKey) {
       toggleChecked(uid)
@@ -678,7 +940,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
         onDragEnd={handleDragEnd}
         onContextMenu={e => handleContextMenu(e, thread)}
         className={cn(
-          'group/row relative w-full text-left grid grid-cols-[auto_1fr] gap-3 border-b border-border/40 transition-colors duration-150 border-l-[3px] cursor-pointer select-none',
+          'group/row relative w-full text-left grid grid-cols-[auto_1fr] gap-3 border-b border-border/40 transition-colors duration-150 border-l-[3px] cursor-pointer',
           compact ? 'px-3 py-2' : 'px-4 py-3',
           isDragging && 'opacity-40',
           isChecked ? 'bg-primary/10 border-l-primary'
@@ -781,9 +1043,18 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
 
   return (
     <div className="flex flex-col h-full bg-background border-r border-border" {...{ [MAIL_SELECTION_COUNT_ATTR]: selectedUids.length }}>
-      {/* Toolbar */}
-      {hasSelection ? (
-        <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border shrink-0 bg-primary/5">
+      {/*
+        Toolbar. Ses trois états n'ont pas la même hauteur (à colonne étroite
+        l'en-tête normal passe sur deux lignes). Si la barre de sélection
+        REMPLAÇAIT l'en-tête, toute la liste remonterait dès la première ligne
+        cochée, et un rectangle de sélection ne couperait plus les lignes visées
+        sous le pointeur. Les deux vivent donc dans la MÊME case de grille : la
+        hauteur est celle du plus grand, la même avec et sans sélection, sans
+        hauteur en dur ni mesure en JS. `invisible` retire aussi de l'ordre de
+        tabulation ce qui n'est pas affiché.
+      */}
+      <div className="grid shrink-0">
+        <div className={cn('col-start-1 row-start-1 flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border bg-primary/5', !hasSelection && 'invisible')} aria-hidden={!hasSelection || undefined}>
           <button
             onClick={toggleAll}
             className="w-7 h-7 flex items-center justify-center rounded text-primary hover:bg-primary/10 transition-colors"
@@ -802,8 +1073,9 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
-      ) : !isSearchMode ? (
-        <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border shrink-0">
+        <div className={cn('col-start-1 row-start-1', hasSelection && 'invisible')} aria-hidden={hasSelection || undefined}>
+        {!isSearchMode ? (
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border h-full">
           <div className="flex rounded-lg overflow-hidden border border-border text-xs font-medium">
             {MAIL_LIST_FILTERS.map(f => (
               <button key={f} onClick={() => { setFilter(f); setPage(1); setAccumulated([]); loadingLockRef.current = 0 }}
@@ -821,38 +1093,76 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
               </button>
             ))}
           </div>
-          <button onClick={handleRefresh} disabled={isValidating} className="ml-auto w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-            <RefreshCw className={cn('w-3.5 h-3.5', isValidating && 'animate-spin')} />
-          </button>
+          <div className="ml-auto" />
           <ScheduledPopover />
           <SnoozePopover activeAccountId={activeAccountId} />
         </div>
-      ) : (
-        <div className="px-4 py-2 border-b border-border shrink-0">
-          <p className="text-xs text-muted-foreground" data-search-summary>
-            {isSearching
-              ? t('searching')
-              : <>
-                  {t('searchResults', { count: searchTotal, query: search })}
-                  {` · ${t('searchFieldsLabel')}`}
-                  {` · ${searchScope === SCOPE_ALL ? t('searchAllFolders') : t('searchThisFolder')}`}
-                  {searchTruncated && ` · ${t('searchTruncated', { shown: messages.length, total: searchTotal })}`}
-                </>}
-          </p>
+        ) : (
+        <div className="px-4 py-2 border-b border-border h-full">
+          {/* UNE ligne : le compte, ce qui est affiché, et la progression quand elle
+              court. Les champs cherchés et la portée — information secondaire —
+              passent en infobulle sur l'icône de droite. */}
+          <div className="flex items-center gap-2 min-w-0">
+            <p className="text-xs text-muted-foreground truncate" data-search-summary>
+              {t('searchCount', { count: searchTotal })}
+              {searchTruncated && ` · ${t('searchShown', { shown: messages.length })}`}
+              {isSearching && streamed.folders > 0 &&
+                ` · ${t('searchProgress', { searched: streamed.searched, folders: streamed.folders })}`}
+              {isSearching && streamed.folders === 0 && ` · ${t('searching')}`}
+            </p>
+            {/* Gardé sur `streaming` et non sur `isSearching` : avant que le compte
+                soit résolu, aucun flux ne court encore — un bouton Arrêter n'aurait
+                rien à arrêter. */}
+            {streaming && isStreamingScope && (
+              <button
+                onClick={stopStream}
+                className="shrink-0 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {t('searchStop')}
+              </button>
+            )}
+            <span
+              className="ml-auto shrink-0 text-muted-foreground/60"
+              title={t('searchDetails', {
+                fields: t('searchFieldsLabel'),
+                scope: searchScope === SCOPE_ALL ? t('searchAllFolders') : t('searchThisFolder'),
+              })}
+              data-search-details
+            >
+              <Info className="w-3.5 h-3.5" />
+            </span>
+          </div>
           {!isSearching && messages.length === 0 && (
             <p className="mt-1 text-xs text-muted-foreground/70" data-search-hint>{t('searchNoBodyHint')}</p>
           )}
         </div>
-      )}
+        )}
+        </div>
+      </div>
 
       {/* Thread List */}
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto"
-        role="listbox"
-        aria-multiselectable
-        aria-label={t('messageList')}
+      {/* `select-none` : un rectangle qui démarre sur un en-tête de date surlignait
+          du texte au passage — la sélection de texte naît au `mousedown`, qu'aucun
+          `preventDefault()` posé au `mousemove` ne peut plus annuler. La liste n'a
+          pas de texte à copier ; ailleurs (volet de lecture) rien ne change. */}
+      <ThinScroll
+        className="flex-1"
+        viewportClassName="relative select-none"
+        viewportRef={scrollRef}
+        viewportProps={{
+          role: 'listbox',
+          'aria-multiselectable': true,
+          'aria-label': t('messageList'),
+          onMouseDown: beginMarquee,
+        }}
       >
+        {marquee && (
+          <div
+            data-mail-marquee
+            className="pointer-events-none absolute z-20 border border-primary bg-primary/10"
+            style={{ left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height }}
+          />
+        )}
         {loading && (
           <div className="space-y-0">
             {[...Array(8)].map((_, i) => (
@@ -896,7 +1206,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
         {groupedThreads.map((group, gi) => (
           <div key={group.label ?? `g${gi}`}>
             {group.label && (
-              <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm px-4 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground border-b border-border/40">
+              <div data-mail-date-header className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm px-4 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground border-b border-border/40">
                 {group.label}
               </div>
             )}
@@ -934,7 +1244,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
             </div>
           )
         )}
-      </div>
+      </ThinScroll>
 
       {/* Context menu */}
       {contextMenu && (
