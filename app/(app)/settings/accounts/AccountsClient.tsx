@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useTranslations } from 'next-intl'
+import { useAppName } from '@/components/providers'
 import useSWR from 'swr'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -42,6 +43,8 @@ interface Props {
 
 export function AccountsClient({ initialError, initialSuccess }: Props) {
   const t = useTranslations('settings.accounts')
+  // Le produit se renomme (lot F1) : le sous-titre lit le nom RÉGLÉ, jamais « Synapmail » écrit en dur.
+  const appName = useAppName()
   const tShared = useTranslations('settings.accounts.receivedShares')
   const { data: accountsData, mutate } = useSWR<{ data: EmailAccount[] }>('/api/accounts', fetcher)
   // Credentials/sharing management is owner-only — accounts shared with this user
@@ -244,7 +247,7 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
         <SettingsHeader
           icon={<Mail className="h-4 w-4" />}
           title={t('title')}
-          description="Vos comptes IMAP / SMTP connectés à Synapmail"
+          description={t('description', { appName })}
         />
 
         <p className="mb-4 text-xs text-muted-foreground">{t('promptGuardDesc')}</p>

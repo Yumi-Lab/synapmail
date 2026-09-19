@@ -204,7 +204,8 @@
       "resultSummary": "摘要",
       "resultTranslation": "译文",
       "resultReply": "AI 草稿，已在撰写窗口打开"
-    }
+    },
+    "back": "返回"
   },
   "compose": {
     "newMessage": "新邮件",
@@ -274,7 +275,8 @@
       "ai": "AI 助手",
       "pgp": "PGP 加密",
       "apiKeys": "API 密钥",
-      "admin": "管理"
+      "admin": "管理",
+      "branding": "标签页名称与图标"
     },
     "common": {
       "save": "保存",
@@ -300,6 +302,7 @@
     },
     "accounts": {
       "title": "邮件账户",
+      "description": "已连接到 {appName} 的 IMAP / SMTP 账户",
       "add": "添加账户",
       "edit": "编辑",
       "setDefault": "设为默认",
@@ -815,7 +818,9 @@
       "rules": "规则, 过滤器, sieve, 自动化, rules",
       "ai": "人工智能, 智能助手, 助手, 模型, ai, copilot",
       "pgp": "pgp, 加密, gpg, 密钥, 隐私",
-      "apiKeys": "api, 密钥, 令牌, token, bearer, mcp, 代理"
+      "apiKeys": "api, 密钥, 令牌, token, bearer, mcp, 代理",
+      "admin": "管理, 管理员, 用户, 角色, admin",
+      "branding": "标签页, 图标, favicon, 标题, 站点名称, 标识"
     }
   }
 }

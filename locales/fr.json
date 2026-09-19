@@ -204,7 +204,8 @@
       "resultSummary": "Résumé",
       "resultTranslation": "Traduction",
       "resultReply": "Brouillon IA, ouvert dans la composition"
-    }
+    },
+    "back": "Retour"
   },
   "compose": {
     "newMessage": "Nouveau message",
@@ -274,7 +275,8 @@
       "ai": "IA Copilot",
       "pgp": "Chiffrement PGP",
       "apiKeys": "Clés API",
-      "admin": "Administration"
+      "admin": "Administration",
+      "branding": "Nom et icône de l'onglet"
     },
     "common": {
       "save": "Enregistrer",
@@ -300,6 +302,7 @@
     },
     "accounts": {
       "title": "Comptes email",
+      "description": "Vos comptes IMAP / SMTP connectés à {appName}",
       "add": "Ajouter un compte",
       "edit": "Modifier",
       "setDefault": "Définir par défaut",
@@ -815,7 +818,9 @@
       "rules": "regles, filtres, sieve, automatisation",
       "ai": "ia, copilote, assistant, modele",
       "pgp": "pgp, chiffrement, gpg, cle, confidentialite",
-      "apiKeys": "api, cle, jeton, token, bearer, mcp, agent, integration"
+      "apiKeys": "api, cle, jeton, token, bearer, mcp, agent, integration",
+      "admin": "admin, administration, utilisateurs, roles, comptes",
+      "branding": "onglet, icône, favicon, titre, nom du site, identité, logo"
     }
   }
 }
