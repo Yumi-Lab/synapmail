@@ -99,7 +99,21 @@ export function useAccountAccent() {
   const accounts = accountsData?.data ?? []
   const activeAccount = resolveActiveAccount(accounts, activeAccountId)
   const colorIndex = activeAccount ? accounts.indexOf(activeAccount) : 0
-  return { accounts, activeAccount, colorIndex, vars: accentVars(activeAccount, colorIndex), setActiveAccountId }
+  /**
+   * Basculer de boite, en UN seul endroit : l'evenement part d'abord (l'accent
+   * tourne sur le clic), l'etat local suit, la preference est ecrite ensuite. La
+   * barre laterale et l'omnibar (lot H3f) appellent CETTE fonction, jamais une copie.
+   */
+  const switchAccount = (id: string) => {
+    window.dispatchEvent(new CustomEvent('synapmail:account-change', { detail: id }))
+    setActiveAccountId(id)
+    fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active_account_id: id }),
+    })
+  }
+  return { accounts, activeAccount, colorIndex, vars: accentVars(activeAccount, colorIndex), switchAccount }
 }
 
 /** Above this the badge reads `99+`. Single source for every unread counter of the bar. */

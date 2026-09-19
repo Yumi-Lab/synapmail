@@ -621,6 +621,19 @@
     "hidePassword": "隐藏密码"
   },
   "omnibar": {
+    "sectionAccounts": "邮箱",
+    "sectionActions": "操作",
+    "sectionSettings": "设置",
+    "searchMailFor": "在邮件中搜索「{query}」",
+    "themeLight": "浅色主题",
+    "themeDark": "深色主题",
+    "themeSystem": "跟随系统",
+    "themeKeywords": "主题, 外观, 显示, theme, dark, light",
+    "languageAction": "语言：{name}",
+    "languageKeywords": "语言, 翻译, language, locale, i18n",
+    "language": "语言",
+    "dashboardKeywords": "仪表板, 概览, 首页, dashboard",
+    "composeKeywords": "写邮件, 新邮件, 撰写, compose",
     "keywords": {
       "profile": "个人资料, 姓名, 密码, 账户, profile",
       "appearance": "外观, 主题, 深色, 浅色, 系统, 语言, theme, dark, light, language",

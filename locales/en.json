@@ -621,6 +621,19 @@
     "hidePassword": "Hide password"
   },
   "omnibar": {
+    "sectionAccounts": "Mailboxes",
+    "sectionActions": "Actions",
+    "sectionSettings": "Settings",
+    "searchMailFor": "Search \"{query}\" in mail",
+    "themeLight": "Light theme",
+    "themeDark": "Dark theme",
+    "themeSystem": "System theme",
+    "themeKeywords": "theme, appearance, display",
+    "languageAction": "Language: {name}",
+    "languageKeywords": "language, locale, translation, i18n",
+    "language": "Language",
+    "dashboardKeywords": "dashboard, overview, home, stats",
+    "composeKeywords": "compose, new message, write, mail",
     "keywords": {
       "profile": "profile, name, password, account, identity",
       "appearance": "appearance, theme, dark, light, system, language, locale, display",

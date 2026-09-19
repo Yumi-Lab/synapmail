@@ -621,6 +621,19 @@
     "hidePassword": "Masquer le mot de passe"
   },
   "omnibar": {
+    "sectionAccounts": "Boîtes",
+    "sectionActions": "Actions",
+    "sectionSettings": "Réglages",
+    "searchMailFor": "Rechercher « {query} » dans le courrier",
+    "themeLight": "Thème clair",
+    "themeDark": "Thème sombre",
+    "themeSystem": "Thème système",
+    "themeKeywords": "thème, apparence, affichage, dark, light, sombre, clair, system",
+    "languageAction": "Langue : {name}",
+    "languageKeywords": "langue, language, traduction, i18n, locale",
+    "language": "Langue",
+    "dashboardKeywords": "tableau de bord, accueil, statistiques, dashboard",
+    "composeKeywords": "nouveau message, écrire, rédiger, compose",
     "keywords": {
       "profile": "profil, nom, mot de passe, compte, identite",
       "appearance": "apparence, theme, sombre, clair, systeme, langue, affichage",
