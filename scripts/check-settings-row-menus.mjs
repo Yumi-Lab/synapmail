@@ -4,10 +4,15 @@
  * now opens the SAME discreet "..." menu as the accounts screen (lot C3), and each
  * confirmation NAMES the object it is about to remove.
  *
- * NOTHING IS EVER DELETED by this bench: every DELETE request is intercepted and aborted
- * before it leaves the browser, and every confirmation is dismissed unless the bench
- * explicitly arms an acceptance. A key, signature, template, contact or rule really
+ * NOTHING PRE-EXISTING IS EVER DELETED by this bench: every DELETE request is intercepted
+ * and aborted before it leaves the browser, and every confirmation is dismissed unless the
+ * bench explicitly arms an acceptance. A key, signature, template, contact or rule really
  * removed here would be user data lost.
+ *
+ * A screen with no row cannot be measured, so the bench SEEDS one through the API. Every
+ * row it seeds is removed in the `finally`, directly in the database: the page's only
+ * delete path is the intercepted one, and revoking an API key through the route would
+ * leave the row behind anyway. The bench leaves the database as it found it.
  *
  * Fails (exit 1) on any mismatch. Exits 2 on a HARNESS error — a missing browser, an
  * unreachable server — which says nothing about the product.
@@ -16,9 +21,12 @@
  *   node scripts/check-settings-row-menus.mjs
  */
 import { existsSync, readFileSync } from 'node:fs'
+import pg from 'pg'
 import puppeteer from 'puppeteer-core'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+// The name every seeded row wears, so the `finally` can find them all again by one value.
+const SEED_NAME = 'bench-row-menu'
 const VIEWPORT = { width: 1440, height: 900 }
 const SETTLE_MS = 400
 
@@ -64,19 +72,19 @@ const SCREENS = [
     key: 'api-keys', path: '/settings/api-keys',
     list: '/api/api-keys', rowsOf: d => d,
     entries: 'revoke', nameOf: k => k.name, confirmNeedle: k => k.name,
-    seed: { url: '/api/api-keys', body: { name: 'bench-row-menu' } },
+    seed: { url: '/api/api-keys', table: 'api_keys', body: { name: SEED_NAME } },
   },
   {
     key: 'signatures', path: '/settings/signatures',
     list: '/api/signatures', rowsOf: d => d,
     entries: 'edit,delete', nameOf: s => s.name, confirmNeedle: s => s.name,
-    seed: { url: '/api/signatures', body: { name: 'bench-row-menu', contentHtml: '<p>bench</p>' } },
+    seed: { url: '/api/signatures', table: 'signatures', body: { name: SEED_NAME, contentHtml: '<p>bench</p>' } },
   },
   {
     key: 'templates', path: '/settings/templates',
     list: '/api/templates', rowsOf: d => d,
     entries: 'edit,delete', nameOf: t => t.name, confirmNeedle: t => t.name,
-    seed: { url: '/api/templates', body: { name: 'bench-row-menu', subject: 'bench', contentHtml: '<p>bench</p>' } },
+    seed: { url: '/api/templates', table: 'compose_templates', body: { name: SEED_NAME, subject: 'bench', contentHtml: '<p>bench</p>' } },
   },
   {
     key: 'contacts', path: '/settings/contacts',
@@ -88,10 +96,10 @@ const SCREENS = [
     list: '/api/rules', rowsOf: d => d,
     entries: 'edit,delete', nameOf: r => r.name, confirmNeedle: r => r.name,
     seed: {
-      url: '/api/rules',
+      url: '/api/rules', table: 'email_rules',
       body: {
-        name: 'bench-row-menu', conditionLogic: 'all',
-        conditions: [{ field: 'from', operator: 'contains', value: 'bench-row-menu.invalid' }],
+        name: SEED_NAME, conditionLogic: 'all',
+        conditions: [{ field: 'from', operator: 'contains', value: `${SEED_NAME}.invalid` }],
         actions: [{ type: 'star' }],
       },
     },
@@ -101,14 +109,18 @@ const SCREENS = [
     list: '/api/pgp/contacts', rowsOf: d => d,
     entries: 'delete', nameOf: c => c.name || c.email, confirmNeedle: c => c.name || c.email,
     seed: {
-      url: '/api/pgp/contacts',
+      url: '/api/pgp/contacts', table: 'pgp_public_keys',
       body: {
-        email: 'bench-row-menu@example.invalid', name: 'bench-row-menu',
+        email: `${SEED_NAME}@example.invalid`, name: SEED_NAME,
         fingerprint: BENCH_PGP_FINGERPRINT, armoredKey: BENCH_PGP_KEY,
       },
     },
   },
 ]
+
+/** The tables a seed can write to, read off SCREENS so the cleanup check can never drift
+ *  from the seeds themselves. */
+const SEED_TABLES = [...new Set(SCREENS.filter(s => s.seed).map(s => s.seed.table))]
 
 for (const file of ['../.env', '../.env.local']) {
   const path = new URL(file, import.meta.url)
@@ -120,9 +132,11 @@ for (const file of ['../.env', '../.env.local']) {
 }
 const {
   SYNAPMAIL_TEST_URL: BASE, SYNAPMAIL_TEST_EMAIL: EMAIL, SYNAPMAIL_TEST_PASSWORD: PASSWORD,
+  DATABASE_URL: DB_URL,
 } = process.env
 for (const [k, v] of Object.entries({
   SYNAPMAIL_TEST_URL: BASE, SYNAPMAIL_TEST_EMAIL: EMAIL, SYNAPMAIL_TEST_PASSWORD: PASSWORD,
+  DATABASE_URL: DB_URL,
 })) {
   if (!v) { console.error(`HARNESS: ${k} is not set`); process.exit(2) }
 }
@@ -181,8 +195,12 @@ const confirmations = []
  *  arm an acceptance still cannot destroy anything. */
 let acceptNextConfirm = false
 let page
+/** Every row this run created, so the `finally` can remove each one. `{ table, id }`. */
+const seeded = []
+const db = new pg.Client({ connectionString: DB_URL })
 
 try {
+  await db.connect()
   page = await browser.newPage()
   await page.setViewport(VIEWPORT)
 
@@ -237,6 +255,9 @@ try {
         })
       }, { base: BASE, url: screen.seed.url, body: { ...screen.seed.body, accountId } })
       rows = screen.rowsOf(await read(screen.list, scoped))
+      // Remembered BEFORE anything can fail below: a row created and then forgotten is
+      // real user data left in the database, which is what this ledger exists to prevent.
+      for (const r of rows) seeded.push({ table: screen.seed.table, id: r.id })
     }
     if (rows.length === 0) {
       // A screen with no row is NOT measured. Reporting it as a pass would tell a reader
@@ -340,7 +361,26 @@ try {
   console.error(`HARNESS: ${e.stack}`)
   process.exit(2)
 } finally {
+  // Every row this run created goes, whatever happened above. Straight in the database:
+  // the page's DELETE path is intercepted on purpose, and the api-keys route only marks a
+  // key revoked, so neither could ever bring these counts back to zero.
+  for (const { table, id } of seeded) {
+    await db.query(`DELETE FROM ${table} WHERE id = $1`, [id]).catch(() => {})
+  }
+  // One query at a time: a single pg client cannot run them in parallel.
+  const left = []
+  for (const table of SEED_TABLES) {
+    const r = await db.query(`SELECT count(*)::int AS n FROM ${table} WHERE name = $1`, [SEED_NAME])
+      .catch(() => ({ rows: [{ n: -1 }] }))
+    left.push(`${table}=${r.rows[0].n}`)
+  }
+  await db.end().catch(() => {})
   await browser.close().catch(() => {})
+  console.log(`rows seeded then removed: ${seeded.length} — left behind: ${left.join(' ')}`)
+  // The cleanup is part of what this bench asserts: a run that leaves a row behind has not
+  // passed, however green its measurements were.
+  const leaked = left.filter(t => !t.endsWith('=0'))
+  if (leaked.length) fail(`the bench left rows behind — ${leaked.join(' ')}`)
 }
 
 console.log(`intercepted DELETE requests (none reached the server): ${JSON.stringify(blockedDeletes)}`)
