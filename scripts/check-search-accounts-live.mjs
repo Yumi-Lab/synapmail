@@ -140,12 +140,24 @@ const imapSockets = () => {
     return out.split('\n').filter(l => /:(993|143)\b/.test(l)).length
   } catch { return -1 }
 }
-// REFERENCE ARM, same run: the app holds IMAP connections that have nothing to do
-// with a search (background inbox sync, IDLE watchers). Counting only the peak
-// would attribute those to the sweep and make the declared cap look breached.
-// What the sweep costs is peak MINUS this baseline.
+// REFERENCE ARM, same run, MATCHED SAMPLING: the app holds IMAP connections a
+// search knows nothing about, and the background inbox sync OPENS MORE of them
+// while the sweep runs. A single point-in-time baseline misses those bursts and
+// charges them to the sweep — measured 20/09/2026: 13 sockets "attributable" for
+// a cap of 12, purely from a sync firing mid-sweep. So the reference is the peak
+// over an IDLE window sampled the SAME way, for a duration comparable to a sweep
+// (calibrated on this bench: 32,7 s and 33,6 s observed).
+const REFERENCE_WINDOW_MS = 35000
+const sampleFor = async (ms) => {
+  let top = imapSockets()
+  const t = setInterval(() => { top = Math.max(top, imapSockets()) }, 200)
+  await new Promise(r => setTimeout(r, ms))
+  clearInterval(t)
+  return top
+}
+const idlePeak = await sampleFor(REFERENCE_WINDOW_MS)
 const baseline = imapSockets()
-let peak = baseline
+let peak = imapSockets()
 const sampler = setInterval(() => { peak = Math.max(peak, imapSockets()) }, 200)
 
 const url = `${BASE}/api/messages/search?${Q_PARAM}=${encodeURIComponent(term)}` +
@@ -189,8 +201,11 @@ console.log(`mailboxes hit  ${mailboxesSeen.size} / ${accounts.length}`)
 console.log(`results        ${results} kept, ${total} matches announced`)
 console.log(`unreachable    ${unreachable.length ? unreachable.join(', ') : 'none'}`)
 const after = imapSockets()
-const attributable = peak - baseline
-console.log(`IMAP sockets   baseline ${baseline}, peak ${peak}, after ${after}` +
+// Le bras de référence, pas le relevé instantané : ce que le SWEEP coûte est ce
+// qu'il ajoute au pic qu'une fenêtre OISIVE de même durée atteint déjà seule.
+const attributable = peak - idlePeak
+console.log(`IMAP sockets   idle peak ${idlePeak} over ${REFERENCE_WINDOW_MS} ms (reference arm)`)
+console.log(`               sweep: baseline ${baseline}, peak ${peak}, after ${after}` +
   (serverPid ? ` (pid ${serverPid})` : ' (server pid not found)'))
 console.log(`               attributable to the sweep: ${attributable}\n`)
 
@@ -208,8 +223,38 @@ if (baseline < 0) {
     attributable <= SOCKET_CAP,
     `${attributable} <= ${ACCOUNT_CONCURRENCY} x ${SEARCH_CONNECTIONS} = ${SOCKET_CAP}`)
   check('every socket the sweep opened is closed when it ends',
-    after <= baseline, `${after} <= ${baseline}`)
+    after <= idlePeak, `${after} <= ${idlePeak} (idle peak)`)
 }
+
+// ── ABANDON : couper le flux doit refermer TOUTES les connexions, pas seulement
+// celles du dossier courant. La référence est le même relevé de sockets, dans la
+// même exécution : on attend le retour à la ligne de base, pas un chiffre absolu.
+console.log('\nabandon')
+const aborter = new AbortController()
+const abortStart = Date.now()
+let abortedPeak = imapSockets()
+const abortRes = await get(url.slice(BASE.length), { signal: aborter.signal })
+if (!abortRes.ok) harness(`GET search (abort arm) -> ${abortRes.status}`)
+const abortReader = abortRes.body.getReader()
+// Couper APRÈS le premier morceau : avant, il n'y aurait encore rien à refermer.
+await abortReader.read()
+abortedPeak = Math.max(abortedPeak, imapSockets())
+aborter.abort()
+await abortReader.cancel().catch(() => {})
+
+// Le serveur referme ses connexions de façon asynchrone : on lui laisse le temps
+// de le faire, et on rapporte COMBIEN il en a mis.
+const CLOSE_BUDGET_MS = 30000
+let closedMs = null
+for (let waited = 0; waited < CLOSE_BUDGET_MS; waited += 250) {
+  await new Promise(r => setTimeout(r, 250))
+  if (imapSockets() <= idlePeak) { closedMs = Date.now() - abortStart; break }
+}
+const leftOpen = imapSockets() - idlePeak
+console.log(`  sockets at abort: ${abortedPeak} (idle peak ${idlePeak}), left open after: ${Math.max(0, leftOpen)}`)
+check('abandoning the sweep closes every connection it opened',
+  leftOpen <= 0,
+  closedMs === null ? `${leftOpen} still open after ${CLOSE_BUDGET_MS} ms` : `back to baseline in ${closedMs} ms`)
 
 if (failures.length) { console.error(`\n${failures.length} check(s) failed`); process.exit(1) }
 console.log('\ncheck-search-accounts-live: OK')
