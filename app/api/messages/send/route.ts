@@ -13,6 +13,7 @@ import {
 } from '@/lib/forward'
 import { upsertContactsFromAddresses } from '@/lib/contacts'
 import { randomUUID } from 'crypto'
+import { appOrigin } from '@/lib/appOrigin'
 
 export const dynamic = 'force-dynamic'
 
@@ -61,7 +62,7 @@ export async function POST(req: Request) {
     let trackedHtml = html
     if (requestReadReceipt && html) {
       token = randomUUID()
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
+      const appUrl = appOrigin(req)
       trackedHtml = injectTrackingPixel(html, `${appUrl}/api/track/${token}`)
     }
 

@@ -1,3 +1,5 @@
+import { appOrigin } from '@/lib/appOrigin'
+
 const TENANT = 'consumers'
 const IMAP_SMTP_SCOPES = [
   'openid',
@@ -12,7 +14,7 @@ export function getMicrosoftAuthUrl(state: string): string {
   const params = new URLSearchParams({
     client_id: process.env.MICROSOFT_CLIENT_ID!,
     response_type: 'code',
-    redirect_uri: `${process.env.NEXT_PUBLIC_APP_URL}/api/oauth/microsoft/callback`,
+    redirect_uri: `${appOrigin()}/api/oauth/microsoft/callback`,
     scope: IMAP_SMTP_SCOPES,
     state,
     response_mode: 'query',
@@ -35,7 +37,7 @@ export async function exchangeCode(code: string): Promise<TokenResult> {
       client_id: process.env.MICROSOFT_CLIENT_ID!,
       client_secret: process.env.MICROSOFT_CLIENT_SECRET!,
       code,
-      redirect_uri: `${process.env.NEXT_PUBLIC_APP_URL}/api/oauth/microsoft/callback`,
+      redirect_uri: `${appOrigin()}/api/oauth/microsoft/callback`,
       grant_type: 'authorization_code',
     }),
   })

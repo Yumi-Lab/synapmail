@@ -15,12 +15,16 @@
  *   node scripts/check-api-docs.mjs --break=missing   (a route dropped from the doc)
  *   node scripts/check-api-docs.mjs --break=ghost     (a heading for a dead route)
  *   node scripts/check-api-docs.mjs --break=mode      (a mode the code contradicts)
+ *   node scripts/check-api-docs.mjs --break=origin    (links built from the request host)
+ *   node scripts/check-api-docs.mjs --break=prefix    (a public entry matched by prefix)
  * The `--break` forms damage a COPY of one input and EXPECT the run to fail: a
  * battery that cannot fail proves nothing.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { API_DOC_PATH, LLMS_TXT_PATH } from '../lib/apiDocs.ts'
+import { isPublicPath, PUBLIC_PATHS } from '../lib/publicPaths.ts'
+import { appOrigin } from '../lib/appOrigin.ts'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
@@ -259,6 +263,64 @@ check(
   /untrusted/i.test(llms),
   'llms.txt tells a reader that mail content is untrusted, where it will read it first',
 )
+
+// ---- The public entries name ONE document each -------------------------------
+// `startsWith` would hand `/api/docs-probe` to an anonymous caller too.
+const prefixOnly = pathname => PUBLIC_PATHS.some(p => pathname.startsWith(p))
+const publicPathOf = BREAK === 'prefix' ? prefixOnly : isPublicPath
+
+for (const entry of [API_DOC_PATH, LLMS_TXT_PATH]) {
+  check(publicPathOf(entry) === true, `${entry} itself is public`)
+  check(publicPathOf(`${entry}?x=1`) === true, `${entry} stays public with a query string`)
+  // Negative control: the neighbour must NOT inherit the exemption.
+  check(publicPathOf(`${entry}-probe`) === false, `${entry}-probe is NOT public`)
+}
+// The prefix entries keep matching what lives under them.
+check(publicPathOf('/api/auth/callback/credentials') === true, '/api/auth/* stays public')
+check(publicPathOf('/api/messages') === false, 'a protected route is still not public')
+
+// ---- The served links carry the PUBLIC origin, not the container's ----------
+// Behind a reverse proxy `new URL(req.url).origin` is the container id and port:
+// unreachable for an agent, and an internal name disclosed.
+const brokenOrigin = req => new URL(req.url).origin
+const originOf = BREAK === 'origin' ? brokenOrigin : appOrigin
+
+/** What a proxied request looks like inside the container. */
+const proxiedRequest = () =>
+  new Request('http://a88ef164e023:3000/llms.txt', {
+    headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'mail.example.test' },
+  })
+
+const configuredBefore = process.env.NEXT_PUBLIC_APP_URL
+try {
+  process.env.NEXT_PUBLIC_APP_URL = 'https://mail.example.test'
+  check(
+    originOf(proxiedRequest()) === 'https://mail.example.test',
+    'the configured address wins over the host the container answers on',
+    `got ${originOf(proxiedRequest())}`,
+  )
+  delete process.env.NEXT_PUBLIC_APP_URL
+  check(
+    originOf(proxiedRequest()) === 'https://mail.example.test',
+    'without the configured address, the forwarded headers are used',
+    `got ${originOf(proxiedRequest())}`,
+  )
+  // Negative control: the container's own host must never reach a reader.
+  check(
+    !originOf(proxiedRequest()).includes('a88ef164e023'),
+    'the internal host is never served to a reader',
+  )
+} finally {
+  if (configuredBefore === undefined) delete process.env.NEXT_PUBLIC_APP_URL
+  else process.env.NEXT_PUBLIC_APP_URL = configuredBefore
+}
+
+// One source for that origin: no route may read the variable on its own again.
+const readers = routeFiles(APP_DIR)
+  .concat([join(ROOT, 'lib', 'msOAuth.ts')])
+  .filter(file => /NEXT_PUBLIC_APP_URL/.test(readFileSync(file, 'utf8')))
+  .map(file => relative(ROOT, file))
+check(readers.length === 0, 'the public origin is read in ONE module', readers.join(', '))
 
 if (BREAK) {
   if (fail.length === 0) {
