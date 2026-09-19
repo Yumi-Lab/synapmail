@@ -253,6 +253,23 @@ try {
   // --- 2. Par la palette de l'omnibar ---
   await run('palette', switchByPalette)
 
+  // Le contrôle négatif s'arrête ici : il ne neutralise QUE la réécriture d'URL
+  // du changement de boîte, donc seules les deux passes ci-dessus peuvent le
+  // voir. Les étapes suivantes porteraient sur une recherche et sur les réglages,
+  // que la neutralisation ne touche pas — les jouer n'ajouterait aucune preuve,
+  // et les faire tourner sur un dossier qui n'existe pas dans la nouvelle boîte
+  // fait attendre IMAP pour rien (passage au-delà de 10 min, mesuré).
+  if (NEGATIVE) {
+    if (!failures.length) {
+      console.error('\ncontrôle négatif : ÉCHEC — sans le correctif, les deux passes restent vertes')
+      process.exit(1)
+    }
+    console.log(`\ncontrôle négatif : OK — le banc voit la régression (${failures.length} échec(s))`)
+    for (const f of failures) console.log(`  · ${f}`)
+    await browser.close()
+    process.exit(0)
+  }
+
   // --- 3. Une recherche « toutes les boîtes » est GARDÉE ---
   await standOnCustomFolder()
   await realClick(OMNIBAR_SEARCH)
@@ -297,16 +314,6 @@ try {
 }
 
 console.log('')
-if (NEGATIVE) {
-  // Le contrôle négatif RÉUSSIT quand le banc échoue : sinon le banc ne mesure rien.
-  if (failures.length) {
-    console.log(`contrôle négatif : OK — le banc voit bien la régression (${failures.length} échec(s))`)
-    for (const f of failures) console.log(`  · ${f}`)
-    process.exit(0)
-  }
-  console.error('contrôle négatif : ÉCHEC — sans le correctif, le banc reste vert : il ne mesure rien')
-  process.exit(1)
-}
 if (failures.length) {
   console.error(`check-mailbox-switch-browser : ${failures.length} ÉCHEC(S)`)
   for (const f of failures) console.error(`  · ${f}`)
