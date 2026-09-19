@@ -863,14 +863,30 @@ const setTheme = theme => {
   document.documentElement.style.colorScheme = theme
 }
 
+// A page-level navigation/settle budget. The 30s puppeteer default is a machine-load
+// threshold, not a product one: under heavy load a `goto` times out and the script used to
+// die with a raw stack and rc=1 — indistinguishable from a product FAIL. Navigation is
+// never what this script measures, so its failures exit 2 (HARNESS) through `gotoOrHarness`.
+const NAV_SETTLE_MS = 120000
+
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] })
 let failures = []
 try {
   const page = await browser.newPage()
+  page.setDefaultNavigationTimeout(NAV_SETTLE_MS)
   await page.setViewport(VIEWPORT)
+  /** Navigates, or exits 2: a page that never loaded measured nothing about the product. */
+  const gotoOrHarness = async url => {
+    try {
+      await page.goto(url, { waitUntil: 'networkidle2' })
+    } catch (err) {
+      console.error(`HARNESS: ${url} did not load within ${NAV_SETTLE_MS} ms (${err.name}) — nothing was measured`)
+      process.exit(2)
+    }
+  }
 
   // Sign in through the credentials endpoint, then land on /mail.
-  await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2' })
+  await gotoOrHarness(`${BASE}/login`)
   const loggedIn = await page.evaluate(async ({ base, email, password }) => {
     const { csrfToken } = await (await fetch(`${base}/api/auth/csrf`)).json()
     const res = await fetch(`${base}/api/auth/callback/credentials`, {
@@ -882,7 +898,7 @@ try {
   }, { base: BASE, email: EMAIL, password: PASSWORD })
   if (!loggedIn) { console.error('HARNESS: credentials login failed'); process.exit(2) }
 
-  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await gotoOrHarness(`${BASE}/mail`)
   await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
   // Which account of this database carries the most custom folders — asked of the app's own
   // API, not hard-coded to a name: lot A7b exists because the rule was only ever measured on
@@ -910,7 +926,7 @@ try {
   await page.evaluate(async ({ base, id }) => {
     await fetch(`${base}/api/settings`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active_account_id: id }) })
   }, { base: BASE, id: smallest.id })
-  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
+  await gotoOrHarness(`${BASE}/mail`)
   await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
   const signedInAs = smallest.label
   console.log(`accounts in this database: ${inventory.map(a => `${a.label}=${a.custom}`).join(', ')} — starting on "${signedInAs}" (${smallest.custom}), biggest is "${biggest.label}" (${biggest.custom})`)
@@ -1284,6 +1300,12 @@ try {
   await page.mouse.click(outsideTarget.x, outsideTarget.y)
   await new Promise(r => setTimeout(r, SETTLE_MS))
   const dismissed = await page.evaluate(probeAccountListBox)
+  // The navigation this click triggers is a soft one, and on a loaded machine it can land
+  // well after SETTLE_MS: sampling the URL on a fixed sleep reports UNCHANGED for a click
+  // that DID get through. Poll for the change instead. A swallowed click never navigates
+  // at all, so waiting longer cannot turn a real dismiss bug into a pass — it only removes
+  // the timing race. Still UNCHANGED when the poll expires = the product failure below.
+  await page.waitForFunction(before => location.href !== before, { timeout: NAV_SETTLE_MS }, urlBefore).catch(() => {})
   const urlAfter = page.url()
   console.log(`outside click on ${outsideTarget.path}: list ${dismissed ? 'STILL OPEN' : 'folded'}, url ${urlBefore === urlAfter ? 'UNCHANGED' : 'changed'} -> ${urlAfter}`)
   if (dismissed) failures.push('account list: a click outside did not fold it')
