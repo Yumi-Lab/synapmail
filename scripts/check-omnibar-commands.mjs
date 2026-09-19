@@ -37,6 +37,19 @@ const ENTRIES = [
   { id: 'action:theme-dark', section: 'actions', label: 'Thème sombre', keywords: 'dark, sombre' },
   { id: 'account:1', section: 'accounts', label: 'Bruno', hint: 'bruno@yumi-lab.com' },
 ]
+
+/**
+ * Les TROIS modes declares dans l'ordre de `lib/theme.ts` (clair, sombre, systeme),
+ * avec les mots-cles que portent les vraies entrees : c'est ce voisinage qui a
+ * produit le defaut du lot H3f (« sombre » designait « Thème clair » au clavier,
+ * les trois partageant alors une seule liste de mots-cles).
+ */
+const THEME_ENTRIES = [
+  { id: 'action:theme-light', section: 'actions', label: 'Thème clair', keywords: 'clair, light, jour, thème' },
+  { id: 'action:theme-dark', section: 'actions', label: 'Thème sombre', keywords: 'sombre, dark, nuit, thème' },
+  { id: 'action:theme-system', section: 'actions', label: 'Thème système', keywords: 'système, system, auto, automatique, thème' },
+  { id: 'account:2', section: 'accounts', label: 'Bruno', hint: 'bruno@yumi-lab.com' },
+]
 const ids = q => matchOmnibar(q, ENTRIES).map(e => e.id)
 
 console.log('matchOmnibar')
@@ -57,6 +70,31 @@ check('ordre des sections : comptes, actions, reglages',
   ['accounts', 'actions', 'settings', 'settings'])
 check('sections declarees dans cet ordre', [...OMNIBAR_SECTIONS], ['accounts', 'actions', 'settings'])
 
+// --- Ce que la saisie NOMME passe en tete ---
+// Une entree dont le LIBELLE porte toute la saisie precede celles qui ne
+// correspondent que par mot-cle : sinon « sombre » + Entree applique le theme CLAIR.
+console.log('ce que la saisie nomme passe en tete')
+const themeIds = q => matchOmnibar(q, THEME_ENTRIES).map(e => e.id)
+check('« sombre » propose le theme sombre en premier', themeIds('sombre')[0], 'action:theme-dark')
+check('« dark » propose le theme sombre en premier', themeIds('dark')[0], 'action:theme-dark')
+check('« clair » propose le theme clair en premier', themeIds('clair')[0], 'action:theme-light')
+check('« light » propose le theme clair en premier', themeIds('light')[0], 'action:theme-light')
+check('« systeme » propose le theme systeme en premier', themeIds('systeme')[0], 'action:theme-system')
+check('« theme » garde l\'ordre de declaration',
+  themeIds('theme'), ['action:theme-light', 'action:theme-dark', 'action:theme-system'])
+// Le rang par libelle ne prime JAMAIS la section : une boite reste avant une action.
+check('« bruno » propose la boite en premier', themeIds('bruno')[0], 'account:2')
+
+// Le rang par libelle est une regle A PART ENTIERE, pas un effet des mots-cles :
+// ici les DEUX entrees portent « sombre » dans leurs mots-cles, donc le filtre les
+// garde toutes les deux et SEUL le libelle peut les departager.
+const SHARED = [
+  { id: 'a:premier', section: 'actions', label: 'Réglage clair', keywords: 'sombre, clair' },
+  { id: 'a:second', section: 'actions', label: 'Réglage sombre', keywords: 'sombre, clair' },
+]
+check('a mots-cles egaux, le libelle qui NOMME la saisie passe devant',
+  matchOmnibar('sombre', SHARED).map(e => e.id), ['a:second', 'a:premier'])
+
 // --- Source UNIQUE des entrees de reglages ---
 console.log('source des reglages')
 const NAV_SRC = readFileSync(new URL('../components/settings/SettingsSidebar.tsx', import.meta.url), 'utf8')
@@ -74,6 +112,11 @@ for (const code of ['en', 'fr', 'zh']) {
   check(`${code} : chaque entree a son libelle`, missingLabel, [])
   const missingKeywords = navKeys.filter(k => !L.omnibar?.keywords?.[k])
   check(`${code} : chaque entree a ses mots-cles`, missingKeywords, [])
+  // Chaque mode de theme a SA liste : une liste partagee reintroduirait le defaut.
+  const themeKeywordKeys = ['themeLightKeywords', 'themeDarkKeywords', 'themeSystemKeywords']
+  const lists = themeKeywordKeys.map(k => L.omnibar?.[k])
+  check(`${code} : chaque theme a ses propres mots-cles`, lists.filter(Boolean).length, 3)
+  check(`${code} : les trois listes de theme sont distinctes`, new Set(lists).size, 3)
 }
 
 console.log(failed ? `\nKO (${failed})` : '\nOK')

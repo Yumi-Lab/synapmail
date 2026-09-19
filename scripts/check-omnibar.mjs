@@ -913,6 +913,29 @@ page.setDefaultNavigationTimeout(120000)
     if (new URL(page.url()).pathname !== '/mail') failures.push('H3f: choosing a theme navigated away from the mailbox')
   }
 
+  // (5b) Ce que la saisie NOMME sort en tete, et le CLAVIER l'applique vraiment.
+  // Mesure du 19/09 avant correction : « sombre » proposait « Thème clair » en
+  // premier (les trois modes partageaient une liste de mots-cles), donc la
+  // premiere fleche + Entree ECLAIRCISSAIT la page au lieu de l'assombrir.
+  for (const [word, wanted] of [['sombre', 'action:theme-dark'], ['clair', 'action:theme-light']]) {
+    const ranked = await typeInOmnibar(word)
+    console.log(`H3f: « ${word} » -> ${ranked?.ids.join(' | ')}`)
+    if (ranked?.ids[0] !== wanted)
+      failures.push(`H3f: « ${word} » proposes ${ranked?.ids[0]} first, expected ${wanted}`)
+  }
+  // Remise au clair d'abord, pour que l'assombrissement soit un VRAI changement.
+  await page.click('[data-omnibar-entry="action:theme-light"]')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const beforeKeyboard = await page.evaluate(() => document.documentElement.classList.contains('dark'))
+  await typeInOmnibar('sombre')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const afterKeyboard = await page.evaluate(() => document.documentElement.classList.contains('dark'))
+  console.log(`H3f: « sombre » + ArrowDown + Enter — dark before=${beforeKeyboard}, after=${afterKeyboard}`)
+  if (beforeKeyboard) failures.push('H3f: the light-theme entry did not lighten the page before the keyboard measurement')
+  if (!afterKeyboard) failures.push('H3f: « sombre » + ArrowDown + Enter did not darken the page')
+
   // (6) La langue est aussi une ligne du menu du compte, avec les 3 langues declarees.
   await page.click(USER_TRIGGER)
   await new Promise(r => setTimeout(r, SETTLE_MS))

@@ -141,7 +141,6 @@ export function UserMenu() {
                   type="button"
                   data-user-menu-language={code}
                   aria-pressed={locale === code}
-                  title={label}
                   onClick={() => { if (locale !== code) void setLocale(code as Locale) }}
                   className={cn(
                     'rounded-[7px] px-2 py-1 text-[11px] transition-colors',

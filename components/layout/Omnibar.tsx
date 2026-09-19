@@ -198,16 +198,21 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
       icon: <PenSquare className={ICON} />,
       run: () => openCompose(pathname, router.push),
     },
-    ...THEMES.map(value => ({
-      id: `${ENTRY.action}:theme-${value}`,
-      section: 'actions' as const,
+    ...THEMES.map(value => {
       // `themeLight`/`themeDark`/`themeSystem` : la cle se compose a partir du nom
       // du theme, la table THEMES reste la seule liste des modes.
-      label: tOmni(`theme${value.charAt(0).toUpperCase()}${value.slice(1)}` as 'themeLight'),
-      keywords: tOmni('themeKeywords'),
-      icon: <ThemeGlyph theme={value} />,
-      run: () => setTheme(value),
-    })),
+      const key = `theme${value.charAt(0).toUpperCase()}${value.slice(1)}`
+      return {
+        id: `${ENTRY.action}:theme-${value}`,
+        section: 'actions' as const,
+        label: tOmni(key as 'themeLight'),
+        // Chaque mode porte SES mots-cles : une liste partagee ferait correspondre
+        // « sombre » aux trois, et le clavier designerait le premier declare.
+        keywords: tOmni(`${key}Keywords` as 'themeLightKeywords'),
+        icon: <ThemeGlyph theme={value} />,
+        run: () => setTheme(value),
+      }
+    }),
     ...LOCALES.map(({ code, label }) => ({
       id: `${ENTRY.action}:language-${code}`,
       section: 'actions' as const,

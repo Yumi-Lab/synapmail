@@ -52,12 +52,23 @@ export function matchOmnibar(query: string, entries: readonly OmnibarEntry[]): O
   const terms = foldText(query).split(/\s+/).filter(Boolean)
   if (!terms.length) return []
   const bySection = (e: OmnibarEntry) => OMNIBAR_SECTIONS.indexOf(e.section)
+  /**
+   * 0 si le LIBELLÉ porte déjà toute la saisie, 1 sinon. Départage les entrées
+   * voisines qui partagent des mots-clés : « sombre » sort « Thème sombre » avant
+   * « Thème clair », alors que les deux se trouvent par le mot-clé « thème ».
+   * Sans ce rang, l'ordre de déclaration désignait au clavier une entrée que la
+   * saisie NOMMAIT pourtant l'autre.
+   */
+  const byLabel = (e: OmnibarEntry) => {
+    const label = foldText(e.label)
+    return terms.every(term => label.includes(term)) ? 0 : 1
+  }
   return entries
     .filter(entry => {
       const haystacks = [entry.label, entry.hint ?? '', entry.keywords ?? ''].map(foldText)
       return terms.every(term => haystacks.some(h => h.includes(term)))
     })
-    // Tri STABLE : à section égale, les entrées gardent l'ordre où l'appelant les a
-    // déclarées (la navigation des réglages, le rang des boîtes) — rien à reclasser.
-    .sort((a, b) => bySection(a) - bySection(b))
+    // Tri STABLE : à section et à rang égaux, les entrées gardent l'ordre où
+    // l'appelant les a déclarées (la navigation des réglages, le rang des boîtes).
+    .sort((a, b) => bySection(a) - bySection(b) || byLabel(a) - byLabel(b))
 }
