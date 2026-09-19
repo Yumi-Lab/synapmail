@@ -8,6 +8,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — actions sur les mails — 2026-09-20
 
 ### Added
+- **Le bouton du volet de lecture dit « Résumer », et les écrans IA parlent la langue du visiteur**
+  (`components/ai/AIToolbar.tsx`, `app/(app)/settings/ai/AISettingsClient.tsx`, `locales/*.json`) : le
+  libellé « TL;DR » était du jargon anglais écrit en dur, et Réglages → IA affichait du français en dur à
+  un visiteur lisant le site en anglais ou en chinois. Les deux fichiers ne portent plus aucune chaîne lue
+  par le visiteur : 42 clés en / fr / zh ajoutées ensemble. Les quatre libellés de fonctionnalité
+  (« Résumer », « Répondre avec l'IA », « Améliorer / Ton », « Traduire ») ont désormais UNE source,
+  `mail.ai.actions.*`, que les deux écrans relisent au lieu d'en garder chacun sa copie. Les noms de marque
+  (Claude, OpenAI, Ollama) restent littéraux.
+
+### Fixed
+- **La commande d'autorisation d'Ollama redémarre vraiment Ollama** (`lib/aiClient.ts`) : elle réglait bien
+  `OLLAMA_ORIGINS`, mais le réglage ne prenait pas effet, parce que l'APPLICATION survivait à l'arrêt du
+  SERVEUR et le relançait avec son ancien environnement. Sur macOS, `quit` par AppleScript est refusé par
+  l'application (et déclenche une demande d'autorisation), et `pkill -x ollama` ne touche que le serveur en
+  minuscules ; la commande arrête maintenant les deux noms, attend qu'aucun ne tourne (boucle bornée sur
+  `pgrep`, plus de `sleep` fixe), puis rouvre Ollama. Même correction sous Windows, où l'icône « ollama app »
+  survivait à un `Stop-Process` sur « ollama ». Sous Linux, le fichier déposé s'appelle `zz-origins.conf`
+  pour trier après un `override.conf` déjà présent, que systemd lit en dernier et qui l'emportait.
+
 - **« Détecter » dit la vraie raison, et le réglage d'Ollama tient en un copier-coller**
   (`lib/aiClient.ts`, `app/(app)/settings/ai/AISettingsClient.tsx`) : un Ollama qui TOURNE mais refuse le
   site répondait « Démarrer le modèle sur cet ordinateur », la seule chose qui n'était pas le problème.
