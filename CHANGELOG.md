@@ -128,9 +128,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `scripts/check-sidebar-collapse.mjs` échoue si le compte actif réapparaît dans la liste ou si une bulle y est marquée.
 - **La barre suit le thème** (claire en clair, sombre en sombre), un seul accent, un seul motif de ligne
   (36 px), aucune animation décorative ; défilement discret `scroll-thin` (`app/globals.css`) à la place de la barre native.
-- **En-tête sur une ligne** (`components/layout/AppShell.tsx`) : le compte occupe la première ligne, le bouton de repli
-  devient un bouton rond de 28 px posé **à cheval sur le bord droit** de la barre — il suit ce bord dans les deux états
-  et sur le tiroir mobile, et reste centré sur la ligne du compte sans jamais entrer dans le flux de la barre.
+- **En-tête sur une ligne** (`components/layout/AppShell.tsx`) : le compte occupe toute la première ligne de la barre ;
+  le repli, lui, n'est plus commandé depuis la barre — c'est le **hamburger de la head bar** (premier du groupe de
+  gauche) qui replie et déplie la barre au-dessus de `lg`, et ouvre le tiroir en dessous. Plus aucun bouton flottant
+  posé sur le bord de la barre.
 - **Dossiers reconnaissables quand la barre est repliée** (`components/layout/FolderGlyph.tsx`) : les dossiers
   personnalisés, qui partageaient tous la même icône générique, portent une tuile carrée monochrome à **exactement
   deux caractères**, départagés sans jamais recourir à une troisième lettre (deux dossiers homonymes prennent des
@@ -143,7 +144,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   coup ; le reste de l'application garde l'accent global.
 - **Sélecteur de thème** (`components/ThemeToggle.tsx`) : icônes seules (soleil / lune / moniteur, nom en infobulle),
   un curseur unique qui glisse en 180 ms (`prefers-reduced-motion` respecté), vertical dans la barre repliée pour rester
-  cliquable ; le même composant sert dans Réglages → Apparence et dans le pied de la barre.
+  cliquable ; le même composant sert dans Réglages → Apparence et dans le menu du compte utilisateur, en haut à droite
+  de la head bar (la barre latérale n'a plus de pied).
 - **Thème sans stockage navigateur** : `components/theme/ThemeProvider.tsx` + `lib/theme.ts` remplacent `next-themes` ;
   le choix vient de `user_settings.theme` et du cookie `synapmail-theme` lu au rendu serveur (aucun flash), le mode
   système suit `prefers-color-scheme` en direct.
@@ -180,8 +182,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   la recherche globale dans un champ de 640 px centré sur la barre. La ligne « Tableau de bord » quitte la barre
   latérale, qui ne garde que comptes, dossiers et réglages. La barre latérale occupe TOUTE la hauteur : l'omnibar
   commence à son bord droit et suit son animation de repli sans décalage (elle en est un frère de flex, il n'y a rien à
-  synchroniser). Le bouton rond de repli reste flottant à cheval sur le bord de la barre, hors de l'omnibar ; le retrait
-  gauche de celle-ci est dérivé de la taille du bouton pour que les deux zones cliquables ne se recouvrent jamais.
+  synchroniser). Le repli est commandé depuis la head bar elle-même : le hamburger ouvre le groupe de gauche, devant
+  Tableau de bord et Nouveau message ; thème et Paramètres, eux, vivent dans le menu du compte utilisateur à droite.
 - **Recherche unique** : le champ de l'omnibar est le SEUL de l'application. Il écrit la requête dans l'URL de la boîte
   (`/mail?q=…&scope=…`), que la liste relit — aucun composant n'en garde une seconde copie. Depuis une autre page,
   Entrée navigue vers la boîte ; un lien profond restaure champ et portée ; ⌘K / Ctrl+K focalise le champ. L'ancien champ
@@ -190,7 +192,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   recherche tous dossiers demande **≈ 30 à 50 s** (4 connexions IMAP réutilisées) : l'attente est couverte par la
   bannière « Recherche… ». Des résultats progressifs, dossier par dossier, restent possibles plus tard.
 - `scripts/check-omnibar.mjs` et `scripts/check-omnibar-search.mjs` (puppeteer-core) : géométrie de la barre (hauteur,
-  bord gauche aligné sur la barre latérale dans les deux états de repli, champ centré, dégagement du bouton rond),
+  bord gauche aligné sur la barre latérale dans les deux états de repli, champ centré, ordre du groupe de gauche
+  — hamburger, Tableau de bord, Nouveau message — et écart minimal entre deux zones cliquables voisines),
   raccourcis, clics réels sur les trois actions, et mesure de bout en bout de la recherche. Les seuils sont lus dans les
   composants au même run, jamais retapés dans le script.
 - **Chinois simplifié** (`locales/zh.json`) : troisième langue complète, détection `zh*`, choix « 中文 » dans Apparence.
