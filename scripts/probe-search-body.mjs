@@ -53,6 +53,10 @@ const NEEDLE_MIN_LENGTH = 6
 const BODY_CAPABILITIES = ['SEARCH=FUZZY', 'ESEARCH', 'CONDSTORE']
 
 const say = (label, value) => console.log(`  ${label}: ${value}`)
+// The server's OWN words, which is what lot S5 asks to record: imapflow puts the
+// tagged status and its text on the error, and 'Command failed' is only its
+// generic wrapper.
+const serverWords = err => (err.responseText ? `${err.responseStatus} ${err.responseText}` : String(err.message ?? err))
 const shape = word => `${word.length} chars, ${/^[\x20-\x7e]+$/.test(word) ? 'ASCII' : 'non-ASCII'}`
 
 /** Runs one SEARCH, timed, and never throws: a refusal IS a measurement. */
@@ -66,8 +70,8 @@ async function timedSearch(label, query) {
     return { n, ms, refused: found === false }
   } catch (err) {
     const ms = Date.now() - started
-    console.log(`  ${label}: REJECTED in ${ms} ms — ${String(err.message ?? err).slice(0, 120)}`)
-    return { n: 0, ms, refused: true, error: String(err.message ?? err) }
+    console.log(`  ${label}: REJECTED in ${ms} ms — server said: ${serverWords(err).slice(0, 160)}`)
+    return { n: 0, ms, refused: true, error: serverWords(err) }
   }
 }
 
@@ -77,13 +81,12 @@ async function timedSearch(label, query) {
  * measure the plain form twice; this issues the wire command itself and counts
  * the UIDs of the untagged SEARCH response.
  */
-async function timedRawSearch(label, key, word) {
+async function timedRawSearch(label, key, word, charset = true) {
   const started = Date.now()
   let uids = 0
   try {
     const response = await client.exec('UID SEARCH', [
-      { type: 'ATOM', value: 'CHARSET' },
-      { type: 'ATOM', value: 'UTF-8' },
+      ...(charset ? [{ type: 'ATOM', value: 'CHARSET' }, { type: 'ATOM', value: 'UTF-8' }] : []),
       { type: 'ATOM', value: key.toUpperCase() },
       { type: 'STRING', value: word },
     ], {
@@ -97,8 +100,8 @@ async function timedRawSearch(label, key, word) {
     return { n: uids, ms, refused: false }
   } catch (err) {
     const ms = Date.now() - started
-    console.log(`  ${label}: REJECTED in ${ms} ms — ${String(err.message ?? err).slice(0, 120)}`)
-    return { n: 0, ms, refused: true, error: String(err.message ?? err) }
+    console.log(`  ${label}: REJECTED in ${ms} ms — server said: ${serverWords(err).slice(0, 160)}`)
+    return { n: 0, ms, refused: true, error: serverWords(err) }
   }
 }
 
@@ -149,22 +152,41 @@ try {
   let reference
   try {
     // SAME-RUN REFERENCE first: this search MUST find the message, otherwise the
-    // harness is broken and nothing below licenses a conclusion.
-    const subject = (await client.fetchOne(String(needleUid), { envelope: true }, { uid: true }))?.envelope?.subject ?? ''
-    reference = await timedSearch('REFERENCE  SUBJECT of that same message', { subject })
+    // harness is broken and nothing below licenses a conclusion. The reference
+    // word is taken ASCII-only on purpose: a first run showed a non-ASCII SUBJECT
+    // search returning 0 on this server, which would have broken the reference
+    // for a reason having nothing to do with bodies.
+    const envelope = (await client.fetchOne(String(needleUid), { envelope: true }, { uid: true }))?.envelope ?? {}
+    const subjectWord = (envelope.subject ?? '').match(/[a-zA-Z]{6,20}/)?.[0]
+    const fromAddress = envelope.from?.[0]?.address ?? ''
+    const referenceQuery = subjectWord ? { subject: subjectWord } : { from: fromAddress }
+    say('reference field', subjectWord ? `SUBJECT, ${shape(subjectWord)}` : 'FROM (the subject holds no ASCII word)')
+    reference = await timedSearch('REFERENCE  a header of that same message ', referenceQuery)
     for (const field of ['body', 'text']) {
       await timedSearch(`${field.toUpperCase().padEnd(10)} plain            `, { [field]: needle })
+      // The RAW form of the same plain search, purely to capture the server's own
+      // refusal text: imapflow's search() swallows it into `false`, and lot S5 asks
+      // for the raw responses, not for a boolean.
+      await timedRawSearch(`${field.toUpperCase().padEnd(10)} plain, raw       `, field, needle, false)
       await timedRawSearch(`${field.toUpperCase().padEnd(10)} CHARSET UTF-8    `, field, needle)
     }
 
     console.log('\nC. does a body term poison the OR the product uses')
     const term = config.username.split('@')[1] ?? config.username
-    const plainOr = await timedSearch('REFERENCE  OR over the product fields', { or: SEARCH_FIELDS.map(f => ({ [f]: term })) })
-    const widenedOr = await timedSearch('           the same OR plus a body term', { or: [...SEARCH_FIELDS.map(f => ({ [f]: term })), { body: needle }] })
-    const poisoned = plainOr.n > 0 && widenedOr.n < plainOr.n
-    say('widening the OR with a body term', poisoned
-      ? `LOSES results — ${plainOr.n} without, ${widenedOr.n} with (same folder, same run)`
-      : `keeps them — ${plainOr.n} without, ${widenedOr.n} with`)
+    // The plain OR is measured TWICE, bracketing the widened one: each of these
+    // searches takes ~25 s on this mailbox, and the mailbox is LIVE. Without the
+    // bracket, a handful of messages arriving between two searches would be
+    // indistinguishable from an effect of the body term — the drift between the
+    // two references is exactly how much of any delta is NOT attributable.
+    const plainOr = await timedSearch('REFERENCE  OR over the product fields   ', { or: SEARCH_FIELDS.map(f => ({ [f]: term })) })
+    const widenedOr = await timedSearch('           the same OR plus a body term ', { or: [...SEARCH_FIELDS.map(f => ({ [f]: term })), { body: needle }] })
+    const plainOrAgain = await timedSearch('REFERENCE  the plain OR again, after    ', { or: SEARCH_FIELDS.map(f => ({ [f]: term })) })
+    const drift = Math.abs(plainOrAgain.n - plainOr.n)
+    const delta = widenedOr.n - plainOr.n
+    say('drift of the mailbox itself during the arm', `${drift} message(s) between the two plain runs`)
+    say('widening the OR with a body term', plainOr.n > 0 && widenedOr.n < plainOr.n - drift
+      ? `LOSES results — ${plainOr.n} without, ${widenedOr.n} with, beyond a drift of ${drift}`
+      : `keeps them — ${plainOr.n} without, ${widenedOr.n} with (delta ${delta >= 0 ? '+' : ''}${delta}, drift ${drift}: ${Math.abs(delta) <= drift ? 'NOT attributable to the body term' : 'beyond the drift'})`)
 
     if (accented) {
       console.log('\nD. accented word')
