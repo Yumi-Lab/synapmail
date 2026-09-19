@@ -165,6 +165,57 @@ const confirmationAfter = async before => {
   return confirmations.length > before ? confirmations.at(-1) : null
 }
 
+/**
+ * Where the OPEN menu really is, and whether it can be clicked. Reading only that the
+ * surface exists in the DOM says nothing about it being reachable: measured on the pgp
+ * screen, the surface existed while sitting 237 px right and 469 px below the window,
+ * because `position: fixed` had latched onto an ancestor carrying `backdrop-filter`
+ * instead of the window. So this reads the rectangle AND hit-tests the middle of it.
+ */
+const measureOpenMenu = rowId => page.evaluate(id => {
+  const surface = document.querySelector(`[data-row-menu-surface="${id}"]`)
+  if (!surface) return null
+  const b = surface.getBoundingClientRect()
+  const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2)
+  return {
+    left: Math.round(b.left), top: Math.round(b.top),
+    right: Math.round(b.right), bottom: Math.round(b.bottom),
+    vw: window.innerWidth, vh: window.innerHeight,
+    // `contains` covers the surface itself and every entry inside it.
+    hitIsMenu: hit !== null && surface.contains(hit),
+  }
+}, rowId)
+
+/** How much window is left under the trigger for the bottom-edge check, in px. */
+const BOTTOM_EDGE_GAP = 20
+
+/**
+ * Shortens the window until the given trigger sits at its bottom edge, and returns the
+ * pixels left underneath so the caller can assert the squeeze really happened. Returns
+ * null when the trigger is gone. Restoring the viewport is the caller's business.
+ */
+const squeezeViewportUnder = async selector => {
+  const box = await page.$eval(selector, el => el.getBoundingClientRect().bottom).catch(() => null)
+  if (box === null) return null
+  await page.setViewport({ ...VIEWPORT, height: Math.max(200, Math.round(box + BOTTOM_EDGE_GAP)) })
+  await settle()
+  return page.evaluate(sel => {
+    const el = document.querySelector(sel)
+    if (!el) return null
+    return Math.round(window.innerHeight - el.getBoundingClientRect().bottom)
+  }, selector)
+}
+
+/** Reads the two things a menu must satisfy wherever it opens, and says so in one line. */
+const checkMenuReachable = (screenKey, where, m) => {
+  if (m === null) { fail(`${screenKey}: the menu did not open ${where}`); return }
+  const inWindow = m.left >= 0 && m.top >= 0 && m.right <= m.vw && m.bottom <= m.vh
+  check(inWindow,
+    `${screenKey}: the open menu is entirely inside the window ${where} — (${m.left},${m.top})-(${m.right},${m.bottom}) in ${m.vw}x${m.vh}`)
+  check(m.hitIsMenu,
+    `${screenKey}: the middle of the open menu is actually the menu, not something on top of it ${where}`)
+}
+
 const openMenuAndClick = async (path, rowId, itemKey) => {
   // Reload before every interaction. The lists revalidate in the background, so a row's
   // DOM can be swapped out between the scroll and the click; the retries that swap
@@ -315,6 +366,9 @@ try {
     check(entries.at(-1)?.danger === true && entries.slice(0, -1).every(e => !e.danger),
       `${screen.key}: only the destructive entry is red, and only while the menu is open`)
 
+    // ── 3b. The open menu is where a human can see and click it ─────────────
+    checkMenuReachable(screen.key, 'below its button', await measureOpenMenu(row.id))
+
     // ── 4. Escape closes and gives the focus back ────────────────────────────
     await page.keyboard.press('Escape')
     await settle()
@@ -324,6 +378,26 @@ try {
     }), row.id)
     check(!afterEscape.surface && afterEscape.focused === row.id,
       `${screen.key}: Escape closes the menu and gives the focus back — focus is on ${afterEscape.focused}`)
+
+    // ── 4b. Same button, now at the bottom edge: the menu must fold upwards or
+    // slide back in, never spill below the window where nothing is clickable.
+    // The window is SHRUNK to just under the button rather than scrolled to it:
+    // scrolling only moves a button that has somewhere to go, and on a short list it
+    // has none — the first write of this check scrolled, measured the very same
+    // rectangle twice, and asserted nothing at all.
+    const edgeGap = await squeezeViewportUnder(`[data-row-menu="${row.id}"]`)
+    if (edgeGap === null) {
+      fail(`${screen.key}: the "..." button vanished when the window was shortened`)
+    } else {
+      check(edgeGap <= BOTTOM_EDGE_GAP + 1,
+        `${screen.key}: the button really sits at the bottom edge for this check — ${edgeGap}px of window left under it`)
+      await page.click(`[data-row-menu="${row.id}"]`)
+      await settle()
+      checkMenuReachable(screen.key, 'with its button at the bottom edge', await measureOpenMenu(row.id))
+      await page.keyboard.press('Escape')
+    }
+    await page.setViewport(VIEWPORT)
+    await settle()
 
     // ── 5. The confirmation names the object, refusing sends nothing ─────────
     const before = blockedDeletes.length
