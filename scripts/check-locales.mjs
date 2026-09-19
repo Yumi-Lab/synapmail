@@ -32,6 +32,13 @@ const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/
  */
 const PROTOCOL_LITERAL = /^-{5}(BEGIN|END) /
 
+/**
+ * House rule (Nicolas, H3e gate): no em dash in any displayed string, in any
+ * locale. Use a comma or two sentences instead. Checked here so the rule holds
+ * on its own instead of depending on a reviewer spotting it.
+ */
+const EM_DASH = '\u2014'
+
 function flatten(value, prefix = '', out = new Map()) {
   for (const [key, child] of Object.entries(value)) {
     const path = prefix ? `${prefix}.${key}` : key
@@ -58,6 +65,17 @@ function localeCodes() {
     .filter(name => name.endsWith('.json'))
     .map(name => name.slice(0, -'.json'.length))
     .sort()
+}
+
+/** House-rule violations: every displayed string carrying an em dash. */
+function emDashProblems(entries) {
+  const problems = []
+  for (const [key, value] of entries) {
+    if (typeof value === 'string' && value.includes(EM_DASH)) {
+      problems.push(`em dash               ${key} = ${JSON.stringify(value)}`)
+    }
+  }
+  return problems
 }
 
 /** Reports gathered for one locale; each entry is one human-readable line. */
@@ -95,6 +113,8 @@ function checkLocale(code, reference) {
     if (!reference.has(key)) problems.push(`orphan key            ${key}`)
   }
 
+  problems.push(...emDashProblems(target))
+
   return { problems, total: target.size, nonLatin }
 }
 
@@ -109,6 +129,12 @@ function main() {
   console.log(`reference ${REFERENCE}.json — ${reference.size} keys`)
 
   let failed = 0
+  const referenceProblems = emDashProblems(reference)
+  if (referenceProblems.length > 0) {
+    failed += 1
+    console.log(`  ${REFERENCE}.json — ${referenceProblems.length} problem(s)`)
+    for (const problem of referenceProblems) console.log(`    ${problem}`)
+  }
   for (const code of codes) {
     if (code === REFERENCE) continue
     const { problems, total, nonLatin } = checkLocale(code, reference)
