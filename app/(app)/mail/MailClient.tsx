@@ -16,6 +16,7 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { toast } from '@/components/ui/toast'
 import { useMailSelection } from '@/lib/mailSelection'
 import { MAILBOX_CHANGED, STREAM_ACCOUNT_PARAM } from '@/lib/stream'
+import type { ForwardedMessages } from '@/lib/forward'
 import type { Message } from '@/types/email'
 import type { EmailAccount } from '@/types/account'
 
@@ -289,9 +290,12 @@ export function MailClient() {
   // être ouverte), on l'ouvre et l'action part dès que le message arrive.
   const pendingCompose = useRef<ComposeKind | null>(null)
   // Transfert d'une sélection MULTIPLE : chaque message part entier en pièce
-  // jointe. Aucun message n'est ouvert pour ça — on n'a besoin que du dossier
-  // et des uid cochés, que le serveur relit lui-même (lot M5).
-  const [forwardedMessages, setForwardedMessages] = useState<{ folder: string; uids: string[] } | null>(null)
+  // jointe. Aucun message n'est ouvert pour ça — on n'a besoin que du compte
+  // d'ORIGINE, du dossier et des uid cochés, que le serveur relit lui-même
+  // (lot M5). Le compte d'origine voyage avec la sélection : l'expéditeur choisi
+  // dans « De » peut en être un autre, et les uid se ressemblent d'une boîte à
+  // l'autre.
+  const [forwardedMessages, setForwardedMessages] = useState<ForwardedMessages | null>(null)
   const composeHandlers = useMemo(
     () => ({ reply: handleReply, replyAll: handleReplyAll, forward: handleForward }),
     [handleReply, handleReplyAll, handleForward]
@@ -299,8 +303,8 @@ export function MailClient() {
 
   useEffect(() => {
     const composeFromToolbar = (kind: ComposeKind) => () => {
-      if (kind === 'forward' && mailTarget.selectedUids.length > 1 && mailTarget.folder) {
-        setForwardedMessages({ folder: mailTarget.folder, uids: mailTarget.selectedUids })
+      if (kind === 'forward' && mailTarget.selectedUids.length > 1 && mailTarget.folder && mailTarget.accountId) {
+        setForwardedMessages({ accountId: mailTarget.accountId, folder: mailTarget.folder, uids: mailTarget.selectedUids })
         setComposeReplyTo(null)
         setComposeMode('forward')
         return

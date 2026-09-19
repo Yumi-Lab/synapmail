@@ -5,6 +5,12 @@ import { getAccessibleAccount } from '@/lib/accountAccess'
 import { sendMail } from '@/lib/smtp'
 import { appendToSentFolder, getMessageSources } from '@/lib/imap'
 import { EML_CONTENT_TYPE, emlFilename } from '@/lib/eml'
+import {
+  FORWARD_ERROR,
+  FORWARD_MAX_TOTAL_BYTES,
+  parseForwardedMessages,
+  resolveForwardOrigin,
+} from '@/lib/forward'
 import { upsertContactsFromAddresses } from '@/lib/contacts'
 import { randomUUID } from 'crypto'
 
@@ -36,8 +42,8 @@ export async function POST(req: Request) {
       inReplyTo?: string
       references?: string
       requestReadReceipt?: boolean
-      /** Messages transférés ENTIERS, joints en `.eml` (lot M5). */
-      forwardedMessages?: { folder: string; uids: string[] }
+      /** Messages transférés ENTIERS, joints en `.eml` (lot M5). Validé par `parseForwardedMessages`. */
+      forwardedMessages?: unknown
     }
 
     if (!accountId || !to || !subject) {
@@ -59,31 +65,61 @@ export async function POST(req: Request) {
       trackedHtml = injectTrackingPixel(html, `${appUrl}/api/track/${token}`)
     }
 
-    // Transfert de messages entiers : la source brute est relue dans le dossier
-    // d'origine, sur le compte accessible — jamais un dossier fourni par le
-    // client sans ce contrôle, qui est celui de `getAccessibleAccount` ci-dessus.
-    const attachments = forwardedMessages?.uids?.length
-      ? (await getMessageSources(
-          {
-            id: account.id,
-            imapHost: account.imap_host,
-            imapPort: account.imap_port,
-            imapSecure: account.imap_secure,
-            username: account.username,
-            passwordEncrypted: account.password_encrypted,
-            oauthProvider: account.oauth_provider,
-            oauthAccessToken: account.oauth_access_token,
-            oauthRefreshToken: account.oauth_refresh_token,
-            oauthExpiresAt: account.oauth_expires_at,
-          },
-          forwardedMessages.folder,
-          forwardedMessages.uids
-        )).map(m => ({
-          filename: emlFilename(m.subject),
-          content: m.source,
-          contentType: EML_CONTENT_TYPE,
-        }))
-      : undefined
+    // Transfert de messages entiers. Le compte d'ORIGINE de la sélection n'est
+    // pas celui de l'expéditeur : l'utilisateur peut changer « De » après avoir
+    // coché ses messages. Relire dans la boîte de l'expéditeur joindrait les
+    // messages portant les MÊMES uid dans une AUTRE boîte. L'origine est donc
+    // contrôlée à part, en lecture (propriétaire ou partage actif).
+    let attachments: Array<{ filename: string; content: Buffer; contentType: string }> | undefined
+    if (forwardedMessages !== undefined) {
+      const parsed = parseForwardedMessages(forwardedMessages)
+      if (!parsed.ok) {
+        return NextResponse.json({ error: parsed.code, limit: parsed.detail }, { status: parsed.status })
+      }
+      const origin = await resolveForwardOrigin(account, parsed.value.accountId, id =>
+        getAccessibleAccount(id, authCtx.id)
+      )
+      if (!origin.ok) {
+        return NextResponse.json({ error: origin.code }, { status: origin.status })
+      }
+      const src = origin.value
+      const result = await getMessageSources(
+        {
+          id: src.id,
+          imapHost: src.imap_host,
+          imapPort: src.imap_port,
+          imapSecure: src.imap_secure,
+          username: src.username,
+          passwordEncrypted: src.password_encrypted,
+          oauthProvider: src.oauth_provider,
+          oauthAccessToken: src.oauth_access_token,
+          oauthRefreshToken: src.oauth_refresh_token,
+          oauthExpiresAt: src.oauth_expires_at,
+        },
+        parsed.value.folder,
+        parsed.value.uids,
+        FORWARD_MAX_TOTAL_BYTES
+      )
+      if (result.oversized) {
+        return NextResponse.json(
+          { error: FORWARD_ERROR.tooLarge, limit: FORWARD_MAX_TOTAL_BYTES },
+          { status: 413 }
+        )
+      }
+      // Rien ne part amputé : un message disparu entre la sélection et l'envoi
+      // annule l'envoi, la fenêtre reste ouverte avec son brouillon.
+      if (result.missing.length) {
+        return NextResponse.json(
+          { error: FORWARD_ERROR.missing, limit: result.missing.length },
+          { status: 409 }
+        )
+      }
+      attachments = result.sources.map(m => ({
+        filename: emlFilename(m.subject),
+        content: m.source,
+        contentType: EML_CONTENT_TYPE,
+      }))
+    }
 
     const { messageId, raw } = await sendMail(
       {

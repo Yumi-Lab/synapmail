@@ -17,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { FORWARD_ERROR, type ForwardedMessages } from '@/lib/forward'
 import useSWR from 'swr'
 import type { Signature, EmailAccount } from '@/types/account'
 import type { Attachment } from '@/types/email'
@@ -55,12 +56,14 @@ interface ComposeModalProps {
   }
   /**
    * Transfert de PLUSIEURS messages entiers (lot M5) : chacun part en pièce
-   * jointe `.eml`. Le serveur relit les sources brutes dans ce dossier, sur le
-   * compte d'envoi qu'il a lui-même contrôlé — voir `app/api/messages/send`.
+   * jointe `.eml`. `accountId` est le compte d'ORIGINE de la sélection, PAS
+   * l'expéditeur — l'utilisateur peut changer « De » après avoir coché : le
+   * serveur doit relire les sources là où elles ont été cochées, et contrôle
+   * cet accès à part (voir `lib/forward.ts`).
    * Sur un seul message, l'appelant laisse ce champ vide et passe `replyTo` :
    * le comportement d'origine ne bouge pas.
    */
-  forwardedMessages?: { folder: string; uids: string[] }
+  forwardedMessages?: ForwardedMessages
   accountEmail: string
   accountId: string
   initialBody?: string
@@ -412,6 +415,21 @@ export function ComposeModal({ mode, replyTo, forwardedMessages, accountEmail, a
     setForwardedAtts(prev => prev.filter(a => a.id !== id))
   }
 
+  // Refus du transfert : le serveur renvoie un CODE, la fenêtre choisit la
+  // phrase traduite. Les deux côtés lisent la même table (`lib/forward.ts`),
+  // donc aucun libellé ne peut diverger d'un code.
+  const forwardErrorMessage = (code: unknown, limit: unknown): string | null => {
+    const count = typeof limit === 'number' ? limit : 0
+    switch (code) {
+      case FORWARD_ERROR.invalid: return t('forwardInvalid')
+      case FORWARD_ERROR.tooMany: return t('forwardTooMany', { count })
+      case FORWARD_ERROR.tooLarge: return t('forwardTooLarge', { count: Math.round(count / (1024 * 1024)) })
+      case FORWARD_ERROR.missing: return t('forwardMissing', { count })
+      case FORWARD_ERROR.originDenied: return t('forwardOriginDenied')
+      default: return null
+    }
+  }
+
   const doActualSend = async (payload: Record<string, unknown>, isScheduled: boolean) => {
     setSending(true)
     setError(null)
@@ -434,7 +452,7 @@ export function ComposeModal({ mode, replyTo, forwardedMessages, accountEmail, a
         })
         if (!res.ok) {
           const data = await res.json()
-          throw new Error(data.error ?? "Erreur lors de l'envoi")
+          throw new Error(forwardErrorMessage(data.error, data.limit) ?? data.error ?? "Erreur lors de l'envoi")
         }
       }
       clearDraft()
@@ -442,7 +460,8 @@ export function ComposeModal({ mode, replyTo, forwardedMessages, accountEmail, a
       onClose()
     } catch (err) {
       setUndoCountdown(0)
-      setError(String(err))
+      // Le message, pas le « Error: » qui l'enveloppe : l'utilisateur lit une phrase.
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setSending(false)
     }
