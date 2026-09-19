@@ -56,14 +56,45 @@ const say = (label, value) => console.log(`  ${label}: ${value}`)
 const shape = word => `${word.length} chars, ${/^[\x20-\x7e]+$/.test(word) ? 'ASCII' : 'non-ASCII'}`
 
 /** Runs one SEARCH, timed, and never throws: a refusal IS a measurement. */
-async function timedSearch(label, query, options = {}) {
+async function timedSearch(label, query) {
   const started = Date.now()
   try {
-    const found = await client.search(query, { uid: true, ...options })
+    const found = await client.search(query, { uid: true })
     const ms = Date.now() - started
     const n = Array.isArray(found) ? found.length : 0
     console.log(`  ${label}: ${n} result(s) in ${ms} ms${found === false ? ' (server refused)' : ''}`)
     return { n, ms, refused: found === false }
+  } catch (err) {
+    const ms = Date.now() - started
+    console.log(`  ${label}: REJECTED in ${ms} ms — ${String(err.message ?? err).slice(0, 120)}`)
+    return { n: 0, ms, refused: true, error: String(err.message ?? err) }
+  }
+}
+
+/**
+ * The same thing, as the RAW command — `UID SEARCH CHARSET UTF-8 <key> <word>`.
+ * imapflow's search() has no charset option, so asking it for one would silently
+ * measure the plain form twice; this issues the wire command itself and counts
+ * the UIDs of the untagged SEARCH response.
+ */
+async function timedRawSearch(label, key, word) {
+  const started = Date.now()
+  let uids = 0
+  try {
+    const response = await client.exec('UID SEARCH', [
+      { type: 'ATOM', value: 'CHARSET' },
+      { type: 'ATOM', value: 'UTF-8' },
+      { type: 'ATOM', value: key.toUpperCase() },
+      { type: 'STRING', value: word },
+    ], {
+      untagged: {
+        SEARCH: async untagged => { uids += (untagged?.attributes ?? []).length },
+      },
+    })
+    response.next()
+    const ms = Date.now() - started
+    console.log(`  ${label}: ${uids} result(s) in ${ms} ms`)
+    return { n: uids, ms, refused: false }
   } catch (err) {
     const ms = Date.now() - started
     console.log(`  ${label}: REJECTED in ${ms} ms — ${String(err.message ?? err).slice(0, 120)}`)
@@ -123,7 +154,7 @@ try {
     reference = await timedSearch('REFERENCE  SUBJECT of that same message', { subject })
     for (const field of ['body', 'text']) {
       await timedSearch(`${field.toUpperCase().padEnd(10)} plain            `, { [field]: needle })
-      await timedSearch(`${field.toUpperCase().padEnd(10)} CHARSET UTF-8    `, { [field]: needle }, { charset: 'UTF-8' })
+      await timedRawSearch(`${field.toUpperCase().padEnd(10)} CHARSET UTF-8    `, field, needle)
     }
 
     console.log('\nC. does a body term poison the OR the product uses')
@@ -138,7 +169,7 @@ try {
     if (accented) {
       console.log('\nD. accented word')
       await timedSearch('BODY       accented, plain      ', { body: accented })
-      await timedSearch('BODY       accented, CHARSET    ', { body: accented }, { charset: 'UTF-8' })
+      await timedRawSearch('BODY       accented, CHARSET    ', 'body', accented)
     } else {
       console.log('\nD. accented word — skipped: the needle message holds none')
     }
