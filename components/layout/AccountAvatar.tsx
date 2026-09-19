@@ -53,7 +53,6 @@ export const accentVars = (account: ColorableAccount | null | undefined, rank: n
  */
 export const ACCENT = {
   solid: 'bg-[color:var(--synap-account)] text-[color:var(--synap-account-ink)]',
-  solidHover: 'hover:bg-[color:var(--synap-account-deep)]',
   tint: 'bg-[color:var(--synap-account-tint)]',
   tintStrong: 'bg-[color:var(--synap-account-tint-strong)]',
   ink: 'text-[color:var(--synap-account)] dark:text-[color:var(--synap-account-lift)]',

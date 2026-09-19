@@ -17,6 +17,11 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 // is expected; anything a human could see is not. GOAL.md fixes this at 1 px.
 const MAX_DRIFT_PX = 1
 const VIEWPORT = { width: 1440, height: 900 }
+// Lot H3c2: clearance demanded between the share mark and the fold chevron of the
+// header row. Origin: GOAL.md's box for H3c2 ("écart >= 6 px"); the product lays the
+// two columns out 8 px apart (ACCOUNT_ROW_RIGHT.gap in components/layout/Sidebar.tsx),
+// so the floor is the spec's, not the implementation's. Bench: this file, 1440x900.
+const MIN_CONTROL_GAP_PX = 6
 // Lot H1 removed the round button that used to straddle the bar's edge: the bar now
 // folds from the application header's menu button. The old marker must be absent.
 const EDGE_TOGGLE = '[data-sidebar-edge-toggle]'
@@ -169,7 +174,7 @@ const HOVER_MIN_ALPHA = 0.01
 // Lot A12: the bar's accent must BE the active account's own colour, so that switching
 // mailbox repaints the whole bar rather than leaving one violet bar behind five coloured
 // bubbles. The gate is a same-run A/B across TWO accounts of different colours: for each,
-// the accent-bearing surfaces of the bar (active folder tint, compose control, selection
+// the accent-bearing surfaces of the bar (active folder tint, unread badge, selection
 // ring, shadows) are read back and compared to the colour of THAT account's own bubble,
 // measured in the same pass on the same page — never to a constant, so the check stays
 // true if the palette changes. Hue is the comparison axis: a tint keeps its accent's hue
@@ -268,7 +273,7 @@ const probeBubbles = () => {
     const dr = badge?.getBoundingClientRect()
     const style = getComputedStyle(bubble)
     return {
-      where: wrapper.closest('[data-sidebar-row]') ? 'header' : 'popover row',
+      where: wrapper.closest('[data-sidebar-row="account"]') ? 'header' : 'list row',
       initial: glyph.textContent,
       letters: [...(glyph.textContent ?? '')].length,
       fontSize: getComputedStyle(glyph).fontSize,
@@ -297,19 +302,25 @@ const probeBubbles = () => {
 const probeAccountList = () => {
   const popover = document.querySelector('[data-account-list-open="true"]')
   if (!popover) return null
-  const inkLeft = node => {
+  // The INKED box of a line, not its element's: a truncated name fills its span, so the
+  // span's right edge says nothing about where the glyphs actually stop.
+  const inkBox = node => {
     const range = document.createRange()
     range.selectNodeContents(node)
     const r = range.getBoundingClientRect()
-    return r.width ? r.left : null
+    return r.width ? r : null
   }
+  const inkLeft = node => inkBox(node)?.left ?? null
   const header = document.querySelector('[data-sidebar-row="account"]')
   const headerLines = header
     ? [...header.querySelectorAll('span.block')].map(l => (l.textContent ?? '').trim()).filter(Boolean)
     : []
   const rows = [...popover.querySelectorAll('button')].map(row => {
     const lines = [...row.querySelectorAll('span.block')]
-      .map(line => ({ text: (line.textContent ?? '').trim(), x: inkLeft(line) }))
+      .map(line => {
+        const ink = inkBox(line)
+        return { text: (line.textContent ?? '').trim(), x: ink?.left ?? null, right: ink?.right ?? null }
+      })
       .filter(l => l.x !== null)
     const bubble = row.querySelector('[data-account-initial]')?.parentElement
     // Lot H3b: the mark is a sibling of the button (a link inside a button is invalid
@@ -334,15 +345,82 @@ const probeAccountList = () => {
           }
         : null,
       rowCy: rowBox.top + rowBox.height / 2,
+      rowRight: rowBox.right,
+      // Lot H3c2, extended to the unfolded list by lot A14: a list row's mark is laid
+      // out from the same columns as the header's, so it is measured the same way —
+      // against the text it must never cover, and against the bar's own edge.
+      textRight: Math.max(...lines.map(l => l.right ?? -Infinity)),
     }
   })
   return {
     rows,
     headerLines,
+    barRight: popover.closest('[data-sidebar]')?.getBoundingClientRect().right ?? null,
     // The whole popover's text, so a re-introduced "shared by" LINE is caught wherever
     // it comes back — the target is one glyph, not one glyph plus the old sentence.
     popoverText: (popover.textContent ?? '').trim(),
     headerMarks: document.querySelectorAll('[data-sidebar] [data-account-shared-mark]').length,
+    // Lot H3c2: in the header row the mark and the fold chevron are two clickable
+    // boxes in two different flows (absolute link / in-flow span). Their overlap is
+    // measured, not assumed: the x-intersection of the two boxes, in pixels.
+    // All three boxes are read from the SAME bar: the page can carry two (desktop bar
+    // + mobile drawer), and taking the mark from one and the chevron from the other
+    // reports a 123 px gap and a 188 px spill that describe no bar that exists.
+    headerControls: (() => {
+      const row = document.querySelector('[data-sidebar] [data-sidebar-row="account"]')
+      const bar = row?.closest('[data-sidebar]')
+      // The list of other accounts is a SIBLING block under the same wrapper and every
+      // shared row in it carries the same marker, so a lookup widened by one ancestor
+      // returns a LIST row's mark whenever the active account is not itself shared — a
+      // box that has nothing to do with the header and that happened to land on the
+      // chevron's own 28 px. Lot A14 turned that list from a fixed popover into an
+      // in-bar accordion, so the exclusion is read from the accordion's own marker.
+      const mark = [...(row?.parentElement?.querySelectorAll('[data-account-shared-mark]') ?? [])]
+        .find(m => !m.closest('[data-account-list]'))
+      const chevron = bar?.querySelector('[data-account-chevron]')
+      if (!mark || !chevron) return { mark: !!mark, chevron: !!chevron, overlapPx: null }
+      // What a human can see, not what the layout engine reports: a collapsed bar folds
+      // the label to zero width behind `overflow: hidden`, so the chevron keeps a box at
+      // its old x while being painted nowhere. Clipping it against its scrolling/hiding
+      // ancestors is what turns "the element's box" into "the pixels on screen" — without
+      // it the collapsed bar reports an 81 px spill that nobody can point at.
+      const visible = el => {
+        let r = el.getBoundingClientRect()
+        for (let a = el.parentElement; a; a = a.parentElement) {
+          const o = getComputedStyle(a)
+          if (o.overflowX === 'visible' && o.overflowY === 'visible') continue
+          const k = a.getBoundingClientRect()
+          r = {
+            left: Math.max(r.left, k.left), right: Math.min(r.right, k.right),
+            top: Math.max(r.top, k.top), bottom: Math.min(r.bottom, k.bottom),
+          }
+        }
+        const width = Math.max(0, r.right - r.left)
+        return { left: r.left, right: r.right, width, painted: width > 0 }
+      }
+      const m = visible(mark)
+      const c = visible(chevron)
+      const b = bar.getBoundingClientRect()
+      // A control folded out of sight cannot overlap or spill: it is reported, not judged.
+      if (!m.painted || !c.painted) {
+        return {
+          mark: true, chevron: true,
+          markBox: { left: m.left, right: m.right }, chevronBox: { left: c.left, right: c.right },
+          painted: { mark: m.painted, chevron: c.painted },
+          overlapPx: null, gapPx: null, overflowPx: null,
+        }
+      }
+      return {
+        mark: true, chevron: true,
+        painted: { mark: true, chevron: true },
+        markBox: { left: m.left, right: m.right },
+        chevronBox: { left: c.left, right: c.right },
+        overlapPx: Math.max(0, Math.min(m.right, c.right) - Math.max(m.left, c.left)),
+        gapPx: Math.max(m.left, c.left) - Math.min(m.right, c.right),
+        // Neither control may spill past the bar's own right edge.
+        overflowPx: Math.max(0, Math.max(m.right, c.right) - b.right),
+      }
+    })(),
     // Any lucide check, however it is classed, plus the raw glyph as a second net.
     checkGlyphs: popover.querySelectorAll('svg.lucide-check, [class*="lucide-check"]').length,
     checkChars: ((popover.textContent ?? '').match(/[✓✔]/g) ?? []).length,
@@ -702,7 +780,7 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
 /**
  * The bar's accent, as the browser actually paints it, next to the colour of the account
  * bubble heading the bar — read in the SAME pass so the comparison is an A/B, not a
- * constant. Surfaces measured: the active folder row's tint, the compose control's fill
+ * constant. Surfaces measured: the active folder row's tint, the unread badge's fill
  * and the published `--synap-account` itself. Colours are
  * resolved through a canvas — the same technique probeCleanliness uses — because the
  * accent is a `color-mix()` whose serialisation no hand-rolled rgb parser reads.
@@ -761,17 +839,17 @@ const probeAccountAccent = () => {
   const activeRow = [...bar.querySelectorAll('[data-sidebar-row^="folder:"]')]
     .find(r => getComputedStyle(r).backgroundColor !== 'rgba(0, 0, 0, 0)')
   add('active folder tint', activeRow, 'backgroundColor', show(barBg))
-  const compose = bar.querySelector('[data-sidebar-row="compose"]')
-  add('compose fill', compose, 'backgroundColor', show(barBg))
 
   // The published property itself: read from the bar's root, painted alone.
   const published = getComputedStyle(bar).getPropertyValue('--synap-account').trim()
   const publishedPainted = published ? paint(published) : null
 
-  // The compose control carries white ink on the accent — the one contrast the palette
-  // has to hold at every account colour.
-  const composeInk = compose ? paint(getComputedStyle(compose).color, show(paint(getComputedStyle(compose).backgroundColor, show(barBg)))) : null
-  const composeBg = compose ? paint(getComputedStyle(compose).backgroundColor, show(barBg)) : null
+  // Lot H3c2 removed the compose row from the bar (the head bar carries it on every
+  // page), so the unread badge is now the bar's only white-ink-on-accent surface: it
+  // is the one that has to hold contrast at every account colour.
+  const badge = bar.querySelector('[data-unread-badge]')
+  const badgeBg = badge ? paint(getComputedStyle(badge).backgroundColor, show(barBg)) : null
+  const badgeInk = badge ? paint(getComputedStyle(badge).color, show(badgeBg)) : null
 
   return {
     theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
@@ -781,7 +859,7 @@ const probeAccountAccent = () => {
     published,
     publishedHue: publishedPainted ? hue(publishedPainted) : null,
     surfaces,
-    composeContrast: composeInk && composeBg ? contrast(composeInk, composeBg) : null,
+    badgeContrast: badgeInk && badgeBg ? contrast(badgeInk, badgeBg) : null,
   }
 }
 
@@ -852,9 +930,26 @@ let failures = []
 try {
   const page = await browser.newPage()
   await page.setViewport(VIEWPORT)
+  // A dev server compiling a route on first hit, and an IMAP fetch behind it, both take
+  // longer than puppeteer's 30 s default. A slow hop must delay the run, never abort it
+  // as a failure that says nothing about the product.
+  page.setDefaultNavigationTimeout(120000)
+
+  // /mail holds an SSE connection open (`/api/stream`), so `networkidle2` can never be
+  // reached there: the wait has to be the marker the bar itself renders, not the network
+  // going quiet. `domcontentloaded` + waitForSelector is the pair used for every hop.
+  // The marker is a FOLDER row, not just any row: the account row is server-rendered and
+  // present immediately, so waiting on it would let the measurements run on a bar whose
+  // folder list has not arrived yet (observed: 1 row measured instead of 102).
+  const land = async path => {
+    await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' })
+    // The folder list is fetched from the real IMAP server, so the wait is generous:
+    // a slow mailbox must delay the measurement, never abort the run as a false failure.
+    await page.waitForSelector('[data-sidebar] [data-sidebar-row^="folder:"]', { timeout: 120000 })
+  }
 
   // Sign in through the credentials endpoint, then land on /mail.
-  await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2' })
+  await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' })
   const loggedIn = await page.evaluate(async ({ base, email, password }) => {
     const { csrfToken } = await (await fetch(`${base}/api/auth/csrf`)).json()
     const res = await fetch(`${base}/api/auth/callback/credentials`, {
@@ -866,8 +961,7 @@ try {
   }, { base: BASE, email: EMAIL, password: PASSWORD })
   if (!loggedIn) { console.error('HARNESS: credentials login failed'); process.exit(2) }
 
-  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
-  await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
+  await land('/mail')
   // Which account of this database carries the most custom folders — asked of the app's own
   // API, not hard-coded to a name: lot A7b exists because the rule was only ever measured on
   // the small box the bench happens to sign into, and "the biggest one" must stay true as the
@@ -891,11 +985,16 @@ try {
   const smallest = inventory.filter(a => a.custom > 0 && a.id !== biggest.id)
     .reduce((least, a) => (a.custom < least.custom ? a : least), { custom: Infinity })
   if (!Number.isFinite(smallest.custom)) { console.error('HARNESS: this database has fewer than two mailboxes carrying custom folders — the switch cannot be measured'); process.exit(2) }
-  await page.evaluate(async ({ base, id }) => {
-    await fetch(`${base}/api/settings`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active_account_id: id }) })
-  }, { base: BASE, id: smallest.id })
-  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
-  await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
+  // Switching mailbox goes through the app's own settings endpoint, then a reload: the
+  // one way the bench puts a chosen account at the head of the bar.
+  const activate = async id => {
+    await page.evaluate(async ({ base, id }) => {
+      await fetch(`${base}/api/settings`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active_account_id: id }) })
+    }, { base: BASE, id })
+    await land('/mail')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+  }
+  await activate(smallest.id)
   const signedInAs = smallest.label
   console.log(`accounts in this database: ${inventory.map(a => `${a.label}=${a.custom}`).join(', ')} — starting on "${signedInAs}" (${smallest.custom}), biggest is "${biggest.label}" (${biggest.custom})`)
   // Let the folder list settle so both states measure the same set of rows.
@@ -1134,6 +1233,60 @@ try {
   const sharedRows = list.rows.filter(r => r.mark)
   const sharedSentence = SHARED_BY_PREFIX && list.popoverText.includes(SHARED_BY_PREFIX)
   console.log(`shared inboxes: ${sharedRows.length} row(s) marked, header marks ${list.headerMarks}, "${SHARED_BY_PREFIX}" as a text line in the popover: ${sharedSentence}`)
+
+  // --- Lot H3c2: the mark and the chevron of the header row never cover each other ---
+  // The defect only exists when the ACTIVE account is itself shared, so the bench makes
+  // it so: it switches to the shared mailbox of the list, measures both bar states, then
+  // puts the previous account back. Reading the header without that switch measured a
+  // popover row's mark instead of the header's, in the account list of any database.
+  {
+    // Rows carry their label, not their id: the id comes from the inventory read from the
+    // app's own API at the top of this run, matched on that label.
+    const sharedLabel = list.rows.find(r => r.mark)?.label
+    const sharedId = inventory.find(a => a.label === sharedLabel)?.id
+    if (!sharedId) {
+      console.error('HARNESS: no shared inbox in this database — the H3c2 overlap measured nothing (create a share between two local users first)')
+      process.exit(2)
+    }
+    const restoreId = smallest.id
+    const measureControls = async where => {
+      const hc = await page.evaluate(probeAccountList).then(r => r?.headerControls)
+      if (!hc) {
+        console.error(`HARNESS: ${where} — the account popover did not open, nothing measured`)
+        process.exit(2)
+      }
+      // A collapsed bar shows the bubble alone: the mark is folded away by design, so
+      // there is no pair to judge. Reported, never silently skipped — and never counted
+      // as a pass either: the expanded pass is the one that carries the contract.
+      if (!hc.mark || !hc.chevron || hc.overlapPx === null) {
+        const seen = hc.painted ? `painted: mark ${hc.painted.mark}, chevron ${hc.painted.chevron}` : `mark present ${hc.mark}, chevron present ${hc.chevron}`
+        console.log(`header controls (${where}): ${seen} — no pair on screen, nothing to overlap`)
+        return
+      }
+      console.log(`header controls (${where}): mark x ${hc.markBox.left.toFixed(2)}..${hc.markBox.right.toFixed(2)}, chevron x ${hc.chevronBox.left.toFixed(2)}..${hc.chevronBox.right.toFixed(2)} -> overlap ${hc.overlapPx.toFixed(2)}px, gap ${hc.gapPx.toFixed(2)}px, past the bar's edge ${hc.overflowPx.toFixed(2)}px`)
+      if (hc.overlapPx > 0) {
+        failures.push(`header row (${where}): the share mark and the fold chevron overlap by ${hc.overlapPx.toFixed(2)}px (expected 0) — one clickable box covers the other`)
+      }
+      if (hc.gapPx < MIN_CONTROL_GAP_PX) {
+        failures.push(`header row (${where}): only ${hc.gapPx.toFixed(2)}px between the share mark and the chevron (min ${MIN_CONTROL_GAP_PX}px)`)
+      }
+      if (hc.overflowPx > MAX_DRIFT_PX) {
+        failures.push(`header row (${where}): a right-hand control spills ${hc.overflowPx.toFixed(2)}px past the bar's own edge`)
+      }
+    }
+    await activate(sharedId)
+    await page.click('[data-sidebar-row="account"]')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    await measureControls('expanded')
+    await toggle()
+    await page.click('[data-sidebar-row="account"]')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    await measureControls('collapsed')
+    await toggle()
+    await activate(restoreId)
+    await page.click('[data-sidebar-row="account"]')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+  }
   if (!sharedRows.length) {
     console.error('HARNESS: no shared inbox in the account list of this database — the H3b mark measured nothing (create a share between two local users first)')
     process.exit(2)
@@ -1150,6 +1303,23 @@ try {
     if (!m.inRow) failures.push(`shared row "${r.label}": the mark sits outside its own row box`)
     if (Math.abs(m.cy - r.rowCy) > MAX_DRIFT_PX) {
       failures.push(`shared row "${r.label}": mark centred at y=${m.cy.toFixed(2)}, row centre y=${r.rowCy.toFixed(2)} (max ${MAX_DRIFT_PX}px) — it must sit on the row's axis`)
+    }
+  }
+  // Lot H3c2 extended by lot A14: a shared row of the UNFOLDED list carries a mark too,
+  // and that list is now inside the bar rather than in a popover of its own — so the
+  // mark is judged against the same two things the header's is: the text it must never
+  // cover, and the bar's own right edge it must never spill past. A list row has no
+  // chevron, so there is no second control to intersect; the text IS the reference.
+  for (const r of sharedRows) {
+    if (!Number.isFinite(r.textRight) || list.barRight === null) continue
+    const textGap = r.mark.x - r.textRight
+    const spill = Math.max(0, r.mark.right - list.barRight)
+    console.log(`  shared "${r.label}" (unfolded list): text ends x ${r.textRight.toFixed(2)}, mark x ${r.mark.x.toFixed(2)}..${r.mark.right.toFixed(2)} -> gap ${textGap.toFixed(2)}px, past the bar's edge ${spill.toFixed(2)}px`)
+    if (textGap < MIN_CONTROL_GAP_PX) {
+      failures.push(`shared row "${r.label}" (unfolded list): only ${textGap.toFixed(2)}px between the name and the share mark (min ${MIN_CONTROL_GAP_PX}px) — the mark lands on the text`)
+    }
+    if (spill > MAX_DRIFT_PX) {
+      failures.push(`shared row "${r.label}" (unfolded list): the share mark spills ${spill.toFixed(2)}px past the bar's own edge`)
     }
   }
   // The x of the NAME must not move between a shared row and an ordinary one: the mark
@@ -1285,7 +1455,7 @@ try {
   for (const [arm, measured] of [['A', accentA], ['B', accentB]]) {
     for (const theme of THEMES) {
       const m = measured[theme]
-      console.log(`accent arm ${arm} (${theme}), account "${m.account}": published ${m.published || 'MISSING'} hue ${m.publishedHue?.toFixed(1)}deg vs bubble ${m.reference} hue ${m.referenceHue?.toFixed(1)}deg; compose ink contrast ${m.composeContrast?.toFixed(2)}:1`)
+      console.log(`accent arm ${arm} (${theme}), account "${m.account}": published ${m.published || 'MISSING'} hue ${m.publishedHue?.toFixed(1)}deg vs bubble ${m.reference} hue ${m.referenceHue?.toFixed(1)}deg; unread badge ink contrast ${m.badgeContrast?.toFixed(2)}:1`)
       if (m.referenceHue == null) { console.error(`HARNESS: arm ${arm} (${theme}): the account bubble is neutral — no hue to compare against`); process.exit(2) }
       if (!m.published) failures.push(`arm ${arm} (${theme}): the bar publishes no --synap-account — nothing reads the account's colour`)
       if (m.publishedHue != null && hueGap(m.publishedHue, m.referenceHue) > MAX_ACCOUNT_ACCENT_HUE_DRIFT_DEG) {
@@ -1304,8 +1474,8 @@ try {
           failures.push(`arm ${arm} (${theme}): ${sf.name} is ${sf.painted} (hue ${sf.hue.toFixed(1)}deg), the account's bubble is ${m.reference} (hue ${m.referenceHue.toFixed(1)}deg) — ${gap.toFixed(1)}deg apart (max ${MAX_ACCOUNT_ACCENT_HUE_DRIFT_DEG})`)
         }
       }
-      if (m.composeContrast != null && m.composeContrast < MIN_CONTRAST) {
-        failures.push(`arm ${arm} (${theme}): the compose control's ink measures ${m.composeContrast.toFixed(2)}:1 on this account's colour (min ${MIN_CONTRAST}:1)`)
+      if (m.badgeContrast != null && m.badgeContrast < MIN_CONTRAST) {
+        failures.push(`arm ${arm} (${theme}): the unread badge's ink measures ${m.badgeContrast.toFixed(2)}:1 on this account's colour (min ${MIN_CONTRAST}:1)`)
       }
     }
   }
