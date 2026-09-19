@@ -325,6 +325,8 @@ page.setDefaultNavigationTimeout(120000)
   if (sidebarRows.includes('dashboard')) failures.push('the sidebar still carries a "dashboard" row')
   // Lot H2 empties the bar's footer: theme and settings moved into the user menu.
   if (sidebarRows.includes('settings')) failures.push('the sidebar still carries a "settings" row')
+  // Lot H3c2: the header carries compose on every page, so the bar no longer does.
+  if (sidebarRows.includes('compose')) failures.push('the sidebar still carries a "compose" row — lot H3c2 removes it')
   const themeSlots = await page.evaluate(() => document.querySelectorAll('[data-sidebar] [data-sidebar-slot="theme-toggle"]').length)
   console.log(`sidebar footer: theme-toggle slots=${themeSlots}`)
   if (themeSlots) failures.push(`${themeSlots} theme-toggle slot(s) still in the sidebar — lot H2 moves the theme into the user menu`)

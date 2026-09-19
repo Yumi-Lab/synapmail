@@ -1,17 +1,17 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
-import { openCompose } from '@/lib/compose'
+import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import {
   Mail, Send, FileText, AlertTriangle, Trash2,
-  PenSquare, Folder, Archive, ChevronDown, RefreshCw, Share2,
+  Folder, Archive, ChevronDown, RefreshCw, Share2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import useSWR from 'swr'
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { ACCENT, AccountAvatar, UnreadBadge, useAccountAccent } from './AccountAvatar'
+import { ACCENT, AccountAvatar, BADGE_OFFSET_PX, UnreadBadge, useAccountAccent } from './AccountAvatar'
+import { IconTooltip } from '@/components/ui/IconTooltip'
 import { folderGlyph, folderInitials } from './FolderGlyph'
 import { ThinScroll } from './ThinScroll'
 import { ACCOUNTS_SETTINGS_HREF } from '@/components/settings/SettingsSidebar'
@@ -30,6 +30,10 @@ export const SIDEBAR = {
   rowHeight: 36,
   /** Vertical padding above and below the header row carrying the account. */
   headerPadY: 8,
+  /** Rows the unfolded account list shows before it starts scrolling. */
+  accountListRows: 8,
+  /** Past this many other accounts the list offers a filter field. */
+  accountFilterFrom: 8,
 } as const
 
 /** The bar's surface, as a CSS value: the theme's own sidebar token, so the bar
@@ -80,14 +84,49 @@ const ROW_DRAG = cn(ACCENT.tintStrong, 'text-foreground')
 const ICON_COL = 'shrink-0 flex items-center justify-center w-[var(--synap-icon-col)]'
 // Collapsible half of a row: folds to zero width, clipped by its own overflow.
 const ROW_LABEL = 'flex-1 min-w-0 flex items-center gap-2 pr-3 text-sm whitespace-nowrap overflow-hidden transition-opacity'
-// Header row only: the straddling toggle reaches half its width inside the bar,
-// so the account name/email needs more right padding than an ordinary row.
-const HEADER_LABEL_PAD = 'pr-8'
-// Gutter reserved at the right of a SHARED account's row for its one mark. Kept as a
-// pair — the column the mark occupies, and the padding the row adds so the mark never
-// lands on the name or the email.
-const SHARED_MARK_COL = 'w-7'
-const SHARED_MARK_PAD = 'pr-7'
+// Right-hand controls of an account row, in pixels — the ONE source both the chevron
+// and the share mark are laid out from. The chevron sits INSIDE the row (last child of
+// its label) while the mark is an absolute sibling, because a link cannot nest in a
+// button: two different flows, so their boxes are only disjoint if they are derived
+// from the same numbers rather than hand-tuned apart.
+const ACCOUNT_ROW_RIGHT = {
+  /** Clearance every row keeps between its content and the bar's right edge. */
+  edge: 12,
+  /** Box of the fold chevron — present only when there are several accounts. */
+  chevron: 28,
+  /** Box of the share mark — present only on a shared account's row. */
+  mark: 28,
+  /** Clearance kept between the two boxes, and between the mark and the text. */
+  gap: 8,
+} as const
+
+// Columns of an account row, read from its RIGHT edge inwards: chevron, then mark, then
+// the text. Every offset below is derived from that single order, so the two boxes cannot
+// drift onto each other the way they did when each was padded on its own.
+
+/** Right offset of the share mark: past the edge, and past the chevron when there is one. */
+function markRight(withChevron: boolean) {
+  const { edge, chevron, gap } = ACCOUNT_ROW_RIGHT
+  return edge + (withChevron ? chevron + gap : 0)
+}
+
+/** Distance from the row's right edge at which a shared row's text has to stop. */
+function textStop(withChevron: boolean) {
+  const { mark, gap } = ACCOUNT_ROW_RIGHT
+  return markRight(withChevron) + mark + gap
+}
+
+/**
+ * Right margin the TEXT of a SHARED row gives up, counted from where the row's IN-FLOW
+ * content already ends — the edge clearance, plus the chevron column when the row has
+ * one. The chevron pushes the text by itself; only the absolute mark has to be reserved
+ * for. Padding the whole label for the mark instead would push the chevron out with it,
+ * which is exactly how the two controls came to sit on the same 28 px.
+ */
+function textInset(withChevron: boolean) {
+  const { edge, chevron } = ACCOUNT_ROW_RIGHT
+  return textStop(withChevron) - edge - (withChevron ? chevron : 0)
+}
 
 /**
  * The ONLY sign that an inbox is shared: one monochrome glyph, in a fixed column
@@ -95,7 +134,13 @@ const SHARED_MARK_PAD = 'pr-7'
  * shared account start at the exact same x as any other account's. Clicking it
  * goes to where a share is removed, without switching the active account.
  */
-function SharedMark({ account, label, className }: { account: EmailAccount; label: string; className?: string }) {
+function SharedMark({ account, label, withChevron = false, hidden = false }: {
+  account: EmailAccount
+  label: string
+  /** The row also carries a fold chevron: the mark steps one column left of it. */
+  withChevron?: boolean
+  hidden?: boolean
+}) {
   if (!account.isShared) return null
   return (
     <Link
@@ -103,10 +148,11 @@ function SharedMark({ account, label, className }: { account: EmailAccount; labe
       title={label}
       aria-label={label}
       data-account-shared-mark
+      style={{ right: markRight(withChevron), width: ACCOUNT_ROW_RIGHT.mark }}
       className={cn(
-        'absolute right-0 top-0 h-full flex items-center justify-center',
-        SHARED_MARK_COL, 'text-muted-foreground hover:text-foreground transition-colors',
-        className,
+        'absolute top-0 h-full flex items-center justify-center',
+        'text-muted-foreground hover:text-foreground transition-colors',
+        hidden && 'hidden',
       )}
     >
       <Share2 className="w-3.5 h-3.5" />
@@ -153,14 +199,10 @@ function RowBody({
 export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const t = useTranslations('mail')
   const pathname = usePathname()
-  const router = useRouter()
   const [currentFolder, setCurrentFolder] = useState('INBOX')
   const [accountOpen, setAccountOpen] = useState(false)
   const [accountFilter, setAccountFilter] = useState('')
   const accountBoxRef = useRef<HTMLDivElement>(null)
-  const accountButtonRef = useRef<HTMLButtonElement>(null)
-  // The popover is fixed-positioned so it escapes the bar when collapsed (56 px).
-  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
 
   useEffect(() => {
@@ -173,14 +215,19 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   // Close the account dropdown on outside click / Escape
   useEffect(() => {
     if (!accountOpen) return
-    const onDown = (e: MouseEvent) => {
+    // On `click`, NOT on `mousedown`: the list is in the bar's flow, so folding it pulls
+    // every row underneath it upwards. Dismissing on mousedown moves the row out from
+    // under the cursor before mouseup, and the browser then resolves the click on
+    // whatever slid into its place — the "the dismiss ate my click" bug the design rule
+    // forbids. By the click phase the target is already settled on the unshifted layout.
+    const onClick = (e: MouseEvent) => {
       if (accountBoxRef.current && !accountBoxRef.current.contains(e.target as Node)) setAccountOpen(false)
     }
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setAccountOpen(false) }
-    document.addEventListener('mousedown', onDown)
+    document.addEventListener('click', onClick)
     document.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('click', onClick)
       document.removeEventListener('keydown', onKey)
     }
   }, [accountOpen])
@@ -189,11 +236,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     if (!accountOpen) setAccountFilter('')
   }, [accountOpen])
 
-  const openAccountMenu = useCallback(() => {
-    const rect = accountButtonRef.current?.getBoundingClientRect()
-    if (rect) setPopoverPos({ top: rect.bottom + 4, left: rect.left })
-    setAccountOpen(o => !o)
-  }, [])
+  const toggleAccountList = useCallback(() => setAccountOpen(o => !o), [])
 
   // Active account + the accent it publishes — the same hook the shell's edge toggle
   // subscribes to, so the bar and the button straddling its edge can never disagree.
@@ -265,6 +308,52 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     })
   }
 
+  /**
+   * One account of the unfolded list. Same row pattern as everything else in the bar:
+   * a fixed icon column, then a label that folds away — so a collapsed bar shows the
+   * bubbles alone, at the exact x the header's bubble sits at, and the name and the
+   * address move into the tooltip instead of overflowing 56 px.
+   */
+  const accountRow = (acc: EmailAccount) => {
+    const label = acc.name || acc.email
+    const bubble = (
+      <AccountAvatar account={acc} colorIndex={accounts.indexOf(acc)} unread={acc.unreadCount ?? 0} />
+    )
+    return (
+      // The row is a button, the shared mark is a link: a link nested in a button is
+      // invalid HTML, so they are siblings and the mark sits in the gutter the row
+      // reserves for it (textInset). A list row never carries a chevron, so it
+      // reserves for the mark alone.
+      <div key={acc.id} className="relative">
+        <button
+          onClick={() => switchAccount(acc.id)}
+          data-sidebar-row={`account:${acc.id}`}
+          className={cn(ROW, ROW_IDLE, 'text-left')}
+        >
+          <span className={ICON_COL}>
+            {collapsed ? <IconTooltip label={acc.name ? t('accountTooltip', { name: acc.name, email: acc.email }) : acc.email} align="start">{bubble}</IconTooltip> : bubble}
+          </span>
+          <span
+            className={cn(ROW_LABEL, collapsed && 'opacity-0')}
+            style={{ transitionDuration: `${SIDEBAR.transitionMs}ms`, paddingRight: ACCOUNT_ROW_RIGHT.edge }}
+            aria-hidden={collapsed}
+          >
+            <span
+              className="flex-1 min-w-0 text-left"
+              style={acc.isShared ? { marginRight: textInset(false) } : undefined}
+            >
+              <span className="block text-sm font-medium truncate leading-tight">{label}</span>
+              {acc.name && (
+                <span className="block text-[11px] text-muted-foreground truncate leading-tight">{acc.email}</span>
+              )}
+            </span>
+          </span>
+        </button>
+        {!collapsed && <SharedMark account={acc} label={t('sharedBy', { name: acc.ownerName ?? acc.email })} />}
+      </div>
+    )
+  }
+
   const folderRow = (
     folder: FolderItem,
     icon: React.ComponentType<{ className?: string }>,
@@ -310,142 +399,129 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
       data-sidebar
       data-collapsed={collapsed ? 'true' : 'false'}
     >
-      {/* Header — line 1 of the bar: the account. The bar folds from the menu button
-          of the application header, not from a control of its own. */}
+      {/* Header — line 1 of the bar: the account, then the list of the OTHER accounts
+          unfolding UNDER it, inside the bar. The list is not a card and not a layer:
+          it is the bar's own surface, so nothing can crop what the rows paint outside
+          their box (an unread badge hangs 9 px off its bubble's corner). */}
       {activeAccount && (
-        <div
-          ref={accountBoxRef}
-          className="relative shrink-0"
-          style={{ paddingTop: SIDEBAR.headerPadY, paddingBottom: SIDEBAR.headerPadY }}
-        >
-          <button
-            ref={accountButtonRef}
-            onClick={hasMultipleAccounts ? openAccountMenu : undefined}
-            disabled={!hasMultipleAccounts}
-            title={otherUnread > 0 ? t('unreadOtherAccounts', { count: otherUnread }) : t('switchAccount')}
-            aria-haspopup={hasMultipleAccounts ? 'menu' : undefined}
-            aria-expanded={hasMultipleAccounts ? accountOpen : undefined}
-            data-sidebar-row="account"
-            className={cn(ROW, ROW_IDLE, !hasMultipleAccounts && 'cursor-default hover:bg-transparent')}
+        <div ref={accountBoxRef} className="relative shrink-0">
+          <div
+            className="relative"
+            style={{ paddingTop: SIDEBAR.headerPadY, paddingBottom: SIDEBAR.headerPadY }}
           >
-            <span className={ICON_COL}>
-              <AccountAvatar
-                account={activeAccount}
-                colorIndex={accountColorIdx}
-                unread={activeAccount.unreadCount ?? 0}
-                data-sidebar-icon
-              />
-            </span>
-            <span
-              className={cn(ROW_LABEL, HEADER_LABEL_PAD, activeAccount.isShared && SHARED_MARK_PAD, collapsed && 'opacity-0')}
-              style={{ transitionDuration: `${SIDEBAR.transitionMs}ms` }}
-              aria-hidden={collapsed}
+            <button
+              onClick={hasMultipleAccounts ? toggleAccountList : undefined}
+              disabled={!hasMultipleAccounts}
+              title={otherUnread > 0 ? t('unreadOtherAccounts', { count: otherUnread }) : t('switchAccount')}
+              aria-expanded={hasMultipleAccounts ? accountOpen : undefined}
+              data-sidebar-row="account"
+              className={cn(ROW, ROW_IDLE, !hasMultipleAccounts && 'cursor-default hover:bg-transparent')}
             >
-              <span className="flex-1 min-w-0 text-left">
-                <span className="block text-sm font-medium text-foreground truncate leading-tight">
-                  {activeAccount.name || activeAccount.email}
+              <span className={ICON_COL}>
+                <AccountAvatar
+                  account={activeAccount}
+                  colorIndex={accountColorIdx}
+                  unread={activeAccount.unreadCount ?? 0}
+                  data-sidebar-icon
+                />
+              </span>
+              <span
+                className={cn(ROW_LABEL, collapsed && 'opacity-0')}
+                // The label's padding places the CHEVRON, so it stays at the edge clearance
+                // whatever else the row carries; the mark's room is taken by the text below.
+                style={{
+                  transitionDuration: `${SIDEBAR.transitionMs}ms`,
+                  paddingRight: ACCOUNT_ROW_RIGHT.edge,
+                }}
+                aria-hidden={collapsed}
+              >
+                <span
+                  className="flex-1 min-w-0 text-left"
+                  style={activeAccount.isShared ? { marginRight: textInset(hasMultipleAccounts) } : undefined}
+                >
+                  <span className="block text-sm font-medium text-foreground truncate leading-tight">
+                    {activeAccount.name || activeAccount.email}
+                  </span>
+                  {activeAccount.name && (
+                    <span className="block text-[11px] text-muted-foreground truncate leading-tight">{activeAccount.email}</span>
+                  )}
                 </span>
-                {activeAccount.name && (
-                  <span className="block text-[11px] text-muted-foreground truncate leading-tight">{activeAccount.email}</span>
+                {hasMultipleAccounts && (
+                  <span
+                    className="shrink-0 flex items-center justify-center"
+                    style={{ width: ACCOUNT_ROW_RIGHT.chevron }}
+                    data-account-chevron
+                  >
+                    <ChevronDown className={cn('w-3.5 h-3.5 text-muted-foreground transition-transform', accountOpen && 'rotate-180')} />
+                  </span>
                 )}
               </span>
-              {hasMultipleAccounts && (
-                <ChevronDown className={cn('w-3.5 h-3.5 text-muted-foreground transition-transform shrink-0', accountOpen && 'rotate-180')} />
-              )}
-            </span>
-          </button>
-          <SharedMark
-            account={activeAccount}
-            label={t('sharedBy', { name: activeAccount.ownerName ?? activeAccount.email })}
-            // Left of the chevron, and gone when the bar is folded: a collapsed bar
-            // shows the bubble alone, nothing may be painted beside it.
-            className={cn(hasMultipleAccounts ? 'right-6' : 'right-1', collapsed && 'hidden')}
-          />
-          {accountOpen && popoverPos && (
-            <div
-              className={cn(
-                'fixed z-50 flex flex-col rounded-xl border border-border overflow-hidden',
-                'bg-popover text-popover-foreground', ACCENT.shadow,
-              )}
-              style={{
-                top: popoverPos.top,
-                left: popoverPos.left,
-                width: SIDEBAR.expandedWidth,
-                // The popover is its own surface: republishing the variable here makes the
-                // badge's ring take the colour of what is ACTUALLY behind it, instead of
-                // the bar's, with no second palette.
-                ['--synap-surface' as string]: 'var(--popover)',
-                // Fixed positioning takes the popover out of the bar's box, so the
-                // accent it inherits would be the page's, not the bar's: republish.
-                ...accentStyle,
-              }}
-              data-account-popover
-            >
-              {otherAccounts.length > 8 && (
-                <div className="p-1.5 border-b border-border">
-                  <input
-                    autoFocus
-                    value={accountFilter}
-                    onChange={e => setAccountFilter(e.target.value)}
-                    placeholder={t('searchAccounts')}
-                    className={cn(
-                      'w-full px-2.5 py-1.5 rounded-md bg-foreground/[0.06] text-sm text-foreground',
-                      'placeholder:text-muted-foreground outline-none focus:ring-1', ACCENT.ring,
-                    )}
-                  />
-                </div>
-              )}
-              <ThinScroll className="max-h-[min(60vh,22rem)]" viewportClassName="overscroll-contain py-1">
-                {filteredAccounts.length === 0 && (
-                  <p className="px-3 py-4 text-xs text-muted-foreground text-center">{t('noAccountMatch')}</p>
+            </button>
+            <SharedMark
+              account={activeAccount}
+              label={t('sharedBy', { name: activeAccount.ownerName ?? activeAccount.email })}
+              withChevron={hasMultipleAccounts}
+              // A collapsed bar shows the bubble alone: nothing may be painted beside it.
+              hidden={collapsed}
+            />
+          </div>
+          {/* Accordion: the row count is animated, not a height in pixels — a grid track
+              going from `0fr` to `1fr` measures its own content, so the list works the
+              same with two accounts or with twenty, and the folders below are pushed
+              down by exactly what the list takes. */}
+          <div
+            className={cn(
+              'grid transition-[grid-template-rows,visibility] ease-out motion-reduce:transition-none',
+              // `visibility`, not just a clipped height: a folded list is still in the
+              // DOM, and without this its rows stay in the tab order — seven invisible
+              // buttons that switch account. It is a discrete property, so it flips only
+              // at the END of the fold, leaving the animation intact.
+              !accountOpen && 'invisible',
+            )}
+            style={{
+              gridTemplateRows: accountOpen ? '1fr' : '0fr',
+              transitionDuration: `${SIDEBAR.transitionMs}ms`,
+            }}
+          >
+            <div className="overflow-hidden">
+              <div
+                className="border-b border-border"
+                style={{ ['--synap-badge-pad' as string]: `${BADGE_OFFSET_PX}px` }}
+                data-account-list
+                data-account-list-open={accountOpen ? 'true' : 'false'}
+              >
+                {otherAccounts.length > SIDEBAR.accountFilterFrom && (
+                  <div className="px-1.5 pb-1.5">
+                    <input
+                      value={accountFilter}
+                      onChange={e => setAccountFilter(e.target.value)}
+                      placeholder={t('searchAccounts')}
+                      className={cn(
+                        'w-full px-2.5 py-1.5 rounded-md bg-foreground/[0.06] text-sm text-foreground',
+                        'placeholder:text-muted-foreground outline-none focus:ring-1', ACCENT.ring,
+                      )}
+                    />
+                  </div>
                 )}
-                {filteredAccounts.map(acc => {
-                  const unread = acc.unreadCount ?? 0
-                  return (
-                    // The row is a button, the shared mark is a link: a link nested in a
-                    // button is invalid HTML, so they are siblings and the mark sits in
-                    // the gutter the row reserves for it (SHARED_MARK_PAD).
-                    <div key={acc.id} className="relative">
-                      <button
-                        onClick={() => switchAccount(acc.id)}
-                        // Every row has the same box: a fixed bubble, one gap, then the text —
-                        // so all names and emails of the list start at the exact same x.
-                        className={cn(ROW, ROW_IDLE, 'gap-2.5 px-3 rounded-none text-left', acc.isShared && SHARED_MARK_PAD)}
-                      >
-                        <AccountAvatar
-                          account={acc}
-                          colorIndex={accounts.indexOf(acc)}
-                          unread={unread}
-                          size="md"
-                        />
-                        <span className="flex-1 min-w-0 text-left">
-                          <span className="block text-sm font-medium truncate leading-tight">{acc.name || acc.email}</span>
-                          {acc.name && (
-                            <span className="block text-[11px] text-muted-foreground truncate leading-tight">{acc.email}</span>
-                          )}
-                        </span>
-                      </button>
-                      <SharedMark account={acc} label={t('sharedBy', { name: acc.ownerName ?? acc.email })} />
-                    </div>
-                  )
-                })}
-              </ThinScroll>
+                {/* The viewport pads itself by the badge's own overhang, read from the
+                    single source that positions the badge: the first row's counter then
+                    sits inside the scrolled box instead of being clipped by its edge. */}
+                <ThinScroll
+                  viewportClassName="overscroll-contain py-[var(--synap-badge-pad)]"
+                  style={{ maxHeight: SIDEBAR.rowHeight * SIDEBAR.accountListRows + 2 * BADGE_OFFSET_PX }}
+                >
+                  {filteredAccounts.length === 0 && (
+                    <p className={cn('px-3 py-4 text-xs text-muted-foreground text-center', collapsed && 'opacity-0')}>
+                      {t('noAccountMatch')}
+                    </p>
+                  )}
+                  {filteredAccounts.map(acc => accountRow(acc))}
+                </ThinScroll>
+              </div>
             </div>
-          )}
+          </div>
         </div>
       )}
-
-      {/* Compose */}
-      <div className="py-2">
-        <button
-          onClick={() => openCompose(pathname, router.push)}
-          title={t('compose')}
-          data-sidebar-row="compose"
-          className={cn(ROW, 'font-medium', ACCENT.solid, ACCENT.solidHover)}
-        >
-          <RowBody icon={PenSquare} label={t('compose')} collapsed={collapsed} />
-        </button>
-      </div>
 
       {/* Folders */}
       <ThinScroll className="flex-1 mt-1" viewportClassName="overscroll-contain">

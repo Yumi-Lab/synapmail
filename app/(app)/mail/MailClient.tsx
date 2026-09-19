@@ -288,7 +288,10 @@ export function MailClient() {
   // lecture (contexte `lib/mailSelection`). La cible est le message sélectionné, sinon
   // le message ouvert. Si elle n'est pas encore chargée (une ligne Cmd-cliquée sans
   // être ouverte), on l'ouvre et l'action part dès que le message arrive.
-  const pendingCompose = useRef<ComposeKind | null>(null)
+  // La cible différée retient le message VISÉ, pas seulement le geste : sans lui, ouvrir
+  // une autre ligne (ou un message poussé par une notification) pendant le chargement
+  // ferait répondre au mauvais message, à l'insu de la personne.
+  const pendingCompose = useRef<{ kind: ComposeKind; uid: string } | null>(null)
   // Transfert d'une sélection MULTIPLE : chaque message part entier en pièce
   // jointe. Aucun message n'est ouvert pour ça — on n'a besoin que du compte
   // d'ORIGINE, du dossier et des uid cochés, que le serveur relit lui-même
@@ -312,7 +315,7 @@ export function MailClient() {
       const uid = mailTarget.selectedUids[0] ?? mailTarget.openUid
       if (!uid || !mailTarget.accountId) return
       if (currentMessage?.uid === uid) return composeHandlers[kind](currentMessage)
-      pendingCompose.current = kind
+      pendingCompose.current = { kind, uid }
       handleSelect(uid, mailTarget.accountId)
     }
     registerMailActions({
@@ -328,7 +331,7 @@ export function MailClient() {
     const pending = pendingCompose.current
     if (pending) {
       pendingCompose.current = null
-      composeHandlers[pending](msg)
+      if (pending.uid === msg.uid) composeHandlers[pending.kind](msg)
     }
     // Show MDN toast if requested and not already shown for this message
     if (

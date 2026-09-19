@@ -2,18 +2,21 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useLocale, useTranslations } from 'next-intl'
-import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag } from 'lucide-react'
+import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag, Info } from 'lucide-react'
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
 import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } from '@/lib/flags'
 import { cn } from '@/lib/utils'
 import { formatRowDate } from '@/lib/dates'
 import {
-  SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, isSearchQuery, type SearchField, type SearchScope,
+  EMPTY_SEARCH_STREAM, SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, STREAM_PARAM,
+  accumulateSearchStream, isSearchQuery, parseNdjsonChunk,
+  type SearchField, type SearchScope, type SearchStreamChunk, type SearchStreamState,
 } from '@/lib/search'
 import useSWR, { mutate as globalMutate } from 'swr'
 import type { Message, Folder, ReadReceipt } from '@/types/email'
 import type { EmailAccount } from '@/types/account'
 import { MessageContextMenu, type ContextMenuState } from '@/components/ui/MessageContextMenu'
+import { IconTooltip } from '@/components/ui/IconTooltip'
 import { ThinScroll } from './ThinScroll'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
@@ -123,7 +126,11 @@ interface Props {
   permissions?: MailPermissions
 }
 
-interface AppSettings { thread_view: boolean; messages_per_page: number; mail_density: DensityMode }
+interface AppSettings {
+  thread_view: boolean; messages_per_page: number; mail_density: DensityMode
+  /** Boîte affichée, telle qu'enregistrée : ce qui dit si le compte reçu est le bon. */
+  active_account_id: string | null
+}
 
 export function MessageList({ folder, selectedUid, onSelect, onSelectThread, activeAccountId, search = '', searchScope = SCOPE_FOLDER, permissions }: Props) {
   const perms = permissions ?? DEFAULT_PERMISSIONS
@@ -219,13 +226,89 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
 
   // `total` = correspondances réelles côté serveur, `fields` = champs interrogés :
   // le bandeau les dit plutôt que de les retaper (source unique : lib/search.ts).
-  const { data: searchData, isValidating: isSearching } = useSWR<{ messages: Message[]; total: number; fields: SearchField[] }>(
-    isSearchMode
+  // La portée « ce dossier » tient en une réponse : un seul dossier, rien à étaler.
+  const isStreamingScope = isSearchMode && searchScope === SCOPE_ALL
+  // Le compte actif arrive APRÈS le premier rendu, et en DEUX temps : /api/accounts
+  // donne la liste, /api/settings dit lequel est affiché. Tant que les réglages
+  // manquent, le compte reçu n'est qu'un repli sur la boîte PAR DÉFAUT : chercher
+  // là balaierait une autre boîte que celle affichée, ouvrirait des connexions IMAP
+  // pour rien, et pourrait montrer un instant les résultats du mauvais compte.
+  // Une SEULE condition retient les deux portées, et le bandeau reste « en attente »
+  // au lieu d'annoncer un « 0 résultat » définitif.
+  //
+  // La présence des réglages ne suffit PAS : les effets d'un enfant s'exécutent AVANT
+  // ceux du parent, donc la liste verrait les réglages arrivés un rendu avant que le
+  // parent n'ait appliqué le compte qu'ils désignent. On exige donc l'ACCORD des deux
+  // sources — le compte affiché est bien celui que les réglages nomment.
+  const savedAccountId = settingsData?.data?.active_account_id
+  const searchReady = isSearchMode && !!activeAccountId && !!settingsData?.data &&
+    (!savedAccountId || savedAccountId === activeAccountId)
+  const { data: searchData, isValidating: isSearchingOne } = useSWR<{ messages: Message[]; total: number; fields: SearchField[] }>(
+    searchReady && !isStreamingScope
       ? `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}&folder=${encodeURIComponent(folder)}` +
         `&${SCOPE_PARAM}=${searchScope}${accountParam}`
       : null,
     fetcher
   )
+
+  // Portée « tous les dossiers » : la réponse arrive dossier par dossier (NDJSON).
+  // Les résultats s'accumulent au fil de l'eau, la progression est affichée, et
+  // changer de requête interrompt la précédente au lieu de la laisser courir.
+  const [streamed, setStreamed] = useState<SearchStreamState<Message>>(EMPTY_SEARCH_STREAM)
+  const [streaming, setStreaming] = useState(false)
+  const streamAbort = useRef<AbortController | null>(null)
+  const stopStream = useCallback(() => { streamAbort.current?.abort() }, [])
+
+  useEffect(() => {
+    if (!isStreamingScope || !searchReady) { setStreamed(EMPTY_SEARCH_STREAM); return }
+    const controller = new AbortController()
+    streamAbort.current = controller
+    setStreamed(EMPTY_SEARCH_STREAM)
+    setStreaming(true)
+    const url = `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}` +
+      `&folder=${encodeURIComponent(folder)}&${SCOPE_PARAM}=${SCOPE_ALL}&${STREAM_PARAM}=1${accountParam}`
+    // Un flux lu JUSQU'AU BOUT n'a plus rien à abandonner : l'interrompre quand même
+    // au démontage faisait conclure le navigateur à `net::ERR_ABORTED` sur une
+    // réponse pourtant complète — trompeur dans les outils réseau, et indissociable
+    // d'un vrai abandon.
+    let complete = false
+    ;(async () => {
+      try {
+        const res = await fetch(url, { signal: controller.signal })
+        const body = res.body
+        if (!body) return
+        const reader = body.getReader()
+        const decoder = new TextDecoder()
+        let pending = ''
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          const { items, pending: rest } =
+            parseNdjsonChunk<SearchStreamChunk<Message> & { error?: string }>(pending, decoder.decode(value, { stream: true }))
+          pending = rest
+          if (items.length === 0) continue
+          setStreamed(prev => accumulateSearchStream(prev, items))
+        }
+        complete = true
+      } catch {
+        // Une interruption volontaire n'est pas une panne : les résultats déjà
+        // reçus restent affichés, et le bandeau cesse simplement de progresser.
+      } finally {
+        // SEULE la recherche COURANTE éteint le drapeau. Une recherche abandonnée
+        // termine APRÈS que la suivante a démarré : sans ce test, son `finally`
+        // éteignait la progression de celle qui court — plus de bouton Arrêter, plus
+        // de « N dossiers sur M », et un « 0 résultat » présenté comme définitif.
+        if (streamAbort.current === controller) setStreaming(false)
+      }
+    })()
+    return () => { if (!complete) controller.abort() }
+  }, [isStreamingScope, searchReady, search, folder, accountParam])
+
+  // Tant que le compte n'est pas résolu, la recherche est EN COURS de démarrage :
+  // le bandeau dit « Recherche… » plutôt que d'affirmer un résultat qu'il n'a pas.
+  const isSearching = isSearchMode && !searchReady
+    ? true
+    : (isStreamingScope ? streaming : isSearchingOne)
 
   // Folders — needed for the move menu, the context menu AND the row "Archive"
   // quick action, so it is fetched whenever an account is active. The key is
@@ -275,15 +358,16 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
     }
   }, [data, page, refreshKey])
 
-  const messages = isSearchMode ? (searchData?.messages ?? []) : accumulated
+  const searchMessages = isStreamingScope ? streamed.messages : (searchData?.messages ?? [])
+  const messages = isSearchMode ? searchMessages : accumulated
   const total = data?.total ?? 0
   // Le serveur peut avoir trouvé plus que ce qu'il rend (plafond SEARCH_RESULT_LIMIT) :
   // le bandeau annonce alors « X premiers sur N » au lieu de laisser croire à N = X.
-  const searchTotal = searchData?.total ?? messages.length
+  const searchTotal = isStreamingScope ? streamed.total : (searchData?.total ?? messages.length)
   const searchTruncated = searchTotal > messages.length
   const showResultFolder = isSearchMode && searchScope === SCOPE_ALL
   const loadError = !isSearchMode && !!error && accumulated.length === 0
-  const loading = isSearchMode ? (!searchData && isSearching) : (!data && !error)
+  const loading = isSearchMode ? (messages.length === 0 && isSearching) : (!data && !error)
 
   // Infinite scroll — a failed page > 1 keeps the list but shows a retry button
   const morePageError = !isSearchMode && !!error && accumulated.length > 0
@@ -1016,16 +1100,43 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
         </div>
         ) : (
         <div className="px-4 py-2 border-b border-border h-full">
-          <p className="text-xs text-muted-foreground" data-search-summary>
-            {isSearching
-              ? t('searching')
-              : <>
-                  {t('searchResults', { count: searchTotal, query: search })}
-                  {` · ${t('searchFieldsLabel')}`}
-                  {` · ${searchScope === SCOPE_ALL ? t('searchAllFolders') : t('searchThisFolder')}`}
-                  {searchTruncated && ` · ${t('searchTruncated', { shown: messages.length, total: searchTotal })}`}
-                </>}
-          </p>
+          {/* UNE ligne : le compte, ce qui est affiché, et la progression quand elle
+              court. Les champs cherchés et la portée — information secondaire —
+              passent en infobulle sur l'icône de droite. */}
+          <div className="flex items-center gap-2 min-w-0">
+            <p className="text-xs text-muted-foreground truncate" data-search-summary>
+              {t('searchCount', { count: searchTotal })}
+              {searchTruncated && ` · ${t('searchShown', { shown: messages.length })}`}
+              {isSearching && streamed.folders > 0 &&
+                ` · ${t('searchProgress', { searched: streamed.searched, folders: streamed.folders })}`}
+              {isSearching && streamed.folders === 0 && ` · ${t('searching')}`}
+            </p>
+            {/* Gardé sur `streaming` et non sur `isSearching` : avant que le compte
+                soit résolu, aucun flux ne court encore — un bouton Arrêter n'aurait
+                rien à arrêter. */}
+            {streaming && isStreamingScope && (
+              <button
+                onClick={stopStream}
+                className="shrink-0 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {t('searchStop')}
+              </button>
+            )}
+            {/* `IconTooltip` et non l'attribut `title` natif : une seule bulle, au style de
+                l'application, posée sous l'icône. `align="end"` — l'icône est collée au
+                bord droit de la liste, une bulle centrée en sortirait. */}
+            <span className="ml-auto flex shrink-0 text-muted-foreground/60">
+              <IconTooltip
+                align="end"
+                label={t('searchDetails', {
+                  fields: t('searchFieldsLabel'),
+                  scope: searchScope === SCOPE_ALL ? t('searchAllFolders') : t('searchThisFolder'),
+                })}
+              >
+                <Info className="w-3.5 h-3.5" data-search-details />
+              </IconTooltip>
+            </span>
+          </div>
           {!isSearching && messages.length === 0 && (
             <p className="mt-1 text-xs text-muted-foreground/70" data-search-hint>{t('searchNoBodyHint')}</p>
           )}
