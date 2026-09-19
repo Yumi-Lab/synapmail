@@ -52,6 +52,11 @@ const STREAM_TIMEOUT_MS = 180000
 // The banner is sampled often enough to catch a state that only lasts a few
 // hundred milliseconds — the defect this bench exists for lasted ~100 ms.
 const SAMPLE_MS = 50
+// A dev server compiles /mail and its route on the FIRST hit; puppeteer's 30 s
+// default navigation timeout turns that into a HARNESS failure that says nothing
+// about the product (measured on this machine: the same navigation costs 4,5 s
+// once the route is warm). Same budget as the sweep itself.
+const NAV_TIMEOUT_MS = STREAM_TIMEOUT_MS
 
 for (const file of ['.env', '.env.local']) {
   const url = new URL(`../${file}`, import.meta.url)
@@ -81,10 +86,11 @@ const check = (label, ok, detail) => {
 }
 const harness = (msg) => { console.error(`HARNESS: ${msg}`); process.exit(2) }
 
-const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] })
+const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'], protocolTimeout: NAV_TIMEOUT_MS * 2 })
 try {
   const page = await browser.newPage()
   await page.setViewport(VIEWPORT)
+  page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS)
 
   // Read only, enforced: any mutating call on the messages API is aborted.
   await page.setRequestInterception(true)

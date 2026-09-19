@@ -74,6 +74,10 @@ const browser = await puppeteer.launch({ executablePath: CHROME, headless: true,
 try {
   const page = await browser.newPage()
   await page.setViewport(VIEWPORT)
+  // A dev server compiles /mail on the FIRST hit; puppeteer's 30 s default
+  // navigation timeout turns that into a HARNESS failure that says nothing about
+  // the product (measured: 4,5 s for the same navigation once warm).
+  page.setDefaultNavigationTimeout(API_TIMEOUT_MS)
   const errs = []
   page.on('pageerror', e => errs.push(`pageerror: ${e.message.slice(0, 160)}`))
   page.on('console', m => { if (m.type() === 'error') errs.push(`console: ${m.text().slice(0, 160)}`) })
