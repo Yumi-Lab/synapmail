@@ -575,6 +575,79 @@ export async function appendToSentFolder(account: AccountConfig, raw: Buffer): P
   }
 }
 
+/**
+ * Les quatre verbes qui MANQUAIENT à ce module : l'application savait lister les
+ * dossiers, jamais en créer, renommer, supprimer ni vider un. Tous suivent la règle
+ * du fichier — `createClient` puis `logout()` dans un `finally`, jamais une connexion
+ * laissée ouverte sur une erreur.
+ *
+ * Aucun contrôle d'accès ici : le droit de faire se décide dans `lib/folderActions.ts`
+ * et se refuse dans la route. Ce niveau ne fait qu'exécuter.
+ */
+export async function createFolder(account: AccountConfig, path: string): Promise<void> {
+  const client = await createClient(account)
+  try {
+    await client.mailboxCreate(path)
+  } finally {
+    await client.logout()
+  }
+}
+
+export async function renameFolder(account: AccountConfig, path: string, newPath: string): Promise<void> {
+  const client = await createClient(account)
+  try {
+    await client.mailboxRename(path, newPath)
+  } finally {
+    await client.logout()
+  }
+}
+
+export async function deleteFolder(account: AccountConfig, path: string): Promise<void> {
+  const client = await createClient(account)
+  try {
+    await client.mailboxDelete(path)
+  } finally {
+    await client.logout()
+  }
+}
+
+/** Marque TOUT le dossier comme lu. `1:*` en numéros de séquence : c'est le seul cas du
+ *  module où l'UID n'apporte rien — la plage vise la boîte entière, pas des messages choisis. */
+export async function markFolderRead(account: AccountConfig, path: string): Promise<void> {
+  const client = await createClient(account)
+  try {
+    const mailbox = await client.mailboxOpen(path)
+    if (mailbox.exists > 0) await client.messageFlagsAdd('1:*', ['\\Seen'])
+  } finally {
+    await client.logout()
+  }
+}
+
+/** Vide le dossier (\Deleted + EXPUNGE). Le DROIT de vider se décide plus haut. */
+export async function emptyFolder(account: AccountConfig, path: string): Promise<number> {
+  const client = await createClient(account)
+  try {
+    const mailbox = await client.mailboxOpen(path)
+    if (mailbox.exists === 0) return 0
+    await client.messageDelete('1:*')
+    return mailbox.exists
+  } finally {
+    await client.logout()
+  }
+}
+
+/** Nombre de messages d'un dossier, sans rien rapatrier — la confirmation de suppression
+ *  le nomme à l'utilisateur avant qu'il valide. */
+export async function folderMessageCount(account: AccountConfig, path: string): Promise<number> {
+  const client = await createClient(account)
+  try {
+    const mailbox = await client.mailboxOpen(path, { readOnly: true })
+    return mailbox.exists
+  } finally {
+    await client.logout()
+  }
+}
+
 export async function listFolders(account: AccountConfig): Promise<Folder[]> {
   const client = await createClient(account)
   try {
