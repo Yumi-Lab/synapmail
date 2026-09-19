@@ -260,12 +260,39 @@ for (const [label, form] of [
   ok(`${label}: same connection as the exact settings, not the raw form string`)
 }
 
-// A port or a TLS box typed in the form is NOT applied on a stored test: the secret goes to
-// the saved endpoint as a whole. Correcting a port is a change to SAVE, then to test.
-const retyped = await connectionOf({ password: '', imapPort: 143, imapSecure: false, smtpPort: 465 })
-assert.equal(retyped.decision, TEST_DECISION.STORED)
-assert.deepEqual(retyped.connection, exact.connection)
-ok('a port or TLS box retyped in the form does not divert the saved password elsewhere')
+// Lot C6, read back from the C5 gate: the PORT and the TLS box come from the FORM, even on
+// a stored test. Repairing a mailbox means trying 587 -> 465 BEFORE saving it; testing the
+// old port instead makes the button lie a second way. The host is unchanged, so the secret
+// is still confided to nobody new — only the way we knock at that door changes.
+const retuned = await connectionOf({ password: '', smtpPort: 465, smtpSecure: true })
+assert.equal(retuned.decision, TEST_DECISION.STORED)
+assert.deepEqual(retuned.connection, {
+  ...exact.connection, smtpPort: 465, smtpSecure: true,
+})
+ok('a corrected SMTP port and TLS box are what gets tried, on the SAVED host')
+
+const retunedImap = await connectionOf({ password: '', imapPort: 143, imapSecure: false })
+assert.equal(retunedImap.decision, TEST_DECISION.STORED)
+assert.deepEqual(retunedImap.connection, {
+  ...exact.connection, imapPort: 143, imapSecure: false,
+})
+ok('the same holds for the IMAP port and its TLS box')
+
+// The security boundary is untouched by that: a retuned port does NOT buy a new host.
+// Spaces and case still collapse to the saved host, and the ports still follow the form.
+const retunedAndSloppy = await connectionOf({
+  password: '', smtpHost: ' SMTP.Example.COM ', smtpPort: 465, smtpSecure: true,
+})
+assert.equal(retunedAndSloppy.decision, TEST_DECISION.STORED)
+assert.deepEqual(retunedAndSloppy.connection, retuned.connection)
+ok('a retuned port on a sloppily-written host still joins the SAVED host, exactly')
+
+const retunedElsewhere = await connectionOf({
+  password: '', imapHost: 'attacker.example.net', imapPort: 143,
+})
+assert.equal(retunedElsewhere.decision, TEST_DECISION.PASSWORD_REQUIRED)
+assert.equal(retunedElsewhere.connection, null)
+ok('changing the HOST still refuses: a port is tunable, a destination is not')
 
 // A TYPED password is the person's own: it goes exactly where the FORM says, ports included.
 const typed = await resolveTestPassword(
@@ -294,7 +321,8 @@ ok('a refused test carries no connection: nothing is joined')
 // Defaults exist so a blank port never becomes port 0 — a connection that fails for the
 // wrong reason and reads as "unreachable" to the person.
 const noPorts = await resolveTestPassword(
-  atSavedServer({ password: '' }),
+  { accountId: 'acc-1', ...SAVED, password: '',
+    imapPort: null, smtpPort: null, imapSecure: null, smtpSecure: null },
   loaderFor({ ...OWNED, imapPort: null, smtpPort: null, imapSecure: null, smtpSecure: null }),
   async () => 'the-saved-secret'
 )

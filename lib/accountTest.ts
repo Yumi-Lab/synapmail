@@ -156,33 +156,52 @@ const port = (value: number | string | null | undefined, fallback: number): numb
 
 const text = (value: string | null | undefined): string => (value ?? '').trim()
 
-/** Les réglages du FORMULAIRE : ce qu'on essaie quand la personne a tapé son mot de passe. */
-export const formConnection = (req: TestRequest): TestConnection => ({
-  imapHost: text(req.imapHost),
-  imapPort: port(req.imapPort, DEFAULT_IMAP_PORT),
-  imapSecure: req.imapSecure ?? true,
-  smtpHost: text(req.smtpHost),
-  smtpPort: port(req.smtpPort, DEFAULT_SMTP_PORT),
-  smtpSecure: req.smtpSecure ?? false,
-  username: text(req.username),
+/**
+ * Une seule fabrique, deux sources. La DESTINATION (hôtes, identifiant) et le RÉGLAGE
+ * (ports, TLS) ne répondent pas à la même question : la première dit à QUI le mot de passe
+ * est confié — c'est la frontière de sécurité — la seconde dit COMMENT on frappe à la
+ * porte. Les défauts ne vivent qu'ici, jamais recopiés d'un appel à l'autre.
+ */
+type ConnectionTarget = {
+  imapHost?: string | null
+  smtpHost?: string | null
+  username?: string | null
+}
+type ConnectionTuning = {
+  imapPort?: number | string | null
+  imapSecure?: boolean | null
+  smtpPort?: number | string | null
+  smtpSecure?: boolean | null
+}
+
+const buildConnection = (target: ConnectionTarget, tuning: ConnectionTuning): TestConnection => ({
+  imapHost: text(target.imapHost),
+  imapPort: port(tuning.imapPort, DEFAULT_IMAP_PORT),
+  imapSecure: tuning.imapSecure ?? true,
+  smtpHost: text(target.smtpHost),
+  smtpPort: port(tuning.smtpPort, DEFAULT_SMTP_PORT),
+  smtpSecure: tuning.smtpSecure ?? false,
+  username: text(target.username),
 })
 
+/** Les réglages du FORMULAIRE : ce qu'on essaie quand la personne a tapé son mot de passe. */
+export const formConnection = (req: TestRequest): TestConnection => buildConnection(req, req)
+
 /**
- * Les réglages ENREGISTRÉS : ce qu'on essaie quand c'est le mot de passe enregistré qui
- * part. `targetsSavedServer` a déjà établi que le formulaire désigne ce serveur-là ; s'y
- * connecter avec les valeurs du compte supprime la dernière différence entre ce qui est
- * COMPARÉ et ce qui est JOINT (une espace de bord, une majuscule, suffisaient à joindre un
- * hôte que la comparaison avait accepté sous une autre écriture).
+ * Ce qu'on joint quand c'est le mot de passe ENREGISTRÉ qui part. Les HÔTES et
+ * l'IDENTIFIANT viennent du compte : `targetsSavedServer` a établi que le formulaire
+ * désigne ce serveur-là, s'y connecter avec les valeurs du compte supprime la dernière
+ * différence entre ce qui est COMPARÉ et ce qui est JOINT (une espace de bord, une
+ * majuscule, suffisaient à joindre un hôte accepté sous une autre écriture).
+ *
+ * Les PORTS et le TLS viennent du FORMULAIRE : c'est l'usage même du bouton, essayer un
+ * réglage AVANT de l'enregistrer (587 → 465, cocher TLS pour réparer une boîte). Sur
+ * l'hôte enregistré, changer de port ne confie le secret à personne d'autre ; refuser la
+ * correction obligerait à enregistrer un réglage non vérifié, ou à retaper son mot de
+ * passe pour rien.
  */
-export const savedConnection = (account: TestableAccount): TestConnection => ({
-  imapHost: text(account.imapHost),
-  imapPort: port(account.imapPort, DEFAULT_IMAP_PORT),
-  imapSecure: account.imapSecure ?? true,
-  smtpHost: text(account.smtpHost),
-  smtpPort: port(account.smtpPort, DEFAULT_SMTP_PORT),
-  smtpSecure: account.smtpSecure ?? false,
-  username: text(account.username),
-})
+export const savedConnection = (account: TestableAccount, req: TestRequest): TestConnection =>
+  buildConnection(account, req)
 
 export async function resolveTestPassword(
   req: TestRequest,
@@ -198,7 +217,7 @@ export async function resolveTestPassword(
     return {
       decision,
       password: await loadStoredPassword(),
-      connection: savedConnection(loaded),
+      connection: savedConnection(loaded, req),
     }
   }
   if (decision === TEST_DECISION.SUBMITTED) {
