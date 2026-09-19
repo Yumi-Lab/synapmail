@@ -166,7 +166,9 @@ try {
   for (const action of ['create', 'createChild', 'rename', 'markRead', 'remove']) {
     check(normal?.items[action] === true, `dossier ordinaire : « ${action} » devrait être actif`)
   }
-  check(normal?.items.empty === false, 'dossier ordinaire : « vider » ne doit pas être offert')
+  // Défaut 3 du gate : « vider » n'est pas AFFICHÉ GRISÉ sur un dossier ordinaire, il
+  // est ABSENT. Une entrée grisée en permanence sur vingt dossiers est du bruit.
+  check(!('empty' in (normal?.items ?? {})), `dossier ordinaire : « vider » ne doit pas figurer au menu (entrées : ${Object.keys(normal?.items ?? {}).join(', ')})`)
 
   // Fermeture en UN clic dehors.
   await page.mouse.click(VIEWPORT.width - 5, VIEWPORT.height / 2)
@@ -183,8 +185,8 @@ try {
   check(specialMenu?.items.rename === false, `${special.path} (${special.special}) : « renommer » devrait être grisé`)
   check(specialMenu?.items.remove === false, `${special.path} (${special.special}) : « supprimer » devrait être grisé`)
   check(specialMenu?.items.markRead === true, `${special.path} : « tout marquer comme lu » doit rester offert`)
-  check(specialMenu?.items.empty === (special.special === 'trash' || special.special === 'spam'),
-    `${special.path} (${special.special}) : « vider » n'est offert que sur la corbeille et les indésirables`)
+  check(('empty' in (specialMenu?.items ?? {})) === (special.special === 'trash' || special.special === 'spam'),
+    `${special.path} (${special.special}) : « vider » ne figure au menu que sur la corbeille et les indésirables`)
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
   check(!(await page.$('[data-folder-context-menu]')), 'le menu ne se ferme pas avec Échap')
@@ -231,6 +233,8 @@ try {
   // « enfantTests-lane-renomme », c'est-à-dire exactement le défaut de concaténation
   // que cette section doit attraper — il est passé inaperçu sous `endsWith`.
   const leafIs = (path, leaf) => path.slice(path.lastIndexOf(delimiter) + 1) === leaf
+  /** `path` est-il rangé SOUS `parent` ? Le préfixe seul ne suffit pas. */
+  const isUnder = (path, parent) => path.startsWith(`${parent}${delimiter}`)
   await page.waitForFunction(
     ({ name, sep }) => [...document.querySelectorAll('[data-sidebar-row^="folder:"]')].some(r => {
       const p = r.dataset.sidebarRow.slice('folder:'.length)
@@ -252,6 +256,75 @@ try {
   await new Promise(r => setTimeout(r, SETTLE_MS))
   check(!(await page.$('[data-folder-name-input]')), 'Échap doit fermer le champ de saisie')
   check((await folders()).length === before, 'Échap ne doit créer aucun dossier')
+
+  // ── 5bis. LES TROIS AUTRES DÉFAUTS RELEVÉS PAR LE GATE ───────────────────────
+  // Défaut 1 : un refus porte un corps LISIBLE à CHAQUE fois, pas seulement à la
+  // première requête de la vie du processus. On rejoue le MÊME refus trois fois.
+  const ghost = `${PREFIX}-inexistant`
+  for (const attempt of [1, 2, 3]) {
+    const res = await api('/api/folders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, path: ghost, name: `${PREFIX}-x` }),
+    })
+    check(res.status === 404 && res.body?.error,
+      `refus répété n°${attempt} : attendu 404 AVEC un corps, reçu ${res.status} ${JSON.stringify(res.body)}`)
+  }
+  // Même exigence sur l'autre route et sur un autre refus : c'est le motif qu'on traque.
+  for (const attempt of [1, 2]) {
+    const res = await jsonPost('/api/folders/actions', { action: 'empty', accountId, path: rootPath })
+    check(res.status === 403 && res.body?.error,
+      `refus 403 répété n°${attempt} : attendu un corps lisible, reçu ${res.status} ${JSON.stringify(res.body)}`)
+  }
+
+  // Défaut 2 : un nom que le client sait déjà invalide ne part PAS au serveur. Le champ
+  // reste ouvert, le message s'affiche, et le compteur de requêtes n'a pas bougé.
+  await page.evaluate(() => {
+    window.__folderPosts = 0
+    const real = window.fetch
+    window.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : input?.url ?? ''
+      if (url.includes('/api/folders') && (init?.method === 'POST' || init?.method === 'PATCH')) window.__folderPosts++
+      return real(input, init)
+    }
+  })
+  await rightClick(rootPath)
+  await page.click('[data-folder-context-menu] [data-menu-item="create"]')
+  await page.waitForSelector('[data-folder-name-input] input', { timeout: 5000 })
+  await page.type('[data-folder-name-input] input', `a${delimiter}b`)
+  await page.keyboard.press('Enter')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const posted = await page.evaluate(() => window.__folderPosts)
+  check(posted === 0, `nom invalide : ${posted} requête(s) partie(s), le client devait refuser seul`)
+  const shownError = await page.$eval('[data-folder-error]', el => el.textContent).catch(() => null)
+  check(!!shownError, 'nom invalide : aucun message affiché sous le champ')
+  check(!!(await page.$('[data-folder-name-input] input')), 'nom invalide : le champ doit rester ouvert pour corriger')
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // Défaut 4 : renommer un dossier qui a des sous-dossiers emmène TOUT le sous-arbre.
+  // Mesuré sur les faits du serveur : après le renommage, plus aucun dossier ne vit
+  // sous l'ancien chemin, et l'enfant est bien rangé sous le nouveau.
+  const subParent = await jsonPost('/api/folders', { accountId, name: `${PREFIX}-arbre` })
+  check(subParent.status === 200, `arbre : création du parent, attendu 200, reçu ${subParent.status}`)
+  const subParentPath = subParent.body?.data?.path
+  const subChild = await jsonPost('/api/folders', { accountId, parent: subParentPath, name: 'sous' })
+  check(subChild.status === 200, `arbre : création de l'enfant, attendu 200, reçu ${subChild.status}`)
+  const movedTo = `${PREFIX}-arbre-neuf`
+  const moved = await api('/api/folders', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ accountId, path: subParentPath, name: movedTo }),
+  })
+  check(moved.status === 200, `arbre : renommage, attendu 200, reçu ${moved.status} ${JSON.stringify(moved.body)}`)
+  const afterTree = (await folders()).map(f => f.path)
+  const newParent = moved.body?.data?.path
+  check(!afterTree.some(p => p === subParentPath || isUnder(p, subParentPath)),
+    `arbre : des dossiers vivent encore sous l'ancien chemin (${afterTree.filter(p => p === subParentPath || isUnder(p, subParentPath)).join(', ')})`)
+  check(afterTree.some(p => isUnder(p, newParent)),
+    `arbre : l'enfant n'a pas suivi sous « ${newParent} » (liste : ${afterTree.filter(p => p.startsWith(PREFIX)).join(', ')})`)
+  // Mesuré : l'arbre repart tout de suite — la section 7 exige zéro survivant du préfixe.
+  for (const path of afterTree.filter(p => p === newParent || isUnder(p, newParent)).sort((a, b) => b.length - a.length)) {
+    await api(`/api/folders?account=${accountId}&path=${encodeURIComponent(path)}`, { method: 'DELETE' })
+  }
 
   // ── 6. TOUT MARQUER COMME LU → COMPTEUR À 0 ──────────────────────────────────
   const markRead = await jsonPost('/api/folders/actions', { action: 'markRead', accountId, path: rootPath })
@@ -316,8 +389,8 @@ try {
       const denied = await readMenu()
       check(denied?.items.remove === false,
         `sans la permission « supprimer », « supprimer » doit être grisé sur ${ordinary.path}`)
-      check(denied?.items.empty === false,
-        `sans la permission « supprimer », « vider » doit être grisé sur ${ordinary.path}`)
+      check(!('empty' in (denied?.items ?? {})),
+        `dossier ordinaire partagé : « vider » ne doit pas figurer au menu sur ${ordinary.path}`)
       await page.keyboard.press('Escape')
 
       // Le grisage n'est pas la barrière : le serveur refuse la même chose. Il répond 404,
