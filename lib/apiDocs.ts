@@ -11,16 +11,19 @@
  * `API_DOC_PATH` from this module. The route does the reading.
  */
 
-/** The document, relative to the running application's root. */
+/** The documents, relative to the running application's root. */
 export const API_DOC_FILE = 'docs/API.md'
+export const OPENAPI_FILE = 'docs/openapi.json'
 
-/** The paths the two routes answer on. Cited in the document and in `llms.txt`. */
+/** The paths the routes answer on. Cited in the document and in `llms.txt`. */
 export const API_DOC_PATH = '/api/docs'
 export const LLMS_TXT_PATH = '/llms.txt'
+export const OPENAPI_PATH = '/openapi.json'
 
 /** Markdown, spelled the way a reader that cares about encoding needs it. */
 export const MARKDOWN_CONTENT_TYPE = 'text/markdown; charset=utf-8'
 export const PLAIN_CONTENT_TYPE = 'text/plain; charset=utf-8'
+export const OPENAPI_CONTENT_TYPE = 'application/json; charset=utf-8'
 
 /**
  * The llmstxt.org file: a title, a summary as a blockquote, then sections of
@@ -46,6 +49,7 @@ export function buildLlmsTxt(origin: string): string {
     '## Docs',
     '',
     link('API reference', API_DOC_PATH, 'every route, its parameters, its responses and its access mode'),
+    link('OpenAPI 3.1 contract', OPENAPI_PATH, 'the routes a Bearer key may call, machine-readable'),
     '',
   ].join('\n')
 }

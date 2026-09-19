@@ -14,9 +14,10 @@ const PUBLIC_PREFIXES = [
 /**
  * Exact entries: ONE document each, so a neighbour that merely starts the same way
  * (`/api/docs-probe`) stays behind the session check.
- * `/api/docs` et `/llms.txt` : un agent doit pouvoir lire ce que l'API propose AVANT d'avoir une clé.
+ * `/api/docs`, `/llms.txt` et `/openapi.json` : un agent doit pouvoir lire ce que l'API propose AVANT
+ * d'avoir une clé.
  */
-const PUBLIC_EXACT = ['/api/docs', '/llms.txt'] as const
+const PUBLIC_EXACT = ['/api/docs', '/llms.txt', '/openapi.json'] as const
 
 export const PUBLIC_PATHS = [...PUBLIC_PREFIXES, ...PUBLIC_EXACT] as const
 
