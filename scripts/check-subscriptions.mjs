@@ -416,3 +416,125 @@ if (BREAK_BOUNDARY) {
 }
 
 console.log('\nsubscriptions: all checks passed')
+
+// ---------------------------------------------------------------------------
+// REAL-WORKLOAD ARM (--live). Green micro-tests above are a necessary, never a
+// sufficient condition: they say nothing about how the route behaves on a real
+// mailbox, nor how long scanning RECENT_MESSAGES_SCANNED headers takes there.
+//
+// This arm READS ONLY: it lists subscriptions through the API with a Bearer key
+// it creates for itself, times the call, and NEVER posts an unsubscribe — that
+// is a real action at a third party's and belongs to the human gate.
+if (process.argv.includes('--live')) {
+  const { readFileSync: read } = await import('node:fs')
+  const crypto = await import('node:crypto')
+  for (const f of [new URL('../.env.local', import.meta.url), new URL('../.env', import.meta.url)]) {
+    for (const line of read(f, 'utf8').split('\n')) {
+      const m = line.match(/^([A-Z_]+)=(.*)$/)
+      if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim()
+    }
+  }
+  const { SYNAPMAIL_TEST_URL: BASE, SYNAPMAIL_TEST_EMAIL: EMAIL } = process.env
+  for (const [k, v] of Object.entries({ SYNAPMAIL_TEST_URL: BASE, SYNAPMAIL_TEST_EMAIL: EMAIL })) {
+    if (!v) { console.error(`HARNESS: ${k} is not set`); process.exit(2) }
+  }
+
+  console.log('\nlive — one real mailbox, read only, no unsubscribe sent')
+  const { default: pg } = await import('pg')
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
+  const { rows } = await pool.query(
+    `SELECT a.id, a.email, a.prompt_guard, u.id AS owner_id
+     FROM email_accounts a JOIN users u ON u.id = a.user_id
+     WHERE u.email = $1 ORDER BY a.created_at LIMIT 1`,
+    [EMAIL]
+  )
+  const acc = rows[0]
+  if (!acc) { await pool.end(); console.error(`HARNESS: no email account for ${EMAIL}`); process.exit(2) }
+
+  // A key of the bench's own, deleted in the finally block; never logged.
+  const RAW_KEY = 'syn_' + crypto.randomBytes(32).toString('hex')
+  const { rows: keyRows } = await pool.query(
+    `INSERT INTO api_keys (user_id, name, key_prefix, key_hash) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [acc.owner_id, 'check-subscriptions bench', RAW_KEY.slice(0, 12),
+     crypto.createHash('sha256').update(RAW_KEY).digest('hex')]
+  )
+  const apiKeyId = keyRows[0].id
+  let liveFailures = 0
+  const bad = msg => { console.error(`  KO  ${msg}`); liveFailures += 1 }
+
+  try {
+    const url = `${BASE}/api/subscriptions?account=${acc.id}&folder=INBOX`
+    const started = Date.now()
+    const res = await fetch(url, { headers: { authorization: `Bearer ${RAW_KEY}` } })
+    const elapsedMs = Date.now() - started
+    const payload = await res.json()
+    if (res.status !== 200) {
+      // PRODUCT vs HARNESS: a non-200 with a body IS the product answering.
+      bad(`the route answered ${res.status} — ${JSON.stringify(payload).slice(0, 200)}`)
+    } else {
+      const list = payload.data
+      if (!Array.isArray(list)) bad(`data is not an array: ${JSON.stringify(payload).slice(0, 200)}`)
+      else {
+        console.log(`  ok  ${list.length} subscription group(s) in ${elapsedMs} ms ` +
+          `(scan window ${RECENT_MESSAGES_SCANNED} headers, mailbox ${acc.email})`)
+        for (const s of list) {
+          if (!/^[0-9a-f]{24}$/.test(s.id ?? '')) bad(`a group has no opaque id: ${JSON.stringify(s).slice(0, 120)}`)
+          if (!['one-click', 'mailto', 'link'].includes(s.method)) bad(`unknown method ${s.method}`)
+          if (typeof s.count !== 'number' || s.count < 1) bad(`a group has no count`)
+        }
+        const counts = list.map(s => s.count)
+        if (counts.join() !== [...counts].sort((a, b) => b - a).join()) bad('groups are not sorted by decreasing count')
+        const methods = list.reduce((acc, s) => ({ ...acc, [s.method]: (acc[s.method] ?? 0) + 1 }), {})
+        if (list.length) console.log(`  ok  ids opaque, counts sorted, methods ${JSON.stringify(methods)}`)
+        // The guard travels with third-party content when the mailbox has it on.
+        if (acc.prompt_guard) {
+          if (Object.keys(payload)[0] !== 'aiSafety') bad('aiSafety is not the first key of the guarded response')
+          else console.log('  ok  aiSafety is the FIRST key of the response (mailbox guard on)')
+        } else {
+          console.log('  --  mailbox guard is off: the wrapper is not expected here')
+        }
+      }
+    }
+    // The ids of one mailbox must mean nothing without that mailbox.
+    const unknown = await fetch(`${BASE}/api/subscriptions?account=${'0'.repeat(8)}-0000-0000-0000-000000000000`, {
+      headers: { authorization: `Bearer ${RAW_KEY}` },
+    })
+    if (unknown.status !== 404) bad(`an unknown account id answered ${unknown.status}, expected 404`)
+    else console.log('  ok  an unknown account id answers 404, leaking nothing')
+
+    const anonymous = await fetch(url)
+    if (anonymous.status !== 401) bad(`without a credential the route answered ${anonymous.status}, expected 401`)
+    else console.log('  ok  without a credential the route answers 401')
+
+    // Refused BEFORE any network call: the ceiling, and the empty body.
+    const tooMany = await fetch(`${BASE}/api/subscriptions/unsubscribe`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${RAW_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account: acc.id, ids: Array.from({ length: MAX_UNSUBSCRIBE_BATCH + 1 }, (_, i) => String(i)) }),
+    })
+    if (tooMany.status !== 400) bad(`${MAX_UNSUBSCRIBE_BATCH + 1} ids answered ${tooMany.status}, expected 400`)
+    else console.log(`  ok  more than ${MAX_UNSUBSCRIBE_BATCH} ids is refused (400), nothing sent`)
+
+    // An id that belongs to no group: `not_found`, and NOT ONE unsubscribe sent.
+    const forged = await fetch(`${BASE}/api/subscriptions/unsubscribe`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${RAW_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account: acc.id, ids: ['f'.repeat(24)] }),
+    })
+    const forgedBody = await forged.json()
+    if (forged.status !== 200 || forgedBody.data?.[0]?.outcome !== 'not_found') {
+      bad(`a forged id gave ${forged.status} ${JSON.stringify(forgedBody).slice(0, 160)}, expected 200 not_found`)
+    } else {
+      console.log('  ok  a forged id is not_found — no unsubscribe was sent for it')
+    }
+  } finally {
+    await pool.query('DELETE FROM api_key_requests WHERE api_key_id = $1', [apiKeyId])
+    await pool.query('DELETE FROM api_keys WHERE id = $1', [apiKeyId])
+    await pool.end()
+  }
+  if (liveFailures) {
+    console.error(`\ncheck-subscriptions: live arm — ${liveFailures} failure(s)`)
+    process.exit(1)
+  }
+  console.log('\ncheck-subscriptions: live arm OK (read only, no unsubscribe sent)')
+}
