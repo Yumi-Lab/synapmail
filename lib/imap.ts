@@ -6,7 +6,7 @@ import { query } from './db'
 import { upsertContact } from './contacts'
 import { DEFAULT_FLAG_KEY, FLAG_BIT_KEYWORDS, FLAG_IMAP_FLAG, flagFromKeywords, keywordsForFlag } from './flags'
 import type { MailListFilter } from './flags'
-import { SEARCH_FIELDS, SEARCH_RESULT_LIMIT, orderFoldersForSearch } from './search'
+import { SEARCH_FIELDS, SEARCH_RESULT_LIMIT, orderFoldersForSearch, splitFolderPasses } from './search'
 import type { FolderRank } from './search'
 import type { Message, Folder, AuthResults } from '@/types/email'
 
@@ -773,7 +773,7 @@ export type SearchOutcome = { messages: Message[]; total: number }
  *  - le cache local (`messages_cache`) donne la date du message le plus récent
  *    connu par dossier, ce qui fait remonter les dossiers vivants.
  */
-export async function listFoldersRanked(account: AccountConfig): Promise<string[]> {
+async function rankFolders(account: AccountConfig): Promise<FolderRank[]> {
   const client = await createClient(account)
   let entries: FolderRank[]
   try {
@@ -800,7 +800,22 @@ export async function listFoldersRanked(account: AccountConfig): Promise<string[
     // Le cache n'est qu'un CLASSEMENT : son absence dégrade l'ordre, jamais le résultat.
   }
 
-  return orderFoldersForSearch(entries.map(e => ({ ...e, lastKnownDate: freshness.get(e.path) ?? null })))
+  return entries.map(e => ({ ...e, lastKnownDate: freshness.get(e.path) ?? null }))
+}
+
+/** Les dossiers d'une boîte, du plus utile au moins utile (lot S2). */
+export async function listFoldersRanked(account: AccountConfig): Promise<string[]> {
+  return orderFoldersForSearch(await rankFolders(account))
+}
+
+/**
+ * Les dossiers d'une boîte en DEUX passes : réception + envoyés d'abord, le reste
+ * ensuite. La portée « toutes les boîtes » fait la première passe de CHAQUE boîte
+ * avant d'attaquer les secondes, pour que la dernière boîte ne soit pas servie
+ * derrière les 97 dossiers d'une autre.
+ */
+export async function listFolderPasses(account: AccountConfig): Promise<{ first: string[]; rest: string[] }> {
+  return splitFolderPasses(await rankFolders(account))
 }
 
 /** Ce qu'un dossier vient de rapporter, dès qu'il l'a rapporté. */

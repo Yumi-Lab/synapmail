@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
-import { listFolders, listFoldersRanked, searchMessagesByFolder, searchMessagesIn } from '@/lib/imap'
+import { listFolderPasses, listFolders, listFoldersRanked, searchMessagesByFolder, searchMessagesIn } from '@/lib/imap'
 import { accountOrderBy } from '@/lib/accountColor'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import {
@@ -128,20 +128,13 @@ export async function GET(req: Request) {
           let folders = 0
           const unreachable: string[] = []
           try {
-            const sources = accounts.map(row => async function* () {
-              const cfg = imapConfig(row)
-              let ranked: string[]
-              try {
-                ranked = await listFoldersRanked(cfg)
-              } catch {
-                // Une boîte injoignable n'arrête pas les autres : elle est signalée
-                // en fin de flux, et son balayage est simplement sauté.
-                unreachable.push(row.email)
-                return
-              }
-              folders += ranked.length
+            // Les passes d'une boîte sont calculées UNE fois : la deuxième réutilise
+            // la liste de dossiers de la première, sans second LIST-STATUS.
+            const passes = new Map<string, { first: string[]; rest: string[] }>()
+            const sweepFolders = (row: AccountRow, list: string[]) => async function* () {
+              if (!list.length) return
               const guard = { enabled: machine && row.prompt_guard }
-              for await (const chunk of searchMessagesByFolder(cfg, ranked, terms, sweep.signal)) {
+              for await (const chunk of searchMessagesByFolder(imapConfig(row), list, terms, sweep.signal)) {
                 if (sweep.signal.aborted) return
                 searched += 1
                 // La garde d'invite s'applique PAR BOÎTE : `prompt_guard` diffère
@@ -157,10 +150,39 @@ export async function GET(req: Request) {
                   folders,
                 }, guard)
               }
+            }
+
+            // PREMIÈRE PASSE : réception + envoyés de CHAQUE boîte. Sans elle, la
+            // dernière boîte attend derrière les 97 dossiers d'une autre (mesuré le
+            // 20/09/2026 : son premier résultat arrivait à 21,2 s).
+            const firstPass = accounts.map(row => async function* () {
+              let split: { first: string[]; rest: string[] }
+              try {
+                split = await listFolderPasses(imapConfig(row))
+              } catch {
+                // Une boîte injoignable n'arrête pas les autres : elle est signalée
+                // en fin de flux, et son balayage est simplement sauté.
+                unreachable.push(row.email)
+                return
+              }
+              passes.set(row.id, split)
+              folders += split.first.length + split.rest.length
+              yield* sweepFolders(row, split.first)()
             })
-            for await (const payload of mergeGenerators(sources, ACCOUNT_CONCURRENCY)) {
+            for await (const payload of mergeGenerators(firstPass, ACCOUNT_CONCURRENCY)) {
               if (sweep.signal.aborted) break
               send(payload)
+            }
+
+            // DEUXIÈME PASSE : tout le reste, dans le même ordre de boîtes.
+            if (!sweep.signal.aborted) {
+              const secondPass = accounts
+                .filter(row => passes.get(row.id)?.rest.length)
+                .map(row => sweepFolders(row, passes.get(row.id)!.rest))
+              for await (const payload of mergeGenerators(secondPass, ACCOUNT_CONCURRENCY)) {
+                if (sweep.signal.aborted) break
+                send(payload)
+              }
             }
             if (!sweep.signal.aborted && unreachable.length) send({ unreachable })
           } catch (err) {
