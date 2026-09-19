@@ -134,7 +134,14 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
     const href = buildSearchHref(searchParams.toString(), next, nextScope)
     // Depuis la boîte, remplacer l'entrée d'historique : la frappe ne doit pas
     // empiler une entrée par caractère. Depuis ailleurs, on y navigue vraiment.
-    if (pathname === MAIL_PATH) router.replace(href)
+    //
+    // `router.replace` refait RENDRE la route côté serveur alors que SEULS des
+    // paramètres d'URL changent : mesuré le 20/09/2026, 4,0 s entre le vrai clic
+    // sur une portée et l'URL mise à jour (plus de 12 s sur une machine chargée),
+    // pendant lesquelles le sélecteur paraissait mort. L'API native d'historique,
+    // que le routeur suit depuis Next 14.2, met `useSearchParams` à jour au rendu
+    // suivant sans aller-retour. Le CHEMIN ne change pas ici, seuls ses paramètres.
+    if (pathname === MAIL_PATH) window.history.replaceState(null, '', href)
     else router.push(href)
   }, [pathname, router, searchParams])
 

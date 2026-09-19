@@ -278,11 +278,23 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const streamAbort = useRef<AbortController | null>(null)
   const stopStream = useCallback(() => { streamAbort.current?.abort() }, [])
 
+  // CE que le flux doit couvrir. Un effet ne s'exécute qu'APRÈS la peinture : entre
+  // le rendu où la recherche devient prête et celui où l'effet lève `streaming`, le
+  // bandeau affichait un « 0 résultat » SANS « Recherche… », donc présenté comme
+  // définitif (mesuré le 20/09/2026 : 52 ms de faux zéro au chargement à froid).
+  // Comparer la clé visée à celle que le flux a démarrée rend l'attente visible dès
+  // le PREMIER rendu, sans second drapeau à tenir en accord avec le premier.
+  const streamKey = isStreamingScope && searchReady
+    ? `${search}|${folder}|${searchScope}|${accountParam}`
+    : null
+  const [streamedKey, setStreamedKey] = useState<string | null>(null)
+
   useEffect(() => {
     if (!isStreamingScope || !searchReady) { setStreamed(EMPTY_SEARCH_STREAM); return }
     const controller = new AbortController()
     streamAbort.current = controller
     setStreamed(EMPTY_SEARCH_STREAM)
+    setStreamedKey(streamKey)
     setStreaming(true)
     const url = `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}` +
       `&folder=${encodeURIComponent(folder)}&${SCOPE_PARAM}=${searchScope}&${STREAM_PARAM}=1${accountParam}`
@@ -321,13 +333,13 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       }
     })()
     return () => { if (!complete) controller.abort() }
-  }, [isStreamingScope, searchReady, search, folder, accountParam, searchScope])
+  }, [isStreamingScope, searchReady, search, folder, accountParam, searchScope, streamKey])
 
   // Tant que le compte n'est pas résolu, la recherche est EN COURS de démarrage :
   // le bandeau dit « Recherche… » plutôt que d'affirmer un résultat qu'il n'a pas.
   const isSearching = isSearchMode && !searchReady
     ? true
-    : (isStreamingScope ? streaming : isSearchingOne)
+    : (isStreamingScope ? (streaming || streamedKey !== streamKey) : isSearchingOne)
 
   // Folders — needed for the move menu, the context menu AND the row "Archive"
   // quick action, so it is fetched whenever an account is active. The key is
