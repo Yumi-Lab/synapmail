@@ -813,8 +813,19 @@ try {
   const page = await browser.newPage()
   await page.setViewport(VIEWPORT)
 
+  // /mail holds an SSE connection open (`/api/stream`), so `networkidle2` can never be
+  // reached there: the wait has to be the marker the bar itself renders, not the network
+  // going quiet. `domcontentloaded` + waitForSelector is the pair used for every hop.
+  // The marker is a FOLDER row, not just any row: the account row is server-rendered and
+  // present immediately, so waiting on it would let the measurements run on a bar whose
+  // folder list has not arrived yet (observed: 1 row measured instead of 102).
+  const land = async path => {
+    await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' })
+    await page.waitForSelector('[data-sidebar] [data-sidebar-row^="folder:"]', { timeout: 30000 })
+  }
+
   // Sign in through the credentials endpoint, then land on /mail.
-  await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2' })
+  await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' })
   const loggedIn = await page.evaluate(async ({ base, email, password }) => {
     const { csrfToken } = await (await fetch(`${base}/api/auth/csrf`)).json()
     const res = await fetch(`${base}/api/auth/callback/credentials`, {
@@ -826,8 +837,7 @@ try {
   }, { base: BASE, email: EMAIL, password: PASSWORD })
   if (!loggedIn) { console.error('HARNESS: credentials login failed'); process.exit(2) }
 
-  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
-  await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
+  await land('/mail')
   // Which account of this database carries the most custom folders — asked of the app's own
   // API, not hard-coded to a name: lot A7b exists because the rule was only ever measured on
   // the small box the bench happens to sign into, and "the biggest one" must stay true as the
@@ -854,8 +864,7 @@ try {
   await page.evaluate(async ({ base, id }) => {
     await fetch(`${base}/api/settings`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active_account_id: id }) })
   }, { base: BASE, id: smallest.id })
-  await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
-  await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
+  await land('/mail')
   const signedInAs = smallest.label
   console.log(`accounts in this database: ${inventory.map(a => `${a.label}=${a.custom}`).join(', ')} — starting on "${signedInAs}" (${smallest.custom}), biggest is "${biggest.label}" (${biggest.custom})`)
   // Let the folder list settle so both states measure the same set of rows.

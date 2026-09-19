@@ -95,16 +95,33 @@ const ACCOUNT_ROW_RIGHT = {
   gap: 8,
 } as const
 
+// Columns of an account row, read from its RIGHT edge inwards: chevron, then mark, then
+// the text. Every offset below is derived from that single order, so the two boxes cannot
+// drift onto each other the way they did when each was padded on its own.
+
 /** Right offset of the share mark: past the edge, and past the chevron when there is one. */
 function markRight(withChevron: boolean) {
   const { edge, chevron, gap } = ACCOUNT_ROW_RIGHT
   return edge + (withChevron ? chevron + gap : 0)
 }
 
-// Room the text of a shared row gives up so it truncates before the mark instead of
-// running under it. Same value with or without a chevron: the chevron is in flow, so
-// it already pushes the text, and only the absolute mark has to be reserved for.
-const SHARED_TEXT_INSET = ACCOUNT_ROW_RIGHT.mark + ACCOUNT_ROW_RIGHT.gap
+/** Distance from the row's right edge at which a shared row's text has to stop. */
+function textStop(withChevron: boolean) {
+  const { mark, gap } = ACCOUNT_ROW_RIGHT
+  return markRight(withChevron) + mark + gap
+}
+
+/**
+ * Right margin the TEXT of a SHARED row gives up, counted from where the row's IN-FLOW
+ * content already ends — the edge clearance, plus the chevron column when the row has
+ * one. The chevron pushes the text by itself; only the absolute mark has to be reserved
+ * for. Padding the whole label for the mark instead would push the chevron out with it,
+ * which is exactly how the two controls came to sit on the same 28 px.
+ */
+function textInset(withChevron: boolean) {
+  const { edge, chevron } = ACCOUNT_ROW_RIGHT
+  return textStop(withChevron) - edge - (withChevron ? chevron : 0)
+}
 
 /**
  * The ONLY sign that an inbox is shared: one monochrome glyph, in a fixed column
@@ -361,13 +378,18 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
             </span>
             <span
               className={cn(ROW_LABEL, collapsed && 'opacity-0')}
+              // The label's padding places the CHEVRON, so it stays at the edge clearance
+              // whatever else the row carries; the mark's room is taken by the text below.
               style={{
                 transitionDuration: `${SIDEBAR.transitionMs}ms`,
-                paddingRight: ACCOUNT_ROW_RIGHT.edge + (activeAccount.isShared ? SHARED_TEXT_INSET : 0),
+                paddingRight: ACCOUNT_ROW_RIGHT.edge,
               }}
               aria-hidden={collapsed}
             >
-              <span className="flex-1 min-w-0 text-left">
+              <span
+                className="flex-1 min-w-0 text-left"
+                style={activeAccount.isShared ? { marginRight: textInset(hasMultipleAccounts) } : undefined}
+              >
                 <span className="block text-sm font-medium text-foreground truncate leading-tight">
                   {activeAccount.name || activeAccount.email}
                 </span>
@@ -436,14 +458,15 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                   return (
                     // The row is a button, the shared mark is a link: a link nested in a
                     // button is invalid HTML, so they are siblings and the mark sits in
-                    // the gutter the row reserves for it (SHARED_MARK_PAD).
+                    // the gutter the row reserves for it (textInset). A list row never
+                    // carries a chevron, so it reserves for the mark alone.
                     <div key={acc.id} className="relative">
                       <button
                         onClick={() => switchAccount(acc.id)}
                         // Every row has the same box: a fixed bubble, one gap, then the text —
                         // so all names and emails of the list start at the exact same x.
                         className={cn(ROW, ROW_IDLE, 'gap-2.5 px-3 rounded-none text-left')}
-                        style={acc.isShared ? { paddingRight: SHARED_TEXT_INSET } : undefined}
+                        style={acc.isShared ? { paddingRight: ACCOUNT_ROW_RIGHT.edge + textInset(false) } : undefined}
                       >
                         <AccountAvatar
                           account={acc}
