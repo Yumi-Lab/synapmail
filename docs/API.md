@@ -32,6 +32,20 @@ That list is not maintained by hand: `scripts/check-api-docs.mjs` reads the acce
 
 Every other route — account/rule/template/signature/PGP/settings CRUD, admin, the rest of the AI routes, OAuth, SSE, tracking, the older `POST /api/unsubscribe`, and the account-mutation and sharing routes (`POST`/`PATCH`/`DELETE /api/accounts...`) — is **session-only**, even where the underlying resource is otherwise Bearer-eligible for reads.
 
+## This document, served
+
+The reference you are reading is served by the instance itself, so an agent can find out what it may call **before** it has a key. Both routes are public, and both carry nothing but this document.
+
+### `GET /api/docs` — public, no auth
+This file, as `text/markdown; charset=utf-8`.
+
+`404 { error: 'docs/API.md is missing from this deployment' }` if the image was built without it — a packaging fault, named as one rather than hidden behind a `500`.
+
+### `GET /llms.txt` — public, no auth
+The [llmstxt.org](https://llmstxt.org) entry point: what this instance is, the warning that mail content is untrusted input, and a link to the reference above. Links are built from the origin of the request — an instance answers under whatever name its owner gave it, so no host is written into the file.
+
+It is `text/plain; charset=utf-8`, as that convention expects.
+
 ## Errors
 
 - `401 Unauthorized` — no valid session and no valid/unrevoked Bearer key.

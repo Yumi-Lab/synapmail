@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Self-check of lot N3: `docs/API.md` cannot drift away from `app/api/**`.
+ * Self-check of lot N3: `docs/API.md` cannot drift away from the routes it describes.
  *
- * PURE: no database, no mailbox, no network, no dev server. It reads the route
- * files and the document from disk and compares them three ways:
+ * PURE: no database, no mailbox, no network, no dev server. It reads every
+ * route file under `app` and the document from disk and compares them three ways:
  *
  *  1. Every HTTP method exported by a route file has its own heading.
  *  2. Every heading names a route and a method that really exist.
@@ -20,10 +20,11 @@
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
+import { API_DOC_PATH, LLMS_TXT_PATH } from '../lib/apiDocs.ts'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
-const API_DIR = join(ROOT, 'app', 'api')
+const APP_DIR = join(ROOT, 'app')
 const DOC_PATH = join(ROOT, 'docs', 'API.md')
 
 /** The methods Next.js routes may export. Anything else is not a route method. */
@@ -50,8 +51,18 @@ const check = (condition, label, detail) => {
   else fail.push(detail ? `${label}\n      ${detail}` : label)
 }
 
-/** `app/api/messages/[id]/route.ts` -> `/api/messages/[id]`. Posix separators only. */
-const routePathOf = file => '/' + relative(ROOT, file).split(sep).slice(1, -1).join('/')
+/**
+ * `app/api/messages/[id]/route.ts` -> `/api/messages/[id]`. Posix separators only.
+ * A route group — a segment in parentheses — shapes the source tree, not the URL,
+ * so it drops out. Not every route lives under `/api`: `app/llms.txt` is one.
+ */
+const routePathOf = file =>
+  '/' +
+  relative(ROOT, file)
+    .split(sep)
+    .slice(1, -1)
+    .filter(segment => !segment.startsWith('('))
+    .join('/')
 
 const routeFiles = dir =>
   readdirSync(dir).flatMap(name => {
@@ -133,7 +144,7 @@ const modeOf = (source, method) => {
 /** Reads `app/api/**` into `{ 'GET /api/x': { file, mode } }`. */
 function readCode(overrides = {}) {
   const routes = {}
-  for (const file of routeFiles(API_DIR)) {
+  for (const file of routeFiles(APP_DIR)) {
     const source = overrides[file] ?? readFileSync(file, 'utf8')
     const path = routePathOf(file)
     for (const method of exportedMethods(source)) {
@@ -215,6 +226,38 @@ const mixed = Object.entries(code).reduce((seen, [key, { file, mode }]) => {
 check(
   [...mixed.values()].some(modes => modes.size > 1),
   'at least one route file mixes two access modes, so the per-method read is exercised',
+)
+
+// ---- The document is SERVED, and packaged so it can be ----------------------
+// A reference that only exists in the repository is a reference no agent reaches.
+const source = file => readFileSync(join(ROOT, file), 'utf8')
+
+check(
+  source(join('lib', 'publicPaths.ts')).includes(`'${API_DOC_PATH}'`) &&
+    source(join('lib', 'publicPaths.ts')).includes(`'${LLMS_TXT_PATH}'`),
+  `${API_DOC_PATH} and ${LLMS_TXT_PATH} are public, so an agent can read them before it has a key`,
+)
+
+check(
+  /COPY\s[^\n]*\/app\/docs\s/.test(source('Dockerfile')),
+  'the image carries docs/, without which the served reference would 404',
+)
+
+// The served links must be built from the request, never from a host written here:
+// every instance answers under the name its owner chose.
+const docsModule = source(join('lib', 'apiDocs.ts'))
+check(
+  !/https?:\/\/[a-z0-9.-]+/i.test(docsModule.replace(/llmstxt\.org/g, '')),
+  'no instance host is written into the served files',
+)
+
+const llms = (await import(new URL('../lib/apiDocs.ts', import.meta.url))).buildLlmsTxt('https://example.test')
+check(llms.startsWith('# '), 'llms.txt opens with its title, as llmstxt.org asks')
+check(/\n> /.test(llms), 'llms.txt carries the summary as a blockquote')
+check(llms.includes(`https://example.test${API_DOC_PATH}`), 'llms.txt links the reference at the calling origin')
+check(
+  /untrusted/i.test(llms),
+  'llms.txt tells a reader that mail content is untrusted, where it will read it first',
 )
 
 if (BREAK) {
