@@ -1,15 +1,14 @@
 #!/usr/bin/env node
 /**
- * Auto-controle de la moitie PURE du panneau de l'omnibar (`lib/omnibarCommands.ts`) :
- * ce qui correspond a une saisie, insensible a la casse ET aux accents, et dans quel
- * ordre les sections sortent.
+ * Self-check of the PURE half of the omnibar panel (`lib/omnibarCommands.ts`): what a
+ * typed query matches, case- AND accent-insensitively, and in which order sections come out.
  *
- * Verifie aussi que la source des entrees de reglages est UNIQUE : la table exportee
- * par `components/settings/SettingsSidebar.tsx` (SETTINGS_NAV), et que chaque entree
- * a bien son libelle dans les TROIS langues, faute de quoi elle serait introuvable
- * dans l'une d'elles.
+ * Also checks that settings entries have a SINGLE source -- the table exported by
+ * `components/settings/SettingsSidebar.tsx` (SETTINGS_NAV) -- and that every entry
+ * carries its label in ALL THREE languages, without which it would be unreachable
+ * in one of them.
  *
- * Aucun reseau, aucun serveur, aucun compte.
+ * No network, no server, no account.
  *   node --experimental-strip-types scripts/check-omnibar-commands.mjs
  */
 import { readFileSync } from 'node:fs'
@@ -22,14 +21,14 @@ const check = (label, actual, expected) => {
   const a = JSON.stringify(actual)
   const e = JSON.stringify(expected)
   if (a === e) { console.log(`  ok   ${label}`); return }
-  console.error(`  FAIL ${label}\n       attendu ${e}\n       obtenu  ${a}`)
+  console.error(`  FAIL ${label}\n       expected ${e}\n       got      ${a}`)
   failed++
 }
 
 console.log('foldText')
-check('accents retires', foldText('Thème'), 'theme')
-check('casse repliee', foldText('Clés API'), 'cles api')
-check('deja plat', foldText('api'), 'api')
+check('accents stripped', foldText('Thème'), 'theme')
+check('case folded', foldText('Clés API'), 'cles api')
+check('already flat', foldText('api'), 'api')
 
 const ENTRIES = [
   { id: 'settings:api-keys', section: 'settings', label: 'Clés API', hint: '/settings/api-keys', keywords: 'api, clé, token, bearer, mcp' },
@@ -70,10 +69,10 @@ check('ordre des sections : comptes, actions, reglages',
   ['accounts', 'actions', 'settings', 'settings'])
 check('sections declarees dans cet ordre', [...OMNIBAR_SECTIONS], ['accounts', 'actions', 'settings'])
 
-// --- Ce que la saisie NOMME passe en tete ---
+// --- What the query NAMES comes first ---
 // An entry whose LABEL carries the whole query comes before those matching by
 // keyword only: otherwise "dark" + Enter would apply the LIGHT theme.
-console.log('ce que la saisie nomme passe en tete')
+console.log('what the query names comes first')
 const themeIds = q => matchOmnibar(q, THEME_ENTRIES).map(e => e.id)
 check('« sombre » propose le theme sombre en premier', themeIds('sombre')[0], 'action:theme-dark')
 check('« dark » propose le theme sombre en premier', themeIds('dark')[0], 'action:theme-dark')
@@ -82,7 +81,7 @@ check('« light » propose le theme clair en premier', themeIds('light')[0], 'ac
 check('« systeme » propose le theme systeme en premier', themeIds('systeme')[0], 'action:theme-system')
 check('« theme » garde l\'ordre de declaration',
   themeIds('theme'), ['action:theme-light', 'action:theme-dark', 'action:theme-system'])
-// Le rang par libelle ne prime JAMAIS la section : une boite reste avant une action.
+// Label ranking NEVER outranks the section: a mailbox still comes before an action.
 check('« ada » propose la boite en premier', themeIds('ada')[0], 'account:2')
 
 // Label ranking is a rule IN ITS OWN RIGHT, not a side effect of keywords: here
@@ -95,8 +94,8 @@ const SHARED = [
 check('a mots-cles egaux, le libelle qui NOMME la saisie passe devant',
   matchOmnibar('sombre', SHARED).map(e => e.id), ['a:second', 'a:premier'])
 
-// --- Source UNIQUE des entrees de reglages ---
-console.log('source des reglages')
+// --- SINGLE source of the settings entries ---
+console.log('settings source')
 const NAV_SRC = readFileSync(new URL('../components/settings/SettingsSidebar.tsx', import.meta.url), 'utf8')
 const navBlock = NAV_SRC.slice(NAV_SRC.indexOf('export const SETTINGS_NAV'), NAV_SRC.indexOf('] as const', NAV_SRC.indexOf('export const SETTINGS_NAV')))
 const navKeys = [...navBlock.matchAll(/key:\s*'([^']+)'/g)].map(m => m[1])
@@ -112,7 +111,7 @@ for (const code of ['en', 'fr', 'zh']) {
   check(`${code} : chaque entree a son libelle`, missingLabel, [])
   const missingKeywords = navKeys.filter(k => !L.omnibar?.keywords?.[k])
   check(`${code} : chaque entree a ses mots-cles`, missingKeywords, [])
-  // Chaque mode de theme a SA liste : une liste partagee reintroduirait le defaut.
+  // Every theme mode owns ITS list: a shared list would bring the defect back.
   const themeKeywordKeys = ['themeLightKeywords', 'themeDarkKeywords', 'themeSystemKeywords']
   const lists = themeKeywordKeys.map(k => L.omnibar?.[k])
   check(`${code} : chaque theme a ses propres mots-cles`, lists.filter(Boolean).length, 3)

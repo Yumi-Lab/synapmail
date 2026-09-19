@@ -105,7 +105,7 @@ export function UserMenu() {
 
   return (
     <div ref={boxRef} className="relative shrink-0">
-      {/* Menu ouvert : pas de bulle, elle se poserait par-dessus la liste. */}
+      {/* While the menu is open: no tooltip, it would sit on top of the list. */}
       {open ? trigger : <IconTooltip label={label || t('userMenu')} align="end">{trigger}</IconTooltip>}
 
       {open && (
@@ -130,8 +130,8 @@ export function UserMenu() {
             <span className="flex-1 truncate text-left">{tTheme('theme')}</span>
             <ThemeToggle />
           </div>
-          {/* La langue se change d'ici, meme gabarit que la ligne du theme.
-              Le mecanisme est celui des reglages Apparence (lib/locales.ts), pas un second. */}
+          {/* Language switches from here, on the same template as the theme row.
+              It reuses the Appearance settings mechanism (lib/locales.ts), not a second one. */}
           <div className={cn(MENU_ROW, 'hover:bg-transparent hover:text-foreground/80')} data-user-menu-item="language">
             <span className="flex-1 truncate text-left">{tOmni('language')}</span>
             <div className="flex shrink-0 items-center rounded-lg border border-border bg-muted/40 p-0.5">

@@ -1,59 +1,57 @@
-# Comment fonctionne la recherche
+# How search works
 
-Ce que le champ de recherche cherche, comment il découpe une requête, où il regarde, et ce qu'il ne
-peut pas faire. Le contrat vit dans `lib/search.ts` — les valeurs citées ici en sont extraites, elles
-ne sont jamais recopiées ailleurs dans le code.
+What the search field looks for, how it splits a query, where it looks, and what it cannot do. The
+contract lives in `lib/search.ts` — the values quoted here are extracted from it, never copied
+elsewhere in the code.
 
-## Les champs cherchés
+## The fields searched
 
-Un terme est cherché dans **l'expéditeur, les destinataires, la copie et l'objet**
-(`SEARCH_FIELDS = ['from', 'to', 'cc', 'subject']`), côté serveur, par un `SEARCH` IMAP.
+A term is looked for in **the sender, the recipients, the carbon copy and the subject**
+(`SEARCH_FIELDS = ['from', 'to', 'cc', 'subject']`), server-side, through an IMAP `SEARCH`.
 
-**Le corps des messages n'est PAS cherché.** Ce n'est pas un choix d'ergonomie, c'est une mesure : sur
-certains serveurs grand public, les critères `BODY` et `TEXT` renvoient **0 résultat** — et, pire, ajouter `body` au `OR` fait
-tomber le `OR` entier à 0, c'est-à-dire que chercher « dans plus de champs » ne rendait plus rien du
-tout. La bannière le dit à la personne quand une recherche ne donne aucun résultat.
+**Message bodies are NOT searched.** This is not an ergonomic choice, it is a measurement: on some
+consumer-grade servers the `BODY` and `TEXT` criteria return **0 results** — and, worse, adding `body`
+to the `OR` drops the whole `OR` to 0, meaning that searching "in more fields" returned nothing at
+all. The banner says so when a search yields no result.
 
-Avant de rétablir la recherche dans le corps sur un autre serveur, il faut la MESURER sur ce serveur :
-`scripts/check-search-capability.mjs` lit ce que le serveur annonce.
+Before restoring body search on another server, it must be MEASURED on that server:
+`scripts/check-search-capability.mjs` reads what the server advertises.
 
-## Comment une requête est découpée
+## How a query is split
 
-`parseQuery(q)` (fonction pure, auto-contrôlée par `scripts/check-search-parse.mjs`) :
+`parseQuery(q)` (a pure function, self-checked by `scripts/check-search-parse.mjs`):
 
-- **plusieurs mots = ET** — chaque mot doit se trouver dans au moins un des champs ci-dessus, dans
-  n'importe quel ordre : « 3d cpi » et « cpi 3d » donnent le même ensemble ;
-- **les guillemets** gardent une sous-chaîne exacte : `"3d cpi"` ne trouve que cette suite-là ;
-- la casse et les espaces multiples sont ignorés, les doublons sont fondus ;
-- un mot de **moins de 2 caractères** est ignoré (il ramènerait la boîte entière).
+- **several words means AND** — each word must be found in at least one of the fields above, in any
+  order: "3d cpi" and "cpi 3d" yield the same set;
+- **quotes** keep an exact substring: `"3d cpi"` matches only that sequence;
+- case and repeated spaces are ignored, duplicates are folded;
+- a word **shorter than 2 characters** is ignored (it would bring back the whole mailbox).
 
-## Où l'on cherche : la portée
+## Where it looks: the scope
 
-Deux portées, écrites dans l'URL (`scope=folder` par défaut, `scope=all`) :
+Two scopes, written in the URL (`scope=folder` by default, `scope=all`):
 
-- **ce dossier** — un `SELECT` + un `SEARCH` sur le dossier ouvert ;
-- **tous les dossiers** — les dossiers sont parcourus **dans l'ordre de leur utilité** (boîte de
-  réception, envoyés, puis les autres par date du dernier message connu du cache), et les résultats
-  sont **diffusés au fil de l'eau** (NDJSON) : les premières lignes s'affichent pendant que la
-  recherche continue. La bannière avance (« 5 dossiers sur 23 ») et un bouton **Arrêter** interrompt
-  le flux ; la liste déjà reçue reste à l'écran.
+- **this folder** — a `SELECT` plus a `SEARCH` on the open folder;
+- **all folders** — folders are walked **in order of usefulness** (inbox, sent, then the rest by the
+  date of the latest message known to the cache), and results are **streamed as they come** (NDJSON):
+  the first lines appear while the search is still running. The banner advances ("5 folders out of
+  23") and a **Stop** button interrupts the stream; the list already received stays on screen.
 
-Changer de requête, ou quitter la page, annule proprement le flux en cours (`AbortController` côté
-navigateur, fermeture des connexions IMAP côté serveur).
+Changing the query, or leaving the page, cancels the running stream cleanly (`AbortController` in the
+browser, IMAP connections closed server-side).
 
-## Les plafonds, et pourquoi ils sont là
+## The ceilings, and why they are there
 
-- **200 résultats affichés** (`SEARCH_RESULT_LIMIT`), les plus récents d'abord. La bannière ne le cache
-  pas : « 2 406 résultats · 200 affichés ». `total` compte **toutes** les correspondances, pas
-  seulement celles qui tiennent à l'écran.
-- **Pas d'index plein texte local.** Ce serait la seule façon de chercher dans le corps sur un serveur
-  qui refuse `BODY`, mais cela veut dire stocker les corps de tous les messages de toutes les boîtes
-  dans PostgreSQL, les tenir synchronisés, et assumer ce que cela représente en volume et en
-  confidentialité. `ponytail:` plafond connu, chemin d'évolution = décision produit à prendre
-  explicitement, pas un détail d'implémentation.
+- **200 results displayed** (`SEARCH_RESULT_LIMIT`), most recent first. The banner does not hide it:
+  "2,406 results · 200 displayed". `total` counts **every** match, not only those that fit on screen.
+- **No local full-text index.** That would be the only way to search bodies on a server that refuses
+  `BODY`, but it means storing the bodies of every message of every mailbox in PostgreSQL, keeping
+  them in sync, and accepting what that represents in volume and in privacy. `ponytail:` known
+  ceiling, upgrade path = a product decision to be taken explicitly, not an implementation detail.
 
-## Ce que la recherche ne dit pas
+## What search does not say
 
-Elle ne cherche pas dans les pièces jointes, ni dans le corps (voir plus haut), et un dossier que le
-serveur refuse d'ouvrir est sauté sans faire échouer la recherche. Les mesures de cette page ont été
-prises sur **un seul serveur grand public** : un autre serveur peut répondre autrement, et rien ici ne permet de l'extrapoler.
+It does not search attachments, nor bodies (see above), and a folder the server refuses to open is
+skipped without failing the search. The measurements on this page were taken on **a single
+consumer-grade server**: another server may answer differently, and nothing here allows extrapolating
+from it.

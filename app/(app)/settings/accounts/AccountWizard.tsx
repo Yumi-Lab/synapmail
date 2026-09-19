@@ -218,7 +218,7 @@ export interface AccountFormData {
 }
 
 interface TestResult {
-  /** Absents quand la route refuse avant tout essai (elle ne renvoie alors qu'une erreur). */
+  /** Absent when the route refuses before any attempt, returning a bare error instead. */
   imap?: { ok: boolean; error: string }
   smtp?: { ok: boolean; error: string }
 }
@@ -303,9 +303,9 @@ export function AccountWizard({ onSave, onCancel, saving }: Props) {
               {r.ok ? '✓' : '✗'}
             </span>
             <span className="font-medium">{proto.toUpperCase()}</span>
-            {/* La route ne renvoie plus l'erreur brute du serveur mais une CAUSE
-                (`lib/accountTest.ts`) : elle se lit par la MEME cle que l'ecran d'edition,
-                sinon la creation afficherait le code nu « unreachable ». */}
+            {/* The route returns a CAUSE (`lib/accountTest.ts`), no longer the raw
+                server error. It is read through the SAME key as the edit screen,
+                otherwise creation would display the bare code "unreachable". */}
             {!r.ok && <span className="text-xs opacity-70 truncate">{t(`testFailure.${r.error}`)}</span>}
           </div>
         )

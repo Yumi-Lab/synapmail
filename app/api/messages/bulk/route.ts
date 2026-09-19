@@ -40,7 +40,7 @@ export async function PATCH(req: Request) {
     accountId: string
     folder: string
     destination?: string
-    /** Couleur de lib/flags.ts, ou `null` pour retirer le drapeau. */
+    /** A colour from lib/flags.ts, or `null` to clear the flag. */
     flag?: string | null
   }
 

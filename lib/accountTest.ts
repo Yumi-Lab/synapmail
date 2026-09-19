@@ -1,5 +1,5 @@
 /**
- * WHICH password the "Tester la connexion" button tries, and for WHOM.
+ * WHICH password the "Test connection" button tries, and for WHOM.
  *
  * Measured in production on 20/09/2026: the button was lying. The edit screen never shows the
  * stored password (it does not leave the server), so the field starts empty; the test
