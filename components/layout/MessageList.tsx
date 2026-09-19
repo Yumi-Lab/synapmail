@@ -1138,7 +1138,13 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
         hauteur en dur ni mesure en JS. `invisible` retire aussi de l'ordre de
         tabulation ce qui n'est pas affiché.
       */}
-      <div className="grid shrink-0">
+      {/* Les deux bandeaux se superposent dans UNE piste de grille. Un élément de
+          grille garde `min-width:auto` : sans `minmax(0,1fr)`, celui qui dépasse
+          ÉLARGIT la piste au lieu de se tronquer, et le bandeau de recherche
+          poussait Arrêter et l'icône d'information hors de la colonne, sous le
+          volet de lecture (mesuré le 20/09/2026 : piste de 318 px pour un
+          contenu de 444 px, bouton à 130 px dehors). */}
+      <div className="grid grid-cols-[minmax(0,1fr)] shrink-0">
         <div className={cn('col-start-1 row-start-1 flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border bg-primary/5', !hasSelection && 'invisible')} aria-hidden={!hasSelection || undefined}>
           <button
             onClick={toggleAll}
@@ -1188,7 +1194,12 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
               court. Les champs cherchés et la portée — information secondaire —
               passent en infobulle sur l'icône de droite. */}
           <div className="flex items-center gap-2 min-w-0">
-            <p className="text-xs text-muted-foreground truncate" data-search-summary>
+            {/* `min-w-0` : un élément de flex garde `min-width:auto`, donc `truncate`
+                ne mordait JAMAIS — le texte poussait Arrêter et l'icône HORS de la
+                colonne (mesuré le 20/09/2026 à 1440 px : bouton à 130 px dehors,
+                sous le volet de lecture, donc plus cliquable). Les deux cibles
+                restent dans la colonne, c'est le texte qui cède. */}
+            <p className="min-w-0 text-xs text-muted-foreground truncate" data-search-summary>
               {t('searchCount', { count: searchTotal })}
               {searchTruncated && ` · ${t('searchShown', { shown: messages.length })}`}
               {isSearching && streamed.folders > 0 &&
