@@ -7,13 +7,6 @@ import { flagByKey } from '@/lib/flags'
 
 export const dynamic = 'force-dynamic'
 
-type AccountRow = {
-  id: string; imap_host: string; imap_port: number; imap_secure: boolean;
-  username: string; password_encrypted: string;
-  oauth_provider: string | null; oauth_access_token: string | null;
-  oauth_refresh_token: string | null; oauth_expires_at: number | null;
-}
-
 // PATCH — mark read/unread or move
 export async function PATCH(req: Request) {
   const authCtx = await authenticate(req)
