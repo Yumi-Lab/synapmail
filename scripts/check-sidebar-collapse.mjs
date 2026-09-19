@@ -336,22 +336,60 @@ const probeAccountList = () => {
     // Lot H3c2: in the header row the mark and the fold chevron are two clickable
     // boxes in two different flows (absolute link / in-flow span). Their overlap is
     // measured, not assumed: the x-intersection of the two boxes, in pixels.
+    // All three boxes are read from the SAME bar: the page can carry two (desktop bar
+    // + mobile drawer), and taking the mark from one and the chevron from the other
+    // reports a 123 px gap and a 188 px spill that describe no bar that exists.
     headerControls: (() => {
-      const mark = document.querySelector('[data-sidebar-row="account"]')
-        ?.parentElement?.querySelector('[data-account-shared-mark]')
-      const chevron = document.querySelector('[data-sidebar] [data-account-chevron]')
+      const row = document.querySelector('[data-sidebar] [data-sidebar-row="account"]')
+      const bar = row?.closest('[data-sidebar]')
+      // The popover of other accounts is a CHILD of the same wrapper and every shared
+      // row in it carries the same marker, so a plain lookup returns a LIST row's mark
+      // whenever the active account is not itself shared — a box that has nothing to do
+      // with the header and that happened to land on the chevron's own 28 px.
+      const mark = [...(row?.parentElement?.querySelectorAll('[data-account-shared-mark]') ?? [])]
+        .find(m => !m.closest('[data-account-popover]'))
+      const chevron = bar?.querySelector('[data-account-chevron]')
       if (!mark || !chevron) return { mark: !!mark, chevron: !!chevron, overlapPx: null }
-      const m = mark.getBoundingClientRect()
-      const c = chevron.getBoundingClientRect()
-      const bar = document.querySelector('[data-sidebar]').getBoundingClientRect()
+      // What a human can see, not what the layout engine reports: a collapsed bar folds
+      // the label to zero width behind `overflow: hidden`, so the chevron keeps a box at
+      // its old x while being painted nowhere. Clipping it against its scrolling/hiding
+      // ancestors is what turns "the element's box" into "the pixels on screen" — without
+      // it the collapsed bar reports an 81 px spill that nobody can point at.
+      const visible = el => {
+        let r = el.getBoundingClientRect()
+        for (let a = el.parentElement; a; a = a.parentElement) {
+          const o = getComputedStyle(a)
+          if (o.overflowX === 'visible' && o.overflowY === 'visible') continue
+          const k = a.getBoundingClientRect()
+          r = {
+            left: Math.max(r.left, k.left), right: Math.min(r.right, k.right),
+            top: Math.max(r.top, k.top), bottom: Math.min(r.bottom, k.bottom),
+          }
+        }
+        const width = Math.max(0, r.right - r.left)
+        return { left: r.left, right: r.right, width, painted: width > 0 }
+      }
+      const m = visible(mark)
+      const c = visible(chevron)
+      const b = bar.getBoundingClientRect()
+      // A control folded out of sight cannot overlap or spill: it is reported, not judged.
+      if (!m.painted || !c.painted) {
+        return {
+          mark: true, chevron: true,
+          markBox: { left: m.left, right: m.right }, chevronBox: { left: c.left, right: c.right },
+          painted: { mark: m.painted, chevron: c.painted },
+          overlapPx: null, gapPx: null, overflowPx: null,
+        }
+      }
       return {
         mark: true, chevron: true,
+        painted: { mark: true, chevron: true },
         markBox: { left: m.left, right: m.right },
         chevronBox: { left: c.left, right: c.right },
         overlapPx: Math.max(0, Math.min(m.right, c.right) - Math.max(m.left, c.left)),
         gapPx: Math.max(m.left, c.left) - Math.min(m.right, c.right),
         // Neither control may spill past the bar's own right edge.
-        overflowPx: Math.max(0, Math.max(m.right, c.right) - bar.right),
+        overflowPx: Math.max(0, Math.max(m.right, c.right) - b.right),
       }
     })(),
     // Any lucide check, however it is classed, plus the raw glyph as a second net.
@@ -812,6 +850,10 @@ let failures = []
 try {
   const page = await browser.newPage()
   await page.setViewport(VIEWPORT)
+  // A dev server compiling a route on first hit, and an IMAP fetch behind it, both take
+  // longer than puppeteer's 30 s default. A slow hop must delay the run, never abort it
+  // as a failure that says nothing about the product.
+  page.setDefaultNavigationTimeout(120000)
 
   // /mail holds an SSE connection open (`/api/stream`), so `networkidle2` can never be
   // reached there: the wait has to be the marker the bar itself renders, not the network
@@ -821,7 +863,9 @@ try {
   // folder list has not arrived yet (observed: 1 row measured instead of 102).
   const land = async path => {
     await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' })
-    await page.waitForSelector('[data-sidebar] [data-sidebar-row^="folder:"]', { timeout: 30000 })
+    // The folder list is fetched from the real IMAP server, so the wait is generous:
+    // a slow mailbox must delay the measurement, never abort the run as a false failure.
+    await page.waitForSelector('[data-sidebar] [data-sidebar-row^="folder:"]', { timeout: 120000 })
   }
 
   // Sign in through the credentials endpoint, then land on /mail.
@@ -861,10 +905,16 @@ try {
   const smallest = inventory.filter(a => a.custom > 0 && a.id !== biggest.id)
     .reduce((least, a) => (a.custom < least.custom ? a : least), { custom: Infinity })
   if (!Number.isFinite(smallest.custom)) { console.error('HARNESS: this database has fewer than two mailboxes carrying custom folders — the switch cannot be measured'); process.exit(2) }
-  await page.evaluate(async ({ base, id }) => {
-    await fetch(`${base}/api/settings`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active_account_id: id }) })
-  }, { base: BASE, id: smallest.id })
-  await land('/mail')
+  // Switching mailbox goes through the app's own settings endpoint, then a reload: the
+  // one way the bench puts a chosen account at the head of the bar.
+  const activate = async id => {
+    await page.evaluate(async ({ base, id }) => {
+      await fetch(`${base}/api/settings`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active_account_id: id }) })
+    }, { base: BASE, id })
+    await land('/mail')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+  }
+  await activate(smallest.id)
   const signedInAs = smallest.label
   console.log(`accounts in this database: ${inventory.map(a => `${a.label}=${a.custom}`).join(', ')} — starting on "${signedInAs}" (${smallest.custom}), biggest is "${biggest.label}" (${biggest.custom})`)
   // Let the folder list settle so both states measure the same set of rows.
@@ -1105,20 +1155,57 @@ try {
   console.log(`shared inboxes: ${sharedRows.length} row(s) marked, header marks ${list.headerMarks}, "${SHARED_BY_PREFIX}" as a text line in the popover: ${sharedSentence}`)
 
   // --- Lot H3c2: the mark and the chevron of the header row never cover each other ---
-  const hc = list.headerControls
-  if (!hc.mark || !hc.chevron) {
-    console.log(`header controls: mark ${hc.mark}, chevron ${hc.chevron} — overlap not judged (needs a SHARED active account and several accounts)`)
-  } else {
-    console.log(`header controls: mark x ${hc.markBox.left.toFixed(2)}..${hc.markBox.right.toFixed(2)}, chevron x ${hc.chevronBox.left.toFixed(2)}..${hc.chevronBox.right.toFixed(2)} -> overlap ${hc.overlapPx.toFixed(2)}px, gap ${hc.gapPx.toFixed(2)}px, past the bar's edge ${hc.overflowPx.toFixed(2)}px`)
-    if (hc.overlapPx > 0) {
-      failures.push(`header row: the share mark and the fold chevron overlap by ${hc.overlapPx.toFixed(2)}px (expected 0) — one clickable box covers the other`)
+  // The defect only exists when the ACTIVE account is itself shared, so the bench makes
+  // it so: it switches to the shared mailbox of the list, measures both bar states, then
+  // puts the previous account back. Reading the header without that switch measured a
+  // popover row's mark instead of the header's, in the account list of any database.
+  {
+    // Rows carry their label, not their id: the id comes from the inventory read from the
+    // app's own API at the top of this run, matched on that label.
+    const sharedLabel = list.rows.find(r => r.mark)?.label
+    const sharedId = inventory.find(a => a.label === sharedLabel)?.id
+    if (!sharedId) {
+      console.error('HARNESS: no shared inbox in this database — the H3c2 overlap measured nothing (create a share between two local users first)')
+      process.exit(2)
     }
-    if (hc.gapPx < MIN_CONTROL_GAP_PX) {
-      failures.push(`header row: only ${hc.gapPx.toFixed(2)}px between the share mark and the chevron (min ${MIN_CONTROL_GAP_PX}px)`)
+    const restoreId = smallest.id
+    const measureControls = async where => {
+      const hc = await page.evaluate(probeAccountList).then(r => r?.headerControls)
+      if (!hc) {
+        console.error(`HARNESS: ${where} — the account popover did not open, nothing measured`)
+        process.exit(2)
+      }
+      // A collapsed bar shows the bubble alone: the mark is folded away by design, so
+      // there is no pair to judge. Reported, never silently skipped — and never counted
+      // as a pass either: the expanded pass is the one that carries the contract.
+      if (!hc.mark || !hc.chevron || hc.overlapPx === null) {
+        const seen = hc.painted ? `painted: mark ${hc.painted.mark}, chevron ${hc.painted.chevron}` : `mark present ${hc.mark}, chevron present ${hc.chevron}`
+        console.log(`header controls (${where}): ${seen} — no pair on screen, nothing to overlap`)
+        return
+      }
+      console.log(`header controls (${where}): mark x ${hc.markBox.left.toFixed(2)}..${hc.markBox.right.toFixed(2)}, chevron x ${hc.chevronBox.left.toFixed(2)}..${hc.chevronBox.right.toFixed(2)} -> overlap ${hc.overlapPx.toFixed(2)}px, gap ${hc.gapPx.toFixed(2)}px, past the bar's edge ${hc.overflowPx.toFixed(2)}px`)
+      if (hc.overlapPx > 0) {
+        failures.push(`header row (${where}): the share mark and the fold chevron overlap by ${hc.overlapPx.toFixed(2)}px (expected 0) — one clickable box covers the other`)
+      }
+      if (hc.gapPx < MIN_CONTROL_GAP_PX) {
+        failures.push(`header row (${where}): only ${hc.gapPx.toFixed(2)}px between the share mark and the chevron (min ${MIN_CONTROL_GAP_PX}px)`)
+      }
+      if (hc.overflowPx > MAX_DRIFT_PX) {
+        failures.push(`header row (${where}): a right-hand control spills ${hc.overflowPx.toFixed(2)}px past the bar's own edge`)
+      }
     }
-    if (hc.overflowPx > MAX_DRIFT_PX) {
-      failures.push(`header row: a right-hand control spills ${hc.overflowPx.toFixed(2)}px past the bar's own edge`)
-    }
+    await activate(sharedId)
+    await page.click('[data-sidebar-row="account"]')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    await measureControls('expanded')
+    await toggle()
+    await page.click('[data-sidebar-row="account"]')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+    await measureControls('collapsed')
+    await toggle()
+    await activate(restoreId)
+    await page.click('[data-sidebar-row="account"]')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
   }
   if (!sharedRows.length) {
     console.error('HARNESS: no shared inbox in the account list of this database — the H3b mark measured nothing (create a share between two local users first)')
