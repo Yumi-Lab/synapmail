@@ -104,6 +104,27 @@ try {
     if (got !== want) failures.push(`${label}: selection holds ${got} messages, expected ${want}`)
   }
 
+  // --- La géométrie de la liste ne dépend PAS de la sélection ---
+  // Sans cela, l'en-tête de liste (deux lignes à colonne étroite) est remplacé par
+  // la barre de sélection, plus courte : toutes les lignes remontent dès la
+  // première cochée, et un rectangle ne coupe plus les lignes visées sous le
+  // pointeur. La référence est le haut de la MÊME ligne dans le MÊME passage,
+  // avant puis après la première sélection — jamais une hauteur en dur.
+  const rowTop = index => page.evaluate((sel, i) => {
+    const el = document.querySelectorAll(sel)[i]
+    return el ? el.getBoundingClientRect().top : null
+  }, ROW, index)
+  const PROBE_ROW = 1
+  const topBefore = await rowTop(PROBE_ROW)
+  if (topBefore === null) { console.error(`HARNESS: row ${PROBE_ROW} is missing before the geometry probe`); process.exit(2) }
+  await clickRow(0, ACCEL)
+  const topAfter = await rowTop(PROBE_ROW)
+  if (topAfter === null) { console.error(`HARNESS: row ${PROBE_ROW} vanished during the geometry probe`); process.exit(2) }
+  console.log(`row ${PROBE_ROW} top: before=${topBefore} after first selection=${topAfter} (expected identical)`)
+  if (Math.abs(topAfter - topBefore) > 0.5) failures.push(`the list shifts by ${(topAfter - topBefore).toFixed(1)}px when the first row is selected: the rectangle can no longer cut the rows under the pointer`)
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
   // --- Cmd/Ctrl-click twice → exactly two selected ---
   await clickRow(0, ACCEL)
   check('accel-click row 0', await readCount(), 1)
@@ -189,6 +210,75 @@ try {
   const openedByMarquee = await page.$(PANE_ACTION).then(Boolean)
   console.log(`vertical drag opened a message: ${openedByMarquee} (expected false)`)
   if (openedByMarquee) failures.push('vertical drag opened the message instead of only selecting')
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // --- Le rectangle coupe EXACTEMENT les lignes qu'il traverse, la première comprise ---
+  // Le rectangle attendu n'est pas un nombre en dur : il se déduit des rectangles
+  // des lignes DANS CE PASSAGE, comparés à la bande balayée par le pointeur. La
+  // ligne où l'on a APPUYÉ doit en faire partie — c'est ce qu'un décalage de
+  // l'en-tête faisait rater. La sélection obtenue est relue sur `aria-selected`,
+  // que le composant publie depuis son propre état.
+  const DRAG_PX = 200
+  const PRESS_ROW = 1
+  // La référence se mesure AVANT le geste : c'est la géométrie que l'humain voit
+  // quand il appuie. La lire pendant le geste la rendrait complice d'un décalage
+  // de l'en-tête (les lignes auraient déjà bougé), et le contrôle ne mesurerait
+  // plus rien.
+  const bp = await rowBox(PRESS_ROW)
+  const pressFrom = startOf(bp)
+  const band = { top: pressFrom.y, bottom: pressFrom.y + DRAG_PX }
+  const expectedCut = await page.evaluate((sel, top, bottom) => {
+    const hit = []
+    for (const el of document.querySelectorAll(sel)) {
+      const r = el.getBoundingClientRect()
+      if (r.bottom >= top && r.top <= bottom) hit.push(el.getAttribute('data-mail-row'))
+    }
+    return hit
+  }, ROW, band.top, band.bottom)
+  const pressedUid = await page.evaluate((sel, i) => document.querySelectorAll(sel)[i]?.getAttribute('data-mail-row'), ROW, PRESS_ROW)
+  if (expectedCut.length < 2) { console.error(`HARNESS: a ${DRAG_PX}px band only cuts ${expectedCut.length} row(s), too few to conclude`); process.exit(2) }
+
+  await page.mouse.move(pressFrom.x, pressFrom.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(pressFrom.x, pressFrom.y + (DRAG_PX * i) / 8)
+    await new Promise(r => setTimeout(r, 20))
+  }
+  await page.mouse.up()
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const gotCut = await page.evaluate(sel =>
+    [...document.querySelectorAll(sel)].filter(el => el.getAttribute('aria-selected') === 'true').map(el => el.getAttribute('data-mail-row')),
+    ROW)
+  console.log(`marquee from the middle of row ${PRESS_ROW} over ${DRAG_PX}px: cuts [${expectedCut}] selected [${gotCut}]`)
+  if (!gotCut.includes(pressedUid)) failures.push(`the row the gesture started on (index ${PRESS_ROW}, uid ${pressedUid}) is NOT selected: the list geometry shifted under the pointer`)
+  if (gotCut.join(',') !== expectedCut.join(',')) failures.push(`the marquee selected [${gotCut}] but the band it swept cuts [${expectedCut}]`)
+
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // --- Un rectangle parti d'un en-tête de date ne surligne AUCUN texte ---
+  // La sélection de texte du navigateur naît au `mousedown` : un
+  // `preventDefault()` posé au `mousemove` arrive trop tard. Mesure directe :
+  // `getSelection()` doit rester vide pendant ET après le geste.
+  const dateHeader = await page.$('[data-mail-date-header]')
+  if (!dateHeader) { console.error('HARNESS: no date header in the list to start the gesture from'); process.exit(2) }
+  const hBox = await dateHeader.boundingBox()
+  const hStart = { x: hBox.x + hBox.width / 2, y: hBox.y + hBox.height / 2 }
+  await page.mouse.move(hStart.x, hStart.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(hStart.x, hStart.y + (170 * i) / 8)
+    await new Promise(r => setTimeout(r, 20))
+  }
+  const textDuring = await page.evaluate(() => String(document.getSelection() ?? '').length)
+  await page.mouse.up()
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+  const textAfter = await page.evaluate(() => String(document.getSelection() ?? '').length)
+  console.log(`gesture from a date header: text selected during=${textDuring} after=${textAfter} (expected 0/0)`)
+  if (textDuring !== 0) failures.push(`a marquee started on a date header highlighted ${textDuring} characters of text during the gesture`)
+  if (textAfter !== 0) failures.push(`a marquee started on a date header left ${textAfter} characters of text highlighted`)
 
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))

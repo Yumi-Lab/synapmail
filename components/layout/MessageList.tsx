@@ -856,7 +856,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
         onDragEnd={handleDragEnd}
         onContextMenu={e => handleContextMenu(e, thread)}
         className={cn(
-          'group/row relative w-full text-left grid grid-cols-[auto_1fr] gap-3 border-b border-border/40 transition-colors duration-150 border-l-[3px] cursor-pointer select-none',
+          'group/row relative w-full text-left grid grid-cols-[auto_1fr] gap-3 border-b border-border/40 transition-colors duration-150 border-l-[3px] cursor-pointer',
           compact ? 'px-3 py-2' : 'px-4 py-3',
           isDragging && 'opacity-40',
           isChecked ? 'bg-primary/10 border-l-primary'
@@ -959,9 +959,18 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
 
   return (
     <div className="flex flex-col h-full bg-background border-r border-border" {...{ [MAIL_SELECTION_COUNT_ATTR]: selectedUids.length }}>
-      {/* Toolbar */}
-      {hasSelection ? (
-        <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border shrink-0 bg-primary/5">
+      {/*
+        Toolbar. Ses trois états n'ont pas la même hauteur (à colonne étroite
+        l'en-tête normal passe sur deux lignes). Si la barre de sélection
+        REMPLAÇAIT l'en-tête, toute la liste remonterait dès la première ligne
+        cochée, et un rectangle de sélection ne couperait plus les lignes visées
+        sous le pointeur. Les deux vivent donc dans la MÊME case de grille : la
+        hauteur est celle du plus grand, la même avec et sans sélection, sans
+        hauteur en dur ni mesure en JS. `invisible` retire aussi de l'ordre de
+        tabulation ce qui n'est pas affiché.
+      */}
+      <div className="grid shrink-0">
+        <div className={cn('col-start-1 row-start-1 flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border bg-primary/5', !hasSelection && 'invisible')} aria-hidden={!hasSelection || undefined}>
           <button
             onClick={toggleAll}
             className="w-7 h-7 flex items-center justify-center rounded text-primary hover:bg-primary/10 transition-colors"
@@ -980,8 +989,9 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
-      ) : !isSearchMode ? (
-        <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border shrink-0">
+        <div className={cn('col-start-1 row-start-1', hasSelection && 'invisible')} aria-hidden={hasSelection || undefined}>
+        {!isSearchMode ? (
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border h-full">
           <div className="flex rounded-lg overflow-hidden border border-border text-xs font-medium">
             {MAIL_LIST_FILTERS.map(f => (
               <button key={f} onClick={() => { setFilter(f); setPage(1); setAccumulated([]); loadingLockRef.current = 0 }}
@@ -1005,8 +1015,8 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
           <ScheduledPopover />
           <SnoozePopover activeAccountId={activeAccountId} />
         </div>
-      ) : (
-        <div className="px-4 py-2 border-b border-border shrink-0">
+        ) : (
+        <div className="px-4 py-2 border-b border-border h-full">
           <p className="text-xs text-muted-foreground" data-search-summary>
             {isSearching
               ? t('searching')
@@ -1021,12 +1031,18 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
             <p className="mt-1 text-xs text-muted-foreground/70" data-search-hint>{t('searchNoBodyHint')}</p>
           )}
         </div>
-      )}
+        )}
+        </div>
+      </div>
 
       {/* Thread List */}
+      {/* `select-none` : un rectangle qui démarre sur un en-tête de date surlignait
+          du texte au passage — la sélection de texte naît au `mousedown`, qu'aucun
+          `preventDefault()` posé au `mousemove` ne peut plus annuler. La liste n'a
+          pas de texte à copier ; ailleurs (volet de lecture) rien ne change. */}
       <div
         ref={scrollRef}
-        className="relative flex-1 overflow-y-auto"
+        className="relative flex-1 overflow-y-auto select-none"
         role="listbox"
         aria-multiselectable
         aria-label={t('messageList')}
@@ -1082,7 +1098,7 @@ export function MessageList({ folder, selectedUid, onSelect, onSelectThread, act
         {groupedThreads.map((group, gi) => (
           <div key={group.label ?? `g${gi}`}>
             {group.label && (
-              <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm px-4 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground border-b border-border/40">
+              <div data-mail-date-header className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm px-4 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground border-b border-border/40">
                 {group.label}
               </div>
             )}
