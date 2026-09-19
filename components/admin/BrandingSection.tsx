@@ -10,6 +10,7 @@ import {
   DEFAULT_APP_NAME,
   type Branding,
   type BrandingError,
+  faviconLinks,
   faviconUrl,
 } from '@/lib/branding'
 
@@ -24,17 +25,23 @@ const isBrandingError = (value: unknown): value is BrandingError =>
   typeof value === 'string' && KNOWN_ERRORS.includes(value)
 
 /**
- * Applique l'identité à l'onglet SANS recharger : le titre, puis l'unique
- * `<link rel="icon">` que la page garde. Repartir d'un `<link>` neuf (plutôt
- * que changer son `href`) est ce qui force les navigateurs à relire l'icône.
+ * Applique l'identité à l'onglet SANS recharger : le titre, puis les
+ * `<link rel="icon">` de la page, reposés depuis `faviconLinks()` — la MÊME
+ * source que le rendu serveur, pour qu'une remise à zéro rétablisse les DEUX
+ * icônes livrées et non la seule première. Repartir de `<link>` neufs (plutôt
+ * que changer leur `href`) est ce qui force les navigateurs à relire l'icône.
  */
 function applyToTab(appName: string, faviconVersion: number | null) {
   document.title = appName
   document.head.querySelectorAll('link[rel~="icon"]').forEach(node => node.remove())
-  const link = document.createElement('link')
-  link.rel = 'icon'
-  link.href = faviconVersion === null ? '/favicon.ico' : faviconUrl(faviconVersion)
-  document.head.appendChild(link)
+  for (const icon of faviconLinks(faviconVersion)) {
+    const link = document.createElement('link')
+    link.rel = 'icon'
+    link.href = icon.url
+    if (icon.type) link.type = icon.type
+    if (icon.sizes) link.sizes.value = icon.sizes
+    document.head.appendChild(link)
+  }
 }
 
 /**
@@ -60,9 +67,10 @@ export function BrandingSection() {
 
   // Tant que l'administrateur n'a rien tapé, le champ montre ce qui est enregistré.
   const nameValue = name ?? branding?.appName ?? ''
-  const iconSrc = branding?.faviconVersion === null || branding === undefined
-    ? '/favicon.ico'
-    : faviconUrl(branding.faviconVersion)
+  // L'aperçu montre UNE image : la première des icônes livrées, ou celle réglée.
+  const iconSrc = branding?.faviconVersion
+    ? faviconUrl(branding.faviconVersion)
+    : faviconLinks(null)[0].url
 
   const settle = (next: Branding) => {
     mutate({ data: next }, false)

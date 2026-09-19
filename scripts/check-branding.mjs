@@ -17,8 +17,10 @@ import {
   DEFAULT_BRANDING,
   FAVICON_MAX_BYTES,
   FAVICON_PATH,
+  BUNDLED_FAVICONS,
   cleanAppName,
   detectImageType,
+  faviconLinks,
   faviconUrl,
 } from '../lib/branding.ts'
 
@@ -86,6 +88,15 @@ check('default name', DEFAULT_APP_NAME, 'Synapmail')
 check('nothing set = original look', DEFAULT_BRANDING, { appName: 'Synapmail', faviconVersion: null })
 check('icon URL carries its version', faviconUrl(1758300000000), `${FAVICON_PATH}?v=1758300000000`)
 check('error codes', Object.values(BRANDING_ERRORS), ['branding_too_large', 'branding_bad_type', 'branding_bad_name'])
+
+console.log('== bundled icons: one source, read by the server render AND by the reset ==')
+// Nicolas' F1 gate found the reset restoring only ONE of the two bundled links until a
+// reload. Both callers now read faviconLinks(), so this is the rule they share.
+check('two bundled links are shipped', BUNDLED_FAVICONS.length, 2)
+check('no setting -> every bundled link', faviconLinks(null).map(i => i.url), BUNDLED_FAVICONS.map(i => i.url))
+check('no setting -> their types are kept', faviconLinks(null).map(i => i.type), ['image/x-icon', 'image/png'])
+check('a set icon replaces them all', faviconLinks(1758300000000).map(i => i.url), [faviconUrl(1758300000000)])
+check('a set icon yields exactly one link', faviconLinks(1758300000000).length, 1)
 
 console.log(failures === 0 ? '\ncheck-branding: OK' : `\ncheck-branding: ${failures} FAIL`)
 process.exit(failures === 0 ? 0 : 1)

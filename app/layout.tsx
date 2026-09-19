@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import { faviconUrl } from '@/lib/branding'
+import { BUNDLED_APPLE_ICON, faviconLinks } from '@/lib/branding'
 import { readBranding } from '@/lib/brandingStore'
 import { Providers } from '@/components/providers'
 import { NextIntlClientProvider } from 'next-intl'
@@ -13,15 +13,6 @@ import {
   toTheme,
 } from '@/lib/theme'
 
-/** Les icônes livrées dans `public/`, servies tant que l'instance n'en a pas choisi une autre. */
-const BUNDLED_ICONS = {
-  icon: [
-    { url: '/favicon.ico', type: 'image/x-icon', sizes: 'any' },
-    { url: '/brand/png/synapmail-favicon@64.png', type: 'image/png', sizes: '64x64' },
-  ],
-  apple: { url: '/brand/png/synapmail-icone@512.png', sizes: '512x512' },
-} as const satisfies Metadata['icons']
-
 /**
  * Le titre de l'onglet et son icône viennent du réglage d'instance quand il en
  * existe un, sinon de ce qui est livré : une instance qui n'a rien réglé ne
@@ -33,10 +24,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: appName,
     description: 'Self-hosted AI-powered email client',
-    icons:
-      faviconVersion === null
-        ? BUNDLED_ICONS
-        : { icon: [{ url: faviconUrl(faviconVersion) }], apple: BUNDLED_ICONS.apple },
+    icons: { icon: [...faviconLinks(faviconVersion)], apple: BUNDLED_APPLE_ICON },
   }
 }
 

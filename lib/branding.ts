@@ -91,3 +91,26 @@ export const DEFAULT_BRANDING: Branding = { appName: DEFAULT_APP_NAME, faviconVe
 /** Route publique de l'icône, avec sa version : une seule écriture de cette URL. */
 export const FAVICON_PATH = '/api/branding/favicon'
 export const faviconUrl = (version: number): string => `${FAVICON_PATH}?v=${version}`
+
+/**
+ * Les icônes livrées dans `public/`, servies tant que l'instance n'en a pas
+ * choisi une autre. Source UNIQUE : lue par `app/layout.tsx` pour les
+ * métadonnées ET par l'écran d'administration pour la remise à zéro, qui doit
+ * reposer EXACTEMENT les mêmes liens sans recharger la page.
+ */
+export const BUNDLED_FAVICONS = [
+  { url: '/favicon.ico', type: 'image/x-icon', sizes: 'any' },
+  { url: '/brand/png/synapmail-favicon@64.png', type: 'image/png', sizes: '64x64' },
+] as const
+
+/** Icône apple-touch livrée : hors périmètre du réglage d'instance, jamais remplacée. */
+export const BUNDLED_APPLE_ICON = { url: '/brand/png/synapmail-icone@512.png', sizes: '512x512' } as const
+
+/**
+ * Les liens `<link rel="icon">` à poser pour une identité donnée : l'icône
+ * réglée quand il y en a une, sinon les fichiers livrés. Une seule règle, lue
+ * par le rendu serveur comme par la mise à jour de l'onglet sans rechargement.
+ */
+export function faviconLinks(faviconVersion: number | null): readonly { url: string; type?: string; sizes?: string }[] {
+  return faviconVersion === null ? BUNDLED_FAVICONS : [{ url: faviconUrl(faviconVersion) }]
+}
