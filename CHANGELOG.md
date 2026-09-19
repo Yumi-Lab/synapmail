@@ -7,6 +7,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — actions sur les mails — 2026-09-20
 
+### Fixed
+- **Les liens publics portent l'adresse de l'instance, jamais l'hôte du conteneur**
+  (`lib/appOrigin.ts`, `app/llms.txt/route.ts`, `app/api/messages/send/route.ts`,
+  `app/api/accounts/[id]/shares/route.ts`, `lib/msOAuth.ts`, `lib/publicPaths.ts`, `package.json`) :
+  derrière un proxy inverse, `new URL(req.url).origin` vaut l'identifiant Docker du conteneur et son
+  port interne. `/llms.txt` envoyait donc les agents vers une adresse injoignable, en divulguant au
+  passage un nom interne. L'adresse publique a désormais UNE source, `appOrigin()` : l'adresse
+  configurée par le propriétaire gagne, les en-têtes transférés ne servent qu'à défaut, l'hôte du
+  conteneur jamais. Les trois endroits qui lisaient la variable chacun de leur côté (pixel de suivi,
+  invitation de partage, redirection OAuth) la relisent là. Elle est lue à l'EXÉCUTION : écrite
+  littéralement, elle aurait été figée dans l'image au moment du build, alors que le déploiement la
+  fournit au lancement. Enfin, `/api/docs` et `/llms.txt` étaient reconnus publics par DÉBUT de chaîne,
+  ce qui exemptait aussi `/api/docs-probe` : la comparaison est maintenant exacte. Un script
+  `npm run check:api-docs` lance le contrôle doc ↔ code sans dépendre d'un fichier local.
+
 ### Added
 - **Le bouton du volet de lecture dit « Résumer », et les écrans IA parlent la langue du visiteur**
   (`components/ai/AIToolbar.tsx`, `app/(app)/settings/ai/AISettingsClient.tsx`, `locales/*.json`) : le
