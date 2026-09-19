@@ -89,6 +89,7 @@
     "searchAccounts": "搜索账户…",
     "searchMail": "搜索邮件",
     "noAccountMatch": "没有匹配的账户",
+    "accountTooltip": "{name}·{email}",
     "unreadOtherAccounts": "其他账户有 {count} 封未读",
     "grpToday": "今天",
     "grpYesterday": "昨天",

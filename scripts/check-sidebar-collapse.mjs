@@ -67,6 +67,19 @@ const SHARED_BY_PREFIX = JSON.parse(readFileSync(new URL('../locales/fr.json', i
   .mail.sharedBy.split('{')[0].trim()
 const ACCOUNTS_SETTINGS_HREF = readFileSync(new URL('../components/settings/SettingsSidebar.tsx', import.meta.url), 'utf8')
   .match(/ACCOUNTS_SETTINGS_HREF\s*=\s*'([^']+)'/)?.[1]
+/**
+ * Lot A15 — the separator the collapsed account tooltip must use between a name and an
+ * address. House rule: no em dash in product copy. Read out of the shipped `accountTooltip`
+ * sentence (placeholders stripped) so this check follows the locale instead of carrying its
+ * own copy of the glyph; the em dash below is the character the rule forbids, not a target.
+ */
+const ACCOUNT_TOOLTIP_SEPARATOR = JSON.parse(readFileSync(new URL('../locales/fr.json', import.meta.url), 'utf8'))
+  .mail.accountTooltip.replace(/\{\w+\}/g, '').trim()
+const FORBIDDEN_DASH = '\u2014'
+if (!ACCOUNT_TOOLTIP_SEPARATOR || ACCOUNT_TOOLTIP_SEPARATOR.includes(FORBIDDEN_DASH)) {
+  console.error(`HARNESS: locales/fr.json accountTooltip separates with "${ACCOUNT_TOOLTIP_SEPARATOR}" — unusable as the expected separator`)
+  process.exit(2)
+}
 if (!SHARED_BY_PREFIX || !ACCOUNTS_SETTINGS_HREF) {
   console.error('HARNESS: could not read the sharedBy sentence or the accounts href from the shipped sources')
   process.exit(2)
@@ -393,6 +406,9 @@ const probeAccountListBox = () => {
     insideBar: br ? lr.left >= br.left - 1 && lr.right <= br.right + 1 : false,
     rows: list.querySelectorAll('button').length,
     badges,
+    // Rendered tooltip copy of the list's rows — the collapsed bar shows the name and
+    // the address here, so this is where a forbidden separator would reach a user.
+    tooltips: [...list.querySelectorAll('[data-icon-tooltip]')].map(t => (t.textContent ?? '').trim()),
   }
 }
 
@@ -1205,6 +1221,19 @@ try {
         failures.push(`account list (${state}): badge "${b.text}" is ${(b.visible * 100).toFixed(1)}% visible (min ${(MIN_BADGE_VISIBLE * 100).toFixed(0)}%) — something crops it`)
       }
     }
+    // Lot A15: collapsed, the name and the address live in the tooltip — and they are
+    // joined by the house separator, never an em dash. Only judged in that state: the
+    // expanded list prints them as rows and renders no tooltip at all.
+    if (state === 'collapsed') {
+      if (!box.tooltips.length) { console.error('HARNESS: collapsed: the account list renders no tooltip — the separator check measured nothing'); process.exit(2) }
+      console.log(`  tooltips: ${box.tooltips.map(t => `"${t}"`).join(', ')}`)
+      for (const tip of box.tooltips) {
+        if (tip.includes(FORBIDDEN_DASH)) failures.push(`account list (collapsed): tooltip "${tip}" joins with an em dash — the house separator is "${ACCOUNT_TOOLTIP_SEPARATOR}"`)
+      }
+      if (!box.tooltips.some(t => t.includes(ACCOUNT_TOOLTIP_SEPARATOR))) {
+        failures.push(`account list (collapsed): no tooltip uses the shipped separator "${ACCOUNT_TOOLTIP_SEPARATOR}" — got ${box.tooltips.map(t => `"${t}"`).join(', ')}`)
+      }
+    }
   }
   // Escape folds it, and the folding is what the user sees — not a node left on screen.
   await page.keyboard.press('Escape')
@@ -1226,6 +1255,19 @@ try {
   })
   if (!outsideTarget) { console.error('HARNESS: no second folder row to click outside onto — light-dismiss measured nothing'); process.exit(2) }
   const urlBefore = page.url()
+  // The coordinates above were read one evaluate ago, and the bar re-renders on its own
+  // (the account SWR refreshes on an interval): if anything shifted the rows since, the
+  // point now covers a DIFFERENT row and the click would be judged against a target it
+  // never aimed at. Re-read what the point actually covers, immediately before clicking —
+  // a mismatch is a harness failure, and says nothing about the product's dismiss.
+  const under = await page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y)
+    return el?.closest('[data-sidebar-row]')?.getAttribute('data-sidebar-row') ?? null
+  }, outsideTarget)
+  if (under !== outsideTarget.path) {
+    console.error(`HARNESS: the point aimed at ${outsideTarget.path} now covers ${under ?? 'nothing'} — the bar shifted between measuring and clicking, light-dismiss measured nothing`)
+    process.exit(2)
+  }
   await page.mouse.click(outsideTarget.x, outsideTarget.y)
   await new Promise(r => setTimeout(r, SETTLE_MS))
   const dismissed = await page.evaluate(probeAccountListBox)
