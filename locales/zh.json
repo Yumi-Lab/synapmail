@@ -174,7 +174,21 @@
     "folderConfirmDelete": "删除“{name}”及其 {count} 封邮件？",
     "folderConfirmEmpty": "永久删除“{name}”中的 {count} 封邮件？",
     "folderHasChildren": "该文件夹包含子文件夹，请先删除子文件夹。",
-    "folderActionFailed": "无法对该文件夹执行此操作"
+    "folderActionFailed": "无法对该文件夹执行此操作",
+    "ai": {
+      "errors": {
+        "server": "无法连接到助手。",
+        "unreachable": "此设备上该地址没有本地模型在监听。",
+        "cors": "本地模型已响应，但浏览器拦截了它：请允许来源 {origin}。",
+        "model": "本地模型返回了错误。",
+        "permission": "浏览器阻止了对本设备上运行的应用的访问。"
+      },
+      "access": {
+        "prompt": "浏览器将请求访问本设备上运行的应用的权限，请允许后继续。",
+        "deniedStep1": "点击地址栏左侧的图标，然后打开网站设置。",
+        "deniedStep2": "允许访问本地网络（本设备上的应用），然后重试。"
+      }
+    }
   },
   "compose": {
     "newMessage": "新邮件",
@@ -407,6 +421,10 @@
       "noRules": "尚未配置规则",
       "noRulesDesc": "规则会自动应用于新邮件。",
       "templates": "快速开始，模板"
+    },
+    "ai": {
+      "stepProvider": "1. 提供方",
+      "stepAccess": "2. 访问"
     }
   },
   "admin": {
@@ -423,6 +441,25 @@
       "actions": "操作",
       "delete": "删除",
       "confirmDelete": "确定要删除该用户吗？"
+    },
+    "branding": {
+      "title": "实例标识",
+      "description": "本实例在浏览器标签页中显示的名称和图标，对所有人生效。",
+      "nameLabel": "名称",
+      "iconLabel": "标签页图标",
+      "iconHint": "支持 PNG、ICO、JPEG 或 WebP，最大 256 KiB。",
+      "choose": "选择文件",
+      "save": "保存",
+      "saving": "正在保存",
+      "saved": "已保存",
+      "resetName": "恢复默认名称",
+      "resetIcon": "恢复默认图标",
+      "preview": "预览",
+      "errors": {
+        "branding_too_large": "该文件超过 256 KiB。",
+        "branding_bad_type": "该文件不是 PNG、ICO、JPEG 或 WebP 图像。",
+        "branding_bad_name": "请输入 1 至 60 个字符的名称。"
+      }
     }
   },
   "contacts": {

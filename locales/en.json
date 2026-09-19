@@ -174,7 +174,21 @@
     "folderConfirmDelete": "Delete “{name}” and its {count} messages?",
     "folderConfirmEmpty": "Permanently delete the {count} messages in “{name}”?",
     "folderHasChildren": "This folder contains subfolders. Delete them first.",
-    "folderActionFailed": "Couldn't apply that to the folder"
+    "folderActionFailed": "Couldn't apply that to the folder",
+    "ai": {
+      "errors": {
+        "server": "The assistant could not be reached.",
+        "unreachable": "No local model is listening at that address on this device.",
+        "cors": "A local model answered but your browser blocked it: allow the origin {origin}.",
+        "model": "The local model returned an error.",
+        "permission": "Your browser blocked access to apps running on this device."
+      },
+      "access": {
+        "prompt": "Your browser will ask permission to reach apps running on this device. Accept it to continue.",
+        "deniedStep1": "Click the icon at the left of the address bar, then open the site settings.",
+        "deniedStep2": "Allow access to the local network (apps on this device), then try again."
+      }
+    }
   },
   "compose": {
     "newMessage": "New message",
@@ -407,6 +421,10 @@
       "noRules": "No rules configured",
       "noRulesDesc": "Rules are automatically applied to new emails.",
       "templates": "Quick start, templates"
+    },
+    "ai": {
+      "stepProvider": "1. Provider",
+      "stepAccess": "2. Access"
     }
   },
   "admin": {
@@ -423,6 +441,25 @@
       "actions": "Actions",
       "delete": "Delete",
       "confirmDelete": "Are you sure you want to delete this user?"
+    },
+    "branding": {
+      "title": "Identity",
+      "description": "The name and the icon this instance shows in the browser tab, for everyone.",
+      "nameLabel": "Name",
+      "iconLabel": "Tab icon",
+      "iconHint": "PNG, ICO, JPEG or WebP, 256 KiB at most.",
+      "choose": "Choose a file",
+      "save": "Save",
+      "saving": "Saving",
+      "saved": "Saved",
+      "resetName": "Restore the default name",
+      "resetIcon": "Restore the default icon",
+      "preview": "Preview",
+      "errors": {
+        "branding_too_large": "This file is over 256 KiB.",
+        "branding_bad_type": "This file is not a PNG, ICO, JPEG or WebP image.",
+        "branding_bad_name": "Enter a name of 1 to 60 characters."
+      }
     }
   },
   "contacts": {

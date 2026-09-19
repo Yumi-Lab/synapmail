@@ -635,6 +635,22 @@ Change role. **Body** `{ role: 'admin' | 'user' }`. `400 Invalid role` for any o
 ### `DELETE /api/admin/users/[id]` — 👑 Admin
 `400 Cannot delete your own account` if `id` is the caller's own id. `{ success: true }`.
 
+### `GET /api/admin/branding` — 👑 Admin
+Current instance identity. `{ data: { appName: string; faviconVersion: number | null } }`. `appName` falls back to the built-in default when unset; `faviconVersion` is `null` when no icon has been uploaded (the bundled icons are served instead).
+
+### `PUT /api/admin/branding` — 👑 Admin
+Set the tab name and/or the tab icon for the **whole instance**, login page included. **Body** `multipart/form-data` with optional `appName` (1–60 chars, whitespace folded, control characters refused) and optional `favicon` (≤ 256 KiB). The icon's type is decided on its **magic bytes**, never on its extension or the browser-declared content type: PNG, ICO, JPEG and WebP are accepted, **SVG is refused** (served from our own origin it would execute its script). Refusals return `400 { error }` with a stable code — `branding_too_large`, `branding_bad_type`, `branding_bad_name` — that the UI translates. `{ data: Branding }`.
+
+### `DELETE /api/admin/branding?target=name|favicon` — 👑 Admin
+Restore one half of the identity to what ships with the app. `{ data: Branding }`.
+
+---
+
+## Instance identity (public)
+
+### `GET /api/branding/favicon?v=<version>` — public, no auth
+Serves the uploaded icon's raw bytes with its **detected** type, `X-Content-Type-Options: nosniff` and a long immutable cache (safe: the URL carries the version). `404` when no icon is set — the app then points at the bundled files. Public because the login page needs it while logged out (`lib/publicPaths.ts`).
+
 ---
 
 ## AI assist
@@ -666,6 +682,19 @@ Runs one AI transformation against arbitrary text, using the caller's configured
 }
 ```
 **Response** `{ data: { result: string } }`, or `500 { error }` on an upstream AI provider failure.
+
+With the `local` provider — a model running on the CALLER's machine — the server never contacts a provider. It builds the prompt exactly as it would for a hosted one (system turn, prompt-injection guard and single-use delimiters included) and hands it back for the caller to run:
+
+```ts
+{ data: {
+  mode: 'local'
+  baseUrl: string   // loopback only: 127.0.0.1, localhost or [::1]
+  model: string
+  messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+} }
+```
+
+The caller POSTs `{ model, messages }` to `{baseUrl}/chat/completions` (OpenAI-compatible, served by Ollama on `/v1`, LM Studio, llama.cpp) and reads `choices[0].message.content`. A Bearer request gets this same response. `400` if the stored address is not a loopback address.
 
 ---
 

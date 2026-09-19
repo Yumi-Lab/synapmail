@@ -3,7 +3,9 @@
 import { useState, useRef, useEffect } from 'react'
 import useSWR from 'swr'
 import { Bot, Wand2, Loader2, Clock, ChevronDown } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
+import { runAIAction, aiFailureKey } from '@/lib/aiClient'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -45,6 +47,7 @@ function ComingSoonBadge() {
 }
 
 export function AICompose({ getContent, onResult, onError, accountId }: Props) {
+  const t = useTranslations('mail.ai')
   const { data } = useSWR<{ data: AISettingsData }>('/api/ai/settings', fetcher)
   const settings = data?.data
 
@@ -73,19 +76,9 @@ export function AICompose({ getContent, onResult, onError, accountId }: Props) {
     setShowToneMenu(false)
 
     try {
-      const res = await fetch('/api/ai/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, content, ...(accountId ? { accountId } : {}), ...extra }),
-      })
-      const json = await res.json() as { data?: { result: string }; error?: string }
-      if (res.ok && json.data?.result) {
-        onResult(json.data.result)
-      } else {
-        onError(json.error || 'Erreur IA')
-      }
-    } catch {
-      onError('Impossible de joindre le service IA')
+      onResult(await runAIAction({ action, content, ...(accountId ? { accountId } : {}), ...extra }))
+    } catch (e: unknown) {
+      onError(t(aiFailureKey(e), { origin: location.origin }))
     } finally {
       setLoading(null)
     }
