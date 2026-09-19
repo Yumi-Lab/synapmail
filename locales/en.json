@@ -71,7 +71,7 @@
     "forwardInvalid": "This forward request is invalid.",
     "forwardTooMany": "You can forward at most {count} messages at once.",
     "forwardTooLarge": "These messages exceed the {count} MB attachment limit.",
-    "forwardMissing": "{count} of the selected messages are no longer in this folder. Nothing was sent.",
+    "forwardMissing": "{count, plural, one {# of the selected messages is no longer in this folder} other {# of the selected messages are no longer in this folder}}. Nothing was sent.",
     "forwardOriginDenied": "The mailbox these messages came from is no longer available.",
     "delete": "Delete",
     "archive2": "Archive",
