@@ -81,11 +81,15 @@ export const OMNIBAR = {
   actionGap: 4,
   headerActions: 4,
   /**
-   * Plancher que la barre d'outils du courrier garde à gauche du champ : son bouton
-   * « … », dans lequel tout le reste se replie quand la place manque. C'est le
-   * minimum que `useOverflowGroups` ne descend jamais en dessous.
+   * Place que la barre d'outils du courrier garde à gauche du champ, comptée en
+   * boutons : un GROUPE entier (trois actions) plus le bouton « … » où le reste se
+   * replie. Réserver le seul « … » (l'état du 20/09) centrait bien le champ, mais il
+   * prenait alors 536 px à 1440 px et la barre se repliait ENTIÈREMENT : mesuré, zéro
+   * action cliquable à 1440 et à 1728 px, alors que le lot H3 les veut vivantes.
+   * Avec quatre boutons, le champ mesure 368 px à 1440 px — l'ordre de grandeur que
+   * Nicolas avait lui-même calculé (« 388 px ») en cadrant H3k.
    */
-  toolbarFloor: 32,
+  toolbarFloorActions: 4,
 } as const
 
 /**
@@ -99,7 +103,8 @@ export const OMNIBAR_ICONS_PX =
   OMNIBAR.actionSize * OMNIBAR.headerActions +
   OMNIBAR.actionGap * (OMNIBAR.headerActions - 1)
 
-export const OMNIBAR_LEAD_PX = OMNIBAR_ICONS_PX + OMNIBAR.toolbarFloor + OMNIBAR.searchGap
+export const OMNIBAR_LEAD_PX =
+  OMNIBAR_ICONS_PX + OMNIBAR.actionSize * OMNIBAR.toolbarFloorActions + OMNIBAR.searchGap
 
 /**
  * Panneau de l'omnibar (lot H3f) : une ligne, un motif. Meme surface que le menu
