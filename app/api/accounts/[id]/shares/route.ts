@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
 import { NextResponse } from 'next/server'
+import { normalizeEmail } from '@/lib/emailAddress'
 import { appOrigin } from '@/lib/appOrigin'
 import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
@@ -84,7 +85,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       canManageRules?: boolean; canManageSignatures?: boolean; expiresAt?: string
     }
 
-    const normalizedEmail = email?.trim().toLowerCase()
+    const normalizedEmail = email ? normalizeEmail(email) : undefined
     if (!normalizedEmail) return NextResponse.json({ error: 'email is required' }, { status: 400 })
     if (normalizedEmail === session.user.email?.toLowerCase()) {
       return NextResponse.json({ error: "Cannot share an account with yourself" }, { status: 400 })
@@ -120,7 +121,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const ownerName = session.user.name ?? account.email
 
     const existingUsers = await query<{ id: string; name: string }>(
-      'SELECT id, name FROM users WHERE email = $1',
+      'SELECT id, name FROM users WHERE lower(email) = $1',
       [normalizedEmail]
     )
 

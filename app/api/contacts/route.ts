@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { normalizeEmail } from '@/lib/emailAddress'
 import { auth } from '@/lib/auth'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
@@ -107,7 +108,7 @@ export async function POST(req: Request) {
   if (!email?.trim()) return NextResponse.json({ error: 'email required' }, { status: 400 })
   if (!EMAIL_REGEX.test(email.trim())) return NextResponse.json({ error: 'email invalide' }, { status: 400 })
 
-  const normalizedEmail = email.trim().toLowerCase()
+  const normalizedEmail = normalizeEmail(email)
   const resolvedName = (name ?? '').trim() || normalizedEmail.split('@')[0]
 
   const rows = await query<{ id: string }>(
