@@ -225,10 +225,37 @@ try {
     `valeur="${afterEsc}", liste ouverte=${listStillOpen}`)
 
   // 7. ↓ déplace la surbrillance, Entrée bascule sur la ligne en surbrillance.
+  //    Réserve du gate humain du 20/09/2026 : il avait lu la surbrillance revenue sur
+  //    la PREMIÈRE ligne après deux ↓, et soupçonnait sa propre lecture (un
+  //    `querySelector` rend le PREMIER nœud portant l'attribut). On mesure donc les
+  //    deux choses qu'il demandait : combien de nœuds portent la marque, et quelles
+  //    lignes trois ↓ successives visitent — jamais une seule lecture.
   const before = await listedEmails()
-  await page.keyboard.press('ArrowDown')
+  const highlightedIds = () => page.$$eval(HIGHLIGHTED, els =>
+    els.map(el => (el.getAttribute('data-sidebar-row') ?? '').slice('account:'.length)))
+
+  const visited = []
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.press('ArrowDown')
+    await new Promise(r => setTimeout(r, 200))
+    const marked = await highlightedIds()
+    check(`après ${i + 1} ↓, un SEUL nœud porte la marque de surbrillance`, marked.length === 1,
+      `${marked.length} nœud(s) : ${JSON.stringify(marked)}`)
+    visited.push(marked[0] ?? null)
+  }
+  // L'ordre AFFICHÉ est `before` : trois ↓ depuis la première ligne visitent les
+  // lignes 2, 3 et 4 — donc trois lignes DISTINCTES, dans cet ordre.
+  const expected = before.slice(1, 4)
+  check('trois ↓ visitent trois lignes DISTINCTES dans l\'ordre affiché',
+    visited.length === 3 && new Set(visited).size === 3 && JSON.stringify(visited) === JSON.stringify(expected),
+    `visitées=${JSON.stringify(visited)}, attendu=${JSON.stringify(expected)}`)
+
+  // La ligne en surbrillance est celle sur laquelle Entrée basculera : on remonte à la
+  // 2ᵉ pour garder le critère d'origine du banc (↓ une fois = 2ᵉ ligne).
+  await page.keyboard.press('ArrowUp')
+  await page.keyboard.press('ArrowUp')
   await new Promise(r => setTimeout(r, 200))
-  const highlighted = await page.$eval(HIGHLIGHTED, el => el.getAttribute('data-sidebar-row').slice('account:'.length)).catch(() => null)
+  const highlighted = (await highlightedIds())[0] ?? null
   check('↓ déplace la surbrillance sur la 2ᵉ ligne', highlighted === before[1],
     `surbrillance=${highlighted}, attendu ${before[1]}`)
   await page.keyboard.press('Enter')
