@@ -1,4 +1,5 @@
 import { query } from './db'
+import { accountColor, accountOrderBy } from './accountColor'
 import type { FocusReason } from '@/types/dashboard'
 
 /**
@@ -66,7 +67,7 @@ export interface FocusItem {
   reason: FocusReason
 }
 
-type AccountRow = { id: string; name: string; color: string }
+type AccountRow = { id: string; name: string; badge_color: string | null }
 type ContactRow = { email: string; frequency: number; is_starred: boolean }
 
 /**
@@ -80,7 +81,9 @@ export async function getFocusItems(userId: string, accountId?: string | null, l
 
   const [accounts, focusRows, contactRows] = await Promise.all([
     query<AccountRow>(
-      `SELECT id, name, color FROM email_accounts WHERE user_id = $1`,
+      // Le RANG de la boîte décide sa couleur automatique : la liste est donc lue dans
+      // l'ordre TOTAL partagé, le même que celui du tableau de bord et de la barre.
+      `SELECT id, name, badge_color FROM email_accounts WHERE user_id = $1 ${accountOrderBy()}`,
       [userId],
     ),
     query<FocusRow>(
@@ -103,6 +106,7 @@ export async function getFocusItems(userId: string, accountId?: string | null, l
   ])
 
   const accountById = new Map(accounts.map(a => [a.id, a]))
+  const rankById = new Map(accounts.map((a, rank) => [a.id, rank]))
   const vip = new Set(contactRows.filter(c => c.is_starred).map(c => c.email.toLowerCase()))
   const freqThreshold = Math.max(5, ...contactRows.map(c => c.frequency))
   const frequent = new Set(
@@ -120,7 +124,7 @@ export async function getFocusItems(userId: string, accountId?: string | null, l
         uid: row.uid,
         accountId: row.account_id,
         accountName: acc?.name ?? '',
-        accountColor: acc?.color ?? '#6366f1',
+        accountColor: accountColor({ badgeColor: acc?.badge_color }, rankById.get(row.account_id) ?? 0),
         folder: row.folder,
         subject: row.subject ?? '',
         fromName: row.from_name,
