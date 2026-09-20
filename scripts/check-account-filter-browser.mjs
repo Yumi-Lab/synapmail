@@ -19,14 +19,16 @@ const VIEWPORT = { width: 1440, height: 900 }
 // Les constantes ne sont PAS retapées : elles sont lues dans le produit au cours
 // de CE passage, pour qu'une dérive fasse échouer le banc au lieu de lui faire
 // mesurer autre chose.
-const SIDEBAR_SRC = readFileSync(new URL('../components/layout/Sidebar.tsx', import.meta.url), 'utf8')
 const FILTER_SRC = readFileSync(new URL('../lib/accountFilter.ts', import.meta.url), 'utf8')
+// Le seuil du champ a UNE source depuis le lot M7c : le composant partagé. La barre
+// ne fait plus que la republier, donc c'est là qu'on la lit.
+const PICKER_SRC = readFileSync(new URL('../components/layout/AccountPicker.tsx', import.meta.url), 'utf8')
 const constant = (name, re, src, file) => {
   const m = src.match(re)
   if (!m) { console.error(`HARNESS: ${name} illisible dans ${file}`); process.exit(2) }
   return m[1]
 }
-const FILTER_FROM = Number(constant('accountFilterFrom', /accountFilterFrom: (\d+)/, SIDEBAR_SRC, 'Sidebar.tsx'))
+const FILTER_FROM = Number(constant('ACCOUNT_PICKER_FILTER_FROM', /ACCOUNT_PICKER_FILTER_FROM = (\d+)/, PICKER_SRC, 'AccountPicker.tsx'))
 const FILTER_MAX = Number(constant('ACCOUNT_FILTER_MAX', /ACCOUNT_FILTER_MAX = (\d+)/, FILTER_SRC, 'accountFilter.ts'))
 
 // Contrôle négatif : le SEUIL du champ est remonté à sa valeur d'avant le lot (8),
