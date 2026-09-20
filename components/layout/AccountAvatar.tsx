@@ -200,17 +200,26 @@ export const BADGE_OFFSET_PX = 9
  * visible when the bar is collapsed and the labels have folded away.
  * Ringed with `--synap-surface` — the colour of whatever surface it is pinned on,
  * published by that surface itself, so the ring follows the theme with no second palette.
+ *
+ * `colour` is the colour of the BOX the count belongs to, read from the same source as
+ * the bubble it is pinned on (`accountColor`). Without it the badge falls back to the
+ * bar's accent — which is the colour of the ACTIVE account, correct for a folder of
+ * that account, and wrong for anything else: on the list of mailboxes it painted all
+ * eight counters violet over green, blue and amber bubbles. A counter names the box it
+ * counts, so it takes the colour of that box and not of whichever box is open.
  */
-export function UnreadBadge({ count }: { count: number }) {
+export function UnreadBadge({ count, colour }: { count: number; colour?: string }) {
   if (count <= 0) return null
   return (
     <span
       aria-hidden
-      style={{ top: -BADGE_OFFSET_PX, right: -BADGE_OFFSET_PX }}
+      style={colour
+        ? { top: -BADGE_OFFSET_PX, right: -BADGE_OFFSET_PX, backgroundColor: colour, color: readableInk(colour) }
+        : { top: -BADGE_OFFSET_PX, right: -BADGE_OFFSET_PX }}
       className={cn(
         'absolute min-w-[14px] h-[14px] px-[3px] rounded-full ring-[1.5px] ring-[color:var(--synap-surface)]',
         'text-[9px] font-semibold leading-none flex items-center justify-center tabular-nums',
-        ACCENT.solid,
+        !colour && ACCENT.solid,
       )}
       data-unread-badge
     >
@@ -255,7 +264,7 @@ export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', ..
       >
         <span data-account-initial>{accountInitials(account)}</span>
       </span>
-      <UnreadBadge count={unread} />
+      <UnreadBadge count={unread} colour={bubble} />
     </span>
   )
 }
