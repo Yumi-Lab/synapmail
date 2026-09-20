@@ -262,6 +262,12 @@ export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', ..
         // appelant : posée écran par écran, elle manquait justement là où les rangs
         // divergeaient (tableau de bord), et l'écart ne se voyait plus qu'à l'œil.
         data-account-badge={account.id}
+        // La bulle dit aussi a QUELLE taille elle est posee. C'est un fait, pas une
+        // interpretation, et c'est ce qui permet au banc de distinguer une bulle de
+        // LISTE (`sm`/`md` : une ligne de boite, qui doit porter son compteur) d'une
+        // marque INLINE dans du texte courant (`xs` : elle dit de quelle boite vient
+        // un message, un compteur de non-lus n'y voudrait rien dire).
+        data-account-badge-size={size}
         className={cn(
           'rounded-full flex items-center justify-center font-semibold select-none tracking-[0.02em]',
           SIZES[size],

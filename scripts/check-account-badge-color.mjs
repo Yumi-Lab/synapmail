@@ -57,6 +57,12 @@ const CENTER_TOL_PX = 1
  * eprouver ce lot, et le banc doit le DIRE au lieu de passer.
  */
 const MIN_COUNTERS = 2
+/**
+ * La taille de bulle qui marque une boite DANS DU TEXTE COURANT (une ligne de message du
+ * tableau de bord) : elle dit de quelle boite vient ce message-la, un compteur de non-lus
+ * n'y voudrait rien dire. Les bulles de LISTE (`sm`, `md`) le portent, elles.
+ */
+const INLINE_SIZE = 'xs'
 /** Essais de saisie dans la palette avant d'annoncer une panne de banc. */
 const TYPE_ATTEMPTS = 4
 /** Ce qu'on laisse au champ apres une saisie : son debounce, plus la marge de rendu. */
@@ -101,6 +107,13 @@ const harness = msg => {
  * `finally` qui ferme le navigateur. Compare a MIN_COUNTERS a la fin.
  */
 let assertedCounters = 0
+
+/**
+ * Non-lus par boite, tels que l'API les rend DANS CE PASSAGE. C'est la reference du
+ * critere « cette boite doit porter un compteur » : jamais une constante ecrite a la
+ * main, qui ne mesurerait plus rien le jour ou la boite de test change.
+ */
+const UNREAD_BY_ID = new Map()
 
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox'], protocolTimeout: 240000 })
   .catch(e => harness(`Chrome ne demarre pas — ${e.message}`))
@@ -180,7 +193,16 @@ try {
         if (!bubble.checkVisibility({ visibilityProperty: true, opacityProperty: true })) { folded++; continue }
         const host = bubble.parentElement
         const badge = host?.querySelector('[data-unread-badge]')
-        const row = { id: bubble.getAttribute('data-account-badge'), bubble: getComputedStyle(bubble).backgroundColor }
+        const row = {
+          id: bubble.getAttribute('data-account-badge'),
+          bubble: getComputedStyle(bubble).backgroundColor,
+          size: bubble.getAttribute('data-account-badge-size'),
+          // Un compteur SOUS la ligne de flottaison ne renvoie rien a
+          // `elementFromPoint`, qui ne repond que dans le cadre visible : sans ce
+          // drapeau, « hors du cadre » se lirait « recouvert », c'est-a-dire une panne
+          // produit inventee par le banc.
+          inViewport: bubbleBox.top >= 0 && bubbleBox.bottom <= innerHeight,
+        }
         const letters = bubble.querySelector('[data-account-initial]')
         const lettersInk = letters ? inkCentre(letters) : null
         if (lettersInk) {
@@ -218,11 +240,23 @@ try {
     return seen
   }
 
-  /** Les quatre criteres de l'enonce, appliques a un ecran deja lu. */
+  /** Les criteres de l'enonce, appliques a un ecran deja lu. */
   const assertScreen = (label, seen, { clipped = false } = {}) => {
     assertedCounters += seen.counters
     for (const r of seen.rows) {
       const who = `${label} / boite ${r.id.slice(0, 8)}`
+      // Lot H4c-bis : une boite qui a des non-lus DOIT porter son compteur, sur CET
+      // ecran comme sur les autres. La reference n'est pas une constante : c'est le
+      // nombre de non-lus que l'API rend dans le MEME passage (`UNREAD_BY_ID`), donc
+      // le critere se recalibre tout seul quand la boite de test change. C'est ce qui
+      // manquait : Reglages -> Comptes et la palette peignaient la bulle sans jamais
+      // nourrir le compteur, et le banc ne voyait rien puisqu'il ne controlait QUE les
+      // compteurs deja presents.
+      const expected = UNREAD_BY_ID.get(r.id)
+      if (expected > 0 && r.size !== INLINE_SIZE) {
+        check(`${who} : porte son compteur (l'API annonce ${expected} non-lu(s))`, !!r.badge,
+          r.badge ? '' : 'aucun [data-unread-badge] dans la bulle')
+      }
       if (r.lettersDx !== undefined) {
         check(`${who} : initiales centrees dans la bulle`,
           Math.abs(r.lettersDx) <= CENTER_TOL_PX && Math.abs(r.lettersDy) <= CENTER_TOL_PX,
@@ -231,8 +265,13 @@ try {
       if (!r.badge) continue
       check(`${who} : le compteur porte la couleur de SA bulle`, r.badge === r.bubble,
         `compteur=${r.badge} bulle=${r.bubble}`)
-      check(`${who} : le compteur est a l'ecran et rien ne le recouvre`, r.badgeReachable === true,
-        `visibility=${r.badgeVisibility} opacity=${r.badgeOpacity} elementFromPoint=${r.badgeHit} boite=${JSON.stringify(r.badgeBox)}`)
+      // Recouvrement : ne se prononce QUE sur un compteur dans le cadre visible. Sous la
+      // ligne de flottaison, `elementFromPoint` rend `null` par construction, et le banc
+      // n'a alors rien mesure — il ne doit donc rien conclure.
+      if (r.inViewport) {
+        check(`${who} : le compteur est a l'ecran et rien ne le recouvre`, r.badgeReachable === true,
+          `visibility=${r.badgeVisibility} opacity=${r.badgeOpacity} elementFromPoint=${r.badgeHit} boite=${JSON.stringify(r.badgeBox)}`)
+      }
       check(`${who} : nombre « ${r.badgeText} » centre dans le compteur`,
         Math.abs(r.numberDx) <= CENTER_TOL_PX && Math.abs(r.numberDy) <= CENTER_TOL_PX,
         `dx=${r.numberDx}px dy=${r.numberDy}px (tolerance ${CENTER_TOL_PX}px)`)
@@ -255,11 +294,18 @@ try {
   // Ce qu'on tape dans la palette vient des boites REELLES du compte de test, jamais
   // d'une lettre choisie a la main : une lettre en dur ne proposerait plus rien le jour
   // ou les boites changent, et le banc annoncerait une panne de produit.
-  const PALETTE_QUERY = await page.evaluate(async base => {
+  // Un SEUL passage sur l'API nourrit deux choses : de quoi interroger la palette, et la
+  // REFERENCE de non-lus par boite, lue dans le meme passage que les ecrans mesures.
+  const apiAccounts = await page.evaluate(async base => {
     const body = await (await fetch(`${base}/api/accounts`, { credentials: 'same-origin' })).json()
-    const first = (body.data ?? [])[0]
-    return ((first?.name || first?.email) ?? '').trim().slice(0, 2)
+    return (body.data ?? []).map(a => ({ id: a.id, label: ((a.name || a.email) ?? '').trim(), unread: a.unreadCount ?? 0 }))
   }, BASE)
+  if (!apiAccounts.length) harness('l\'API ne rend aucune boite')
+  for (const a of apiAccounts) UNREAD_BY_ID.set(a.id, a.unread)
+  const withUnread = apiAccounts.filter(a => a.unread > 0).length
+  console.log(`  reference : ${apiAccounts.length} boite(s), dont ${withUnread} avec des non-lus`)
+  if (!withUnread) harness('aucune boite de test n\'a de non-lus — le banc ne peut rien dire du compteur')
+  const PALETTE_QUERY = apiAccounts[0].label.slice(0, 2)
   if (PALETTE_QUERY.length < 2) harness('aucune boite lisible pour interroger la palette')
   // La palette ne deroule ses entrees que sur une SAISIE : cliquer le champ ne suffit
   // pas (`showPanel = panelOpen && suggestions.length > 0`). On tape donc la premiere

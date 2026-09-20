@@ -8,7 +8,7 @@ import { Check, ChevronDown, LayoutGrid, Languages, Menu, Monitor, Moon, PenSqua
 import { cn } from '@/lib/utils'
 import { UserMenu } from './UserMenu'
 import { MailToolbar, MailToolbarLead } from './MailToolbar'
-import { AccountAvatar, useAccountAccent } from './AccountAvatar'
+import { AccountAvatar, BADGE_OFFSET_PX, useAccountAccent } from './AccountAvatar'
 import { IconTooltip } from '@/components/ui/IconTooltip'
 import {
   ContextMenuSurface, ContextMenuItem, MENU_ANCHOR_GAP, MENU_ICON, MENU_MIN_WIDTH, focusMenuItem,
@@ -244,7 +244,7 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
       section: 'accounts' as const,
       label: acc.name || acc.email,
       hint: acc.email,
-      icon: <AccountAvatar account={acc} colorIndex={rank} unread={0} />,
+      icon: <AccountAvatar account={acc} colorIndex={rank} unread={acc.unreadCount ?? 0} />,
       run: () => { switchAccount(acc.id); if (!onMail) router.push(MAIL_PATH) },
     })),
     {
@@ -561,13 +561,23 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
 
         {/* Lot H3f : le panneau se deroule SOUS le champ, a sa largeur exacte
             (`inset-x-0`), au-dessus du contenu. Il se ferme sans voile, donc le clic
-            qui le ferme atteint aussi ce qu'il visait. */}
+            qui le ferme atteint aussi ce qu'il visait.
+            Lot H4c-bis : il publie SA surface (`--synap-surface`), dont le compteur
+            epingle sur une bulle de boite tire son cercle, et il reserve en haut et en
+            bas de quoi laisser DEPASSER ce compteur — il defile, donc sans cette reserve
+            le compteur de la premiere et de la derniere ligne serait rogne. Meme reserve
+            que la barre laterale (`BADGE_OFFSET_PX`, une seule source). */}
         {showPanel && (
           <div
             role="listbox"
             data-omnibar-panel
             className="absolute inset-x-0 top-full z-50 mt-1 max-h-[70vh] overflow-y-auto
-              rounded-xl border border-border bg-popover p-1 shadow-xl"
+              rounded-xl border border-border bg-popover px-1 shadow-xl"
+            style={{
+              ['--synap-surface' as string]: 'var(--popover)',
+              paddingTop: `${BADGE_OFFSET_PX}px`,
+              paddingBottom: `${BADGE_OFFSET_PX}px`,
+            }}
           >
             {OMNIBAR_SECTIONS.map(section => {
               const rows = suggestions.filter(entry => entry.section === section)
