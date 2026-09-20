@@ -253,6 +253,16 @@ try {
   }
 
   console.log('== la bulle est CELLE de la barre laterale ==')
+  // Depuis le lot H4d, une ligne RETENUE remplace sa bulle par la case a cocher
+  // (le meme selecteur que la liste des messages) : il n'y a donc plus de bulle
+  // a comparer tant que la selection tient. On la relache AVANT de lire les
+  // couleurs. Sans ce relachement, le banc concluait « aucune bulle » sur un
+  // ecran qui se comportait exactement comme demande — une faute de BANC.
+  const stillSelected = await page.$$(SELECTED)
+  if (stillSelected.length) {
+    await page.click('[data-subs-select-all]')
+    await new Promise(r => setTimeout(r, SETTLE_MS))
+  }
   const dashBubbles = await page.$$eval(`${CARD} [data-account-badge]`, els =>
     els.map(el => ({
       id: el.getAttribute('data-account-badge'),
