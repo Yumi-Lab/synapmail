@@ -28,7 +28,6 @@ import type { AccountConfig } from './imap'
  */
 export const RECENT_MESSAGES_SCANNED = 400
 
-export { MAX_UNSUBSCRIBE_BATCH } from './subscriptionsContract'
 
 /**
  * Deadline of ONE outgoing one-click request, milliseconds.
@@ -186,13 +185,56 @@ export function isOneClick(postHeader: string | undefined, uris: UnsubscribeUris
   return /list-unsubscribe\s*=\s*one-click/i.test(postHeader ?? '')
 }
 
-/** `Name <addr@host>` or a bare address. */
+/**
+ * Decodes the RFC 2047 encoded-words of a display name, so a sender reads as
+ * `Communications Amazon Seller Central` and not as
+ * `=?UTF-8?Q?Communications_Amazon=C2=A0Selle?=…` on screen. Reported by the
+ * human gate of lot M7d, on a real Amazon newsletter.
+ *
+ * Handles both encodings the field allows — `B` (base64) and `Q`
+ * (quoted-printable, where `_` stands for a space) — and any charset
+ * `TextDecoder` knows, which covers the iso-8859-* and windows-125* names real
+ * senders still use. A word that is malformed, or carries a charset this
+ * runtime cannot decode, is LEFT AS IT WAS: a name shown raw is ugly, a name
+ * replaced by a decoding error is a lie about who wrote.
+ *
+ * Adjacent words separated only by whitespace are joined without it (RFC 2047
+ * §6.2) — that whitespace is the encoding's own separator, not part of the
+ * name; keeping it splits a word cut across two encoded-words (`Selle` + `r`).
+ */
+export function decodeEncodedWords(value: string): string {
+  if (!value.includes('=?')) return value
+  return value.replace(
+    /(=\?[^?]+\?[bBqQ]\?[^?]*\?=)((?:\s+)(?==\?[^?]+\?[bBqQ]\?[^?]*\?=))?/g,
+    (whole, word: string) => {
+      const m = word.match(/^=\?([^?]+)\?([bBqQ])\?([^?]*)\?=$/)
+      if (!m) return whole
+      const [, charset, encoding, text] = m
+      const bytes =
+        encoding.toLowerCase() === 'b'
+          ? Buffer.from(text, 'base64')
+          : Buffer.from(
+              text.replace(/_/g, ' ').replace(/=([0-9A-Fa-f]{2})/g, (_all, hex: string) =>
+                String.fromCharCode(parseInt(hex, 16))
+              ),
+              'binary'
+            )
+      try {
+        return new TextDecoder(charset).decode(bytes)
+      } catch {
+        return whole
+      }
+    }
+  )
+}
+
+/** `Name <addr@host>` or a bare address. The name is decoded (RFC 2047). */
 export function parseAddress(value: string | undefined): EmailAddress {
   const raw = (value ?? '').trim()
   const angled = raw.match(/^(.*)<([^<>]+)>\s*$/)
   if (angled) {
     return {
-      name: angled[1].trim().replace(/^"(.*)"$/, '$1').trim(),
+      name: decodeEncodedWords(angled[1].trim()).replace(/^"(.*)"$/, '$1').trim(),
       address: angled[2].trim().toLowerCase(),
     }
   }

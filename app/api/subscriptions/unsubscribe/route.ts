@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
-import { MAX_UNSUBSCRIBE_BATCH, imapConfigOf, smtpConfigOf, unsubscribeGroups } from '@/lib/subscriptions'
+import { imapConfigOf, smtpConfigOf, unsubscribeGroups } from '@/lib/subscriptions'
+import { MAX_UNSUBSCRIBE_BATCH } from '@/lib/subscriptionsContract'
 
 export const dynamic = 'force-dynamic'
 
