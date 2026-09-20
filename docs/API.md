@@ -816,7 +816,7 @@ Batch lookup of tracking state by subject (not message id — works around Outlo
 
 ## Subscriptions
 
-Three routes so an agent can clean a mailbox in three calls: **list** what it is subscribed to, **unsubscribe** from the chosen lists, then **file the messages away** with the existing `PATCH`/`DELETE /api/messages/bulk` — there is no cleaning route here. A fourth, `GET /api/subscriptions/unsubscribed`, is the history, and it outlives the cleaning. All accept a Bearer key or a session. The older `POST /api/unsubscribe` (below) stays: the reading pane's banner uses it.
+Routes so an agent can clean a mailbox: **list** what it is subscribed to, **unsubscribe** from the chosen lists, then file the messages away — either the ones the list named, with the existing `PATCH`/`DELETE /api/messages/bulk`, or a list's **whole history** with the two routes at the end of this section. `GET /api/subscriptions/unsubscribed` is the history of departures, and it outlives the cleaning. All accept a Bearer key or a session. The older `POST /api/unsubscribe` (below) stays: the reading pane's banner uses it.
 
 ### `GET /api/subscriptions?account=<id>[&folder=INBOX]` — Bearer or session
 Lists the newsletters of a mailbox, grouped per list. Same access rule as `GET /api/messages` (ownership or an active share). **Reads headers only** — `From`, `List-Id`, `List-Unsubscribe`, `List-Unsubscribe-Post`, `Date`, `Subject` — of the 400 most recent messages of the folder; a message body is never read and never logged. A message with no `List-Unsubscribe` is not a subscription and is absent from the list.
@@ -915,6 +915,74 @@ curl -s -X PATCH -H "Authorization: Bearer $SYN_KEY" -H 'Content-Type: applicati
 # 4. the history outlives step 3: the group is gone from step 1, the entry stays
 curl -s -H "Authorization: Bearer $SYN_KEY" \
   "$BASE/api/subscriptions/unsubscribed?account=$ACCOUNT" | jq '.data[] | {sender: .sender.address, method, unsubscribedAt}'
+```
+
+### `GET /api/subscriptions/history?account=<id>&id=<subscription>[&folder=INBOX]` — Bearer or session
+Counts, across the **whole mailbox**, the messages of one newsletter — including the ones `GET /api/subscriptions` never sees, since that route reads only the 400 most recent messages of a single folder. Same access rule as `GET /api/subscriptions`: counting is reading. **Read only**: nothing is moved and nothing is deleted.
+
+`id` is an id `GET /api/subscriptions` answered, and `folder` is the folder it was listed from — that is where the id is resolved back to a newsletter. The search then uses the identity that group already carries: `List-Id` when the sender declares one (stable across a sender's address rotations), the `From` address otherwise.
+
+**Scope**: every folder of the mailbox **except** the sent, the drafts and the trash. The sent and the drafts hold what the owner wrote themselves; the trash is where the purge below puts things, so reading it would make a second purge shuffle the trash into itself.
+
+**Response** `{ data: SubscriptionHistory }`:
+
+```ts
+interface SubscriptionHistory {
+  id: string
+  sender: { name: string; address: string }
+  listId: string | null
+  header: 'list-id' | 'from'   // what was searched, so the purge replays the same thing
+  value: string
+  total: number                // across every folder of the scope
+  oldest: string | null        // server dates (INTERNALDATE), not the sender's Date header
+  newest: string | null
+  folders: Array<{ folder: string; count: number; oldest: string | null; newest: string | null }>
+}
+```
+
+`404` when no group of that folder produces that id. A sender's name carries the same `aiSafety` wrapper as the list when the mailbox's guard is on.
+
+A search by header is a server-side `SEARCH HEADER`, folder by folder, over 4 shared connections — the same shape and the same budget as `GET /api/messages/search`. On a mailbox with many folders it is a **slow call**: count once, then purge.
+
+### `POST /api/subscriptions/purge` — Bearer or session
+Moves a newsletter's whole history to the mailbox's **trash**. Access rule `delete` — strictly above the `send` an unsubscribe asks for, because this repeats what `DELETE /api/messages/bulk` does on messages the caller never listed one by one.
+
+**Never a permanent deletion and never an expunge**: everything lands in the trash, so a mistake stays recoverable by the mailbox's owner.
+
+**Body** `{ account: string; id: string; expected: number; folder?: string /* default 'INBOX' */ }`. `expected` is the `total` the count above answered. The purge re-runs the same search and **refuses** if the mailbox no longer holds that number: between the two calls a message may have arrived or left, and the caller only ever consented to what it saw.
+
+**Response** `{ data: PurgeReport }` on success, `{ data: PurgeRefused }` with status **409** on a refusal:
+
+```ts
+interface PurgeReport {
+  id: string
+  moved: number
+  trash: string                                     // the folder everything went to
+  folders: Array<{ folder: string; moved: number }>
+}
+
+interface PurgeRefused {
+  id: string
+  refused: 'not_found' | 'count_changed' | 'no_trash'
+  total?: number   // on `count_changed`: what the mailbox holds now, to replay with
+}
+```
+
+- `count_changed` → re-read the count and call again with the new total.
+- `no_trash` → the mailbox declares no trash folder; the route refuses rather than deleting anything.
+- `not_found` → no group of that folder produces that id.
+
+**Agent example: clean out one newsletter's whole history**
+
+```bash
+# 1. how much is there, everywhere, for this list?
+curl -s -H "Authorization: Bearer $SYN_KEY" \
+  "$BASE/api/subscriptions/history?account=$ACCOUNT&id=3f2a…" | jq '{total, oldest, newest, folders}'
+
+# 2. move exactly that many to the trash — a different number refuses with 409
+curl -s -X POST -H "Authorization: Bearer $SYN_KEY" -H 'Content-Type: application/json' \
+  -d '{"account":"'$ACCOUNT'","id":"3f2a…","expected":1743}' \
+  "$BASE/api/subscriptions/purge" | jq '.data'
 ```
 
 ### `POST /api/unsubscribe` — session only

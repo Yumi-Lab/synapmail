@@ -8,6 +8,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — recherche, suite — 2026-09-20
 
 ### Added
+- **Nettoyer TOUT l'historique d'une newsletter, pas seulement la fenêtre du listing**
+  (`lib/imap.ts` — une fonction `searchHeaderIn` —, `lib/subscriptions.ts`,
+  `GET /api/subscriptions/history`, `POST /api/subscriptions/purge`, `docs/API.md`,
+  `docs/openapi.json`, `scripts/check-subscriptions-history.mjs`) : `GET /api/subscriptions` ne lit que
+  les 400 derniers messages d'UN dossier, donc les archives anciennes d'une lettre lui étaient
+  invisibles et rien ne permettait de les nettoyer. Le dénombrement cherche maintenant par en-tête
+  (`List-Id` quand l'expéditeur en déclare un — l'identité que `groupingKey` utilise déjà —, `From`
+  sinon) dans TOUS les dossiers du compte SAUF les envoyés, les brouillons et la corbeille, et rend le
+  nombre par dossier, le total et les dates extrêmes, en LECTURE SEULE. La purge vient ensuite, et
+  seulement ensuite : elle rejoue la même recherche et REFUSE d'agir (409) si le total annoncé ne
+  correspond plus — on ne déplace jamais plus que ce que l'appelant a vu. Les messages sont DÉPLACÉS
+  vers la corbeille du compte, jamais supprimés définitivement et jamais expungés : une erreur reste
+  rattrapable. La purge demande la permission `delete`, strictement au-dessus du `send` d'un
+  désabonnement. Le plafond de 400 du listing ne bouge pas : le listing reste rapide, l'historique se
+  demande lettre par lettre.
 - **Troisième portée de recherche : « Toutes les boîtes »** (`lib/search.ts`, `app/api/messages/search/`)
   — le même flux progressif, étendu à toutes les boîtes accessibles (les siennes plus celles reçues en
   partage actif). La boîte active passe en premier, au plus `ACCOUNT_CONCURRENCY` boîtes sont ouvertes
