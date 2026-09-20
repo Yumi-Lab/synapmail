@@ -19,6 +19,12 @@ export const ACCOUNTS_SETTINGS_HREF = '/settings/accounts'
 export const ADMIN_HREF = '/admin/users'
 
 /**
+ * La page Apparence — écrite une fois, lue deux : l'entrée ordinaire ci-dessous et
+ * l'entrée d'administration qui mène à la section d'identité qu'elle héberge (lot H4a).
+ */
+export const APPEARANCE_HREF = '/settings/appearance'
+
+/**
  * Source UNIQUE des entrees de reglages : cette barre les rend, et l'omnibar
  * (lot H3f) les propose a la saisie. Ajouter un reglage ici le rend trouvable
  * dans les deux endroits, sans seconde table a tenir a jour ; `key` sert de cle
@@ -27,7 +33,7 @@ export const ADMIN_HREF = '/admin/users'
  */
 export const SETTINGS_NAV = [
   { href: '/settings/profile',       key: 'profile',       icon: User },
-  { href: '/settings/appearance',    key: 'appearance',    icon: Palette },
+  { href: APPEARANCE_HREF,           key: 'appearance',    icon: Palette },
   { href: '/settings/reading',       key: 'reading',       icon: BookOpen },
   { href: '/settings/notifications', key: 'notifications', icon: Bell },
   { href: '/settings/composition',   key: 'composition',   icon: PenSquare },
@@ -45,12 +51,12 @@ export const SETTINGS_NAV = [
  * Les entrées réservées à l'ADMINISTRATEUR, même forme que `SETTINGS_NAV` et même
  * rôle de source unique : cette barre les rend et l'omnibar (lot H3h) les propose,
  * les deux pour un administrateur SEULEMENT. « Nom et icône de l'onglet » pointe sur
- * l'ancre de la section qui les règle (`BRANDING_ANCHOR`) et non sur le haut de la
- * page d'administration, où rien ne la nomme — c'est le défaut que le lot corrige.
+ * l'ancre de la section qui les règle (`BRANDING_ANCHOR`), désormais DANS Apparence
+ * (lot H4a) : c'est là que Nicolas l'a cherchée, et elle n'existe qu'à cet endroit.
  */
 export const ADMIN_NAV = [
   { href: ADMIN_HREF,                          key: 'admin',    icon: ShieldCheck },
-  { href: `${ADMIN_HREF}#${BRANDING_ANCHOR}`,  key: 'branding', icon: ImageIcon },
+  { href: `${APPEARANCE_HREF}#${BRANDING_ANCHOR}`, key: 'branding', icon: ImageIcon },
 ] as const
 
 export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
