@@ -16,7 +16,7 @@ export async function GET(req: Request) {
       `SELECT a.id, a.name, a.email,
               a.imap_host AS "imapHost", a.imap_port AS "imapPort", a.imap_secure AS "imapSecure",
               a.smtp_host AS "smtpHost", a.smtp_port AS "smtpPort", a.smtp_secure AS "smtpSecure",
-              a.username, a.is_default AS "isDefault", a.color,
+              a.username, a.is_default AS "isDefault",
               a.oauth_provider AS "oauthProvider", a.prompt_guard AS "promptGuard",
               a.badge_color AS "badgeColor",
               a.created_at AS "createdAt",
@@ -42,7 +42,7 @@ export async function GET(req: Request) {
        SELECT a.id, a.name, a.email,
               a.imap_host AS "imapHost", a.imap_port AS "imapPort", a.imap_secure AS "imapSecure",
               a.smtp_host AS "smtpHost", a.smtp_port AS "smtpPort", a.smtp_secure AS "smtpSecure",
-              a.username, false AS "isDefault", a.color,
+              a.username, false AS "isDefault",
               a.oauth_provider AS "oauthProvider", a.prompt_guard AS "promptGuard",
               a.badge_color AS "badgeColor",
               a.created_at AS "createdAt",
@@ -90,7 +90,7 @@ export async function POST(req: Request) {
     const {
       name, email, imapHost, imapPort, imapSecure,
       smtpHost, smtpPort, smtpSecure, username, password,
-      isDefault = false, color = '#6366f1',
+      isDefault = false,
     } = body
 
     if (!name || !email || !imapHost || !smtpHost || !username || !password) {
@@ -109,15 +109,15 @@ export async function POST(req: Request) {
     const result = await query(
       `INSERT INTO email_accounts
         (user_id, name, email, imap_host, imap_port, imap_secure,
-         smtp_host, smtp_port, smtp_secure, username, password_encrypted, is_default, color)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         smtp_host, smtp_port, smtp_secure, username, password_encrypted, is_default)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        RETURNING id, name, email, imap_host, imap_port, imap_secure,
-                 smtp_host, smtp_port, smtp_secure, username, is_default, color, created_at`,
+                 smtp_host, smtp_port, smtp_secure, username, is_default, created_at`,
       [
         session.user?.id, name, email,
         imapHost, imapPort ?? 993, imapSecure ?? true,
         smtpHost, smtpPort ?? 587, smtpSecure ?? false,
-        username, passwordEncrypted, isDefault, color,
+        username, passwordEncrypted, isDefault,
       ]
     )
 

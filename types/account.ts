@@ -11,7 +11,6 @@ export interface EmailAccount {
   smtpSecure: boolean
   username: string
   isDefault: boolean
-  color: string
   oauthProvider?: 'google' | 'microsoft' | null
   /** Prompt-injection guard for this mailbox (default on) — see lib/promptGuard.ts. */
   promptGuard: boolean
