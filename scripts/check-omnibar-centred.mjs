@@ -52,6 +52,16 @@ const CENTRED_WIDTHS = [1440, 1728, 1920, 2560]
 const TIGHT_WIDTHS = [1280, 390]
 const PAGES = ['/mail', '/dashboard']
 const SETTLE_MS = 450
+/**
+ * La barre d'outils replie ses groupes APRÈS une mesure de dépassement, donc la
+ * géométrie de l'en-tête bouge encore une ou deux frames après le premier rendu :
+ * une attente à durée fixe l'a lue en cours de repli (observé une fois sur six, à
+ * 390 px, la dernière icône à 212 px au lieu de 189). On lit donc jusqu'à ce que
+ * la même mesure revienne DEUX fois de suite — plus de course, et aucune seconde
+ * perdue quand c'est déjà stable.
+ */
+const STABLE_POLL_MS = 120
+const STABLE_TRIES = 25
 
 const BAR = '[data-omnibar]'
 const FIELD = '[data-omnibar-search-field]'
@@ -77,7 +87,19 @@ const probe = ({ bar, field, right, menu, scope }) => {
   const f = box(fieldEl)
   // Dernier élément cliquable AVANT le champ : le bouton le plus à droite de la
   // rangée d'icônes / de la barre d'outils, celui qui pourrait chevaucher le champ.
+  // Les boutons de la place RÉSERVÉE (lot H4b : la barre d'outils garde sa place
+  // hors du courrier, en `visibility: hidden`) ont une boîte de mise en page mais ne
+  // se voient pas — un élément invisible ne peut pas chevaucher visuellement quoi
+  // que ce soit. Le critère est visuel, on ne compte donc que ce qui est VISIBLE.
+  const visible = el => {
+    for (let n = el; n instanceof Element; n = n.parentElement) {
+      const st = getComputedStyle(n)
+      if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return false
+    }
+    return true
+  }
   const leftBoxes = Array.from(document.querySelectorAll(`${bar} button, ${bar} a`))
+    .filter(visible)
     .map(el => el.getBoundingClientRect())
     .filter(r => r.width > 0 && r.height > 0 && r.right <= f.left + 200 && r.left < f.left)
   const lastLeft = leftBoxes.length ? Math.max(...leftBoxes.map(r => r.right)) : null
@@ -93,6 +115,25 @@ const probe = ({ bar, field, right, menu, scope }) => {
     docOverflow: document.documentElement.scrollWidth - window.innerWidth,
     menuPresent: Boolean(q(menu)),
   }
+}
+
+/**
+ * Lit `probe` jusqu'à obtenir deux mesures IDENTIQUES d'affilée. Renvoie la mesure
+ * stabilisée ; sort en 2 (HARNESS) si elle ne se stabilise pas — un banc qui n'a
+ * pas su lire ne dit rien du produit.
+ */
+const stableProbe = async (page, where) => {
+  const args = { bar: BAR, field: FIELD, right: RIGHT, menu: MENU, scope: SCOPE }
+  let prev = null
+  for (let i = 0; i < STABLE_TRIES; i++) {
+    const m = await page.evaluate(probe, args)
+    if (!m) { console.error(`HARNESS: header or field missing at ${where}`); process.exit(2) }
+    if (prev && JSON.stringify(prev) === JSON.stringify(m)) return m
+    prev = m
+    await new Promise(r => setTimeout(r, STABLE_POLL_MS))
+  }
+  console.error(`HARNESS: header geometry never settled at ${where} after ${STABLE_TRIES} reads`)
+  process.exit(2)
 }
 
 const fails = []
@@ -135,8 +176,7 @@ try {
       await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle2' })
       await page.waitForSelector(FIELD, { timeout: 20000 })
       await new Promise(r => setTimeout(r, SETTLE_MS))
-      const m = await page.evaluate(probe, { bar: BAR, field: FIELD, right: RIGHT, menu: MENU, scope: SCOPE })
-      if (!m) { console.error(`HARNESS: header or field missing at ${width}px ${path}`); process.exit(2) }
+      const m = await stableProbe(page, `${width}px ${path}`)
       measured.set(`${width}|${path}`, m)
     }
   }
