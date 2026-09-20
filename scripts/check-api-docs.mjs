@@ -20,6 +20,7 @@
  *   node scripts/check-api-docs.mjs --break=missing   (a route dropped from the doc)
  *   node scripts/check-api-docs.mjs --break=ghost     (a heading for a dead route)
  *   node scripts/check-api-docs.mjs --break=mode      (a mode the code contradicts)
+ *   node scripts/check-api-docs.mjs --break=scope     (a scope the code does not require)
  *   node scripts/check-api-docs.mjs --break=origin    (links built from the request host)
  *   node scripts/check-api-docs.mjs --break=prefix    (a public entry matched by prefix)
  *   node scripts/check-api-docs.mjs --break=inline    (the address frozen at build time)
@@ -34,6 +35,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { API_DOC_PATH, LLMS_TXT_PATH, OPENAPI_FILE, OPENAPI_PATH, withServedOrigin } from '../lib/apiDocs.ts'
 import { isPublicPath, PUBLIC_PATHS } from '../lib/publicPaths.ts'
+import { ROUTE_SCOPES } from '../lib/apiScopes.ts'
 import { appOrigin } from '../lib/appOrigin.ts'
 import { fileURLToPath } from 'node:url'
 
@@ -51,7 +53,9 @@ const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'
  */
 const MODES = {
   admin: { markers: ['👑 Admin'], detect: body => /\bisAdmin\s*\(|\brequireAdmin\b/.test(body) },
-  bearer: { markers: ['🔑 Bearer', 'Bearer or session'], detect: body => /\bauthenticate\s*\(/.test(body) },
+  // `authorize()` est `authenticate()` + le refus qui nomme la portée manquante :
+  // les deux ouvrent la route aux clés, donc les deux valent preuve de mode Bearer.
+  bearer: { markers: ['🔑 Bearer', 'Bearer or session'], detect: body => /\b(?:authenticate|authorize)\s*\(/.test(body) },
   session: { markers: ['session only'], detect: body => /\bauth\s*\(\s*\)/.test(body) },
   public: { markers: ['public, no auth', 'Auth.js v5 handler'], detect: () => true },
 }
@@ -188,7 +192,9 @@ function readDoc(text) {
     if (!HTTP_METHODS.includes(method) && method !== '*') continue
     const path = raw.replace(/\[\?[^\]]*\]/g, '').split('?')[0].replace(/\/$/, '')
     const mode = MODE_ORDER.find(name => MODES[name].markers.some(marker => rest.includes(marker)))
-    entries[`${method} ${path}`] = { mode, line: line.trim() }
+    // `🔑 Bearer (`accounts:delete`)` — la portée annoncée par le titre, s'il en annonce une.
+    const scope = (/\(`([a-z]+:[a-z]+)`\)/.exec(rest) || [])[1] ?? null
+    entries[`${method} ${path}`] = { mode, scope, line: line.trim() }
   }
   return entries
 }
@@ -204,6 +210,10 @@ if (BREAK === 'missing') {
   docText = docText.replace(victim, '### `GET /api/nothing-here` — session only')
 } else if (BREAK === 'ghost') {
   docText += '\n### `DELETE /api/ghost-route` — session only\nA route that does not exist.\n'
+} else if (BREAK === 'scope') {
+  // Annonce une portée que le code n'exige pas, dans une COPIE du document.
+  const victim = Object.entries(readDoc(docText)).find(([key, e]) => e.scope && ROUTE_SCOPES[key])[1]
+  docText = docText.replace(victim.line, victim.line.replace(`\`${victim.scope}\``, '`messages:send`'))
 } else if (BREAK === 'mode') {
   // Announce a session-only route as Bearer-eligible, in a COPY of the document.
   const victim = Object.entries(readDoc(docText)).find(([key]) => code[key]?.mode === 'session')[1].line
@@ -230,6 +240,63 @@ const wrongMode = Object.entries(doc)
   .filter(([key, entry]) => code[key] && entry.mode !== code[key].mode)
   .map(([key, entry]) => `${key}: the document says ${entry.mode ?? 'no mode'}, ${code[key].file} enforces ${code[key].mode}`)
 check(wrongMode.length === 0, 'the announced access mode is the one the code enforces', wrongMode.join('\n      '))
+
+// ---- Toute route ouverte aux clés annonce la portée que le code exige --------
+// Sans cela, un agent lit « Bearer » et se prend un 403 qu'aucune page n'expliquait.
+const bearerKeys = Object.keys(code).filter(key => code[key].mode === 'bearer')
+
+const unscoped = bearerKeys.filter(key => !ROUTE_SCOPES[key]).sort()
+check(
+  unscoped.length === 0,
+  'every route open to keys has its scope in lib/apiScopes.ts',
+  unscoped.join('\n      '),
+)
+
+const scopeGhosts = Object.keys(ROUTE_SCOPES).filter(key => code[key]?.mode !== 'bearer').sort()
+check(
+  scopeGhosts.length === 0,
+  'every scoped route really is open to keys in the code',
+  scopeGhosts.join('\n      '),
+)
+
+/**
+ * Les titres qui n'annoncent pas encore leur portée. Les sections « messages »,
+ * « dossiers », « contacts », « abonnements » et « IA » du document appartiennent à
+ * une autre lane en cours : les annoter ici ferait un conflit de fusion. La liste
+ * se vide quand ces sections reviennent — voir les deux contrôles ci-dessous, qui
+ * empêchent aussi bien d'y ajouter une route neuve que de l'y laisser pourrir.
+ */
+const SCOPE_PENDING = new Set(Object.keys(ROUTE_SCOPES).filter(key => !key.includes('/api/accounts')))
+
+const wrongScope = bearerKeys
+  .filter(key => doc[key] && !SCOPE_PENDING.has(key) && doc[key].scope !== ROUTE_SCOPES[key])
+  .map(key => `${key}: the document says ${doc[key].scope ?? 'no scope'}, the code requires ${ROUTE_SCOPES[key]}`)
+  .sort()
+check(
+  wrongScope.length === 0,
+  'the scope announced by each Bearer heading is the one the code requires',
+  wrongScope.join('\n      '),
+)
+
+// Une portée déjà annoncée ne doit plus figurer dans la liste d'attente : sans ce
+// contrôle, la liste survivrait au travail qu'elle décrit et couvrirait une dérive.
+const staleePending = [...SCOPE_PENDING].filter(key => doc[key]?.scope).sort()
+check(
+  staleePending.length === 0,
+  'the pending list holds no heading that already announces its scope',
+  staleePending.join('\n      '),
+)
+
+// Le libellé de `API_SCOPES` est celui de l'ÉCRAN, en français ; le document est en
+// anglais. On exige donc que le document nomme chaque portée et lui donne une ligne
+// de tableau — pas qu'il recopie un libellé d'interface dans une autre langue.
+const scopeRow = scope => new RegExp(`^\\|[^|\\n]*\`${scope}\`[^|\\n]*\\|\\s*\\S`, 'm').test(docText)
+const undescribedScopes = [...new Set(Object.values(ROUTE_SCOPES))].filter(s => !scopeRow(s)).sort()
+check(
+  undescribedScopes.length === 0,
+  'the document gives every scope a row of its own, name and meaning',
+  undescribedScopes.join('\n      '),
+)
 
 // The mode reader must look inside the method, not across the file: a route file
 // holding one Bearer method and one session method must report both truthfully.
