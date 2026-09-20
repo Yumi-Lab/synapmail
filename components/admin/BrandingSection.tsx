@@ -129,13 +129,20 @@ export function BrandingSection() {
   const dirty = (name !== null && name !== branding?.appName) || file !== null
 
   return (
-    // `scroll-mt-*` : arrivé par l'ancre, le titre ne se colle pas sous le haut de
-    // la fenêtre — la hauteur du header de l'application est laissée au-dessus.
-    <section id={BRANDING_ANCHOR} className="mb-6 scroll-mt-16 rounded-xl border border-border bg-card p-4">
-      <h2 className="text-sm font-semibold">{t('title')}</h2>
-      <p className="mt-1 text-xs text-muted-foreground">{t('description')}</p>
+    // `scroll-mt-*` : arrivé par l'ancre, le titre ne se colle pas au bord haut du
+    // panneau des réglages — la hauteur de son en-tête est laissée au-dessus.
+    // Le fond suit celui des autres cartes de réglages (`SettingsSection`), la
+    // section étant désormais rendue parmi elles (lot H4a).
+    <section
+      id={BRANDING_ANCHOR}
+      className="scroll-mt-16 space-y-4 rounded-2xl border border-border bg-card/80 p-5 shadow-sm backdrop-blur-sm"
+    >
+      <div>
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('title')}</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">{t('description')}</p>
+      </div>
 
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label className="mb-1 block text-xs text-muted-foreground" htmlFor="branding-name">
             {t('nameLabel')}

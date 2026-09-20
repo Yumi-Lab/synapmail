@@ -9,6 +9,8 @@ import {
 } from '@/components/settings/primitives'
 import { DEFAULT_LOCALE, LOCALES, setLocale, type Locale } from '@/lib/locales'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { BrandingSection } from '@/components/admin/BrandingSection'
+import { useIsAdmin } from '@/hooks/useIsAdmin'
 
 interface UserSettings {
   language: string
@@ -21,6 +23,10 @@ export default function AppearancePage() {
   const tc = useTranslations('settings.common')
   const { data } = useSWR<{ data: UserSettings }>('/api/settings', fetcher)
   const settings = data?.data
+  // Lot H4a : l'identité de l'instance (nom et icône de l'onglet) se règle ICI,
+  // là où Nicolas l'a cherchée deux fois. Le composant est RÉUTILISÉ tel quel,
+  // jamais recopié, et un non-administrateur ne voit rien de plus sur cette page.
+  const isAdmin = useIsAdmin()
 
   const [selectedLang, setSelectedLang] = useState<string>(DEFAULT_LOCALE)
   const [saving, setSaving] = useState(false)
@@ -50,6 +56,8 @@ export default function AppearancePage() {
       <SettingsHeader icon={<Palette className="h-4 w-4" />} title={t('title')} description={t('description')} />
 
       <div className="space-y-6">
+        {isAdmin && <BrandingSection />}
+
         <SettingsSection title={t('theme')} description={t('themeDesc')}>
           <ThemeToggle />
         </SettingsSection>

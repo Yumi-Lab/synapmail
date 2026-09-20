@@ -130,6 +130,32 @@ const BRANDING_SRC = readFileSync(new URL('../components/admin/BrandingSection.t
 check('la section porte l\'ancre qu\'elle exporte',
   /export const BRANDING_ANCHOR/.test(BRANDING_SRC) && /id=\{BRANDING_ANCHOR\}/.test(BRANDING_SRC), true)
 
+// --- Lot H4a : l'identite d'instance se regle dans APPARENCE, en UN seul exemplaire ---
+console.log('identite d\'instance (lot H4a)')
+const APPEARANCE_SRC = readFileSync(new URL('../app/(app)/settings/appearance/page.tsx', import.meta.url), 'utf8')
+check('Apparence rend la section d\'identite',
+  /<BrandingSection \/>/.test(APPEARANCE_SRC), true)
+// Nicolas l'a cherchee deux fois dans Apparence : l'entree admin doit y MENER,
+// pas vers la page d'administration ou rien ne la nomme.
+check('l\'entree « nom et icone de l\'onglet » mene a Apparence',
+  /key: 'branding'/.test(NAV_SRC) && /\$\{APPEARANCE_HREF\}#\$\{BRANDING_ANCHOR\}/.test(NAV_SRC), true)
+check('le chemin d\'Apparence s\'ecrit en UN seul endroit',
+  (NAV_SRC.match(/'\/settings\/appearance'/g) ?? []).length, 1)
+// « JAMAIS deux copies » : une seule surface monte le composant.
+const MOUNTS = ['app/(app)/settings/appearance/page.tsx', 'app/(app)/admin/users/page.tsx']
+  .filter(f => /<BrandingSection \/>/.test(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')))
+check('la section n\'est montee qu\'a UN endroit', MOUNTS, ['app/(app)/settings/appearance/page.tsx'])
+// Un non-administrateur ne voit rien de plus dans Apparence : le rendu est garde par le role.
+check('le rendu dans Apparence est garde par le role',
+  /isAdmin && <BrandingSection \/>/.test(APPEARANCE_SRC), true)
+// Le role se lit par le hook partage, jamais recopie surface par surface.
+check('Apparence lit le role par le hook partage', /useIsAdmin\(\)/.test(APPEARANCE_SRC), true)
+for (const f of ['components/layout/Omnibar.tsx', 'components/settings/SettingsModal.tsx']) {
+  const src = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')
+  check(`${f} lit le role par le hook partage`,
+    /useIsAdmin\(\)/.test(src) && !/role\?: string/.test(src), true)
+}
+
 for (const code of ['en', 'fr', 'zh']) {
   const L = JSON.parse(readFileSync(new URL(`../locales/${code}.json`, import.meta.url), 'utf8'))
   // Les deux tables passent le MEME controle : une entree admin sans libelle ou

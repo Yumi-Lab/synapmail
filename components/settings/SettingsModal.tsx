@@ -2,7 +2,6 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useSession } from 'next-auth/react'
 import { useTranslations } from 'next-intl'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import {
@@ -12,6 +11,7 @@ import {
 import { Dialog, DialogPortal, DialogOverlay } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { SettingsModalPanel } from './SettingsModalPanel'
+import { useIsAdmin } from '@/hooks/useIsAdmin'
 
 const NAV_ITEMS = [
   { seg: 'profile',       key: 'profile',       icon: User },
@@ -33,8 +33,7 @@ export function SettingsModal() {
   const router = useRouter()
   const pathname = usePathname()
   const t = useTranslations('settings.nav')
-  const { data: session } = useSession()
-  const isAdmin = (session?.user as { role?: string } | undefined)?.role === 'admin'
+  const isAdmin = useIsAdmin()
 
   const segment = pathname.replace(/^\/settings\/?/, '').split('/')[0] || 'profile'
 
