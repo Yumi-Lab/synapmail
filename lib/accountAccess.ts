@@ -90,22 +90,66 @@ export async function getAccessibleAccount(
 }
 
 /**
- * Toutes les boîtes que cette personne peut RÉELLEMENT lire : les siennes, plus
- * celles reçues en partage actif et non expiré. Même règle que
- * `getAccessibleAccount(id, user, [])`, posée pour l'ENSEMBLE en une requête au
- * lieu d'une par boîte — ce dont ont besoin la recherche « Toutes les boîtes » et
- * l'historique des désabonnements, qui n'ont aucun identifiant à vérifier.
+ * Les boîtes qu'un utilisateur VOIT, comme UNE règle : les siennes plus celles reçues
+ * en partage actif et non expiré — la même condition que `getAccessibleAccount`, posée
+ * pour l'ENSEMBLE en une requête au lieu d'une par boîte. Écrite comme un sous-`SELECT`
+ * d'identifiants pour que chaque écran projette les colonnes qui lui servent (la
+ * recherche a besoin des identifiants de connexion, le tableau de bord du nom et de la
+ * couleur) sans réécrire la règle. `$1` est l'utilisateur.
+ */
+export const ACCESSIBLE_ACCOUNT_IDS = `(
+    SELECT a.id FROM email_accounts a WHERE a.user_id = $1
+    UNION
+    SELECT sh.account_id FROM account_shares sh
+     WHERE sh.invitee_user_id = $1 AND ${ACTIVE_SHARE_SQL}
+  )`
+
+/**
+ * L'ordre TOTAL de ces boîtes, identique à celui que sert `/api/accounts` : une boîte
+ * REÇUE n'est jamais la boîte par défaut, même si son propriétaire l'a marquée telle —
+ * c'est pourquoi le premier terme teste la propriété en plus du drapeau. Il va avec
+ * `ACCESSIBLE_ACCOUNT_IDS` : les deux se lisent ensemble ou pas du tout.
+ */
+export const ACCESSIBLE_ORDER_BY = accountOrderBy({
+  isDefault: '(a.user_id = $1 AND a.is_default)',
+  createdAt: 'a.created_at',
+  id: 'a.id',
+})
+
+/**
+ * Le même ordre, exprimé sur les noms de SORTIE camelCase : un `UNION` ne peut être
+ * classé que par les colonnes qu'il produit, et c'est la forme dont `/api/accounts` a
+ * besoin — la liste que lisent la barre latérale et les réglages. Les deux clauses
+ * disent la MÊME chose : une boîte reçue n'est jamais la boîte par défaut (la branche
+ * partagée publie déjà `false AS "isDefault"`), puis la plus ancienne, puis l'identifiant.
+ */
+export const ACCESSIBLE_ORDER_BY_ALIASED = accountOrderBy({
+  isDefault: '"isDefault"',
+  createdAt: '"createdAt"',
+  id: 'id',
+})
+
+/**
+ * Toutes les boîtes que cette personne peut RÉELLEMENT lire : les siennes, plus celles
+ * reçues en partage actif et non expiré — ce dont ont besoin la recherche « Toutes les
+ * boîtes » et l'historique des désabonnements, qui n'ont aucun identifiant à vérifier.
+ *
+ * Son ORDRE fait partie du contrat : le RANG d'une boîte dans cette liste décide de sa
+ * couleur automatique. C'est l'ENSEMBLE, pas seulement l'ordre, qui doit être unique —
+ * deux écrans qui classent deux ensembles différents peignent forcément la même boîte
+ * de deux couleurs. Le tableau de bord listait `WHERE user_id = $1` seul : dès qu'un
+ * compte a UNE boîte partagée, les rangs glissaient et ses pastilles n'étaient plus
+ * celles de la barre ni des réglages (mesuré au banc navigateur le 20/09/2026). Toute
+ * surface qui a besoin du rang lit CETTE liste — son index EST le rang, sans second
+ * parcours — jamais sa propre requête.
  *
  * Aucun identifiant venu du client n'entre ici : la liste vient de la base.
  */
 export async function listAccessibleAccounts(userId: string): Promise<DbEmailAccount[]> {
   return query<DbEmailAccount>(
-    `SELECT a.* FROM email_accounts a WHERE a.user_id = $1
-     UNION
-     SELECT a.* FROM email_accounts a
-       JOIN account_shares sh ON sh.account_id = a.id
-      WHERE sh.invitee_user_id = $1 AND ${ACTIVE_SHARE_SQL}
-     ${accountOrderBy({ isDefault: 'is_default', createdAt: 'created_at', id: 'id' })}`,
+    `SELECT a.* FROM email_accounts a
+      WHERE a.id IN ${ACCESSIBLE_ACCOUNT_IDS}
+      ${ACCESSIBLE_ORDER_BY}`,
     [userId]
   )
 }

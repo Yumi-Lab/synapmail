@@ -1,9 +1,6 @@
 import { query } from './db'
 import { encrypt, decrypt } from './encrypt'
 import { getAccessibleAccount } from './accountAccess'
-import { accountOrderBy } from './accountColor'
-
-export { accountOrderBy }
 
 export interface DbEmailAccount {
   id: string
@@ -24,6 +21,8 @@ export interface DbEmailAccount {
   oauth_expires_at: number | null
   is_default: boolean
   color: string
+  /** La couleur CHOISIE pour la pastille, ou null quand c'est celle du rang. */
+  badge_color: string | null
   /** Prompt-injection guard for this mailbox — see lib/promptGuard.ts. */
   prompt_guard: boolean
   created_at: string
@@ -43,16 +42,6 @@ export async function getAccountById(id: string, userId: string): Promise<DbEmai
     [id, userId]
   )
   return accounts[0] ?? null
-}
-
-export async function listAccounts(userId: string): Promise<Omit<DbEmailAccount, 'password_encrypted'>[]> {
-  return query(
-    `SELECT id, user_id, name, email, imap_host, imap_port, imap_secure,
-            smtp_host, smtp_port, smtp_secure, username,
-            is_default, color, prompt_guard, oauth_provider, created_at
-     FROM email_accounts WHERE user_id = $1 ${accountOrderBy()}`,
-    [userId]
-  )
 }
 
 /**

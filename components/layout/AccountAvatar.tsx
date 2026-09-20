@@ -121,16 +121,20 @@ const UNREAD_CAP = 99
 
 const formatUnread = (count: number) => (count > UNREAD_CAP ? `${UNREAD_CAP}+` : String(count))
 
-type AvatarSize = 'sm' | 'md'
+type AvatarSize = 'xs' | 'sm' | 'md'
 
 /**
- * Bubble sizes: `sm` in the bar's rows (fits the fixed icon column), `md` in the popover
- * list. The type scale is set so TWO letters fit inside the circle without touching its
- * edge: at 10 px in the 28 px bubble and 11 px in the 32 px one, the widest pair this
- * palette can produce stays clear of the rim. `scripts/check-sidebar-collapse.mjs`
- * measures the rendered glyph box against the bubble, so the fit is enforced, not assumed.
+ * Bubble sizes: `xs` inline in a line of running text (the dashboard's mail rows, where a
+ * bar-sized bubble would set the line's height), `sm` in the bar's rows (fits the fixed
+ * icon column), `md` in the popover list. The type scale is set so TWO letters fit inside
+ * the circle without touching its edge: at 10 px in the 28 px bubble and 11 px in the
+ * 32 px one, the widest pair this palette can produce stays clear of the rim, and the
+ * 20 px bubble keeps the same headroom by shrinking its type further (8 px).
+ * `scripts/check-sidebar-collapse.mjs` measures the rendered glyph box against the
+ * bubble, so the fit is enforced, not assumed.
  */
 const SIZES: Record<AvatarSize, string> = {
+  xs: 'w-5 h-5 text-[8px]',
   sm: 'w-7 h-7 text-[10px]',
   md: 'w-8 h-8 text-[11px]',
 }
@@ -216,7 +220,7 @@ export function UnreadBadge({ count }: { count: number }) {
 }
 
 interface AccountAvatarProps extends React.HTMLAttributes<HTMLSpanElement> {
-  account: Pick<EmailAccount, 'name' | 'email'> & ColorableAccount
+  account: Pick<EmailAccount, 'name' | 'email'> & ColorableAccount & { id?: string }
   /** Rank of the account in the list — used only when its owner picked no colour. */
   colorIndex: number
   unread?: number
@@ -237,6 +241,12 @@ export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', ..
     <span className="relative inline-flex shrink-0">
       <span
         {...rest}
+        // La bulle publie QUELLE boîte elle peint, sur TOUS les écrans : c'est ce qui
+        // permet de comparer la couleur RENDUE d'une même boîte d'un écran à l'autre
+        // (banc `scripts/check-account-badge-parity.mjs`). Portée ici plutôt que par chaque
+        // appelant : posée écran par écran, elle manquait justement là où les rangs
+        // divergeaient (tableau de bord), et l'écart ne se voyait plus qu'à l'œil.
+        data-account-badge={account.id}
         className={cn(
           'rounded-full flex items-center justify-center font-semibold select-none tracking-[0.02em]',
           SIZES[size],

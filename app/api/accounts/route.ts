@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
-import { accountOrderBy } from '@/lib/accounts'
-import { ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
+import { ACCESSIBLE_ORDER_BY_ALIASED, ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
 import { encrypt } from '@/lib/encrypt'
 
 export const dynamic = 'force-dynamic'
@@ -64,7 +63,7 @@ export async function GET(req: Request) {
        ) um ON um.account_id = a.id
        WHERE sh.invitee_user_id = $1 AND ${ACTIVE_SHARE_SQL}
 
-       ${accountOrderBy({ isDefault: '"isDefault"', createdAt: '"createdAt"', id: 'id' })}`,
+       ${ACCESSIBLE_ORDER_BY_ALIASED}`,
       [authCtx.id]
     )
 

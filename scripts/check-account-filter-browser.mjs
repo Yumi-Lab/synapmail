@@ -19,14 +19,16 @@ const VIEWPORT = { width: 1440, height: 900 }
 // Les constantes ne sont PAS retapées : elles sont lues dans le produit au cours
 // de CE passage, pour qu'une dérive fasse échouer le banc au lieu de lui faire
 // mesurer autre chose.
-const SIDEBAR_SRC = readFileSync(new URL('../components/layout/Sidebar.tsx', import.meta.url), 'utf8')
 const FILTER_SRC = readFileSync(new URL('../lib/accountFilter.ts', import.meta.url), 'utf8')
+// Le seuil du champ a UNE source depuis le lot M7c : le composant partagé. La barre
+// ne fait plus que la republier, donc c'est là qu'on la lit.
+const PICKER_SRC = readFileSync(new URL('../components/layout/AccountPicker.tsx', import.meta.url), 'utf8')
 const constant = (name, re, src, file) => {
   const m = src.match(re)
   if (!m) { console.error(`HARNESS: ${name} illisible dans ${file}`); process.exit(2) }
   return m[1]
 }
-const FILTER_FROM = Number(constant('accountFilterFrom', /accountFilterFrom: (\d+)/, SIDEBAR_SRC, 'Sidebar.tsx'))
+const FILTER_FROM = Number(constant('ACCOUNT_PICKER_FILTER_FROM', /ACCOUNT_PICKER_FILTER_FROM = (\d+)/, PICKER_SRC, 'AccountPicker.tsx'))
 const FILTER_MAX = Number(constant('ACCOUNT_FILTER_MAX', /ACCOUNT_FILTER_MAX = (\d+)/, FILTER_SRC, 'accountFilter.ts'))
 
 // Contrôle négatif : le SEUIL du champ est remonté à sa valeur d'avant le lot (8),
@@ -225,10 +227,37 @@ try {
     `valeur="${afterEsc}", liste ouverte=${listStillOpen}`)
 
   // 7. ↓ déplace la surbrillance, Entrée bascule sur la ligne en surbrillance.
+  //    Réserve du gate humain du 20/09/2026 : il avait lu la surbrillance revenue sur
+  //    la PREMIÈRE ligne après deux ↓, et soupçonnait sa propre lecture (un
+  //    `querySelector` rend le PREMIER nœud portant l'attribut). On mesure donc les
+  //    deux choses qu'il demandait : combien de nœuds portent la marque, et quelles
+  //    lignes trois ↓ successives visitent — jamais une seule lecture.
   const before = await listedEmails()
-  await page.keyboard.press('ArrowDown')
+  const highlightedIds = () => page.$$eval(HIGHLIGHTED, els =>
+    els.map(el => (el.getAttribute('data-sidebar-row') ?? '').slice('account:'.length)))
+
+  const visited = []
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.press('ArrowDown')
+    await new Promise(r => setTimeout(r, 200))
+    const marked = await highlightedIds()
+    check(`après ${i + 1} ↓, un SEUL nœud porte la marque de surbrillance`, marked.length === 1,
+      `${marked.length} nœud(s) : ${JSON.stringify(marked)}`)
+    visited.push(marked[0] ?? null)
+  }
+  // L'ordre AFFICHÉ est `before` : trois ↓ depuis la première ligne visitent les
+  // lignes 2, 3 et 4 — donc trois lignes DISTINCTES, dans cet ordre.
+  const expected = before.slice(1, 4)
+  check('trois ↓ visitent trois lignes DISTINCTES dans l\'ordre affiché',
+    visited.length === 3 && new Set(visited).size === 3 && JSON.stringify(visited) === JSON.stringify(expected),
+    `visitées=${JSON.stringify(visited)}, attendu=${JSON.stringify(expected)}`)
+
+  // La ligne en surbrillance est celle sur laquelle Entrée basculera : on remonte à la
+  // 2ᵉ pour garder le critère d'origine du banc (↓ une fois = 2ᵉ ligne).
+  await page.keyboard.press('ArrowUp')
+  await page.keyboard.press('ArrowUp')
   await new Promise(r => setTimeout(r, 200))
-  const highlighted = await page.$eval(HIGHLIGHTED, el => el.getAttribute('data-sidebar-row').slice('account:'.length)).catch(() => null)
+  const highlighted = (await highlightedIds())[0] ?? null
   check('↓ déplace la surbrillance sur la 2ᵉ ligne', highlighted === before[1],
     `surbrillance=${highlighted}, attendu ${before[1]}`)
   await page.keyboard.press('Enter')

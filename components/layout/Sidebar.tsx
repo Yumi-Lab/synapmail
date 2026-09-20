@@ -18,7 +18,7 @@ import { ACCOUNTS_SETTINGS_HREF } from '@/components/settings/SettingsSidebar'
 import { FolderContextMenu, type FolderMenuState } from './FolderContextMenu'
 import { accountDelimiter, isDescendant, sanitizeFolderName, type FolderAction } from '@/lib/folderActions'
 import { MAIL_PATH } from '@/lib/compose'
-import { ACCOUNT_FILTER_MAX, filterAccounts } from '@/lib/accountFilter'
+import { ACCOUNT_PICKER_FILTER_FROM, AccountPickerFilter, AccountPickerText, useAccountPicker } from './AccountPicker'
 import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, mailboxSwitchHref } from '@/app/(app)/mail/mailboxUrl'
 import type { EmailAccount } from '@/types/account'
 
@@ -37,8 +37,8 @@ export const SIDEBAR = {
   headerPadY: 8,
   /** Rows the unfolded account list shows before it starts scrolling. */
   accountListRows: 8,
-  /** Past this many other accounts the list offers a filter field. */
-  accountFilterFrom: 3,
+  /** Past this many other accounts the list offers a filter field — source partagée. */
+  accountFilterFrom: ACCOUNT_PICKER_FILTER_FROM,
 } as const
 
 /** The bar's surface, as a CSS value: the theme's own sidebar token, so the bar
@@ -206,11 +206,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const pathname = usePathname()
   const [currentFolder, setCurrentFolder] = useState('INBOX')
   const [accountOpen, setAccountOpen] = useState(false)
-  const [accountFilter, setAccountFilter] = useState('')
-  /** Ligne en surbrillance dans la liste dépliée, déplacée par ↑/↓ et validée par Entrée. */
-  const [accountHighlight, setAccountHighlight] = useState(0)
   const accountBoxRef = useRef<HTMLDivElement>(null)
-  const accountFilterRef = useRef<HTMLInputElement>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
   const [folderMenu, setFolderMenu] = useState<FolderMenuState | null>(null)
   /** Saisie EN LIGNE d'un nom de dossier — jamais `window.prompt`. `path` vide = création à la racine. */
@@ -258,15 +254,6 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     }
   }, [accountOpen])
 
-  useEffect(() => {
-    if (!accountOpen) setAccountFilter('')
-    setAccountHighlight(0)
-  }, [accountOpen])
-
-
-  // La surbrillance ne doit jamais désigner une ligne que le filtre vient de retirer.
-  useEffect(() => { setAccountHighlight(0) }, [accountFilter])
-
   const toggleAccountList = useCallback(() => setAccountOpen(o => !o), [])
 
   // Active account + the accent it publishes — the same hook the shell's edge toggle
@@ -280,19 +267,28 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   // The list offers the OTHER accounts only: the active one already heads the bar,
   // repeating it as a row would be a line that does nothing.
   const otherAccounts = accounts.filter(acc => acc.id !== activeAccount?.id)
-  // Le QUOI du filtre vit dans `lib/accountFilter.ts` (moitié pure, auto-contrôlée) :
-  // la barre n'en garde que le champ et le clavier.
-  const filteredAccounts = filterAccounts(accountFilter, otherAccounts)
-  const showAccountFilter = otherAccounts.length > SIDEBAR.accountFilterFrom && !collapsed
-  // Le champ prend le focus à l'OUVERTURE, et pas au montage : la liste est toujours
-  // dans le document (c'est sa hauteur qui s'anime), donc un `autoFocus` volerait le
-  // focus au chargement de la page. Le pli dure `transitionMs` et le champ n'est
-  // atteignable qu'une fois visible, d'où l'attente de la fin du pli.
-  useEffect(() => {
-    if (!accountOpen || !showAccountFilter) return
-    const id = window.setTimeout(() => accountFilterRef.current?.focus(), SIDEBAR.transitionMs)
-    return () => window.clearTimeout(id)
-  }, [accountOpen, showAccountFilter])
+  // La bascule elle-meme vit dans `useAccountAccent` (source unique, partagee avec
+  // l'omnibar) ; ici on ne lui ajoute que la fermeture de la liste depliee.
+  const pickAccount = (id: string) => {
+    switchAccount(id)
+    setAccountOpen(false)
+  }
+
+  // Le filtre, son focus et son clavier vivent dans `AccountPicker` — le tableau de
+  // bord ouvre le MÊME code. La barre ne lui passe que ce qui lui est propre : le
+  // pli à attendre avant de prendre le focus, et le fait qu'une barre repliée n'a
+  // pas de champ du tout.
+  const {
+    filter: accountFilter, setFilter: setAccountFilter, filtered: filteredAccounts,
+    highlight: accountHighlight, showFilter: showAccountFilter,
+    inputRef: accountFilterRef, onKeyDown: onAccountFilterKey,
+  } = useAccountPicker({
+    open: accountOpen,
+    accounts: otherAccounts,
+    onPick: pickAccount,
+    focusDelayMs: SIDEBAR.transitionMs,
+    enabled: !collapsed,
+  })
 
   const { data: foldersData, error: foldersError, mutate: mutateFolders } = useSWR<{ data: FolderItem[] }>(
     resolvedAccountId ? `/api/folders?account=${resolvedAccountId}` : '/api/folders',
@@ -306,48 +302,6 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const customFolders = folders.filter(f => !f.special)
   // Resolved once per list: a folder grows to two letters only when a sibling shares its first.
   const customInitials = folderInitials(customFolders)
-
-  // La bascule elle-meme vit dans `useAccountAccent` (source unique, partagee avec
-  // l'omnibar) ; ici on ne lui ajoute que la fermeture de la liste depliee.
-  const pickAccount = (id: string) => {
-    switchAccount(id)
-    setAccountOpen(false)
-  }
-
-  /**
-   * Clavier du champ de filtre : ↑/↓ déplacent la surbrillance, Entrée bascule sur
-   * la ligne en surbrillance (la première par défaut), Échap vide le filtre s'il est
-   * rempli et ne ferme la liste que s'il est déjà vide — sinon une frappe de trop
-   * refermerait le panneau qu'on vient d'ouvrir.
-   *
-   * L'Échap qui a servi à vider le champ est arrêté par `stopImmediatePropagation`,
-   * et non par le `stopPropagation` de React : le routeur d'applications hydrate le
-   * DOCUMENT entier, donc l'écouteur de React et celui qui referme la liste sont
-   * posés sur le MÊME nœud. Entre deux écouteurs du même nœud, seule la variante
-   * « immediate » arrête le second — mesuré : sans elle, la liste se refermait et
-   * le champ perdait le focus, ce qui rendait ↑/↓ inopérants juste après un Échap.
-   */
-  const onAccountFilterKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    const last = filteredAccounts.length - 1
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-      if (last < 0) return
-      const step = e.key === 'ArrowDown' ? 1 : -1
-      setAccountHighlight(i => Math.min(last, Math.max(0, i + step)))
-      return
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      const picked = filteredAccounts[accountHighlight]
-      if (picked) pickAccount(picked.id)
-      return
-    }
-    if (e.key === 'Escape' && accountFilter) {
-      e.preventDefault()
-      e.nativeEvent.stopImmediatePropagation()
-      setAccountFilter('')
-    }
-  }
 
   const handleFolderClick = (path?: string) => {
     if (path) setCurrentFolder(path)
@@ -384,7 +338,6 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
    * address move into the tooltip instead of overflowing 56 px.
    */
   const accountRow = (acc: EmailAccount, highlighted = false) => {
-    const label = acc.name || acc.email
     const bubble = (
       <AccountAvatar account={acc} colorIndex={accounts.indexOf(acc)} unread={acc.unreadCount ?? 0} />
     )
@@ -408,15 +361,10 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
             style={{ transitionDuration: `${SIDEBAR.transitionMs}ms`, paddingRight: ACCOUNT_ROW_RIGHT.edge }}
             aria-hidden={collapsed}
           >
-            <span
-              className="flex-1 min-w-0 text-left"
+            <AccountPickerText
+              account={acc}
               style={acc.isShared ? { marginRight: textInset(false) } : undefined}
-            >
-              <span className="block text-sm font-medium truncate leading-tight">{label}</span>
-              {acc.name && (
-                <span className="block text-[11px] text-muted-foreground truncate leading-tight">{acc.email}</span>
-              )}
-            </span>
+            />
           </span>
         </button>
         {!collapsed && <SharedMark account={acc} label={t('sharedBy', { name: acc.ownerName ?? acc.email })} />}
@@ -612,17 +560,11 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                 }}
                 aria-hidden={collapsed}
               >
-                <span
-                  className="flex-1 min-w-0 text-left"
+                <AccountPickerText
+                  account={activeAccount}
+                  className="text-foreground"
                   style={activeAccount.isShared ? { marginRight: textInset(hasMultipleAccounts) } : undefined}
-                >
-                  <span className="block text-sm font-medium text-foreground truncate leading-tight">
-                    {activeAccount.name || activeAccount.email}
-                  </span>
-                  {activeAccount.name && (
-                    <span className="block text-[11px] text-muted-foreground truncate leading-tight">{activeAccount.email}</span>
-                  )}
-                </span>
+                />
                 {hasMultipleAccounts && (
                   <span
                     className="shrink-0 flex items-center justify-center"
@@ -669,18 +611,11 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
               >
                 {showAccountFilter && (
                   <div className="px-1.5 pb-1.5">
-                    <input
-                      ref={accountFilterRef}
+                    <AccountPickerFilter
                       value={accountFilter}
-                      onChange={e => setAccountFilter(e.target.value)}
+                      onChange={setAccountFilter}
                       onKeyDown={onAccountFilterKey}
-                      maxLength={ACCOUNT_FILTER_MAX}
-                      placeholder={t('searchAccounts')}
-                      data-account-filter
-                      className={cn(
-                        'w-full px-2.5 py-1.5 rounded-md bg-foreground/[0.06] text-sm text-foreground',
-                        'placeholder:text-muted-foreground outline-none focus:ring-1', ACCENT.ring,
-                      )}
+                      inputRef={accountFilterRef}
                     />
                   </div>
                 )}
