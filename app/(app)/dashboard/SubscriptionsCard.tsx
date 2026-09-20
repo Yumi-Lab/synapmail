@@ -1,8 +1,8 @@
 'use client'
 
 /**
- * Les lettres d'information du tableau de bord : combien on en reçoit, de qui,
- * et un bouton pour en partir.
+ * Les newsletters du tableau de bord : combien on en reçoit, de qui, et un
+ * bouton pour en partir.
  *
  * Rien n'est recodé côté serveur — le lot N1 a déjà posé le contrat :
  * `GET /api/subscriptions?account=<id>` liste les groupes, `POST
@@ -20,7 +20,8 @@ import { useMemo, useState } from 'react'
 import useSWR from 'swr'
 import { MailX, Loader2 } from 'lucide-react'
 import { useTranslations, useLocale } from 'next-intl'
-import { AccountAvatar } from '@/components/layout/AccountAvatar'
+import { AccountAvatar, BUBBLE_BOX } from '@/components/layout/AccountAvatar'
+import { SelectableBubble } from '@/components/ui/SelectableBubble'
 import {
   explorerSelect, gestureOf, isAllSelected, selectAll,
   type ExplorerSelection,
@@ -39,6 +40,12 @@ interface Row extends Subscription {
 
 /** La clé d'une ligne pour la sélection : l'id du groupe porte déjà sa boîte. */
 const rowKey = (r: Row) => r.id
+
+/**
+ * La taille de bulle de cette liste, lue à sa source : la case à cocher doit
+ * couvrir la bulle au pixel, et `xs` est la taille que `AccountAvatar` rend ici.
+ */
+const SUBS_BUBBLE_SIZE = BUBBLE_BOX.xs
 
 /**
  * Un appel par boîte, puis un seul tableau trié. Une boîte qui échoue (IMAP
@@ -94,6 +101,14 @@ export function SubscriptionsCard({
 
   const click = (r: Row, e: React.MouseEvent) =>
     setSelection(curr => explorerSelect(keys, curr, rowKey(r), gestureOf(e.nativeEvent)))
+
+  /**
+   * Le clic sur la BULLE ajoute ou retire cette seule ligne — le geste `toggle`
+   * de `explorerSelection`, exactement comme la case de la liste des messages :
+   * une case à cocher ne remplace jamais la sélection en cours.
+   */
+  const toggle = (r: Row) =>
+    setSelection(curr => explorerSelect(keys, curr, rowKey(r), 'toggle'))
 
   const fmtDate = (iso: string) => new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short' })
 
@@ -153,7 +168,18 @@ export function SubscriptionsCard({
                   picked && 'bg-violet-500/10',
                 )}
               >
-                {account && <AccountAvatar account={account} colorIndex={account.rank} size="xs" />}
+                {account && (
+                  // La MÊME bulle-case que la liste des messages : au survol elle
+                  // laisse la case vide, cochée elle la remplit. Pas de second
+                  // sélecteur dessiné ici — le composant est partagé.
+                  <SelectableBubble
+                    checked={picked}
+                    onToggle={e => { e.stopPropagation(); toggle(r) }}
+                    className={SUBS_BUBBLE_SIZE}
+                  >
+                    <AccountAvatar account={account} colorIndex={account.rank} size="xs" />
+                  </SelectableBubble>
+                )}
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold">
                     {r.sender.name || r.sender.address}
