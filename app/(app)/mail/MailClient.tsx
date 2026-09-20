@@ -47,7 +47,6 @@ export function MailClient() {
   const [aiReplyDraft, setAiReplyDraft] = useState<string | null>(null)
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null)
   const [showReadingPane, setShowReadingPane] = useState(false)
-  const settingsPaneInitialized = useRef(false)
   const [currentMessage, setCurrentMessage] = useState<Message | null>(null)
   const [mdnToast, setMdnToast] = useState<{
     uid: string; accountId: string; folder: string;
@@ -91,7 +90,7 @@ export function MailClient() {
   const search = effectiveParams.get(SEARCH_PARAM) ?? ''
   const searchScope = readScope(effectiveParams.get(SCOPE_PARAM))
 
-  const { data: settingsData } = useSWR<{ data: { active_account_id: string | null; list_width: number; reading_pane: boolean; notifications: boolean } }>('/api/settings', fetcher)
+  const { data: settingsData } = useSWR<{ data: { active_account_id: string | null; list_width: number; notifications: boolean } }>('/api/settings', fetcher)
   const didInitFromSettings = useRef(false)
   useEffect(() => {
     if (!settingsData?.data || didInitFromSettings.current) return
@@ -203,13 +202,12 @@ export function MailClient() {
     return () => window.removeEventListener('synapmail:open-message', handler)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Initialize showReadingPane from DB setting (once, before any user interaction)
-  useEffect(() => {
-    if (settingsData?.data && !settingsPaneInitialized.current) {
-      settingsPaneInitialized.current = true
-      setShowReadingPane(settingsData.data.reading_pane)
-    }
-  }, [settingsData])
+  // `showReadingPane` ne dit qu'UNE chose : un message est ouvert. Au-dessus de `lg` il
+  // n'a aucun effet de mise en page (les deux colonnes portent `lg:flex` dans les deux
+  // états) ; en dessous, c'est lui qui décide LAQUELLE des deux colonnes occupe l'écran.
+  // L'initialiser depuis le réglage `reading_pane` faisait donc arriver sur le volet de
+  // lecture, sans liste à cliquer, en fenêtre étroite (mesuré le 20/09/2026 à 900 px sur
+  // le staging) — alors que ce réglage vise la vue à DEUX colonnes.
 
   const { data: accountsData } = useSWR<{ data: EmailAccount[] }>(
     '/api/accounts',

@@ -14,6 +14,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   de front, chacune en deux passes (réception et envoyés d'abord). Une boîte injoignable est signalée
   en fin de flux au lieu d'arrêter les autres. Mesuré sur le compte de test (8 boîtes) : premier
   résultat à **1,1-1,3 s**, balayage complet 65 s.
+- **`scripts/check-mail-context-widths.mjs`** : banc navigateur du clic droit du courrier à TOUTE
+  largeur de fenêtre (1440 / 1200 / 1024 / 900 / 780 / 390 px), à la vraie souris, déplacements
+  interceptés. Il NOMME la règle de disposition qui explique le constat de terrain « à 900 px rien ne
+  s'ouvre » : sous le `lg` de Tailwind la coquille du courrier montre une colonne à la fois, donc un
+  message ouvert met la liste en `display: none` et il n'y a plus de ligne à l'écran à cliquer droit —
+  le gestionnaire, lui, est bien présent et le menu s'ouvre à ces largeurs dès que la liste est
+  visible. Il mesure aussi le repli À GAUCHE du panneau « Déplacer vers » en fenêtre étroite, avec sa
+  référence à 1440 px où il s'ouvre à droite. Aucune ligne de produit modifiée : la mesure conclut que
+  le code livré satisfait déjà la cible.
+- **`scripts/check-mail-arrival-column.mjs`** : banc navigateur de la colonne montrée À L'ARRIVÉE sur
+  /mail (1440 / 900 / 780 / 390 px), à la vraie souris, écritures interceptées. Il IMPOSE la
+  précondition au lieu de l'espérer du compte : le compte de banc stocke `reading_pane: false`, donc le
+  banc sert à la page un `/api/settings` rustiné à `true` (la valeur par défaut du produit, celle
+  mesurée sur le staging) sans jamais rien écrire côté serveur. Contrôle négatif observé rouge : en
+  remettant l'initialisation depuis le réglage, 900, 780 et 390 px passent à « 0 ligne visible, colonne
+  display=none » pendant que 1440 px reste vert.
 - **`docs/RECHERCHE-CORPS.md`** : ce que coûterait une recherche dans le CORPS des messages. IONOS
   refuse `BODY` et `TEXT` par `NO full text search not supported` (ce n'est pas « zéro résultat ») ;
   la seule voie serait un index local, chiffré dans la note. Aucun code produit : la décision
@@ -30,6 +46,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   qui refuse toute nouvelle copie et vérifie que les quatre appelants passent bien par la source.
 
 ### Fixed
+- **En fenêtre étroite, on arrive sur la LISTE et non sur le volet de lecture**
+  (`app/(app)/mail/MailClient.tsx`) — `showReadingPane` ne dit qu'une chose, « un message est ouvert » :
+  au-dessus du `lg` de Tailwind il n'a aucun effet de disposition (les deux colonnes sont montrées dans
+  les deux états), en dessous c'est lui seul qui décide laquelle occupe l'écran. Il était initialisé
+  depuis le réglage `reading_pane`, pensé pour la vue à DEUX colonnes : sur un compte au réglage par
+  défaut, charger /mail à 900 px ouvrait donc le volet « À traiter » avec un bouton « Retour » et
+  aucune ligne à cliquer. L'initialisation est retirée ; ouvrir un message donne toujours l'écran au
+  volet sous `lg`, et « Retour » ramène la liste. Le réglage « volet de lecture » n'est pas touché.
 - **Deux boîtes qui partagent un uid ne s'effacent plus l'une l'autre** (`lib/search.ts`) : en portée
   « Toutes les boîtes », l'accumulation des résultats dédoublonnait sur dossier + uid. Deux messages
   sans rapport portant l'uid 3231 dans l'« INBOX » de deux boîtes se confondaient, et l'un des deux
