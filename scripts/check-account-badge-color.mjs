@@ -57,6 +57,10 @@ const CENTER_TOL_PX = 1
  * eprouver ce lot, et le banc doit le DIRE au lieu de passer.
  */
 const MIN_COUNTERS = 2
+/** Essais de saisie dans la palette avant d'annoncer une panne de banc. */
+const TYPE_ATTEMPTS = 4
+/** Ce qu'on laisse au champ apres une saisie : son debounce, plus la marge de rendu. */
+const TYPE_SETTLE_MS = 900
 
 const NEGATIVE = process.argv.includes('--negative')
 
@@ -285,10 +289,34 @@ try {
   // pas (`showPanel = panelOpen && suggestions.length > 0`). On tape donc la premiere
   // lettre d'une boite, comme un humain qui cherche une boite dans la palette.
   await page.click('[data-omnibar-search]')
-  await page.keyboard.press('Backspace')
-  await page.type('[data-omnibar-search]', PALETTE_QUERY, { delay: 20 })
+  // Vidage caractere par caractere : mesure du 19/09 deja consignee par
+  // `check-omnibar.mjs` — dans ce Chrome headless un Cmd+A suivi d'un Backspace
+  // n'efface QU'UN caractere, et les saisies s'empilent. On efface ce que le champ
+  // porte, puis on tape, puis on VERIFIE que le champ porte bien la saisie : sans ce
+  // controle, une saisie tronquee se lisait comme une palette sans boite, c'est-a-dire
+  // comme une panne de produit.
+  // La saisie du champ n'est pas fiable en une passe : le champ relance la recherche a
+  // `SEARCH_DEBOUNCE_MS` et se relit depuis l'URL, ce qui peut avaler des caracteres
+  // (mesure : « ni » tape, champ a « i » puis vide). On retape donc jusqu'a ce que le
+  // champ porte VRAIMENT la saisie, en nombre borne d'essais, et on annonce HARNESS si
+  // on n'y arrive pas — une saisie tronquee ne dit rien du produit.
+  let typed = ''
+  for (let attempt = 0; attempt < TYPE_ATTEMPTS && typed !== PALETTE_QUERY; attempt++) {
+    await page.click('[data-omnibar-search]')
+    const before = await page.$eval('[data-omnibar-search]', el => el.value.length)
+    for (let i = 0; i < before; i++) await page.keyboard.press('Backspace')
+    await page.type('[data-omnibar-search]', PALETTE_QUERY, { delay: 40 })
+    await new Promise(r => setTimeout(r, TYPE_SETTLE_MS))
+    typed = await page.$eval('[data-omnibar-search]', el => el.value)
+  }
+  if (typed !== PALETTE_QUERY) harness(`le champ porte « ${typed} » apres ${TYPE_ATTEMPTS} essais de « ${PALETTE_QUERY} »`)
   await page.waitForSelector('[data-omnibar-panel] [data-account-badge]')
-    .catch(() => harness(`la palette ne propose aucune boite pour « ${PALETTE_QUERY} »`))
+    .catch(async () => harness(`la palette ne propose aucune boite pour « ${PALETTE_QUERY} » — `
+      + JSON.stringify(await page.evaluate(() => ({
+        panel: !!document.querySelector('[data-omnibar-panel]'),
+        entries: [...document.querySelectorAll('[data-omnibar-entry]')].map(e => e.dataset.omnibarEntry),
+        value: document.querySelector('[data-omnibar-search]')?.value,
+      })))))
   const palette = await readScreen('palette (omnibar)')
   if (!palette.rows.length) harness('la palette s\'est ouverte sans peindre une bulle de boite')
   assertScreen('palette', palette)
