@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
-import { authenticate } from '@/lib/apiAuth'
+import { authenticate, authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { ACCESSIBLE_ORDER_BY_ALIASED, ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
 import { encrypt } from '@/lib/encrypt'
@@ -81,8 +80,9 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const access = await authorize(req)
+  if ('denied' in access) return access.denied
+  const userId = access.ctx.id
 
   try {
     const body = await req.json()
@@ -101,7 +101,7 @@ export async function POST(req: Request) {
     if (isDefault) {
       await query(
         'UPDATE email_accounts SET is_default = false WHERE user_id = $1',
-        [session.user?.id]
+        [userId]
       )
     }
 
@@ -113,7 +113,7 @@ export async function POST(req: Request) {
        RETURNING id, name, email, imap_host, imap_port, imap_secure,
                  smtp_host, smtp_port, smtp_secure, username, is_default, created_at`,
       [
-        session.user?.id, name, email,
+        userId, name, email,
         imapHost, imapPort ?? 993, imapSecure ?? true,
         smtpHost, smtpPort ?? 587, smtpSecure ?? false,
         username, passwordEncrypted, isDefault,

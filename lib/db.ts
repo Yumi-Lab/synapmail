@@ -1,4 +1,5 @@
 import { Pool } from 'pg'
+import { LEGACY_SCOPES } from '@/lib/apiScopes'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -333,6 +334,17 @@ export async function initDb(): Promise<void> {
     )
   `)
   await query(`CREATE INDEX IF NOT EXISTS api_keys_hash_idx ON api_keys(key_hash)`)
+
+  // Portées par clé (lot P8) : ce que la clé a le droit de faire, source unique dans
+  // lib/apiScopes.ts. Les clés déjà créées reçoivent EXACTEMENT ce qu'elles pouvaient
+  // déjà faire (LEGACY_SCOPES) — l'écriture sur les boîtes n'est donnée à personne,
+  // il faut la cocher. Le DEFAULT ne vaut que pour une insertion sans portées.
+  await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scopes TEXT[] NOT NULL DEFAULT '{}'`)
+  await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scopes_migrated_at TIMESTAMPTZ`)
+  await query(
+    `UPDATE api_keys SET scopes = $1::text[], scopes_migrated_at = NOW() WHERE scopes_migrated_at IS NULL`,
+    [LEGACY_SCOPES]
+  )
 
   // Journal des requêtes Bearer par clé — un log léger (méthode + chemin + IP), pas les
   // requêtes de session. Alimenté fire-and-forget par lib/apiAuth.ts à chaque auth réussie ;
