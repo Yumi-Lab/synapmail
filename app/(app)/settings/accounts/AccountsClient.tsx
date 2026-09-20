@@ -33,7 +33,6 @@ interface EditFormState {
   username: string
   password: string
   isDefault: boolean
-  color: string
 }
 
 interface Props {
@@ -88,7 +87,7 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
       imapHost: account.imapHost, imapPort: String(account.imapPort), imapSecure: account.imapSecure,
       smtpHost: account.smtpHost, smtpPort: String(account.smtpPort), smtpSecure: account.smtpSecure,
       username: account.username, password: '',
-      isDefault: account.isDefault, color: account.color,
+      isDefault: account.isDefault,
     })
     setTestResult(null)
     setError('')
