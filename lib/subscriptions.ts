@@ -28,8 +28,7 @@ import type { AccountConfig } from './imap'
  */
 export const RECENT_MESSAGES_SCANNED = 400
 
-/** Hard ceiling of ids accepted by one unsubscribe call. */
-export const MAX_UNSUBSCRIBE_BATCH = 50
+export { MAX_UNSUBSCRIBE_BATCH } from './subscriptionsContract'
 
 /**
  * Deadline of ONE outgoing one-click request, milliseconds.
