@@ -71,7 +71,35 @@ export const OMNIBAR = {
    * click folds the bar or opens the drawer.
    */
   desktopQuery: '(min-width: 1024px)',
+  /**
+   * Lot H3k : le champ se centre sur l'ÉCRAN. Ces trois nombres sont ceux du rendu,
+   * pas des valeurs recopiées : `ACTION` fait `w-8` (32 px) et le groupe de gauche
+   * les espace de `gap-1` (4 px). Le nombre d'actions du groupe de gauche est
+   * COMPTÉ (menu + tableau de bord + « Relever » + nouveau message), pas deviné.
+   */
+  actionSize: 32,
+  actionGap: 4,
+  headerActions: 4,
+  /**
+   * Plancher que la barre d'outils du courrier garde à gauche du champ : son bouton
+   * « … », dans lequel tout le reste se replie quand la place manque. C'est le
+   * minimum que `useOverflowGroups` ne descend jamais en dessous.
+   */
+  toolbarFloor: 32,
 } as const
+
+/**
+ * Place à réserver à GAUCHE du champ pour qu'il tombe sur le centre de l'ÉCRAN,
+ * SANS compter la barre latérale (elle s'ajoute en CSS, sa largeur étant animée) :
+ * les actions de l'en-tête et leurs écarts, le plancher de la barre d'outils, puis
+ * l'écart fixe avant le champ. Dérivé de `OMNIBAR`, donc une action ajoutée demain
+ * déplace la réserve toute seule.
+ */
+export const OMNIBAR_ICONS_PX =
+  OMNIBAR.actionSize * OMNIBAR.headerActions +
+  OMNIBAR.actionGap * (OMNIBAR.headerActions - 1)
+
+export const OMNIBAR_LEAD_PX = OMNIBAR_ICONS_PX + OMNIBAR.toolbarFloor + OMNIBAR.searchGap
 
 /**
  * Panneau de l'omnibar (lot H3f) : une ligne, un motif. Meme surface que le menu
@@ -357,12 +385,37 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
   return (
     <header
       data-omnibar
-      className="relative shrink-0 flex items-center border-b border-border bg-background px-2 sm:px-3"
-      style={{ height: OMNIBAR.height }}
+      className="relative shrink-0 flex items-center border-b border-border bg-background px-2 sm:px-3
+        lg:grid lg:items-center"
+      style={{
+        height: OMNIBAR.height,
+        /* Lot H3k — le champ se centre sur l'ÉCRAN, en CSS seul (aucune mesure
+           JavaScript au redimensionnement).
+           À partir de `lg` l'en-tête devient une grille de quatre pistes :
+             [ressort gauche 1fr] [champ] [ressort droit 1fr] [rattrapage barre]
+           Les deux ressorts portent le même `1fr` : ils finissent donc à la MÊME
+           largeur, ce qui centre le champ dans ce qui reste une fois la dernière
+           piste retirée. Cette dernière piste vaut exactement la largeur de la barre
+           latérale — or l'en-tête commence à son bord droit, donc la retirer à
+           DROITE remet le centre du champ sur le centre de l'ÉCRAN, barre dépliée
+           comme repliée (sa largeur est publiée par `AppShell` en `--synap-bar-w`,
+           depuis la même source `SIDEBAR` qui l'anime).
+           RÉTRÉCISSEMENT : la piste du champ est bornée `minmax(searchMinWidth,
+           searchMaxWidth)`. Tant que les ressorts ont la place, le champ garde 640 px
+           et reste centré ; quand elle manque, le plancher du ressort gauche
+           (`--synap-omnibar-lead` : les icônes, le plancher de la barre d'outils et
+           l'écart) l'emporte et le champ rétrécit — puis, tout en bas, se retrouve
+           simplement collé aux icônes, le repli demandé. */
+        ['--synap-omnibar-lead' as string]: `${OMNIBAR_LEAD_PX}px`,
+        gridTemplateColumns:
+          `minmax(var(--synap-omnibar-lead), 1fr)` +
+          ` minmax(${OMNIBAR.searchMinWidth}px, ${OMNIBAR.searchMaxWidth}px)` +
+          ` minmax(var(--synap-omnibar-lead), 1fr) var(--synap-bar-w, 0px)`,
+      }}
     >
       {/* gap-1 : deux boîtes cliquables voisines gardent 4 px d'écart, le plancher
           que le gate mesure — rien ne se touche ni ne se recouvre, même à 390 px. */}
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1 lg:[grid-area:1/1] lg:justify-self-start">
         <IconTooltip label={menuLabel} align="start">
           <button
             type="button"
@@ -401,17 +454,31 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
           La barre y garde sa largeur naturelle (`shrink-0`) et le champ prend ce qui
           reste, borné : le champ se colle donc à la dernière icône, et la place en
           trop tombe APRÈS lui — plus jamais entre la barre et le champ. */}
-      <div className="flex min-w-0 flex-1 items-center">
+      {/* Sous `lg` : la rangée d'avant (barre d'outils + champ collé, `flex-1`).
+          À partir de `lg` : le conteneur se dissout dans la grille (`display: contents`),
+          la barre d'outils se pose dans la piste des icônes, à leur suite, et le champ
+          occupe la piste du MILIEU — celle que les deux pistes `1fr` centrent. */}
+      <div className="flex min-w-0 flex-1 items-center lg:contents">
         {/* Lot H4b : hors de la boîte la barre n'agit plus, mais sa PLACE reste
             prise — sinon le champ remontait de 342 px vers la gauche et gagnait
-            80 px sur le tableau de bord (mesuré en prod à 1440 px). */}
-        <MailToolbar shown={onMail} />
+            80 px sur le tableau de bord (mesuré en prod à 1440 px).
+            Lot H3k : dans la grille elle se pose sur la piste des icônes, décalée de
+            leur largeur — même suite visuelle qu'avant, mais elle ne pousse plus le
+            champ, donc le centrage ne dépend pas de ce qu'elle affiche. */}
+        <div
+          className="flex min-w-0 shrink items-center lg:[grid-area:1/1] lg:justify-self-start"
+          style={{ ['--synap-omnibar-icons' as string]: `${OMNIBAR_ICONS_PX}px` }}
+        >
+          <span aria-hidden className="hidden lg:block shrink-0" style={{ width: 'var(--synap-omnibar-icons)' }} />
+          <MailToolbar shown={onMail} />
+        </div>
 
       <div
         ref={panelRef}
         data-omnibar-search-field
         className="relative flex min-w-0 flex-1 items-center
-          sm:[--synap-search-pad:var(--synap-search-pad-wide)]"
+          sm:[--synap-search-pad:var(--synap-search-pad-wide)]
+          lg:[grid-area:1/2] lg:ml-0 lg:w-full"
         style={{
           maxWidth: OMNIBAR.searchMaxWidth,
           minWidth: OMNIBAR.searchMinWidth,
@@ -640,7 +707,10 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
           ici — elle est une puce DANS le champ, où l'on choisit AVANT de taper. */}
       {/* `ml-auto` depuis le lot H3c : le champ ne porte plus de marges automatiques,
           c'est donc CE groupe qui absorbe l'espace libre et reste collé au bord droit. */}
-      <div data-omnibar-right className="ml-auto flex shrink-0 items-center gap-2 pl-2">
+      <div
+        data-omnibar-right
+        className="ml-auto flex shrink-0 items-center gap-2 pl-2 lg:[grid-area:1/3/1/5] lg:justify-self-end"
+      >
         <UserMenu />
       </div>
     </header>
