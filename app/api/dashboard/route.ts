@@ -5,7 +5,7 @@ import type {
   DashboardData, ActivityPoint,
 } from '@/types/dashboard'
 import { scoreFocus } from '@/lib/focus'
-import { accountColor, accountOrderBy } from '@/lib/accountColor'
+import { accountOrderBy } from '@/lib/accountColor'
 
 export const dynamic = 'force-dynamic'
 
@@ -184,13 +184,10 @@ export async function GET(req: Request) {
     ])
 
     const accountById = new Map(accounts.map(a => [a.id, a]))
-    // La couleur d'une boîte est calculée ici comme partout ailleurs : la couleur
-    // choisie, sinon celle de son RANG dans la liste ordonnée par `accountOrderBy`.
-    // Les vignettes de mails du tableau de bord la lisent par l'id de leur boîte,
-    // jamais par une colonne recopiée dans leur propre requête — une seule source.
-    const rankById = new Map(accounts.map((a, rank) => [a.id, rank]))
-    const colorOf = (id: string) =>
-      accountColor({ badgeColor: accountById.get(id)?.badge_color }, rankById.get(id) ?? 0)
+    // La couleur n'est PAS résolue ici : la liste des boîtes part avec la couleur
+    // CHOISIE et son RANG (l'ordre de `accountOrderBy`), et chaque vignette de mail
+    // porte l'id de sa boîte. Le client y lit la même bulle `AccountAvatar` que la
+    // barre latérale — une seule source pour la bulle comme pour la couleur.
     const unreadByAccount = new Map(unreadAllRows.map(r => [r.account_id, Number(r.n)]))
     const unreadTotal = acct
       ? (unreadByAccount.get(acct) ?? 0)
@@ -215,7 +212,6 @@ export async function GET(req: Request) {
           uid: row.uid,
           accountId: row.account_id,
           accountName: acc?.name ?? '',
-          accountColor: colorOf(row.account_id),
           folder: row.folder,
           subject: row.subject ?? '',
           fromName: row.from_name,
@@ -270,11 +266,11 @@ export async function GET(req: Request) {
         scheduledPending: Number(scheduledCountRow[0]?.n ?? 0),
         nextScheduledAt: nextScheduledRow[0]?.send_at ?? null,
       },
-      accounts: accounts.map((a, rank) => ({
+      accounts: accounts.map(a => ({
         id: a.id,
         name: a.name,
         email: a.email,
-        accountColor: accountColor({ badgeColor: a.badge_color }, rank),
+        badgeColor: a.badge_color,
         unread: unreadByAccount.get(a.id) ?? 0,
       })),
       activity,
@@ -285,7 +281,7 @@ export async function GET(req: Request) {
         openedAt: r.opened_at,
         openCount: r.open_count,
         accountName: r.account_name,
-        accountColor: r.account_id ? colorOf(r.account_id) : null,
+        accountId: r.account_id,
       })),
       scheduled: scheduledRows.map(s => ({
         id: s.id,
@@ -293,7 +289,7 @@ export async function GET(req: Request) {
         to: parseAddrs(s.to_addresses),
         sendAt: s.send_at,
         accountName: s.account_name,
-        accountColor: s.account_id ? colorOf(s.account_id) : null,
+        accountId: s.account_id,
       })),
       rules: {
         items: ruleItems,

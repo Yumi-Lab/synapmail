@@ -23,9 +23,10 @@ export interface DashboardAccount {
   id: string
   name: string
   email: string
-  // Résolue par le serveur via `accountColor()` — même nom que sur les autres
-  // lignes du tableau de bord, et jamais la vieille colonne `email_accounts.color`.
-  accountColor: string
+  // La couleur CHOISIE par le propriétaire, telle quelle : c'est `accountColor()`
+  // qui tranche entre elle et celle du RANG, du même côté que la barre latérale.
+  // Jamais la vieille colonne `email_accounts.color`.
+  badgeColor: string | null
   unread: number
 }
 
@@ -39,7 +40,6 @@ export interface FocusItem {
   uid: string
   accountId: string
   accountName: string
-  accountColor: string
   folder: string
   subject: string
   fromName: string | null
@@ -54,7 +54,8 @@ export interface ReceiptItem {
   openedAt: string
   openCount: number
   accountName: string | null
-  accountColor: string | null
+  /** La boîte, par son id : le client y lit sa bulle (nom, initiales, couleur). */
+  accountId: string | null
 }
 
 export interface ScheduledItem {
@@ -63,7 +64,7 @@ export interface ScheduledItem {
   to: string[]
   sendAt: string
   accountName: string | null
-  accountColor: string | null
+  accountId: string | null
 }
 
 export interface RuleActivityItem {

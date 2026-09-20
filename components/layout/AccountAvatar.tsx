@@ -121,16 +121,20 @@ const UNREAD_CAP = 99
 
 const formatUnread = (count: number) => (count > UNREAD_CAP ? `${UNREAD_CAP}+` : String(count))
 
-type AvatarSize = 'sm' | 'md'
+type AvatarSize = 'xs' | 'sm' | 'md'
 
 /**
- * Bubble sizes: `sm` in the bar's rows (fits the fixed icon column), `md` in the popover
- * list. The type scale is set so TWO letters fit inside the circle without touching its
- * edge: at 10 px in the 28 px bubble and 11 px in the 32 px one, the widest pair this
- * palette can produce stays clear of the rim. `scripts/check-sidebar-collapse.mjs`
- * measures the rendered glyph box against the bubble, so the fit is enforced, not assumed.
+ * Bubble sizes: `xs` inline in a line of running text (the dashboard's mail rows, where a
+ * bar-sized bubble would set the line's height), `sm` in the bar's rows (fits the fixed
+ * icon column), `md` in the popover list. The type scale is set so TWO letters fit inside
+ * the circle without touching its edge: at 10 px in the 28 px bubble and 11 px in the
+ * 32 px one, the widest pair this palette can produce stays clear of the rim, and the
+ * 20 px bubble keeps the same headroom by shrinking its type further (8 px).
+ * `scripts/check-sidebar-collapse.mjs` measures the rendered glyph box against the
+ * bubble, so the fit is enforced, not assumed.
  */
 const SIZES: Record<AvatarSize, string> = {
+  xs: 'w-5 h-5 text-[8px]',
   sm: 'w-7 h-7 text-[10px]',
   md: 'w-8 h-8 text-[11px]',
 }

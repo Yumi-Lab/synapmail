@@ -62,8 +62,15 @@ const RULES = [
   },
   {
     id: 'bulle dessinée à la main',
-    // Un rond coloré par un style en ligne dont la couleur vient d'une boîte.
-    test: src => /rounded-full[^\n]*style=\{\{\s*(?:background|backgroundColor)[^\n]*(?:account|acc)\w*\.(?:color|badgeColor)/i.test(src),
+    // Un rond coloré par un style en ligne dont la couleur vient d'une boîte. Deux
+    // écritures, parce que la couleur peut venir de la boîte elle-même (`a.color`,
+    // `acc.badgeColor`) OU d'un helper qui la résout (`accountColor()`, `colorOf()`) :
+    // depuis que le tableau de bord passe par le helper, la première forme seule ne
+    // verrait plus rien revenir. Le RAYON n'est pas un critère suffisant (une barre de
+    // proportion est `rounded-full` elle aussi) : c'est la TAILLE FIXE et minuscule,
+    // celle qui n'existe que pour une pastille, qui distingue les deux.
+    test: src => /rounded-full[^\n]*style=\{\{\s*(?:background|backgroundColor)[^\n]*(?:account|acc)\w*\.(?:color|badgeColor)/i.test(src)
+      || /\bh-(1|1\.5|2|2\.5)\s+w-\1\b[^\n]*rounded-full[^\n]*style=\{\{\s*(?:background|backgroundColor)/i.test(src),
     hint: 'bulle de boîte dessinée à la main : utiliser `<AccountAvatar>`',
   },
 ]
@@ -86,8 +93,11 @@ if (BREAK) {
   // Ce que le lot a SUPPRIMÉ du tableau de bord, remis tel quel : le verrou doit le voir.
   sources.push({
     path: join('app', '(app)', 'dashboard', '__break__.tsx'),
-    src: `const dot = <span className="h-2 w-2 rounded-full" style={{ background: a.color ?? '${LEGACY_FALLBACK}' }} />\n`
-      + `const q = \`SELECT id, name, color FROM email_accounts WHERE user_id = $1\`\n`,
+    src: `const old = <span className="h-2 w-2 rounded-full" style={{ background: a.color ?? '${LEGACY_FALLBACK}' }} />\n`
+      + `const q = \`SELECT id, name, color FROM email_accounts WHERE user_id = $1\`\n`
+      // La pastille telle que le lot l'a supprimée du tableau de bord : plus aucune
+      // colonne `color`, la couleur vient du helper — c'est la forme qui rechuterait.
+      + `const dot = <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: colorOf(id) }} />\n`,
   })
 }
 
