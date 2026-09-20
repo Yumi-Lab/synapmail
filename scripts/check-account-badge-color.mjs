@@ -94,6 +94,14 @@ const harness = msg => {
   process.exit(2)
 }
 
+/**
+ * Combien de compteurs le banc a effectivement eprouves, tous ecrans confondus. Sans ce
+ * total, ecarter les bulles repliees pourrait tout ecarter : le banc sortirait vert sans
+ * avoir rien mesure. Declare ICI, hors du `try`, parce que le verdict se rend APRES le
+ * `finally` qui ferme le navigateur. Compare a MIN_COUNTERS a la fin.
+ */
+let assertedCounters = 0
+
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox'], protocolTimeout: 240000 })
   .catch(e => harness(`Chrome ne demarre pas — ${e.message}`))
 liveBrowser = browser
@@ -210,12 +218,6 @@ try {
     return seen
   }
 
-  /**
-   * Combien de compteurs le banc a effectivement eprouves, tous ecrans confondus. Sans
-   * ce total, ecarter les bulles repliees pourrait tout ecarter : le banc sortirait vert
-   * sans avoir rien mesure. Il est compare a MIN_COUNTERS a la fin.
-   */
-  let assertedCounters = 0
   /** Les quatre criteres de l'enonce, appliques a un ecran deja lu. */
   const assertScreen = (label, seen, { clipped = false } = {}) => {
     assertedCounters += seen.counters
@@ -243,37 +245,11 @@ try {
     }
   }
 
-  // 1. + 2. La barre laterale, liste des boites DEPLIEE puis barre REPLIEE. L'etat vit
-  // cote serveur ; il est pose par l'interface elle-meme (clic), pas par une requete
-  // d'ecriture : ce banc reste en lecture seule vis-a-vis de l'API.
-  await page.goto(`${BASE}/mail`, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector(SIDEBAR_ACCOUNT)
-  const collapsedNow = await page.$eval('[data-sidebar]', el => el.dataset.collapsed === 'true')
-  if (collapsedNow) { await page.click('[data-omnibar-menu]'); await new Promise(r => setTimeout(r, SETTLE_MS)) }
-  await page.click(SIDEBAR_ACCOUNT)
-  assertScreen('barre depliee', await readScreen('barre laterale (depliee)'), { clipped: true })
-
-  await page.click('[data-omnibar-menu]')
-  assertScreen('barre repliee', await readScreen('barre laterale (repliee)'), { clipped: true })
-  await page.click('[data-omnibar-menu]')
-  await new Promise(r => setTimeout(r, SETTLE_MS))
-
-  // 3. Reglages -> Comptes.
-  await page.goto(`${BASE}/settings/accounts`, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector(BUBBLE)
-  assertScreen('reglages', await readScreen('reglages -> comptes'))
-
-  // 4. Le tableau de bord : ses pastilles, puis son selecteur deplie.
-  await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector(DASHBOARD_TRIGGER)
-    .catch(() => harness('le selecteur du tableau de bord ne rend pas son bouton'))
-  assertScreen('tableau de bord', await readScreen('tableau de bord (pastilles)'))
-  await page.click(DASHBOARD_TRIGGER)
-  const picker = await readScreen('tableau de bord (selecteur)')
-  if (!picker.rows.length) harness('le selecteur du tableau de bord s\'est ouvert sans peindre une bulle')
-  assertScreen('selecteur', picker)
-
-  // 5. La palette (omnibar) : ses suggestions de boites portent la meme bulle.
+  // 1. La palette (omnibar) : ses suggestions de boites portent la meme bulle. Mesuree
+  // EN PREMIER, sur un document neuf : le champ se relit depuis l'URL, et une portee ou
+  // une recherche laissee par un ecran precedent le vidait au moment de la saisie
+  // (mesure : champ a « », panneau ferme, alors que la meme saisie sur une page fraiche
+  // proposait 5 boites). L'ordre des ecrans est donc une condition du banc, pas un detail.
   await page.goto(`${BASE}/mail`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('[data-omnibar-search]')
   // Ce qu'on tape dans la palette vient des boites REELLES du compte de test, jamais
@@ -320,6 +296,36 @@ try {
   const palette = await readScreen('palette (omnibar)')
   if (!palette.rows.length) harness('la palette s\'est ouverte sans peindre une bulle de boite')
   assertScreen('palette', palette)
+  // 2. + 3. La barre laterale, liste des boites DEPLIEE puis barre REPLIEE. L'etat vit
+  // cote serveur ; il est pose par l'interface elle-meme (clic), pas par une requete
+  // d'ecriture : ce banc reste en lecture seule vis-a-vis de l'API.
+  await page.goto(`${BASE}/mail`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector(SIDEBAR_ACCOUNT)
+  const collapsedNow = await page.$eval('[data-sidebar]', el => el.dataset.collapsed === 'true')
+  if (collapsedNow) { await page.click('[data-omnibar-menu]'); await new Promise(r => setTimeout(r, SETTLE_MS)) }
+  await page.click(SIDEBAR_ACCOUNT)
+  assertScreen('barre depliee', await readScreen('barre laterale (depliee)'), { clipped: true })
+
+  await page.click('[data-omnibar-menu]')
+  assertScreen('barre repliee', await readScreen('barre laterale (repliee)'), { clipped: true })
+  await page.click('[data-omnibar-menu]')
+  await new Promise(r => setTimeout(r, SETTLE_MS))
+
+  // 4. Reglages -> Comptes.
+  await page.goto(`${BASE}/settings/accounts`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector(BUBBLE)
+  assertScreen('reglages', await readScreen('reglages -> comptes'))
+
+  // 5. Le tableau de bord : ses pastilles, puis son selecteur deplie.
+  await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector(DASHBOARD_TRIGGER)
+    .catch(() => harness('le selecteur du tableau de bord ne rend pas son bouton'))
+  assertScreen('tableau de bord', await readScreen('tableau de bord (pastilles)'))
+  await page.click(DASHBOARD_TRIGGER)
+  const picker = await readScreen('tableau de bord (selecteur)')
+  if (!picker.rows.length) harness('le selecteur du tableau de bord s\'est ouvert sans peindre une bulle')
+  assertScreen('selecteur', picker)
+
 } finally {
   await Promise.race([browser.close(), new Promise(r => setTimeout(r, CLOSE_TIMEOUT_MS))])
   browser.process()?.kill('SIGKILL')
