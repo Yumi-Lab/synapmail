@@ -20,9 +20,13 @@
  *     and 390 px: a mail row is VISIBLE and right-clicking it opens the menu. No
  *     absolute threshold: 1440 px is measured in the SAME run as the narrow widths and
  *     is their reference (a red 1440 would indict the bench or the session, not width).
- *  B. THE SETTING IS REALLY ON — the same run reads GET /api/settings and asserts
- *     `reading_pane: true` for the bench account. Without this, arm A would also be
- *     green on an account where the setting is off, i.e. it would measure nothing.
+ *  B. THE PRECONDITION IS IMPOSED, NOT HOPED FOR — the bench account stores
+ *     `reading_pane: false`, so arm A on it would be green even with the defect present
+ *     and would measure nothing. The bench therefore SERVES the app a patched
+ *     GET /api/settings whose `reading_pane` is true (the product default, and what
+ *     Nicolas measured on staging), and asserts that patched value is what reaches the
+ *     page. It writes nothing: the account's stored setting is left untouched, and the
+ *     un-patched value it really holds is printed alongside.
  *  C. OPENING A MESSAGE STILL GIVES THE SCREEN TO THE PANE — below `lg`, clicking a row
  *     hides the list column (`display: none`) and shows "Retour". REFERENCE: the same
  *     click at 1440 px leaves the list column on screen. This is what keeps the
@@ -32,6 +36,7 @@
  *
  * READ ONLY: every non-GET request to /api/messages and /api/settings is captured and
  * ABORTED, so no message is touched and the bench account's settings are never written.
+ * The `reading_pane` override of arm B lives entirely in the browser's response to a GET.
  *
  * Needs a running dev server and SYNAPMAIL_TEST_* credentials (see .env).
  *   node scripts/check-mail-arrival-column.mjs
@@ -84,6 +89,9 @@ const wait = ms => new Promise(r => setTimeout(r, ms))
 
 const ROW = '[data-mail-row]'
 const SURFACE = '[data-mail-context-menu]'
+// La sonde qui lit le réglage RÉEL doit échapper à l'override du bras B, sinon elle
+// relirait la valeur que le banc vient d'imposer. La route ignore les paramètres inconnus.
+const PROBE_PARAM = 'benchprobe'
 
 const browser = await puppeteer.launch({
   executablePath: CHROME, headless: true, args: ['--no-sandbox'],
@@ -98,10 +106,18 @@ try {
   // de banc est capturée et avortée — elle n'atteint jamais le serveur.
   await page.setRequestInterception(true)
   const writes = []
+  // Rempli par le bras B une fois le réglage réel lu ; tant qu'il est nul, /api/settings
+  // passe tel quel (c'est ce qui laisse la sonde lire la valeur du compte).
+  let patchedSettings = null
   page.on('request', req => {
-    if (req.method() !== 'GET' && /\/api\/(messages|settings)/.test(req.url())) {
-      writes.push({ method: req.method(), url: req.url() })
+    const url = req.url()
+    if (req.method() !== 'GET' && /\/api\/(messages|settings)/.test(url)) {
+      writes.push({ method: req.method(), url })
       req.abort().catch(() => {})
+      return
+    }
+    if (patchedSettings && req.method() === 'GET' && /\/api\/settings(\?|$)/.test(url) && !url.includes(PROBE_PARAM)) {
+      req.respond({ status: 200, contentType: 'application/json', body: patchedSettings }).catch(() => {})
       return
     }
     req.continue().catch(() => {})
@@ -152,12 +168,17 @@ try {
     return census()
   }
 
-  // ---- B. le réglage est bien ACTIF sur le compte du banc ---------------------------
-  // Sans cette lecture, le bras A serait vert aussi sur un compte où `reading_pane` est
-  // à faux : il ne mesurerait alors rien du défaut que ce lot corrige.
-  const settings = await page.evaluate(async base => (await (await fetch(`${base}/api/settings`)).json()).data, BASE)
-  check('le compte du banc a bien `reading_pane: true` (le défaut)', settings?.reading_pane === true,
-    `reading_pane=${settings?.reading_pane}`)
+  // ---- B. la précondition est IMPOSÉE au navigateur, pas espérée du compte -----------
+  // Le compte du banc stocke `reading_pane: false` : sur lui, le bras A serait vert même
+  // avec le défaut présent. Le banc sert donc à l'application un /api/settings rustiné à
+  // `reading_pane: true` (la valeur par défaut du produit, celle que Nicolas a mesurée sur
+  // le staging), sans jamais rien ÉCRIRE côté serveur.
+  const stored = await page.evaluate(async ({ base, probe }) =>
+    (await (await fetch(`${base}/api/settings?${probe}=1`)).json()).data, { base: BASE, probe: PROBE_PARAM })
+  patchedSettings = JSON.stringify({ data: { ...stored, reading_pane: true } })
+  const served = await page.evaluate(async base => (await (await fetch(`${base}/api/settings`)).json()).data, BASE)
+  check('la précondition `reading_pane: true` atteint bien la page', served?.reading_pane === true,
+    `servi=${served?.reading_pane}, stocké sur le compte=${stored?.reading_pane} (inchangé)`)
 
   // ---- A. à l'ARRIVÉE, la liste est à l'écran et le clic droit y marche -------------
   console.log(`A. arrivée sur /mail sans message sélectionné (${WIDTHS.join(' / ')} px)`)
