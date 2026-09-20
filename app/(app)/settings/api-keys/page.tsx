@@ -3,16 +3,54 @@
 import { useState } from 'react'
 import useSWR from 'swr'
 import { useTranslations } from 'next-intl'
-import { Plus, Trash2, Terminal, Copy, Check, TriangleAlert, ChevronDown, Activity, BookOpen } from 'lucide-react'
+import { Plus, Trash2, Terminal, Copy, Check, TriangleAlert, ChevronDown, Activity, BookOpen, KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { ApiKey, ApiKeyRequestLog } from '@/types/account'
 import { SettingsPage, SettingsHeader, SettingsSection } from '@/components/settings/primitives'
 import { API_DOC_PATH } from '@/lib/apiDocs'
+import { ALL_SCOPES, API_SCOPES, type ApiScope } from '@/lib/apiScopes'
 import { RowMenu, ContextMenuItem, MENU_ICON } from '@/components/ui/ContextMenu'
 import { cn } from '@/lib/utils'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
+
+/**
+ * `ApiKey` vit dans `types/account.ts`, hors du périmètre de ce lot : la portée
+ * est ajoutée ici, là où elle est consommée, plutôt qu'en touchant un type partagé.
+ */
+type ScopedApiKey = ApiKey & { scopes: ApiScope[] }
+
+/** Ce qu'une clé reçoit quand on n'y touche pas : lire, rien d'autre. */
+const DEFAULT_SCOPES: ApiScope[] = ['accounts:read', 'messages:read', 'folders:read']
+
+/**
+ * Les portées à cocher. La liste et les libellés viennent de `lib/apiScopes.ts` :
+ * rien n'est retapé ici, donc une portée ajoutée là apparaît ici toute seule.
+ */
+function ScopePicker({ value, onChange }: { value: ApiScope[]; onChange: (next: ApiScope[]) => void }) {
+  const toggle = (scope: ApiScope) =>
+    onChange(value.includes(scope) ? value.filter(s => s !== scope) : [...value, scope])
+
+  return (
+    <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+      {ALL_SCOPES.map(scope => (
+        <label key={scope} className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-muted">
+          <input
+            type="checkbox"
+            checked={value.includes(scope)}
+            onChange={() => toggle(scope)}
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-violet-600"
+          />
+          <span className="min-w-0">
+            <span className="block text-sm leading-tight">{API_SCOPES[scope]}</span>
+            <span className="block font-mono text-[11px] text-muted-foreground">{scope}</span>
+          </span>
+        </label>
+      ))}
+    </div>
+  )
+}
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -48,14 +86,41 @@ function ActivityPanel({ keyId }: { keyId: string }) {
   )
 }
 
+/** Les autorisations d'une clé existante, modifiables sans la recréer. */
+function ScopeEditor({ apiKey, onSave }: { apiKey: ScopedApiKey; onSave: (scopes: ApiScope[]) => Promise<void> }) {
+  const [draft, setDraft] = useState<ApiScope[]>(apiKey.scopes)
+  const [saving, setSaving] = useState(false)
+  const dirty = draft.length !== apiKey.scopes.length || draft.some(s => !apiKey.scopes.includes(s))
+
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3">
+      <ScopePicker value={draft} onChange={setDraft} />
+      <div className="mt-3 flex items-center gap-2">
+        <Button
+          size="sm"
+          disabled={!dirty || !draft.length || saving}
+          onClick={async () => { setSaving(true); try { await onSave(draft) } finally { setSaving(false) } }}
+        >
+          {saving ? 'Enregistrement…' : 'Enregistrer'}
+        </Button>
+        {!draft.length && (
+          <span className="text-xs text-muted-foreground">Une clé sans autorisation ne pourrait rien faire.</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function ApiKeysPage() {
   const tRow = useTranslations('settings.rowActions')
   const tDocs = useTranslations('settings.apiKeys')
-  const { data, mutate } = useSWR<{ data: ApiKey[] }>('/api/api-keys', fetcher)
+  const { data, mutate } = useSWR<{ data: ScopedApiKey[] }>('/api/api-keys', fetcher)
   const keys = data?.data ?? []
 
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
+  const [newScopes, setNewScopes] = useState<ApiScope[]>(DEFAULT_SCOPES)
+  const [editingScopesFor, setEditingScopesFor] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [revealedKey, setRevealedKey] = useState<string | null>(null)
@@ -64,25 +129,39 @@ export default function ApiKeysPage() {
 
   const createKey = async () => {
     if (!newName.trim()) { setError('Nom requis'); return }
+    if (!newScopes.length) { setError('Cochez au moins une autorisation'); return }
     setSaving(true)
     setError(null)
     try {
       const res = await fetch('/api/api-keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName }),
+        body: JSON.stringify({ name: newName, scopes: newScopes }),
       })
       const d = await res.json()
       if (!res.ok) throw new Error(d.error ?? 'Erreur')
       await mutate()
       setCreating(false)
       setNewName('')
+      setNewScopes(DEFAULT_SCOPES)
       setRevealedKey(d.data.key)
     } catch (err) {
       setError(String(err))
     } finally {
       setSaving(false)
     }
+  }
+
+  const saveScopes = async (key: ScopedApiKey, scopes: ApiScope[]) => {
+    const res = await fetch(`/api/api-keys/${key.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scopes }),
+    })
+    if (!res.ok) { setError((await res.json()).error ?? 'Erreur'); return }
+    setError(null)
+    setEditingScopesFor(null)
+    await mutate()
   }
 
   const revokeKey = async (key: ApiKey) => {
@@ -166,6 +245,13 @@ export default function ApiKeysPage() {
               className="h-8 text-sm"
             />
           </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Autorisations</label>
+            <p className="mb-2 text-xs text-muted-foreground">
+              La clé ne pourra faire que ce qui est coché. Tout refus indique la portée qui manque.
+            </p>
+            <ScopePicker value={newScopes} onChange={setNewScopes} />
+          </div>
           <div className="flex gap-2">
             <Button size="sm" onClick={createKey} disabled={saving}>
               {saving ? 'Création…' : 'Créer'}
@@ -184,6 +270,7 @@ export default function ApiKeysPage() {
       <div className="space-y-3">
         {keys.map(key => {
           const expanded = expandedKeyId === key.id
+          const editingScopes = editingScopesFor === key.id
           return (
             <div key={key.id} className="border border-border rounded-xl bg-card shadow-sm p-4">
               <div className="flex items-center justify-between gap-3">
@@ -194,8 +281,20 @@ export default function ApiKeysPage() {
                     Créée le {formatDate(key.createdAt)}
                     {key.lastUsedAt ? ` · Dernière utilisation le ${formatDate(key.lastUsedAt)}` : ' · Jamais utilisée'}
                   </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {key.scopes.length} autorisation{key.scopes.length > 1 ? 's' : ''}
+                  </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => setEditingScopesFor(editingScopes ? null : key.id)}
+                    className="h-8 px-2.5 flex items-center gap-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    title="Modifier les autorisations"
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    Autorisations
+                    <ChevronDown className={cn('w-3 h-3 transition-transform', editingScopes && 'rotate-180')} />
+                  </button>
                   <button
                     onClick={() => setExpandedKeyId(expanded ? null : key.id)}
                     className="h-8 px-2.5 flex items-center gap-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -215,6 +314,7 @@ export default function ApiKeysPage() {
                   </RowMenu>
                 </div>
               </div>
+              {editingScopes && <ScopeEditor apiKey={key} onSave={scopes => saveScopes(key, scopes)} />}
               {expanded && <ActivityPanel keyId={key.id} />}
             </div>
           )

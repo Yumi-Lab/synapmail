@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authorize } from '@/lib/apiAuth'
 import { ImapFlow } from 'imapflow'
 import nodemailer from 'nodemailer'
 import { getAccountById } from '@/lib/accounts'
@@ -13,9 +13,9 @@ import {
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const userId = (session.user as { id: string }).id
+  const access = await authorize(req)
+  if ('denied' in access) return access.denied
+  const userId = access.ctx.id
 
   try {
     const {

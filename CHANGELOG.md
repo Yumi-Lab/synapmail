@@ -5,6 +5,35 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — fork Yumi-Lab (branche `yumi`) — portées des clés API — 2026-09-20
+
+### Added
+- **Portées par clé API** (`lib/apiScopes.ts`, `lib/apiAuth.ts`, `app/(app)/settings/api-keys/`) — une
+  clé ne peut plus que ce que son propriétaire lui a coché : interdire la suppression d'une boîte tout
+  en autorisant son ajout. Les portées se déduisent des routes qui existent, une par famille, sauf le
+  cycle de vie d'une boîte, découpé en créer / modifier / supprimer. La vérification vit là où la clé
+  est reconnue, donc aucune route ne peut l'oublier, et une route absente de la table n'accepte aucune
+  clé. Une clé trop étroite reçoit un **403 qui NOMME la portée manquante** au lieu d'un 401 muet, pour
+  qu'un agent puisse dire ce qui lui manque. Une session humaine n'est jamais limitée par une portée.
+  Cases à cocher à la création et sur une clé existante (`PATCH /api/api-keys/[id]`).
+- **Cycle de vie d'une boîte ouvert au Bearer** — `POST /api/accounts`, `POST /api/accounts/test`,
+  `PATCH` et `DELETE /api/accounts/[id]`, chacune derrière sa portée. Un agent peut désormais ajouter
+  une boîte lui-même ; c'est le 401 qu'il rencontrait.
+- **`scripts/check-api-scopes.mjs`** : banc de 12 assertions contre une instance qui tourne et une
+  vraie base — création autorisée puis suppression refusée par la même clé, refus d'une clé trop
+  étroite, clé d'avant la migration intacte, session humaine libre. Contrôle négatif : toutes portées
+  accordées, les 5 refus s'effondrent. La boîte d'essai vise un hôte `.invalid` que rien ne résout et
+  est supprimée à la fin — aucune tentative d'authentification ne part vers un vrai serveur.
+
+### Changed
+- **Migration sans rupture** : les clés déjà créées reçoivent exactement ce qu'elles pouvaient déjà
+  faire (les 11 portées des routes Bearer d'alors). L'écriture sur les boîtes n'est accordée à
+  personne par défaut : il faut la cocher.
+- **`scripts/check-api-docs.mjs`** exige désormais qu'une route ouverte aux clés figure dans la table
+  des portées et qu'un titre n'annonce pas une portée que le code n'exige pas (`--break=scope`).
+
+---
+
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — recherche, suite — 2026-09-20
 
 ### Added

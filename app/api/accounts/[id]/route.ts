@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { encrypt } from '@/lib/encrypt'
 import { isBadgeColor } from '@/lib/accountColor'
@@ -10,8 +10,9 @@ export async function PATCH(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const access = await authorize(req)
+  if ('denied' in access) return access.denied
+  const userId = access.ctx.id
 
   try {
     const body = await req.json()
@@ -30,14 +31,14 @@ export async function PATCH(
     // Verify ownership
     const existing = await query(
       'SELECT id FROM email_accounts WHERE id = $1 AND user_id = $2',
-      [params.id, session.user?.id]
+      [params.id, userId]
     )
     if (!existing.length) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     if (isDefault) {
       await query(
         'UPDATE email_accounts SET is_default = false WHERE user_id = $1',
-        [session.user?.id]
+        [userId]
       )
     }
 
@@ -84,16 +85,17 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: { id: string } }
 ) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const access = await authorize(req)
+  if ('denied' in access) return access.denied
+  const userId = access.ctx.id
 
   try {
     const result = await query(
       'DELETE FROM email_accounts WHERE id = $1 AND user_id = $2 RETURNING id',
-      [params.id, session.user?.id]
+      [params.id, userId]
     )
     if (!result.length) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     return NextResponse.json({ success: true })

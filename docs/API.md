@@ -23,14 +23,42 @@ Two ways in, both handled transparently by route handlers that call `authenticat
    curl -H "Authorization: Bearer syn_..." https://your-instance/api/accounts
    ```
 
-Only routes explicitly marked **🔑 Bearer** accept an API key — everything else requires the session cookie (some additionally require the `admin` role, marked **👑 Admin**). `middleware.ts` runs at the Edge and only checks that *some* credential (cookie or `Authorization` header) is present; the actual key lookup and hashing happens server-side in each route via `authenticate()`. A key stops working immediately on revoke (`DELETE /api/api-keys/[id]`, soft — sets `revoked_at`). Keys have no per-scope restriction beyond the fixed Bearer-eligible route list below — a key grants full read/write on every 🔑 route for that user's data.
+Only routes explicitly marked **🔑 Bearer** accept an API key — everything else requires the session cookie (some additionally require the `admin` role, marked **👑 Admin**). `middleware.ts` runs at the Edge and only checks that *some* credential (cookie or `Authorization` header) is present; the actual key lookup and hashing happens server-side in each route via `authenticate()`. A key stops working immediately on revoke (`DELETE /api/api-keys/[id]`, soft — sets `revoked_at`).
+
+### Scopes
+
+A key carries **scopes** — what its owner ticked in **Settings → Clés API**, at creation or afterwards. Every 🔑 route names the scope it requires, written `🔑 Bearer (scope)` in its heading. The check happens where the key is recognised (`lib/apiAuth.ts`), against the single table in `lib/apiScopes.ts`, so a route missing from that table accepts no key at all.
+
+A key that is valid but too narrow gets **`403`**, naming what it lacks — never a silent `401`:
+
+```json
+{ "error": "Missing API key scope: accounts:delete",
+  "missingScope": "accounts:delete",
+  "missingScopeLabel": "Supprimer une boîte" }
+```
+
+| Scope | Allows |
+|---|---|
+| `accounts:read` | list mailboxes |
+| `accounts:create` | add a mailbox, and test connectivity before saving |
+| `accounts:update` | change a mailbox's settings or credentials |
+| `accounts:delete` | remove a mailbox |
+| `messages:read` | list, read, search and thread messages |
+| `messages:write` | flag, move and delete messages |
+| `messages:send` | send messages |
+| `folders:read` / `folders:write` | list folders / create, rename, delete them |
+| `contacts:read` | list and search contacts |
+| `subscriptions:read` / `subscriptions:write` | list newsletters / unsubscribe |
+| `ai:use` | the assistance actions |
+
+A **human session is never limited by a scope**: scopes apply to keys only. Keys created before scopes existed keep exactly the routes they could already call; writing to mailboxes is granted to nobody by default and has to be ticked.
 
 **Bearer-eligible routes** (the complete list — nothing else accepts a key):
-`GET /api/accounts`, `GET /api/folders`, `POST /api/folders`, `PATCH /api/folders`, `DELETE /api/folders`, `POST /api/folders/actions`, `GET /api/messages`, `GET /api/messages/[id]`, `PATCH /api/messages/[id]`, `DELETE /api/messages/[id]`, `PATCH /api/messages/bulk`, `DELETE /api/messages/bulk`, `GET /api/messages/search`, `GET /api/messages/thread`, `POST /api/messages/send`, `GET /api/contacts`, `GET /api/subscriptions`, `POST /api/subscriptions/unsubscribe`, `GET /api/subscriptions/unsubscribed`, `POST /api/ai/action`.
+`GET /api/accounts`, `POST /api/accounts`, `PATCH /api/accounts/[id]`, `DELETE /api/accounts/[id]`, `POST /api/accounts/test`, `GET /api/folders`, `POST /api/folders`, `PATCH /api/folders`, `DELETE /api/folders`, `POST /api/folders/actions`, `GET /api/messages`, `GET /api/messages/[id]`, `PATCH /api/messages/[id]`, `DELETE /api/messages/[id]`, `PATCH /api/messages/bulk`, `DELETE /api/messages/bulk`, `GET /api/messages/search`, `GET /api/messages/thread`, `POST /api/messages/send`, `GET /api/contacts`, `GET /api/subscriptions`, `POST /api/subscriptions/unsubscribe`, `GET /api/subscriptions/unsubscribed`, `POST /api/ai/action`.
 
 That list is not maintained by hand: `scripts/check-api-docs.mjs` reads the access mode each method's own body enforces and refuses any heading the code contradicts.
 
-Every other route — account/rule/template/signature/PGP/settings CRUD, admin, the rest of the AI routes, OAuth, SSE, tracking, the older `POST /api/unsubscribe`, and the account-mutation and sharing routes (`POST`/`PATCH`/`DELETE /api/accounts...`) — is **session-only**, even where the underlying resource is otherwise Bearer-eligible for reads.
+Every other route — rule/template/signature/PGP/settings CRUD, admin, the rest of the AI routes, OAuth, SSE, tracking, the older `POST /api/unsubscribe`, and the account-sharing routes (`/api/accounts/[id]/shares...`) — is **session-only**, even where the underlying resource is otherwise Bearer-eligible for reads.
 
 ## This document, served
 
@@ -76,7 +104,7 @@ Two different kinds of `id` appear in these routes — don't confuse them:
 
 ## Accounts
 
-### `GET /api/accounts` 🔑 Bearer
+### `GET /api/accounts` 🔑 Bearer (`accounts:read`)
 List the caller's email accounts, each with its authoritative INBOX unread count.
 
 **Response** `{ data: EmailAccount[] }` where each account also carries `unreadCount: number` (from `mailbox_stats`, falling back to a live cache count — see CLAUDE.md's IMAP section).
@@ -94,7 +122,7 @@ interface EmailAccount {
 }
 ```
 
-### `POST /api/accounts` — session only
+### `POST /api/accounts` 🔑 Bearer (`accounts:create`)
 Add an IMAP/SMTP account.
 
 **Body**
@@ -109,13 +137,13 @@ Add an IMAP/SMTP account.
 ```
 `name`, `email`, `imapHost`, `smtpHost`, `username`, `password` are required (`400` otherwise). Setting `isDefault: true` clears the flag on every other account first. Returns `201` with the created row (no `password`/`passwordEncrypted` field).
 
-### `PATCH /api/accounts/[id]` — session only
+### `PATCH /api/accounts/[id]` 🔑 Bearer (`accounts:update`)
 Partial update — any subset of the `POST` body fields, plus `promptGuard: boolean` (see [Prompt-injection guard](#prompt-injection-guard)). Only fields present in the body are updated (`undefined` fields are left alone). A non-empty `password` re-encrypts and replaces `password_encrypted`. `404` if the account isn't owned by the caller. `400 Nothing to update` if the body has no recognized fields.
 
-### `DELETE /api/accounts/[id]` — session only
+### `DELETE /api/accounts/[id]` 🔑 Bearer (`accounts:delete`)
 `{ success: true }`, or `404` if not owned.
 
-### `POST /api/accounts/test` — session only
+### `POST /api/accounts/test` 🔑 Bearer (`accounts:create`)
 Connectivity check, used by the account wizard before saving. Doesn't touch the DB.
 
 **Body** `{ imapHost, imapPort?, imapSecure?, smtpHost, smtpPort?, smtpSecure?, username, password }`
@@ -631,10 +659,13 @@ Import a contact's public key. **Body** `{ email: string; armoredKey: string; fi
 Manage the Bearer keys documented in [Authentication](#authentication) above. This management surface is itself session-only — you can't mint or revoke keys using a key.
 
 ### `GET /api/api-keys` — session only
-`{ data: ApiKey[] }` (active keys only — revoked ones are excluded), where `ApiKey = { id, name, keyPrefix, lastUsedAt: string | null, createdAt, requestCount24h: number }`. Never includes the raw key or its hash. `requestCount24h` is a live `COUNT` over `api_key_requests` in the last 24h (see the logs endpoint below).
+`{ data: ApiKey[] }` (active keys only — revoked ones are excluded), where `ApiKey = { id, name, keyPrefix, lastUsedAt: string | null, createdAt, scopes: string[], requestCount24h: number }`. `scopes` is what the key may do — see [Scopes](#scopes). Never includes the raw key or its hash. `requestCount24h` is a live `COUNT` over `api_key_requests` in the last 24h (see the logs endpoint below).
 
 ### `POST /api/api-keys` — session only
-**Body** `{ name: string }`, required. Generates `syn_<48 hex chars>`, stores only its SHA-256 hash + 12-char prefix. **Response** `201 { data: ApiKey & { key: string } }` — `key` is the **only time** the raw value is ever returned; it is not retrievable again.
+**Body** `{ name: string, scopes: string[] }`, both required. `scopes` must hold at least one scope from the [table above](#scopes) — unknown entries are dropped, and an empty result is `400`: a key with no scope could do nothing. Generates `syn_<48 hex chars>`, stores only its SHA-256 hash + 12-char prefix. **Response** `201 { data: ApiKey & { key: string } }` — `key` is the **only time** the raw value is ever returned; it is not retrievable again.
+
+### `PATCH /api/api-keys/[id]` — session only
+Re-tick what an existing key may do, without reissuing it. **Body** `{ scopes: string[] }`, same rules as `POST` (at least one known scope, `400` otherwise). **Response** `{ data: { id, scopes } }`, or `404` if the key isn't the caller's or is already revoked. The change takes effect on the key's next request.
 
 ### `DELETE /api/api-keys/[id]` — session only
 Soft-revoke (`revoked_at = NOW()`) — the key stops authenticating immediately. `{ success: true }` (idempotent — succeeds even if the id doesn't belong to the caller or doesn't exist, since the `UPDATE` predicate just matches zero rows).
