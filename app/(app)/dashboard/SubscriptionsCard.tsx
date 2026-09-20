@@ -10,10 +10,11 @@
  * d'un coup et rend un état par groupe, `GET /api/subscriptions/unsubscribed`
  * garde l'historique. Ici on ne fait que LIRE, sélectionner et rendre.
  *
- * Deux règles viennent d'ailleurs et ne sont pas réécrites : la sélection façon
- * explorateur (`lib/explorerSelection.ts`, la même que la liste des messages) et
+ * Trois règles viennent d'ailleurs et ne sont pas réécrites : la sélection façon
+ * explorateur (`lib/explorerSelection.ts`, la même que la liste des messages),
  * la bulle de boîte (`AccountAvatar`, nourrie du rang, la même que la barre
- * latérale et les réglages).
+ * latérale et les réglages) et la case à cocher posée SUR cette bulle
+ * (`SelectableBubble`, sortie de la liste des messages au lot H4d).
  */
 
 import { useMemo, useState } from 'react'
