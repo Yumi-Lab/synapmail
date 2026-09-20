@@ -18,6 +18,7 @@ import crypto from 'node:crypto'
 import dns from 'node:dns/promises'
 import https from 'node:https'
 import type { AccountConfig, HeaderMatches } from './imap'
+import type { SpecialType } from './specialFolders'
 import type { Folder } from '@/types/email'
 
 /**
@@ -1001,14 +1002,35 @@ export interface HistoryRequest {
     value: string
   ) => Promise<HeaderMatches[]>
   move?: (imap: AccountConfig, folder: string, uids: string[], destination: string) => Promise<void>
+  specials?: (folders: Folder[]) => Map<string, SpecialType>
+}
+
+/**
+ * La porte de la boîte : les fonctions injectées quand il y en a, le vrai module
+ * IMAP sinon — et il n'est CHARGÉ que dans ce second cas. Un banc qui fournit
+ * les trois n'ouvre donc aucune socket et ne peut pas en ouvrir une par erreur.
+ */
+async function imapDoor(req: HistoryRequest) {
+  const specials = req.specials ?? (await import('./specialFolders')).detectSpecials
+  if (req.folders && req.search && req.move) {
+    return { folders: req.folders, search: req.search, move: req.move, specials }
+  }
+  const imap = await import('./imap')
+  return {
+    folders: req.folders ?? imap.listFolders,
+    search: req.search ?? imap.searchHeaderIn,
+    move: req.move ?? imap.moveMessagesBulk,
+    specials,
+  }
 }
 
 /** Les dossiers à couvrir et celui qui sert de corbeille, décidés ensemble. */
-async function historyScope(req: HistoryRequest): Promise<{ folders: string[]; trash: string | null }> {
-  const { listFolders } = await import('./imap')
-  const { detectSpecials } = await import('./specialFolders')
-  const all = await (req.folders ?? listFolders)(req.imap)
-  const specials = detectSpecials(all)
+async function historyScope(
+  req: HistoryRequest,
+  door: Awaited<ReturnType<typeof imapDoor>>
+): Promise<{ folders: string[]; trash: string | null }> {
+  const all = await door.folders(req.imap)
+  const specials = door.specials(all)
   const excluded = new Set<string>(HISTORY_EXCLUDED_SPECIALS)
   return {
     folders: all.filter(f => !excluded.has(specials.get(f.path) ?? '')).map(f => f.path),
@@ -1038,10 +1060,10 @@ export async function countSubscriptionHistory(
   const target = await historyTarget(req)
   if (!target) return null
 
-  const { searchHeaderIn } = await import('./imap')
+  const door = await imapDoor(req)
   const { header, value } = historyCriterion(target.key)
-  const { folders } = await historyScope(req)
-  const matches = await (req.search ?? searchHeaderIn)(req.imap, folders, header, value)
+  const { folders } = await historyScope(req, door)
+  const matches = await door.search(req.imap, folders, header, value)
 
   const dates = matches.flatMap(m => [m.oldest, m.newest]).filter((d): d is string => !!d).sort()
   return {
@@ -1077,22 +1099,21 @@ export async function purgeSubscriptionHistory(
   const target = await historyTarget(req)
   if (!target) return { id: req.id, refused: 'not_found' }
 
-  const { searchHeaderIn, moveMessagesBulk } = await import('./imap')
+  const door = await imapDoor(req)
   const { header, value } = historyCriterion(target.key)
-  const { folders, trash } = await historyScope(req)
+  const { folders, trash } = await historyScope(req, door)
   if (!trash) return { id: req.id, refused: 'no_trash' }
 
-  const matches = await (req.search ?? searchHeaderIn)(req.imap, folders, header, value)
+  const matches = await door.search(req.imap, folders, header, value)
   const total = matches.reduce((sum, m) => sum + m.uids.length, 0)
   if (total !== req.expected) return { id: req.id, refused: 'count_changed', total }
 
-  const move = req.move ?? moveMessagesBulk
   const moved: Array<{ folder: string; moved: number }> = []
   for (const m of matches) {
     // Un dossier à la fois, en série : `moveMessagesBulk` ouvre sa propre
     // connexion, et un compte de test porte 1 226 dossiers — les ouvrir en
     // parallèle ferait refuser les connexions par le serveur.
-    await move(req.imap, m.folder, m.uids, trash)
+    await door.move(req.imap, m.folder, m.uids, trash)
     moved.push({ folder: m.folder, moved: m.uids.length })
   }
   return { id: req.id, moved: total, trash, folders: moved }
