@@ -57,7 +57,7 @@ const BAR = '[data-omnibar]'
 const FIELD = '[data-omnibar-search-field]'
 const RIGHT = '[data-omnibar-right]'
 const MENU = '[data-omnibar-menu]'
-const SCOPE = '[data-omnibar-scope]'
+const SCOPE = '[data-omnibar-scope-trigger]'
 
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split('\n')) {
   const m = line.match(/^([A-Z_]+)=(.*)$/)
@@ -75,7 +75,6 @@ const probe = ({ bar, field, right, menu, scope }) => {
   const barEl = q(bar), fieldEl = q(field)
   if (!barEl || !fieldEl) return null
   const f = box(fieldEl)
-  const icons = box(menu)?.left != null ? box(menu.replace(/.*/, menu)) : null
   // Dernier élément cliquable AVANT le champ : le bouton le plus à droite de la
   // rangée d'icônes / de la barre d'outils, celui qui pourrait chevaucher le champ.
   const leftBoxes = Array.from(document.querySelectorAll(`${bar} button, ${bar} a`))
@@ -92,7 +91,7 @@ const probe = ({ bar, field, right, menu, scope }) => {
     rightGroup: r ? { left: r.left, right: r.right } : null,
     scope: s ? { left: s.left, right: s.right } : null,
     docOverflow: document.documentElement.scrollWidth - window.innerWidth,
-    iconsPresent: Boolean(icons ?? q(menu)),
+    menuPresent: Boolean(q(menu)),
   }
 }
 

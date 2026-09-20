@@ -407,6 +407,7 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
            l'écart) l'emporte et le champ rétrécit — puis, tout en bas, se retrouve
            simplement collé aux icônes, le repli demandé. */
         ['--synap-omnibar-lead' as string]: `${OMNIBAR_LEAD_PX}px`,
+        ['--synap-search-gap' as string]: `${OMNIBAR.searchGap}px`,
         gridTemplateColumns:
           `minmax(var(--synap-omnibar-lead), 1fr)` +
           ` minmax(${OMNIBAR.searchMinWidth}px, ${OMNIBAR.searchMaxWidth}px)` +
@@ -466,10 +467,18 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
             leur largeur — même suite visuelle qu'avant, mais elle ne pousse plus le
             champ, donc le centrage ne dépend pas de ce qu'elle affiche. */}
         <div
-          className="flex min-w-0 shrink items-center lg:[grid-area:1/1] lg:justify-self-start"
+          className="flex min-w-0 shrink items-center lg:[grid-area:1/1] lg:w-full"
           style={{ ['--synap-omnibar-icons' as string]: `${OMNIBAR_ICONS_PX}px` }}
         >
-          <span aria-hidden className="hidden lg:block shrink-0" style={{ width: 'var(--synap-omnibar-icons)' }} />
+          {/* Place des icônes, qui sont posées PAR-DESSUS cette même piste : la barre
+              d'outils vient donc à leur suite. `minWidth` et non `width`, parce que
+              `useOverflowGroups` lit les planchers de ses voisins pour connaître son
+              budget — une largeur qu'il ne verrait pas le ferait déborder. */}
+          <span
+            aria-hidden
+            className="hidden lg:block shrink-0"
+            style={{ width: 'var(--synap-omnibar-icons)', minWidth: 'var(--synap-omnibar-icons)' }}
+          />
           <MailToolbar shown={onMail} />
         </div>
 
@@ -478,11 +487,17 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
         data-omnibar-search-field
         className="relative flex min-w-0 flex-1 items-center
           sm:[--synap-search-pad:var(--synap-search-pad-wide)]
-          lg:[grid-area:1/2] lg:ml-0 lg:w-full"
+          lg:[grid-area:1/2] lg:w-full lg:[--synap-search-gap:0px]"
         style={{
           maxWidth: OMNIBAR.searchMaxWidth,
           minWidth: OMNIBAR.searchMinWidth,
-          marginLeft: OMNIBAR.searchGap,
+          // Sous `lg` le champ se colle à la dernière icône (l'écart de H3c) ; dans
+          // la grille, c'est la piste qui place le champ, l'écart y vaut donc 0.
+          // La remise à zéro est déclarée SUR CE MÊME élément (`lg:` ci-dessus) :
+          // l'en-tête publie la valeur, le champ la redéclare pour lui-même et sa
+          // propre déclaration bat celle dont il hérite. Posée sur l'en-tête, elle
+          // perdait contre le style en ligne qui y écrit la variable.
+          marginLeft: 'var(--synap-search-gap)',
           // Réserve intérieure droite : la puce de portée et l'indication ⌘K se
           // posent dessus, la saisie s'arrête avant. Une variable, deux lecteurs
           // (le champ et la classe `sm:` ci-dessous) — jamais deux valeurs écrites.
