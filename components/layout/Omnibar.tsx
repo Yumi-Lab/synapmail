@@ -383,7 +383,7 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
         {/* Lot H3c : « Relever » passe AVANT « Nouveau message » (demande de Nicolas).
             Sa définition reste celle de MAIL_TOOLBAR_GROUPS — seul l'endroit où le
             header la rend change ; le menu « … » la garde en tête. */}
-        {onMail && <MailToolbarLead />}
+        <MailToolbarLead shown={onMail} />
         <IconTooltip label={t('compose')} shortcut={COMPOSE_SHORTCUT}>
           <button
             type="button"
@@ -402,8 +402,10 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
           reste, borné : le champ se colle donc à la dernière icône, et la place en
           trop tombe APRÈS lui — plus jamais entre la barre et le champ. */}
       <div className="flex min-w-0 flex-1 items-center">
-        {/* Hors de la boîte, rien à griser : le groupe courrier n'existe pas. */}
-        {onMail && <MailToolbar />}
+        {/* Lot H4b : hors de la boîte la barre n'agit plus, mais sa PLACE reste
+            prise — sinon le champ remontait de 342 px vers la gauche et gagnait
+            80 px sur le tableau de bord (mesuré en prod à 1440 px). */}
+        <MailToolbar shown={onMail} />
 
       <div
         ref={panelRef}

@@ -249,20 +249,42 @@ function ToolbarGroup({ items, first, openMenu, setOpenMenu, variant = 'bar', al
 }
 
 /**
+ * Lot H4b : hors du courrier, les actions n'ont pas lieu d'être — mais leur PLACE
+ * reste prise. Le gabarit RÉEL est rendu, simplement invisible et hors d'atteinte,
+ * donc le champ de recherche garde la même position et la même largeur d'une page
+ * à l'autre. Réserver le rendu lui-même plutôt qu'une largeur recopiée : une icône
+ * ajoutée demain déplace la réserve toute seule, il n'y a rien à retoucher.
+ *
+ * `visibility: hidden` sort déjà du parcours clavier et du clic ; `aria-hidden` le
+ * dit aux lecteurs d'écran, et `data-mail-toolbar-reserved` le dit au banc de mesure
+ * (qui doit pouvoir distinguer une barre vivante d'une place réservée).
+ */
+type ReservedProps = { shown?: boolean }
+
+function reserved(shown: boolean) {
+  return shown ? {} : { 'aria-hidden': true, 'data-mail-toolbar-reserved': '' }
+}
+
+/**
  * Le groupe de tête de `MAIL_TOOLBAR_GROUPS` (« Relever »), rendu par le header
  * entre le Tableau de bord et Nouveau message — lot H3c. Même bouton, même source :
  * ce composant ne fait que le sortir de la barre d'outils, qui l'ignore ensuite.
  */
-export function MailToolbarLead() {
+export function MailToolbarLead({ shown = true }: ReservedProps) {
   const [openMenu, setOpenMenu] = useState<MailActionName | null>(null)
   return (
-    <ToolbarGroup
-      items={MAIL_TOOLBAR_GROUPS[LEAD_GROUP]}
-      first
-      openMenu={openMenu}
-      setOpenMenu={setOpenMenu}
-      align="start"
-    />
+    // Une boîte TOUJOURS rendue, même hors du courrier (lot H4b) : c'est elle qui
+    // tient la place, donc l'écart `gap-1` du groupe de gauche est le même sur les
+    // deux pages et « Nouveau message » ne recule pas sur le tableau de bord.
+    <div {...reserved(shown)} className={cn('flex shrink-0 items-center gap-1', !shown && 'invisible')}>
+      <ToolbarGroup
+        items={MAIL_TOOLBAR_GROUPS[LEAD_GROUP]}
+        first
+        openMenu={openMenu}
+        setOpenMenu={setOpenMenu}
+        align="start"
+      />
+    </div>
   )
 }
 
@@ -276,7 +298,7 @@ export function MailToolbarLead() {
  * Un bouton sans capacité est grisé, jamais masqué : la barre ne saute pas quand la
  * sélection change. Ce qui ne tient plus dans la largeur passe dans le menu « … ».
  */
-export function MailToolbar() {
+export function MailToolbar({ shown = true }: ReservedProps) {
   const t = useTranslations('mail')
   const [openMenu, setOpenMenu] = useState<MailActionName | null>(null)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -297,7 +319,12 @@ export function MailToolbar() {
     // `shrink-0` depuis le lot H3c : la barre garde sa largeur naturelle pour que le
     // champ vienne se coller à sa dernière icône. Le budget de repli est donc lu sur
     // la rangée qui la contient, plus sur elle-même (voir `useOverflowGroups`).
-    <div ref={hostRef} data-mail-toolbar className="relative flex shrink-0 items-center">
+    <div
+      ref={hostRef}
+      data-mail-toolbar
+      {...reserved(shown)}
+      className={cn('relative flex shrink-0 items-center', !shown && 'invisible')}
+    >
       {/* Sonde hors écran : la largeur que TOUS les groupes demanderaient, mesurée
           sur le rendu réel. Elle ne se voit pas et ne se clique pas. */}
       <div
