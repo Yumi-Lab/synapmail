@@ -41,6 +41,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — actions sur les mails — 2026-09-20
 
 ### Added
+- **Les lettres d'information dans le tableau de bord** (`app/(app)/dashboard/SubscriptionsCard.tsx`,
+  `lib/explorerSelection.ts`, `lib/subscriptionsContract.ts`) : une section qui annonce COMBIEN de lettres
+  on reçoit, les liste par nombre de messages, et permet d'en quitter plusieurs d'un coup. La sélection
+  obéit aux gestes de l'explorateur (clic, Maj-clic, Cmd/Ctrl-clic, tout sélectionner) — la MÊME règle que
+  la liste des messages, extraite dans `lib/explorerSelection.ts` et partagée, pas recopiée. Quitter une
+  liste est irréversible chez l'expéditeur : une confirmation NOMME ce qui part avant tout envoi, et chaque
+  résultat est rendu ligne par ligne (fait / à terminer à la main, avec le lien AFFICHÉ et jamais ouvert
+  tout seul / échec avec sa cause). Au-delà de 50 sélections le bouton se désactive et propose d'y aller
+  par paquets, plutôt que de laisser l'API refuser. Rien n'a été recodé côté serveur : l'écran consomme
+  l'API du lot N1. Mesuré à la vraie souris sur 178 lettres, tous les envois interceptés.
+
 - **Un contrat OpenAPI 3.1 des routes qu'une clé peut appeler, servi en `/openapi.json`**
   (`docs/openapi.json`, `app/openapi.json/route.ts`, `lib/apiDocs.ts`, `lib/publicPaths.ts`,
   `docs/API.md`, `scripts/check-api-docs.mjs`) : c'est le format que les outils d'agents importent pour
@@ -58,6 +69,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `--break=session`, `--break=ref`) : neuf en tout, neuf attrapés.
 
 ### Fixed
+- **Un nom d'expéditeur encodé se lit comme son expéditeur l'a écrit** (`lib/subscriptions.ts`) : la liste
+  des abonnements lit les en-têtes BRUTS (c'est tout son intérêt : `List-Unsubscribe` n'est pas dans
+  l'enveloppe IMAP), et affichait donc les mots encodés RFC 2047 tels quels —
+  `=?UTF-8?Q?Communications_Amazon=C2=A0Selle?=…` au lieu de `Communications Amazon Seller Central`.
+  Le décodage (base64 et quoted-printable, tout jeu de caractères connu du moteur) se fait au SEUL endroit
+  où le nom est lu, donc la liste, l'historique et la trace en base en profitent ensemble. Un mot malformé
+  ou un jeu de caractères inconnu est laissé INTACT : un nom affiché brut est laid, un nom remplacé par une
+  erreur de décodage serait un mensonge sur qui a écrit. Aucune dépendance ajoutée.
 - **Le contrat servi porte l'adresse à laquelle l'instance répond** (`app/openapi.json/route.ts`,
   `lib/apiDocs.ts`, `docs/openapi.json`, `scripts/check-api-docs.mjs`) : le fichier annonçait une
   adresse « remplacée à l'exécution » alors que la route le servait tel quel — la description était
