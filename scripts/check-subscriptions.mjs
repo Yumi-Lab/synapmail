@@ -25,7 +25,6 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   MAILTO_SUBJECT,
-  MAX_UNSUBSCRIBE_BATCH,
   ONE_CLICK_BODY,
   ONE_CLICK_CONTENT_TYPE,
   RECENT_MESSAGES_SCANNED,
@@ -36,6 +35,7 @@ import {
   isOneClick,
   isPrivateAddress,
   mailtoAddress,
+  decodeEncodedWords,
   mailtoSubject,
   manualUrl,
   methodOf,
@@ -50,6 +50,7 @@ import {
   UNSUBSCRIBE_CONCURRENCY,
   UNSUBSCRIBE_TIMEOUT_MS,
 } from '../lib/subscriptions.ts'
+import { MAX_UNSUBSCRIBE_BATCH } from '../lib/subscriptionsContract.ts'
 
 const ok = label => console.log(`  ok  ${label}`)
 /** Header separator, so a fixture never has to escape it inline. */
@@ -122,6 +123,25 @@ assert.deepEqual(parseAddress('Example News <News@Example.com>'), {
 })
 assert.deepEqual(parseAddress('"Quoted, Name" <a@b.com>'), { name: 'Quoted, Name', address: 'a@b.com' })
 ok('a From value gives a name and a lower-case address')
+
+// RFC 2047 encoded-words in a display name. The first fixture is the real
+// Amazon sender the human gate of M7d saw shown raw on the dashboard.
+assert.deepEqual(
+  parseAddress(
+    '=?UTF-8?Q?Communications_Amazon=C2=A0Selle?= =?UTF-8?Q?r=C2=A0Central_=28ne_pas_r=C3=A9pondre=29?= <news@amazon.test>'
+  ),
+  { name: 'Communications Amazon\u00a0Seller\u00a0Central (ne pas répondre)', address: 'news@amazon.test' }
+)
+assert.equal(parseAddress('=?UTF-8?B?TGV0dHJlIGTigJlpbmZv?= <a@b.test>').name, 'Lettre d\u2019info')
+assert.equal(parseAddress('=?ISO-8859-1?Q?Caf=E9?= <c@d.test>').name, 'Café')
+ok('an encoded display name is decoded, in B and in Q, whatever its charset')
+
+// Negative controls: what must NOT be touched.
+assert.equal(parseAddress('Plain Name <p@q.test>').name, 'Plain Name')
+assert.equal(parseAddress('=?BOGUS-CHARSET?Q?x?= <e@f.test>').name, '=?BOGUS-CHARSET?Q?x?=')
+assert.equal(parseAddress('=?UTF-8?Q?truncated <g@h.test>').name, '=?UTF-8?Q?truncated')
+assert.equal(decodeEncodedWords('a =?UTF-8?Q?b?= c'), 'a b c')
+ok('a plain name, an unknown charset and a malformed word are left untouched')
 
 // A message without any unsubscribe route is not a subscription at all.
 assert.equal(parseSubscriptionHeaders('7', 'From: a@b.com\r\nSubject: hello'), null)
