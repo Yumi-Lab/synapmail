@@ -204,7 +204,8 @@
       "resultSummary": "Résumé",
       "resultTranslation": "Traduction",
       "resultReply": "Brouillon IA, ouvert dans la composition"
-    }
+    },
+    "back": "Retour"
   },
   "compose": {
     "newMessage": "Nouveau message",
@@ -274,7 +275,8 @@
       "ai": "IA Copilot",
       "pgp": "Chiffrement PGP",
       "apiKeys": "Clés API",
-      "admin": "Administration"
+      "admin": "Administration",
+      "branding": "Nom et icône de l'onglet"
     },
     "common": {
       "save": "Enregistrer",
@@ -300,6 +302,7 @@
     },
     "accounts": {
       "title": "Comptes email",
+      "description": "Vos comptes IMAP / SMTP connectés à {appName}",
       "add": "Ajouter un compte",
       "edit": "Modifier",
       "setDefault": "Définir par défaut",
@@ -707,7 +710,25 @@
     "from": "de",
     "newToday": "+{count} aujourd’hui",
     "upToDate": "à jour",
-    "allAccounts": "Tous les comptes"
+    "allAccounts": "Tous les comptes",
+    "subsTitle": "Lettres d’information",
+    "subsCount": "{count, plural, one {# abonnement} other {# abonnements}}",
+    "subsLoading": "Lecture des boîtes…",
+    "subsEmpty": "Aucune lettre d’information dans ces boîtes.",
+    "subsMeta": "{count, plural, one {# message} other {# messages}} · dernier le {date}",
+    "subsMethod_oneClick": "en un clic",
+    "subsMethod_mailto": "par courriel",
+    "subsMethod_link": "par lien",
+    "subsAlreadyLeft": "désabonné le {date}",
+    "subsSelectAll": "Tout sélectionner",
+    "subsSelectNone": "Ne rien sélectionner",
+    "subsUnsubscribe": "Se désabonner",
+    "subsConfirm": "{count, plural, one {# lettre d’information va être quittée. L’expéditeur ne peut pas revenir en arrière. Continuer ?} other {# lettres d’information vont être quittées. L’expéditeur ne peut pas revenir en arrière. Continuer ?}}",
+    "subsTooMany": "{count} sélectionnées : {max} au plus à la fois, désélectionnez-en ou procédez par paquets.",
+    "subsResultDone": "Désabonné.",
+    "subsResultManual": "À terminer à la main sur la page de l’expéditeur :",
+    "subsResultFailed": "Échec : {reason}",
+    "subsResultNotFound": "N’est plus dans cette boîte."
   },
   "pgp": {
     "title": "Chiffrement PGP",
@@ -815,7 +836,9 @@
       "rules": "regles, filtres, sieve, automatisation",
       "ai": "ia, copilote, assistant, modele",
       "pgp": "pgp, chiffrement, gpg, cle, confidentialite",
-      "apiKeys": "api, cle, jeton, token, bearer, mcp, agent, integration"
+      "apiKeys": "api, cle, jeton, token, bearer, mcp, agent, integration",
+      "admin": "admin, administration, utilisateurs, roles, comptes",
+      "branding": "onglet, icône, favicon, titre, nom du site, identité, logo"
     }
   }
 }

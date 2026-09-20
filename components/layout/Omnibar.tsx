@@ -3,14 +3,18 @@
 import Link from 'next/link'
 import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { useSession } from 'next-auth/react'
 import { useTranslations } from 'next-intl'
-import { LayoutGrid, Languages, Menu, Monitor, Moon, PenSquare, Search, Sun, X } from 'lucide-react'
+import { Check, ChevronDown, LayoutGrid, Languages, Menu, Monitor, Moon, PenSquare, Search, Sun, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { UserMenu } from './UserMenu'
 import { MailToolbar, MailToolbarLead } from './MailToolbar'
 import { AccountAvatar, useAccountAccent } from './AccountAvatar'
 import { IconTooltip } from '@/components/ui/IconTooltip'
-import { SETTINGS_NAV } from '@/components/settings/SettingsSidebar'
+import {
+  ContextMenuSurface, ContextMenuItem, MENU_ANCHOR_GAP, MENU_ICON, MENU_MIN_WIDTH, focusMenuItem,
+} from '@/components/ui/ContextMenu'
+import { ADMIN_NAV, SETTINGS_NAV } from '@/components/settings/SettingsSidebar'
 import { useTheme } from '@/components/theme/ThemeProvider'
 import { THEMES, type Theme } from '@/lib/theme'
 import { LOCALES, setLocale } from '@/lib/locales'
@@ -47,6 +51,19 @@ export const OMNIBAR = {
    * barre, et l'espace libre part à sa DROITE, avant la bulle du compte.
    */
   searchGap: 12,
+  /**
+   * Place réservée À L'INTÉRIEUR du champ, à sa droite : la puce de portée puis
+   * l'indication ⌘K (lot H3g). La saisie s'arrête là, donc le texte tapé ne passe
+   * jamais SOUS la puce. Deux valeurs parce que sous `sm` la puce se réduit à son
+   * icône et l'indication ⌘K disparaît — la réserve suit, sinon un champ de 140 px
+   * n'aurait plus de place pour écrire.
+   * Mesuré le 20/09/2026 : puce (icône 14 + libellé borné 92 + chevron 12 + marges)
+   * + ⌘K (26) + écarts = 168 px ; icône seule + marges = 60 px.
+   */
+  searchRightPad: 168,
+  searchRightPadNarrow: 60,
+  /** Au-delà, le libellé de la portée est coupé : la puce ne pousse pas le champ. */
+  scopeLabelMaxWidth: 92,
   /**
    * Width at and above which the bar is a column of its own rather than a drawer —
    * Tailwind's default `lg`, the same breakpoint `AppShell` folds the <aside> on
@@ -123,12 +140,24 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
   const urlQuery = searchParams.get(SEARCH_PARAM) ?? ''
   const scope = readScope(searchParams.get(SCOPE_PARAM))
   const [query, setQuery] = useState(urlQuery)
+  /**
+   * La portée choisie AVANT d'avoir tapé (lot H3g : on choisit la portée puis on
+   * écrit). L'URL reste la SEULE source de vérité — mais elle ne porte le paramètre
+   * que s'il y a une requête (`buildSearchHref`), donc à champ vide il n'y a rien à
+   * relire : ce souvenir tient la place jusqu'à la première frappe, qui l'écrit.
+   */
+  const [pendingScope, setPendingScope] = useState<SearchScope | null>(null)
+  const activeScope = pendingScope ?? scope
   const onMail = pathname === MAIL_PATH
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // L'URL reste la source : une navigation (retour arrière, lien, changement de
   // dossier) réaligne le champ, qui n'en garde jamais une version divergente.
   useEffect(() => setQuery(urlQuery), [urlQuery])
+  // Dès que l'URL porte une portée, elle redevient la seule source : le souvenir
+  // s'efface. Sans cela un retour arrière laisserait la puce désigner une portée
+  // que la liste n'applique plus.
+  useEffect(() => setPendingScope(null), [scope])
 
   const submit = useCallback((next: string, nextScope: SearchScope) => {
     const href = buildSearchHref(searchParams.toString(), next, nextScope)
@@ -154,14 +183,14 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
     setPanelOpen(next.length > 0)
     setPanelIndex(-1)
     if (debounce.current) clearTimeout(debounce.current)
-    debounce.current = setTimeout(() => submit(next, scope), SEARCH_DEBOUNCE_MS)
+    debounce.current = setTimeout(() => submit(next, activeScope), SEARCH_DEBOUNCE_MS)
   }
 
   const clear = () => {
     if (debounce.current) clearTimeout(debounce.current)
     setQuery('')
     closePanel()
-    submit('', scope)
+    submit('', activeScope)
   }
 
   useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current) }, [])
@@ -171,9 +200,40 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
   const tNav = useTranslations('settings.nav')
   const { setTheme } = useTheme()
   const { accounts, switchAccount } = useAccountAccent()
+  // Lot H3h : les entrées d'administration ne sont PROPOSÉES qu'à un administrateur.
+  // Le rôle se lit sur la session, comme `SettingsModal` le fait déjà — et ce n'est
+  // qu'un filtre d'affichage : les routes `/api/admin/*` vérifient le rôle elles-mêmes.
+  const { data: session } = useSession()
+  const isAdmin = (session?.user as { role?: string } | undefined)?.role === 'admin'
   const [panelIndex, setPanelIndex] = useState(-1)
   const [panelOpen, setPanelOpen] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
+
+  // --- Lot H3g : la portée est une puce DANS le champ, pas un contrôle à côté ---
+  const [scopeAnchor, setScopeAnchor] = useState<{ x: number; y: number } | null>(null)
+  const scopeTriggerRef = useRef<HTMLButtonElement>(null)
+  const scopeListRef = useRef<HTMLDivElement>(null)
+  // « Toutes les boîtes » n'a de sens qu'avec plus d'une boîte : avec une seule,
+  // elle ferait doublon avec « Tous les dossiers ». Règle du lot O2, gardée.
+  const offeredScopes = SEARCH_SCOPES.filter(value => value !== SCOPE_ACCOUNTS || accounts.length > 1)
+
+  // Le menu s'aligne sur le bord DROIT de la puce, comme celui d'une ligne de
+  // réglages : il ne peut donc pas déborder à droite d'un champ déjà collé au bord.
+  const openScope = () => {
+    const box = scopeTriggerRef.current?.getBoundingClientRect()
+    if (box) setScopeAnchor({ x: box.right - MENU_MIN_WIDTH, y: box.bottom + MENU_ANCHOR_GAP })
+  }
+  const closeScope = () => setScopeAnchor(null)
+
+  const pickScope = (value: SearchScope) => {
+    closeScope()
+    // Le focus revient au CHAMP, pas à la puce : on choisit une portée POUR écrire.
+    inputRef.current?.focus()
+    setPendingScope(value)
+    if (!query) return
+    if (debounce.current) clearTimeout(debounce.current)
+    submit(query, value)
+  }
 
   /**
    * Les entrees proposables, et ce que chacune FAIT. Une seule table : le libelle,
@@ -230,6 +290,18 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
       run: () => { void setLocale(code) },
     })),
     ...SETTINGS_NAV.map(({ href, key, icon: Icon }) => ({
+      id: `${ENTRY.settings}:${key}`,
+      section: 'settings' as const,
+      label: tNav(key),
+      hint: href,
+      keywords: tOmni(`keywords.${key}` as 'keywords.profile'),
+      icon: <Icon className={ICON} />,
+      run: () => router.push(href),
+    })),
+    // Lot H3h : mêmes lignes, même source unique (`ADMIN_NAV`, partagée avec la
+    // navigation des réglages), pour un administrateur SEULEMENT. « Nom et icône de
+    // l'onglet » mène à l'ancre de sa section, pas en haut d'une page qui ne la nomme pas.
+    ...(isAdmin ? ADMIN_NAV : []).map(({ href, key, icon: Icon }) => ({
       id: `${ENTRY.settings}:${key}`,
       section: 'settings' as const,
       label: tNav(key),
@@ -339,11 +411,17 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
       <div
         ref={panelRef}
         data-omnibar-search-field
-        className="relative flex min-w-0 flex-1 items-center"
+        className="relative flex min-w-0 flex-1 items-center
+          sm:[--synap-search-pad:var(--synap-search-pad-wide)]"
         style={{
           maxWidth: OMNIBAR.searchMaxWidth,
           minWidth: OMNIBAR.searchMinWidth,
           marginLeft: OMNIBAR.searchGap,
+          // Réserve intérieure droite : la puce de portée et l'indication ⌘K se
+          // posent dessus, la saisie s'arrête avant. Une variable, deux lecteurs
+          // (le champ et la classe `sm:` ci-dessous) — jamais deux valeurs écrites.
+          ['--synap-search-pad' as string]: `${OMNIBAR.searchRightPadNarrow}px`,
+          ['--synap-search-pad-wide' as string]: `${OMNIBAR.searchRightPad}px`,
         }}
       >
         <Search className="absolute left-2.5 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
@@ -372,7 +450,7 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
               // courrier exactement comme avant le lot H3f.
               if (showPanel && panelIndex >= 0) { e.preventDefault(); runSuggestion(panelIndex); return }
               closePanel()
-              submit(e.currentTarget.value, scope)
+              submit(e.currentTarget.value, activeScope)
               return
             }
             if (e.key !== 'Escape') return
@@ -384,25 +462,102 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
           placeholder={t('searchMail')}
           aria-label={t('searchMail')}
           data-omnibar-search
-          className="w-full h-8 pl-8 pr-12 text-xs rounded-lg border border-border bg-muted/50
+          style={{ paddingRight: `var(--synap-search-pad)` }}
+          className="w-full h-8 pl-8 text-xs rounded-lg border border-border bg-muted/50
             placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         />
-        {query ? (
-          <IconTooltip label={t('clearSearch')} align="end">
+        {/* Rail droit DANS le champ (lot H3g) : la puce de portée, puis l'effacement
+            ou l'indication ⌘K. Une seule rangée, donc rien ne peut se recouvrir —
+            et la réserve `--synap-search-pad` tient exactement sa largeur. */}
+        <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1.5">
+          <IconTooltip label={t(SCOPE_LABEL[activeScope])} align="end">
             <button
+              ref={scopeTriggerRef}
               type="button"
-              onClick={clear}
-              aria-label={t('clearSearch')}
-              data-omnibar-search-clear
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              data-omnibar-scope-trigger
+              aria-haspopup="menu"
+              aria-expanded={scopeAnchor !== null}
+              aria-label={t(SCOPE_LABEL[activeScope])}
+              onClick={() => (scopeAnchor ? closeScope() : openScope())}
+              onKeyDown={e => {
+                if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+                e.preventDefault()
+                if (!scopeAnchor) openScope()
+                requestAnimationFrame(() => focusMenuItem(scopeListRef.current, e.key === 'ArrowDown' ? 1 : -1))
+              }}
+              className="flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground
+                transition-colors hover:bg-foreground/[0.06] hover:text-foreground
+                focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
-              <X className="w-3.5 h-3.5" />
+              <Search className="h-3 w-3 shrink-0" />
+              {/* Sous `sm` la puce se réduit à son icône : l'infobulle dit la portée. */}
+              <span
+                className="hidden truncate sm:block"
+                style={{ maxWidth: OMNIBAR.scopeLabelMaxWidth }}
+              >
+                {t(SCOPE_LABEL[activeScope])}
+              </span>
+              <ChevronDown className="h-3 w-3 shrink-0" />
             </button>
           </IconTooltip>
-        ) : (
-          <kbd className="absolute right-2 top-1/2 hidden -translate-y-1/2 text-[10px] text-muted-foreground pointer-events-none sm:block">
-            {SEARCH_SHORTCUT}
-          </kbd>
+          {query ? (
+            <IconTooltip label={t('clearSearch')} align="end">
+              <button
+                type="button"
+                onClick={clear}
+                aria-label={t('clearSearch')}
+                data-omnibar-search-clear
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </IconTooltip>
+          ) : (
+            <kbd className="hidden text-[10px] text-muted-foreground pointer-events-none sm:block">
+              {SEARCH_SHORTCUT}
+            </kbd>
+          )}
+        </div>
+
+        {scopeAnchor && (
+          <ContextMenuSurface
+            anchor={scopeAnchor}
+            onClose={closeScope}
+            ignoreRef={scopeTriggerRef}
+            role="menu"
+            data-omnibar-scope-menu
+          >
+            <div
+              ref={scopeListRef}
+              onKeyDown={e => {
+                if (e.key === 'Escape') {
+                  // Échap rend le focus au CHAMP, pas à la puce : on revient écrire.
+                  closeScope()
+                  inputRef.current?.focus()
+                  return
+                }
+                if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+                e.preventDefault()
+                focusMenuItem(scopeListRef.current, e.key === 'ArrowDown' ? 1 : -1)
+              }}
+            >
+              {offeredScopes.map(value => (
+                <ContextMenuItem
+                  key={value}
+                  itemKey={value}
+                  data-omnibar-scope={value}
+                  aria-checked={activeScope === value}
+                  enabled
+                  icon={activeScope === value
+                    ? <Check className={MENU_ICON} />
+                    : <span className={MENU_ICON} aria-hidden />}
+                  label={t(SCOPE_LABEL[value])}
+                  onClick={() => pickScope(value)}
+                  onClose={closeScope}
+                />
+              ))}
+            </div>
+          </ContextMenuSurface>
         )}
 
         {/* Lot H3f : le panneau se deroule SOUS le champ, a sa largeur exacte
@@ -457,7 +612,7 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
                 onClick={() => {
                   if (debounce.current) clearTimeout(debounce.current)
                   closePanel()
-                  submit(query, scope)
+                  submit(query, activeScope)
                 }}
                 className={cn(PANEL_ROW, panelIndex === -1 ? PANEL_ROW_ACTIVE : PANEL_ROW_IDLE)}
               >
@@ -472,39 +627,11 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
       </div>
       </div>
 
-      {/* Right-hand group: the scope toggle only while searching, then the signed-in
-          user. One group, so the field's side reserve has a single thing to clear. */}
+      {/* Right-hand group: the signed-in user. Depuis le lot H3g la portée n'est plus
+          ici — elle est une puce DANS le champ, où l'on choisit AVANT de taper. */}
       {/* `ml-auto` depuis le lot H3c : le champ ne porte plus de marges automatiques,
           c'est donc CE groupe qui absorbe l'espace libre et reste collé au bord droit. */}
       <div data-omnibar-right className="ml-auto flex shrink-0 items-center gap-2 pl-2">
-      {/* Étendue de la recherche — n'apparaît que pendant une recherche, une seule ligne, deux positions */}
-      {query && (
-        <div className="hidden sm:flex shrink-0 items-center rounded-lg border border-border bg-muted/50 p-0.5 text-[11px]">
-          {SEARCH_SCOPES
-            // « Toutes les boîtes » n'a de sens qu'avec plus d'une boîte : avec une
-            // seule, elle ferait doublon avec « Tous les dossiers ».
-            .filter(value => value !== SCOPE_ACCOUNTS || accounts.length > 1)
-            .map(value => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => {
-                if (debounce.current) clearTimeout(debounce.current)
-                submit(query, value)
-              }}
-              data-omnibar-scope={value}
-              aria-pressed={scope === value}
-              className={cn(
-                'px-2 h-6 rounded-md transition-colors',
-                scope === value ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {t(SCOPE_LABEL[value])}
-            </button>
-          ))}
-        </div>
-      )}
-
         <UserMenu />
       </div>
     </header>

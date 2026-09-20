@@ -15,6 +15,14 @@ import {
 } from '@/lib/branding'
 
 const ROUTE = '/api/admin/branding'
+
+/**
+ * Ancre de cette section dans la page d'administration. Source UNIQUE : la section
+ * la porte, et tout ce qui y CONDUIT (palette de l'omnibar, navigation des réglages)
+ * bâtit son lien avec — un identifiant recopié à la main finirait par ne plus
+ * désigner cette section, et le lien mènerait en haut de page sans rien dire.
+ */
+export const BRANDING_ANCHOR = 'branding'
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
 /** Les deux tailles auxquelles un navigateur affiche réellement une favicon. */
@@ -121,7 +129,9 @@ export function BrandingSection() {
   const dirty = (name !== null && name !== branding?.appName) || file !== null
 
   return (
-    <section className="mb-6 rounded-xl border border-border bg-card p-4">
+    // `scroll-mt-*` : arrivé par l'ancre, le titre ne se colle pas sous le haut de
+    // la fenêtre — la hauteur du header de l'application est laissée au-dessus.
+    <section id={BRANDING_ANCHOR} className="mb-6 scroll-mt-16 rounded-xl border border-border bg-card p-4">
       <h2 className="text-sm font-semibold">{t('title')}</h2>
       <p className="mt-1 text-xs text-muted-foreground">{t('description')}</p>
 

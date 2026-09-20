@@ -9,9 +9,14 @@ import { useTranslations, useLocale } from 'next-intl'
 import {
   Mail, Send, Eye, Clock, Sparkles, BarChart3, Users, Filter,
   PenSquare, RefreshCw, ArrowUpRight, Minus, CheckCheck,
-  Paperclip, Star, FileText, AlarmClock, ChevronRight, ChevronDown, Check,
+  Paperclip, Star, FileText, AlarmClock, ChevronRight, ChevronDown, Check, MailX,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { AccountAvatar } from '@/components/layout/AccountAvatar'
+import { AccountPickerFilter, AccountPickerText, useAccountPicker } from '@/components/layout/AccountPicker'
+import { SubscriptionsCard } from './SubscriptionsCard'
+import { ContextMenuSurface, type ContextMenuAnchor } from '@/components/ui/ContextMenu'
+import { accountColor } from '@/lib/accountColor'
 import type { DashboardData, DashboardAccount, FocusReason, ActivityPoint } from '@/types/dashboard'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -462,7 +467,7 @@ export function DashboardClient() {
                     >
                       <span
                         className="grid h-9 w-9 place-items-center rounded-[10px] font-mono text-[13px] font-semibold text-white"
-                        style={{ background: f.accountColor }}
+                        style={{ background: colorOf(d.accounts, f.accountId) ?? undefined }}
                       >
                         {initials(f.fromName, f.fromAddress)}
                       </span>
@@ -474,7 +479,7 @@ export function DashboardClient() {
                           </span>
                           {!scoped && f.accountName && (
                             <span className="inline-flex items-center gap-1">
-                              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: f.accountColor }} />
+                              <AccountBubble accounts={d.accounts} id={f.accountId} />
                               {f.accountName}
                             </span>
                           )}
@@ -545,14 +550,14 @@ export function DashboardClient() {
                       >
                         <div className="flex items-center justify-between gap-2 text-sm">
                           <span className="flex min-w-0 items-center gap-2 font-semibold">
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: a.color }} />
+                            <AccountBubble accounts={d.accounts} id={a.id} />
                             <span className="truncate">{a.name}</span>
                           </span>
                           <span className="font-mono text-sm font-semibold tabular-nums">{a.unread}</span>
                         </div>
                         <div className="truncate pl-3.5 font-mono text-xs text-muted-foreground">{a.email}</div>
                         <div className="mt-1.5 h-[5px] overflow-hidden rounded-full bg-muted">
-                          <div className="h-full rounded-full" style={{ width: `${(a.unread / maxUnread) * 100}%`, background: a.color }} />
+                          <div className="h-full rounded-full" style={{ width: `${(a.unread / maxUnread) * 100}%`, background: colorOf(d.accounts, a.id) ?? undefined }} />
                         </div>
                       </button>
                     </li>
@@ -584,7 +589,7 @@ export function DashboardClient() {
                       <span className="flex items-center gap-1 text-xs text-muted-foreground">
                         {!scoped && r.accountName && (
                           <>
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: r.accountColor ?? '#6366f1' }} />
+                            <AccountBubble accounts={d.accounts} id={r.accountId} />
                             <span className="shrink-0">{r.accountName} ·</span>
                           </>
                         )}
@@ -621,7 +626,7 @@ export function DashboardClient() {
                     <div className="flex items-center gap-1 text-xs text-muted-foreground">
                       {!scoped && s.accountName && (
                         <>
-                          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: s.accountColor ?? '#6366f1' }} />
+                          <AccountBubble accounts={d.accounts} id={s.accountId} />
                           <span className="shrink-0">{s.accountName} ·</span>
                         </>
                       )}
@@ -697,9 +702,26 @@ export function DashboardClient() {
             )}
           </Card>
 
+          {/* Abonnements */}
+          <SubscriptionsCard
+            accounts={d.accounts}
+            filterAccount={filterAccount}
+            renderCard={({ title, action, children }) => (
+              <Card
+                index={7}
+                className="col-span-12 lg:col-span-8"
+                icon={<MailX className="h-[15px] w-[15px]" />}
+                title={title}
+                action={action}
+              >
+                {children}
+              </Card>
+            )}
+          />
+
           {/* Quick compose */}
           <Card
-            index={7}
+            index={8}
             className="col-span-12"
             icon={<PenSquare className="h-[15px] w-[15px]" />}
             title={t('quickComposeTitle')}
@@ -769,12 +791,58 @@ function Kpi({
   )
 }
 
+/**
+ * La boîte que porte une ligne, cherchée par son identifiant. `null` quand la ligne n'en
+ * porte pas, ou quand elle en nomme une que cet écran ne liste pas. Tout ce qui peint une
+ * boîte ici passe par elle, puis par SON rang (`account.rank`) : celui que le serveur a
+ * calculé sur la liste partagée (boîtes possédées + partages actifs), jamais l'index dans
+ * la liste de cet écran. Celle-ci ne montre que les boîtes possédées, donc un index local
+ * glisserait d'un cran par boîte partagée et repeindrait la même boîte d'une autre couleur
+ * que la barre latérale et les réglages — c'est le défaut mesuré au banc le 20/09/2026.
+ */
+const accountOf = (accounts: DashboardAccount[], id: string | null) =>
+  (id ? accounts.find(a => a.id === id) ?? null : null)
+
+/**
+ * La couleur d'une boîte, pour ce que le tableau de bord peint À CÔTÉ de sa bulle
+ * (la vignette d'un expéditeur, une barre de proportion) : exactement la même
+ * fonction que la bulle elle-même, donc jamais une seconde teinte pour la même boîte.
+ */
+const colorOf = (accounts: DashboardAccount[], id: string | null) => {
+  const account = accountOf(accounts, id)
+  return account ? accountColor(account, account.rank) : null
+}
+
+/**
+ * La bulle d'une boîte, sur une ligne du tableau de bord. Elle ne dessine RIEN :
+ * c'est `AccountAvatar`, celui de la barre latérale, nourri du rang de la boîte —
+ * donc les mêmes initiales et la même couleur des deux côtés de l'écran.
+ */
+function AccountBubble({ accounts, id }: { accounts: DashboardAccount[]; id: string | null }) {
+  const account = accountOf(accounts, id)
+  // Une ligne sans boîte (l'enregistrement n'en porte pas) ne montre RIEN plutôt
+  // qu'un repli qui ferait croire à une vraie boîte.
+  if (!account) return null
+  return <AccountAvatar account={account} colorIndex={account.rank} size="xs" />
+}
+
 function Empty({ children }: { children: React.ReactNode }) {
   return (
     <p className="py-6 text-center text-sm text-muted-foreground">{children}</p>
   )
 }
 
+/** Écart entre le bas du bouton et le haut de la liste qu'il ouvre, en px. */
+const PICKER_GAP = 4
+
+/**
+ * Le sélecteur de boîte du tableau de bord. Il ne recode RIEN : la bulle, le texte,
+ * le filtre et son clavier viennent du composant partagé avec la barre latérale
+ * (`components/layout/AccountPicker.tsx`), et la surface qui les porte est celle des
+ * autres menus de l'application (`ContextMenuSurface` : portail, maintien dans
+ * l'écran, fermeture en UN clic qui atteint sa cible). Ce qui lui est propre tient
+ * en une chose : l'entrée « Toutes les boîtes » en tête.
+ */
 function AccountFilter({
   accounts, value, onChange, allLabel,
 }: {
@@ -783,83 +851,115 @@ function AccountFilter({
   onChange: (id: string | null) => void
   allLabel: string
 }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const [anchor, setAnchor] = useState<ContextMenuAnchor | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const open = anchor !== null
 
-  useEffect(() => {
-    if (!open) return
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
+  const pick = (id: string | null) => {
+    onChange(id)
+    setAnchor(null)
+  }
 
-  const current = accounts.find(a => a.id === value) ?? null
-  const rows: { id: string | null; label: string; email?: string; color?: string; unread?: number }[] = [
-    { id: null, label: allLabel },
-    ...accounts.map(a => ({ id: a.id, label: a.name, email: a.email, color: a.color, unread: a.unread })),
-  ]
+  const {
+    filter, setFilter, filtered, highlight, showFilter, inputRef, onKeyDown,
+  } = useAccountPicker({ open, accounts, onPick: pick })
+
+  // La liste s'ouvre SOUS le bouton et alignée sur son bord gauche ; la surface
+  // partagée se charge ensuite de la garder dans l'écran.
+  const toggle = () => {
+    if (open) { setAnchor(null); return }
+    const box = triggerRef.current?.getBoundingClientRect()
+    if (box) setAnchor({ x: box.left, y: box.bottom + PICKER_GAP })
+  }
+
+  const current = accountOf(accounts, value)
+
+  const row = (
+    id: string | null,
+    selected: boolean,
+    highlighted: boolean,
+    body: React.ReactNode,
+  ) => (
+    <button
+      key={id ?? 'all'}
+      type="button"
+      role="option"
+      aria-selected={selected}
+      onClick={() => pick(id)}
+      data-account-highlight={highlighted ? 'true' : undefined}
+      className={cn(
+        'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
+        selected ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400' : 'hover:bg-muted',
+        highlighted && !selected && 'bg-foreground/[0.06]',
+      )}
+    >
+      {body}
+      {selected && <Check className="h-3.5 w-3.5 shrink-0" />}
+    </button>
+  )
 
   return (
-    <div ref={ref} className="relative mt-2 inline-block text-left">
+    <>
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen(o => !o)}
+        onClick={toggle}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="inline-flex items-center gap-2 rounded-lg border border-border bg-card/70 px-2.5 py-1.5 text-xs font-medium backdrop-blur-sm transition-colors hover:bg-card"
+        data-dashboard-account-trigger
+        className="mt-2 inline-flex items-center gap-2 rounded-lg border border-border bg-card/70 px-2.5 py-1.5 text-xs font-medium backdrop-blur-sm transition-colors hover:bg-card"
       >
-        <span
-          className={cn('h-2 w-2 shrink-0 rounded-full', !current && 'bg-gradient-to-br from-violet-500 to-blue-500')}
-          style={current ? { background: current.color } : undefined}
-        />
+        {current
+          ? <AccountAvatar account={current} colorIndex={current.rank} size="sm" />
+          : <Filter className="h-3.5 w-3.5 text-muted-foreground" />}
         {current ? current.name : allLabel}
         <ChevronDown className={cn('h-3.5 w-3.5 text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
 
-      {open && (
-        <div
+      {anchor && (
+        <ContextMenuSurface
+          anchor={anchor}
+          onClose={() => setAnchor(null)}
+          ignoreRef={triggerRef}
           role="listbox"
-          className="absolute left-0 z-20 mt-1.5 w-64 overflow-hidden rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg"
+          data-dashboard-account-list
+          // La surface place et ferme ; la classe n'ajoute que la LARGEUR des lignes
+          // de boîte. `fixed z-[100]` est répété parce qu'un `className` passé à la
+          // surface REMPLACE le sien : `components/ui/ContextMenu.tsx` est tenu hors
+          // de ce lot (la lane `search` le corrige au lot S7), donc pas de fusion ici.
+          className="fixed z-[100] w-72 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-xl"
         >
-          {rows.map(row => {
-            const selected = row.id === value
-            return (
-              <button
-                key={row.id ?? '__all__'}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                onClick={() => { onChange(row.id); setOpen(false) }}
-                className={cn(
-                  'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
-                  selected ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400' : 'hover:bg-muted',
-                )}
-              >
-                <span
-                  className={cn('h-2 w-2 shrink-0 rounded-full', !row.color && 'bg-gradient-to-br from-violet-500 to-blue-500')}
-                  style={row.color ? { background: row.color } : undefined}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{row.label}</span>
-                  {row.email && <span className="block truncate font-mono text-xs text-muted-foreground">{row.email}</span>}
-                </span>
-                {typeof row.unread === 'number' && row.unread > 0 && (
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">{row.unread}</span>
-                )}
-                {selected && <Check className="h-3.5 w-3.5 shrink-0" />}
-              </button>
-            )
-          })}
-        </div>
+          {showFilter && (
+            <div className="p-1">
+              <AccountPickerFilter
+                value={filter}
+                onChange={setFilter}
+                onKeyDown={onKeyDown}
+                inputRef={inputRef}
+              />
+            </div>
+          )}
+          {row(
+            null,
+            value === null,
+            false,
+            <>
+              <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate font-medium">{allLabel}</span>
+            </>,
+          )}
+          {filtered.map((a, i) => row(
+            a.id,
+            a.id === value,
+            i === highlight,
+            <>
+              <AccountAvatar account={a} colorIndex={a.rank} unread={a.unread} size="sm" />
+              <AccountPickerText account={a} />
+            </>,
+          ))}
+        </ContextMenuSurface>
       )}
-    </div>
+    </>
   )
 }
 

@@ -245,6 +245,14 @@ Two ways in:
 curl -H "Authorization: Bearer syn_..." https://your-instance/api/accounts
 ```
 
+### Reading the API from the outside
+
+Three public endpoints, no key needed — an agent reads what the API offers before it has one.
+
+- `/api/docs` — the full reference ([docs/API.md](docs/API.md)) served as Markdown: every route, its parameters, its responses and its access mode.
+- `/llms.txt` — the [llmstxt.org](https://llmstxt.org) entry point for agents: what this instance is, the warning that mail content is untrusted input, and links to the two documents below it.
+- `/openapi.json` — the OpenAPI 3.1 contract of the Bearer-eligible routes only, machine-readable, checked against the code on every build.
+
 ### Accounts
 
 | Method | Path | Bearer | Description |

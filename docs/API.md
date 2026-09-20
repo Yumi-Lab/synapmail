@@ -42,14 +42,14 @@ This file, as `text/markdown; charset=utf-8`.
 `404 { error: 'docs/API.md is missing from this deployment' }` if the image was built without it — a packaging fault, named as one rather than hidden behind a `500`.
 
 ### `GET /llms.txt` — public, no auth
-The [llmstxt.org](https://llmstxt.org) entry point: what this instance is, the warning that mail content is untrusted input, and a link to the reference above. Links are built from the origin of the request — an instance answers under whatever name its owner gave it, so no host is written into the file.
+The [llmstxt.org](https://llmstxt.org) entry point: what this instance is, the warning that mail content is untrusted input, and a link to the reference above. Links are built from the address the owner configured for this instance (`NEXT_PUBLIC_APP_URL`, read at run time), falling back to the forwarded headers when it is absent — never the container host, which nobody outside can reach.
 
 It is `text/plain; charset=utf-8`, as that convention expects.
 
 ### `GET /openapi.json` — public, no auth
 The OpenAPI 3.1 contract of the **Bearer-eligible routes only** — the ones an agent can actually call. Session-only routes are deliberately absent: a contract that describes calls a key cannot make generates code that 401s.
 
-It is `application/json; charset=utf-8`. Each operation carries its parameters, its request body, its responses and the `bearerAuth` scheme; the non-standard envelopes flagged in this document are described as they really are, not normalised into `{ data }`.
+It is `application/json; charset=utf-8`. Its `servers` entry is set as it is served, to the same configured address `/llms.txt` uses, so an importer has an absolute base URL to resolve calls against; the file on disk keeps `/` for the case where nothing says what this instance is called. Each operation carries its parameters, its request body, its responses and the `bearerAuth` scheme; the non-standard envelopes flagged in this document are described as they really are, not normalised into `{ data }`.
 
 `scripts/check-api-docs.mjs` compares it to the code both ways: every Bearer route of the code is an operation, and no operation names a route that does not accept a key.
 

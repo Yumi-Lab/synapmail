@@ -2,8 +2,10 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import { COMPOSE_EVENT, COMPOSE_QUERY, MAIL_PATH } from '@/lib/compose'
 import { SCOPE_PARAM, SEARCH_PARAM, focusSearch, readScope } from '@/lib/search'
+import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, mailboxSwitchHref } from './mailboxUrl'
 import { ArrowLeft } from 'lucide-react'
 import useSWR from 'swr'
 import { MessageList } from '@/components/layout/MessageList'
@@ -29,6 +31,7 @@ type SelectionMode = 'none' | 'single' | 'thread'
 type ComposeKind = 'reply' | 'replyAll' | 'forward'
 
 export function MailClient() {
+  const t = useTranslations('mail')
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('none')
   /**
    * Message ouvert, par son ORIGINE (compte, dossier, uid) : ouvrir un résultat
@@ -62,10 +65,31 @@ export function MailClient() {
 
   const searchParams = useSearchParams()
   const router = useRouter()
-  const folder = searchParams.get('folder') ?? 'INBOX'
+  /**
+   * Un changement de boîte réécrit l'URL dans le même geste, mais le routeur ne
+   * la relit qu'au rendu SUIVANT : pendant ce rendu-là, le compte est déjà le
+   * nouveau et `searchParams` porte encore le dossier de l'ancien — la liste
+   * partait alors chercher ce dossier DANS LA NOUVELLE BOÎTE (mesuré le
+   * 20/09/2026 : 2 requêtes par changement). On lit donc les paramètres à
+   * travers la MÊME fonction qui écrit l'URL, le temps que celle-ci suive :
+   * les deux ne peuvent pas diverger, puisqu'il n'y en a qu'une.
+   */
+  const [switching, setSwitching] = useState(false)
+  /** Les paramètres tels qu'ils seront, une fois l'URL rattrapée. */
+  const switchedParams = useMemo(
+    () => new URLSearchParams(mailboxSwitchHref(searchParams.toString()).split('?')[1] ?? ''),
+    [searchParams],
+  )
+  const caughtUp = switchedParams.toString() === searchParams.toString()
+  const effectiveParams = switching && !caughtUp ? switchedParams : searchParams
+  // L'attente prend fin quand l'URL porte ce que le changement a écrit — mesuré
+  // sur l'URL elle-même, jamais sur une minuterie.
+  useEffect(() => { if (switching && caughtUp) setSwitching(false) }, [switching, caughtUp])
+
+  const folder = effectiveParams.get(FOLDER_PARAM) ?? DEFAULT_FOLDER
   // La recherche vit dans l'URL : la barre d'application l'écrit, la liste la lit.
-  const search = searchParams.get(SEARCH_PARAM) ?? ''
-  const searchScope = readScope(searchParams.get(SCOPE_PARAM))
+  const search = effectiveParams.get(SEARCH_PARAM) ?? ''
+  const searchScope = readScope(effectiveParams.get(SCOPE_PARAM))
 
   const { data: settingsData } = useSWR<{ data: { active_account_id: string | null; list_width: number; reading_pane: boolean; notifications: boolean } }>('/api/settings', fetcher)
   const didInitFromSettings = useRef(false)
@@ -136,14 +160,31 @@ export function MailClient() {
   useEffect(() => {
     const handler = (e: Event) => {
       const id = (e as CustomEvent<string>).detail
+      // La nouvelle boîte s'ouvre sur SA réception : le dossier de l'ancienne
+      // n'existe souvent pas chez elle, et la liste partait le chercher pour
+      // rien. L'URL est lue au moment de l'événement (elle est la source), pas
+      // capturée à l'inscription de l'écouteur.
+      const href = mailboxSwitchHref(window.location.search)
+      // Même idiome que le sélecteur de portée de la barre : seuls des
+      // PARAMÈTRES changent, et `router.replace` refait alors rendre la route
+      // côté serveur (mesuré le 20/09/2026 dans ce dépôt : 4,0 s avant que
+      // l'URL ne bouge). L'API d'historique, que le routeur suit depuis
+      // Next 14.2, met `useSearchParams` à jour au rendu suivant — et ce rendu
+      // a lieu, puisque le compte actif change juste après.
+      if (href !== `${window.location.pathname}${window.location.search}`) {
+        window.history.replaceState(null, '', href)
+      }
+      // Posé dans le MÊME lot que le compte : la liste ne voit jamais un rendu où
+      // le compte a changé mais pas le dossier.
+      setSwitching(true)
       setActiveAccountId(id)
       setSelectedOrigin(null)
       setSelectedThread(null)
       setSelectionMode('none')
       setCurrentMessage(null)
     }
-    window.addEventListener('synapmail:account-change', handler)
-    return () => window.removeEventListener('synapmail:account-change', handler)
+    window.addEventListener(ACCOUNT_CHANGE_EVENT, handler)
+    return () => window.removeEventListener(ACCOUNT_CHANGE_EVENT, handler)
   }, [])
 
   // Listen for notification click / "à traiter" click → open specific message
@@ -153,7 +194,7 @@ export function MailClient() {
       // L'origine voyage entière : le volet lit le message dans SON dossier, sans
       // que la liste ait à changer de dossier d'abord.
       if (targetFolder) {
-        router.push(`/mail?folder=${encodeURIComponent(targetFolder)}`)
+        router.push(`${MAIL_PATH}?${FOLDER_PARAM}=${encodeURIComponent(targetFolder)}`)
       }
       handleSelect({ uid, accountId, folder: targetFolder ?? folder })
       setShowReadingPane(true)
@@ -433,7 +474,7 @@ export function MailClient() {
           <div className="lg:hidden flex items-center gap-2 px-4 py-2 border-b border-border shrink-0">
             <button onClick={handleBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
               <ArrowLeft className="w-4 h-4" />
-              Retour
+              {t('back')}
             </button>
           </div>
         )}

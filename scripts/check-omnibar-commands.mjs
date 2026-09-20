@@ -98,19 +98,46 @@ check('a mots-cles egaux, le libelle qui NOMME la saisie passe devant',
 // --- Source UNIQUE des entrees de reglages ---
 console.log('source des reglages')
 const NAV_SRC = readFileSync(new URL('../components/settings/SettingsSidebar.tsx', import.meta.url), 'utf8')
-const navBlock = NAV_SRC.slice(NAV_SRC.indexOf('export const SETTINGS_NAV'), NAV_SRC.indexOf('] as const', NAV_SRC.indexOf('export const SETTINGS_NAV')))
-const navKeys = [...navBlock.matchAll(/key:\s*'([^']+)'/g)].map(m => m[1])
+/** Les cles d'une table `… = [ … ] as const` de la barre des reglages. */
+const navTableKeys = name => {
+  const from = NAV_SRC.indexOf(`export const ${name}`)
+  const block = NAV_SRC.slice(from, NAV_SRC.indexOf('] as const', from))
+  return [...block.matchAll(/key:\s*'([^']+)'/g)].map(m => m[1])
+}
+const navKeys = navTableKeys('SETTINGS_NAV')
 check('la table de navigation est exportee et non vide', navKeys.length > 0, true)
+
+// Lot H3h : les entrees d'administration vivent dans LEUR table, meme forme et meme
+// role de source unique — la barre des reglages les rend, l'omnibar les propose.
+const adminKeys = navTableKeys('ADMIN_NAV')
+check('la table d\'administration est exportee et non vide', adminKeys.length > 0, true)
+check('« nom et icone de l\'onglet » y figure', adminKeys.includes('branding'), true)
 
 const OMNIBAR_SRC = readFileSync(new URL('../components/layout/Omnibar.tsx', import.meta.url), 'utf8')
 check('l\'omnibar lit SETTINGS_NAV au lieu de recopier les entrees',
   /SETTINGS_NAV/.test(OMNIBAR_SRC), true)
+check('l\'omnibar lit ADMIN_NAV au lieu de recopier les entrees admin',
+  /ADMIN_NAV/.test(OMNIBAR_SRC), true)
+// Ces entrees ne sont PROPOSEES qu'a un administrateur : le rendu est garde par le role.
+check('les entrees admin de l\'omnibar sont gardees par le role',
+  /isAdmin \? ADMIN_NAV : \[\]/.test(OMNIBAR_SRC), true)
+
+// L'ancre de la section reglee est PARTAGEE, jamais recopiee : la barre batit son
+// lien avec `BRANDING_ANCHOR`, que la section porte.
+check('la barre des reglages batit le lien admin avec l\'ancre partagee',
+  /BRANDING_ANCHOR/.test(NAV_SRC), true)
+const BRANDING_SRC = readFileSync(new URL('../components/admin/BrandingSection.tsx', import.meta.url), 'utf8')
+check('la section porte l\'ancre qu\'elle exporte',
+  /export const BRANDING_ANCHOR/.test(BRANDING_SRC) && /id=\{BRANDING_ANCHOR\}/.test(BRANDING_SRC), true)
 
 for (const code of ['en', 'fr', 'zh']) {
   const L = JSON.parse(readFileSync(new URL(`../locales/${code}.json`, import.meta.url), 'utf8'))
-  const missingLabel = navKeys.filter(k => !L.settings?.nav?.[k])
+  // Les deux tables passent le MEME controle : une entree admin sans libelle ou
+  // sans mots-cles serait invisible a la saisie, exactement le defaut du lot H3h.
+  const allKeys = [...navKeys, ...adminKeys]
+  const missingLabel = allKeys.filter(k => !L.settings?.nav?.[k])
   check(`${code} : chaque entree a son libelle`, missingLabel, [])
-  const missingKeywords = navKeys.filter(k => !L.omnibar?.keywords?.[k])
+  const missingKeywords = allKeys.filter(k => !L.omnibar?.keywords?.[k])
   check(`${code} : chaque entree a ses mots-cles`, missingKeywords, [])
   // Chaque mode de theme a SA liste : une liste partagee reintroduirait le defaut.
   const themeKeywordKeys = ['themeLightKeywords', 'themeDarkKeywords', 'themeSystemKeywords']

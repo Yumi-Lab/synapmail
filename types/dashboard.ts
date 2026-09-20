@@ -23,7 +23,15 @@ export interface DashboardAccount {
   id: string
   name: string
   email: string
-  color: string
+  // La couleur CHOISIE par le propriétaire, telle quelle : c'est `accountColor()`
+  // qui tranche entre elle et celle du RANG, du même côté que la barre latérale.
+  // Jamais la vieille colonne `email_accounts.color`.
+  badgeColor: string | null
+  // Le RANG de la boîte dans la liste PARTAGÉE de l'utilisateur (`listAccessibleAccounts`),
+  // celle que sert aussi `/api/accounts`. La couleur automatique est une fonction de ce
+  // rang : le recalculer sur la liste du tableau de bord, plus courte, repeindrait la
+  // même boîte d'une autre couleur que la barre latérale.
+  rank: number
   unread: number
 }
 
@@ -37,7 +45,6 @@ export interface FocusItem {
   uid: string
   accountId: string
   accountName: string
-  accountColor: string
   folder: string
   subject: string
   fromName: string | null
@@ -52,7 +59,8 @@ export interface ReceiptItem {
   openedAt: string
   openCount: number
   accountName: string | null
-  accountColor: string | null
+  /** La boîte, par son id : le client y lit sa bulle (nom, initiales, couleur). */
+  accountId: string | null
 }
 
 export interface ScheduledItem {
@@ -61,7 +69,7 @@ export interface ScheduledItem {
   to: string[]
   sendAt: string
   accountName: string | null
-  accountColor: string | null
+  accountId: string | null
 }
 
 export interface RuleActivityItem {

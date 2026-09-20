@@ -18,7 +18,7 @@ export async function PATCH(
     const {
       name, email, imapHost, imapPort, imapSecure,
       smtpHost, smtpPort, smtpSecure, username, password,
-      isDefault, color, promptGuard, badgeColor,
+      isDefault, promptGuard, badgeColor,
     } = body
 
     // The colour is the only field the user types by hand, so it is the only one the
@@ -62,7 +62,6 @@ export async function PATCH(
     set('smtp_secure', smtpSecure)
     set('username', username)
     set('is_default', isDefault)
-    set('color', color)
     set('prompt_guard', promptGuard)
     set('badge_color', badgeColor)
     if (password) {
@@ -74,7 +73,7 @@ export async function PATCH(
 
     values.push(params.id)
     const result = await query(
-      `UPDATE email_accounts SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, name, email, is_default, color, prompt_guard AS "promptGuard", badge_color AS "badgeColor"`,
+      `UPDATE email_accounts SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, name, email, is_default, prompt_guard AS "promptGuard", badge_color AS "badgeColor"`,
       values
     )
 

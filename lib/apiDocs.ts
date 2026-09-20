@@ -53,3 +53,19 @@ export function buildLlmsTxt(origin: string): string {
     '',
   ].join('\n')
 }
+
+/**
+ * The contract as served: its `servers` entry becomes the absolute address this
+ * instance answers on. The file on disk keeps `/` as the fallback, which is what
+ * a reader gets when nothing tells the instance what it is called.
+ *
+ * An absolute URL and not the relative one on disk because several agent-tool
+ * importers refuse a contract they cannot resolve a base URL from; a relative
+ * `servers` only works for a reader that already knows where it fetched from.
+ */
+export function withServedOrigin(contract: string, origin: string): string {
+  if (!origin) return contract
+  const document = JSON.parse(contract)
+  document.servers = [{ url: origin, description: 'This instance, at the address it answers on.' }]
+  return JSON.stringify(document, null, 2)
+}
