@@ -129,7 +129,7 @@
     "folders": "Folders",
     "switchAccount": "Switch account",
     "searchAllAccounts": "All mailboxes",
-    "searchAllFolders": "All folders",
+    "searchAllFolders": "This mailbox",
     "searchThisFolder": "This folder",
     "clearSearch": "Clear search",
     "searchResults": "{count, plural, one {# result} other {# results}} for “{query}”",
