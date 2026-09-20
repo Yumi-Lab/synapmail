@@ -69,6 +69,14 @@ const TYPE_ATTEMPTS = 4
 const TYPE_SETTLE_MS = 900
 
 const NEGATIVE = process.argv.includes('--negative')
+/**
+ * Second controle negatif, pour le critere AJOUTE par le lot H4c-bis (« une boite qui a
+ * des non-lus porte son compteur ») : il rejoue l'etat d'AVANT, ou Reglages -> Comptes et
+ * la palette peignaient la bulle sans jamais nourrir le compteur. Sans lui, ce critere
+ * pourrait etre vert sans rien mesurer — le premier controle negatif ne repeint que la
+ * COULEUR des compteurs deja presents, il ne les fait pas disparaitre.
+ */
+const NEGATIVE_MISSING = process.argv.includes('--negative-missing')
 
 const BUBBLE = '[data-account-badge]'
 const SIDEBAR_ACCOUNT = '[data-sidebar-row="account"]'
@@ -135,6 +143,20 @@ try {
     return res.ok
   }, { base: BASE, email: EMAIL, password: PASSWORD })
   if (!loggedIn) harness('connexion refusee')
+
+  if (NEGATIVE_MISSING) {
+    // L'etat d'AVANT H4c-bis : sur ces deux ecrans la bulle est peinte, le compteur
+    // n'est jamais nourri. On retire donc le compteur des bulles qui ne sont NI dans la
+    // barre laterale NI dans le tableau de bord — exactement les deux ecrans du lot.
+    await page.evaluateOnNewDocument(() => {
+      setInterval(() => {
+        for (const b of document.querySelectorAll('[data-unread-badge]')) {
+          if (b.closest('[data-sidebar]') || b.closest('[data-dashboard-account-trigger]')) continue
+          if (b.closest('[data-omnibar-panel]') || b.closest('[data-account-row]')) b.remove()
+        }
+      }, 50)
+    })
+  }
 
   if (NEGATIVE) {
     // L'etat d'AVANT le correctif, rejoue dans la page : le compteur reprend l'accent du
@@ -382,12 +404,16 @@ if (assertedCounters < MIN_COUNTERS) {
     + '— le banc n\'a pas assez mesure pour conclure quoi que ce soit sur le produit')
   process.exit(2)
 }
-if (NEGATIVE) {
+for (const [flag, on, what] of [
+  ['--negative', NEGATIVE, 'l\'accent du compte actif est rejoue'],
+  ['--negative-missing', NEGATIVE_MISSING, 'le compteur est retire de Reglages -> Comptes et de la palette'],
+]) {
+  if (!on) continue
   if (failures.length) {
-    console.log(`check-account-badge-color --negative : rouge comme attendu (${failures.length} echec(s))`)
+    console.log(`check-account-badge-color ${flag} : rouge comme attendu (${failures.length} echec(s))`)
     process.exit(0)
   }
-  console.error('check-account-badge-color --negative : VERT alors que l\'accent du compte actif est rejoue — le banc ne mesure rien')
+  console.error(`check-account-badge-color ${flag} : VERT alors que ${what} — le banc ne mesure rien`)
   process.exit(1)
 }
 if (failures.length) {
