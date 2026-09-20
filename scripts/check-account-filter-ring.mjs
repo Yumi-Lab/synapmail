@@ -93,6 +93,11 @@ const MEASURE = fallback => {
     const r = R(el)
     const box = { t: r.t - grow, l: r.l - grow, b: r.b + grow, r: r.r + grow }
     let worst = null
+    // La marche part du PARENT, JAMAIS de l'élément : un `input` porte `overflow: clip` par
+    // défaut du navigateur, donc se prendre lui-même pour cage revient à comparer sa boîte à
+    // elle-même dilatée de l'anneau — soit -épaisseur en haut ET en bas, sur tout écran. C'est
+    // la signature arithmétique d'un banc tiers qui a conclu « -2/-2 à 390 px » le 20/09, là où
+    // la marche depuis le parent lit +5 px (mesuré le 21/09, local ET staging).
     for (let p = el.parentElement; p && p !== bar.parentElement; p = p.parentElement) {
       const s = getComputedStyle(p)
       if (!/hidden|auto|scroll|clip/.test(s.overflowX + s.overflowY)) continue
