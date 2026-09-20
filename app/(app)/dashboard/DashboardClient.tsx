@@ -12,6 +12,8 @@ import {
   Paperclip, Star, FileText, AlarmClock, ChevronRight, ChevronDown, Check,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { AccountAvatar } from '@/components/layout/AccountAvatar'
+import { AccountPickerFilter, AccountPickerText, useAccountPicker } from '@/components/layout/AccountPicker'
 import type { DashboardData, DashboardAccount, FocusReason, ActivityPoint } from '@/types/dashboard'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -474,7 +476,7 @@ export function DashboardClient() {
                           </span>
                           {!scoped && f.accountName && (
                             <span className="inline-flex items-center gap-1">
-                              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: f.accountColor }} />
+                              <AccountDot color={f.accountColor} />
                               {f.accountName}
                             </span>
                           )}
@@ -545,7 +547,7 @@ export function DashboardClient() {
                       >
                         <div className="flex items-center justify-between gap-2 text-sm">
                           <span className="flex min-w-0 items-center gap-2 font-semibold">
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: a.color }} />
+                            <AccountDot color={a.color} />
                             <span className="truncate">{a.name}</span>
                           </span>
                           <span className="font-mono text-sm font-semibold tabular-nums">{a.unread}</span>
@@ -584,7 +586,7 @@ export function DashboardClient() {
                       <span className="flex items-center gap-1 text-xs text-muted-foreground">
                         {!scoped && r.accountName && (
                           <>
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: r.accountColor ?? '#6366f1' }} />
+                            <AccountDot color={r.accountColor} />
                             <span className="shrink-0">{r.accountName} ·</span>
                           </>
                         )}
@@ -621,7 +623,7 @@ export function DashboardClient() {
                     <div className="flex items-center gap-1 text-xs text-muted-foreground">
                       {!scoped && s.accountName && (
                         <>
-                          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: s.accountColor ?? '#6366f1' }} />
+                          <AccountDot color={s.accountColor} />
                           <span className="shrink-0">{s.accountName} ·</span>
                         </>
                       )}
@@ -769,12 +771,31 @@ function Kpi({
   )
 }
 
+/**
+ * La pastille d'une boîte, sur une ligne de mail. Sa couleur est résolue par le
+ * serveur (`accountColor`, `lib/accountColor.ts`) et rendue telle quelle : pas de
+ * repli écrit ici, qui serait une SECONDE source pour une couleur de boîte.
+ */
+function AccountDot({ color }: { color: string | null }) {
+  // Une ligne sans boîte (l'enregistrement n'en porte pas) n'a pas de couleur : on
+  // ne peint alors RIEN plutôt qu'un repli qui ferait croire à une vraie boîte.
+  if (!color) return null
+  return <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+}
+
 function Empty({ children }: { children: React.ReactNode }) {
   return (
     <p className="py-6 text-center text-sm text-muted-foreground">{children}</p>
   )
 }
 
+/**
+ * Le sélecteur de boîte du tableau de bord. Il ne recode RIEN : la bulle, le texte,
+ * le filtre et son clavier viennent du composant partagé avec la barre latérale
+ * (`components/layout/AccountPicker.tsx`). Ce qui lui est propre tient en deux
+ * choses : l'entrée « Toutes les boîtes » en tête, et le fait que la liste s'ouvre
+ * en surface flottante plutôt que dans le flux d'une barre.
+ */
 function AccountFilter({
   accounts, value, onChange, allLabel,
 }: {
@@ -786,25 +807,35 @@ function AccountFilter({
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
+  const pick = (id: string | null) => {
+    onChange(id)
+    setOpen(false)
+  }
+
+  const {
+    filter, setFilter, filtered, highlight, showFilter, inputRef, onKeyDown,
+  } = useAccountPicker({ open, accounts, onPick: pick })
+
   useEffect(() => {
     if (!open) return
+    // `click`, et non `mousedown` : le même clic doit atteindre sa cible sous le
+    // panneau, sans second clic ni zone morte.
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('click', onDoc)
     document.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('click', onDoc)
       document.removeEventListener('keydown', onKey)
     }
   }, [open])
 
   const current = accounts.find(a => a.id === value) ?? null
-  const rows: { id: string | null; label: string; email?: string; color?: string; unread?: number }[] = [
-    { id: null, label: allLabel },
-    ...accounts.map(a => ({ id: a.id, label: a.name, email: a.email, color: a.color, unread: a.unread })),
-  ]
+  // Le rang d'une boîte décide sa couleur automatique : il est lu dans la liste
+  // COMPLÈTE, jamais dans la liste filtrée — sinon une frappe repeindrait les lignes.
+  const rankOf = (id: string) => accounts.findIndex(a => a.id === id)
 
   return (
     <div ref={ref} className="relative mt-2 inline-block text-left">
@@ -813,12 +844,12 @@ function AccountFilter({
         onClick={() => setOpen(o => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
+        data-dashboard-account-trigger
         className="inline-flex items-center gap-2 rounded-lg border border-border bg-card/70 px-2.5 py-1.5 text-xs font-medium backdrop-blur-sm transition-colors hover:bg-card"
       >
-        <span
-          className={cn('h-2 w-2 shrink-0 rounded-full', !current && 'bg-gradient-to-br from-violet-500 to-blue-500')}
-          style={current ? { background: current.color } : undefined}
-        />
+        {current
+          ? <AccountAvatar account={current} colorIndex={rankOf(current.id)} size="sm" />
+          : <Filter className="h-3.5 w-3.5 text-muted-foreground" />}
         {current ? current.name : allLabel}
         <ChevronDown className={cn('h-3.5 w-3.5 text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
@@ -826,33 +857,51 @@ function AccountFilter({
       {open && (
         <div
           role="listbox"
-          className="absolute left-0 z-20 mt-1.5 w-64 overflow-hidden rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg"
+          data-dashboard-account-list
+          className="absolute left-0 z-20 mt-1.5 w-72 overflow-hidden rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg"
         >
-          {rows.map(row => {
-            const selected = row.id === value
+          {showFilter && (
+            <div className="p-1">
+              <AccountPickerFilter
+                value={filter}
+                onChange={setFilter}
+                onKeyDown={onKeyDown}
+                inputRef={inputRef}
+              />
+            </div>
+          )}
+          <button
+            type="button"
+            role="option"
+            aria-selected={value === null}
+            onClick={() => pick(null)}
+            className={cn(
+              'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
+              value === null ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400' : 'hover:bg-muted',
+            )}
+          >
+            <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate font-medium">{allLabel}</span>
+            {value === null && <Check className="h-3.5 w-3.5 shrink-0" />}
+          </button>
+          {filtered.map((a, i) => {
+            const selected = a.id === value
             return (
               <button
-                key={row.id ?? '__all__'}
+                key={a.id}
                 type="button"
                 role="option"
                 aria-selected={selected}
-                onClick={() => { onChange(row.id); setOpen(false) }}
+                onClick={() => pick(a.id)}
+                data-account-highlight={i === highlight ? 'true' : undefined}
                 className={cn(
                   'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
                   selected ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400' : 'hover:bg-muted',
+                  i === highlight && !selected && 'bg-foreground/[0.06]',
                 )}
               >
-                <span
-                  className={cn('h-2 w-2 shrink-0 rounded-full', !row.color && 'bg-gradient-to-br from-violet-500 to-blue-500')}
-                  style={row.color ? { background: row.color } : undefined}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{row.label}</span>
-                  {row.email && <span className="block truncate font-mono text-xs text-muted-foreground">{row.email}</span>}
-                </span>
-                {typeof row.unread === 'number' && row.unread > 0 && (
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">{row.unread}</span>
-                )}
+                <AccountAvatar account={a} colorIndex={rankOf(a.id)} unread={a.unread} size="sm" />
+                <AccountPickerText account={a} />
                 {selected && <Check className="h-3.5 w-3.5 shrink-0" />}
               </button>
             )
