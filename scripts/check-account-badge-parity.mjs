@@ -78,7 +78,19 @@ const check = (label, ok, detail = '') => {
   console.error(`  FAIL ${label}${detail ? `\n       ${detail}` : ''}`)
   failures.push(label)
 }
-const harness = msg => { console.error(`HARNESS: ${msg}`); process.exit(2) }
+/**
+ * Sortie d'OUTILLAGE : le banc n'a rien pu mesurer, il ne conclut RIEN sur le produit.
+ * `process.exit` court-circuite le `finally`, donc le navigateur est tué ICI : sans cela
+ * chaque passage interrompu laissait un Chrome sans tête derrière lui (mesuré : 44
+ * processus orphelins, charge moyenne 288, les passages suivants expirant sur le
+ * protocole — une panne de banc que rien ne distinguait d'une panne de produit).
+ */
+let liveBrowser = null
+const harness = msg => {
+  console.error(`HARNESS: ${msg}`)
+  liveBrowser?.process()?.kill('SIGKILL')
+  process.exit(2)
+}
 
 /**
  * Le défaut ne se manifeste QUE sur un compte qui voit une boîte dont il n'est pas
@@ -115,6 +127,7 @@ await db.connect().catch(e => harness(`base injoignable — ${e.message}`))
 
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox'], protocolTimeout: 240000 })
   .catch(e => harness(`Chrome ne démarre pas — ${e.message}`))
+liveBrowser = browser
 
 try {
   const page = await browser.newPage()
@@ -231,11 +244,19 @@ try {
 
   // 3. + 4. Le tableau de bord : ses pastilles de mails, puis son sélecteur déplié.
   await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector(DASHBOARD_TRIGGER).catch(() => null)
+  // Le sélecteur est l'un des QUATRE écrans que le gate humain exige. S'il ne s'ouvre
+  // pas, le banc n'a pas le droit de conclure : il le passait en silence et rendait un
+  // vert qui ne couvrait que trois écrans sur quatre (mesuré : 0 bulle lue côté
+  // sélecteur, aucune ligne au rapport, sortie 0).
+  await page.waitForSelector(DASHBOARD_TRIGGER)
+    .catch(() => harness('le sélecteur du tableau de bord ne rend pas son bouton — '
+      + 'un des quatre écrans exigés ne peut pas être lu'))
   const dashboardRows = await readScreen('tableau de bord (pastilles de mails)')
-  const hasTrigger = await page.$(DASHBOARD_TRIGGER)
-  if (hasTrigger) await page.click(DASHBOARD_TRIGGER)
-  const dashboardPicker = hasTrigger ? await readScreen('tableau de bord (sélecteur)') : {}
+  await page.click(DASHBOARD_TRIGGER)
+  const dashboardPicker = await readScreen('tableau de bord (sélecteur)')
+  if (!Object.keys(dashboardPicker).length) {
+    harness('le sélecteur du tableau de bord s\'est ouvert sans peindre une seule bulle')
+  }
 
   const screens = [
     ['barre latérale', sidebar],
