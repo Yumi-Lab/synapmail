@@ -44,8 +44,14 @@ const HIDDEN_MAX = 0.1
 
 const NEGATIVE = process.argv.includes('--negative')
 
-/** L'attribut publie par `components/ui/SelectableBubble.tsx`. */
+/** L'attribut publie par `components/ui/SelectableBubble.tsx`, cote newsletters. */
 const BOX = '[data-select-box]'
+// L'ecran de REFERENCE (la liste des messages) appartient a la lane
+// `mailactions` : ce banc ne le modifie pas et n'y ajoute aucun attribut. Sa
+// bulle-case est la PREMIERE case de la ligne (grille `auto_1fr`), et son etat
+// se LIT dans ses calques, comme l'oeil le lit : une seule couche, porteuse de
+// la coche et non absolue, c'est une ligne cochee.
+const MAIL_BOX = null
 const SUBS_LIST = '[data-subs-list]'
 const SUBS_ROW = '[data-subs-row]'
 const MAIL_ROW = '[data-mail-row]'
@@ -89,10 +95,10 @@ liveBrowser = browser
  * case, celle de la bulle qu'elle recouvre, et les opacites calculees des deux
  * calques. Tout est LU dans la page, rien n'est suppose.
  */
-const readBox = (page, rowSel, i) => page.evaluate((rowSel, i, boxSel) => {
+const readBox = (page, rowSel, i, boxSel = BOX) => page.evaluate((rowSel, i, boxSel) => {
   const row = document.querySelectorAll(rowSel)[i]
   if (!row) return null
-  const box = row.querySelector(boxSel)
+  const box = boxSel ? row.querySelector(boxSel) : row.firstElementChild
   if (!box) return null
   const rect = el => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height } }
   // Le calque de la case VIDE est le seul enfant direct porteur d'un fond
@@ -105,13 +111,17 @@ const readBox = (page, rowSel, i) => page.evaluate((rowSel, i, boxSel) => {
     box: rect(el),
   }))
   const bubble = box.querySelector('[data-account-badge], [data-account-initial]')
+  // Quand l'ecran ne PUBLIE pas son etat (la liste des messages, hors perimetre
+  // de cette lane), on le lit dans ce qui est dessine : la case cochee REMPLACE
+  // la bulle, il ne reste donc qu'un seul calque, porteur de la coche.
+  const drawn = layers.length === 1 && layers[0].hasSvg && !layers[0].absolute ? 'checked' : 'unchecked'
   return {
-    state: box.getAttribute('data-select-box'),
+    state: box.getAttribute('data-select-box') ?? drawn,
     box: rect(box),
     bubble: bubble ? rect(bubble.closest('span,div') ?? bubble) : null,
     layers,
   }
-}, rowSel, i, BOX)
+}, rowSel, i, boxSel)
 
 try {
   const page = await browser.newPage()
@@ -175,17 +185,19 @@ try {
     .catch(() => harness('la liste des messages ne rend aucune ligne'))
   await new Promise(r => setTimeout(r, SETTLE_MS))
 
-  const mailRest = await readBox(page, MAIL_ROW, 0)
+  const mailRest = await readBox(page, MAIL_ROW, 0, MAIL_BOX)
   if (!mailRest) harness('la premiere ligne de messages ne porte pas de bulle-case')
   check('messages : au repos la ligne n\'est pas cochee', mailRest.state === 'unchecked', String(mailRest.state))
   const mailEmptyLayer = mailRest.layers.find(l => l.absolute && l.hasSvg)
   check('messages : au repos la case vide est invisible',
     !!mailEmptyLayer && mailEmptyLayer.opacity <= HIDDEN_MAX, JSON.stringify(mailRest.layers))
 
-  const mailBoxEl = await page.$(`${MAIL_ROW} ${BOX}`)
+  const mailBoxEl = (await page.evaluateHandle(
+    sel => document.querySelector(sel)?.firstElementChild, MAIL_ROW)).asElement()
+  if (!mailBoxEl) harness('la premiere ligne de messages ne porte pas de bulle')
   await mailBoxEl.hover()
   await new Promise(r => setTimeout(r, HOVER_MS))
-  const mailHover = await readBox(page, MAIL_ROW, 0)
+  const mailHover = await readBox(page, MAIL_ROW, 0, MAIL_BOX)
   const mailHoverEmpty = mailHover.layers.find(l => l.absolute && l.hasSvg)
   const mailHoverBubble = mailHover.layers.find(l => !l.absolute)
   check('messages : au survol la case vide apparait',
@@ -195,7 +207,7 @@ try {
 
   await mailBoxEl.click()
   await new Promise(r => setTimeout(r, SETTLE_MS))
-  const mailChecked = await readBox(page, MAIL_ROW, 0)
+  const mailChecked = await readBox(page, MAIL_ROW, 0, MAIL_BOX)
   check('messages : un clic sur la bulle coche la ligne', mailChecked.state === 'checked', String(mailChecked.state))
   const mailTick = mailChecked.layers.find(l => l.hasSvg)
   check('messages : la case cochee porte sa coche, pleinement visible',
