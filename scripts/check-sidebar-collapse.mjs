@@ -747,6 +747,13 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
     // Account bubbles are excluded: their palette is deliberately multi-colour and is
     // contrast-gated above. Everything else the bar paints must share one accent hue.
     if (el.hasAttribute('data-account-initial') || el.querySelector('[data-account-initial]')) continue
+    // Lot H4c: an account's unread counter carries the colour of ITS box, by the same
+    // source as the bubble it hangs on — so the eight counters of the mailbox list are
+    // as deliberately multi-colour as the eight bubbles, and for the same reason. Only
+    // the counters that say `account` are excluded: a FOLDER counter still follows the
+    // active account's accent, so it stays measured here and a second hue family
+    // appearing on one would still fail this check.
+    if (el.getAttribute('data-unread-badge') === 'account') continue
     // A gradient lives in background-IMAGE and a ring/glow in box-SHADOW: both compute
     // background-color to transparent, so reading that property alone is blind to exactly
     // the two decorations this lot removes. Every colour token of all three is measured.
