@@ -5,7 +5,77 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — fork Yumi-Lab (branche `yumi`) — recherche, suite — 2026-09-20
+
+### Added
+- **Troisième portée de recherche : « Toutes les boîtes »** (`lib/search.ts`, `app/api/messages/search/`)
+  — le même flux progressif, étendu à toutes les boîtes accessibles (les siennes plus celles reçues en
+  partage actif). La boîte active passe en premier, au plus `ACCOUNT_CONCURRENCY` boîtes sont ouvertes
+  de front, chacune en deux passes (réception et envoyés d'abord). Une boîte injoignable est signalée
+  en fin de flux au lieu d'arrêter les autres. Mesuré sur le compte de test (8 boîtes) : premier
+  résultat à **1,1-1,3 s**, balayage complet 65 s.
+- **`docs/RECHERCHE-CORPS.md`** : ce que coûterait une recherche dans le CORPS des messages. IONOS
+  refuse `BODY` et `TEXT` par `NO full text search not supported` (ce n'est pas « zéro résultat ») ;
+  la seule voie serait un index local, chiffré dans la note. Aucun code produit : la décision
+  appartient au produit, car un index local STOCKE le texte des mails sur le serveur.
+
+### Changed
+- **L'identité d'un message est un triplet** `{ compte, dossier, uid }` (`lib/mailOrigin.ts`) : un uid
+  n'est unique que dans un dossier d'une boîte. Un résultat de recherche s'ouvre et s'actionne
+  désormais dans SON dossier et SA boîte, au lieu du dossier affiché.
+- **La règle de partage ne s'écrit plus qu'à un endroit** (`lib/accountAccess.ts`) : « ce partage
+  donne accès maintenant » existait en quatre exemplaires (liste des comptes, recherche « Toutes les
+  boîtes », `lib/subscriptions.ts`, et ici) et la clause de péremption en cinq. Un partage qui gagne
+  un état ou une date est désormais une seule correction. Garde : `scripts/check-share-rule.mjs`,
+  qui refuse toute nouvelle copie et vérifie que les quatre appelants passent bien par la source.
+
+### Fixed
+- **Deux boîtes qui partagent un uid ne s'effacent plus l'une l'autre** (`lib/search.ts`) : en portée
+  « Toutes les boîtes », l'accumulation des résultats dédoublonnait sur dossier + uid. Deux messages
+  sans rapport portant l'uid 3231 dans l'« INBOX » de deux boîtes se confondaient, et l'un des deux
+  DISPARAISSAIT de la liste sans rien dire. La clé est maintenant l'origine complète (`originKey`,
+  la même source que le reste du parcours). Garde : `scripts/check-search-order.mjs`.
+
+---
+
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — actions sur les mails — 2026-09-20
+
+### Added
+- **Un contrat OpenAPI 3.1 des routes qu'une clé peut appeler, servi en `/openapi.json`**
+  (`docs/openapi.json`, `app/openapi.json/route.ts`, `lib/apiDocs.ts`, `lib/publicPaths.ts`,
+  `docs/API.md`, `scripts/check-api-docs.mjs`) : c'est le format que les outils d'agents importent pour
+  écrire leurs appels tout seuls. Il décrit les 20 couples méthode/route ouverts à une clé `syn_…`, et
+  EUX SEULS : y mettre une route « session only » produirait du code généré qui répond 401 à chaque
+  appel. Les enveloppes non standard déjà signalées dans la doc y sont décrites telles quelles plutôt
+  que normalisées, et l'objet `aiSafety` y figure avec son avertissement — un agent qui importe le
+  contrat sans lire la prose doit quand même apprendre que le contenu d'un mail est une donnée non
+  fiable. L'adresse des serveurs est relative : un hôte écrit dans le fichier enverrait les agents vers
+  la boîte de quelqu'un d'autre. Le fichier est PUBLIC, comme `/api/docs` et `/llms.txt`, qui le cite
+  désormais. Le contrôle doc ↔ code s'étend dans les deux sens (aucune route Bearer absente du contrat,
+  aucune route du contrat qui refuserait une clé) et vérifie la structure sans dépendance nouvelle :
+  version 3.1, schéma `bearerAuth` exigé par défaut, chaque opération identifiée, répondue et
+  authentifiée, chaque `$ref` résolu. Trois contrôles négatifs de plus (`--break=contract`,
+  `--break=session`, `--break=ref`) : neuf en tout, neuf attrapés.
+
+### Fixed
+- **Le contrat servi porte l'adresse à laquelle l'instance répond** (`app/openapi.json/route.ts`,
+  `lib/apiDocs.ts`, `docs/openapi.json`, `scripts/check-api-docs.mjs`) : le fichier annonçait une
+  adresse « remplacée à l'exécution » alors que la route le servait tel quel — la description était
+  fausse et l'entrée `servers` restait `/`. Plusieurs importeurs d'outils d'agents refusent un contrat
+  dont ils ne peuvent pas résoudre l'adresse de base. La route pose maintenant `servers` au moment de
+  servir, depuis la même `appOrigin()` que `/llms.txt` : adresse configurée d'abord, en-têtes
+  transférés à défaut, hôte du conteneur jamais. Le fichier sur disque garde `/` comme repli, pour le
+  cas où rien ne dit à l'instance comment elle s'appelle. Quatre contrôles de plus, dont un contrôle
+  négatif `--break=servers` : servir ne change QUE l'entrée `servers`, et la route passe par cet unique
+  assistant au lieu d'en recopier la logique.
+
+### Documentation
+- **La doc dit d'où viennent les liens servis** (`docs/API.md`, `README.md`) : l'entrée `GET /llms.txt`
+  affirmait encore que les liens sont construits « depuis l'origine de la requête », ce qui est faux
+  depuis `appOrigin()`. Elle nomme désormais l'adresse configurée puis les en-têtes transférés, et
+  l'entrée `GET /openapi.json` dit que son `servers` est posé au moment de servir. Le README gagne une
+  sous-section « Reading the API from the outside » qui liste en une ligne chacun les trois points
+  publics — `/api/docs`, `/llms.txt`, `/openapi.json` — qu'un agent lit avant d'avoir une clé.
 
 ### Fixed
 - **Les liens publics portent l'adresse de l'instance, jamais l'hôte du conteneur**

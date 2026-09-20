@@ -189,7 +189,7 @@ export async function GET(req: Request) {
     // au lieu d'être recalculé côté client sur cette liste réduite : recalculé là,
     // il ne serait plus celui de la barre latérale.
     const rankById = new Map(accounts.map((a, rank) => [a.id, rank]))
-    const ownedAccounts = accounts.filter(a => a.owner_id === userId)
+    const ownedAccounts = accounts.filter(a => a.user_id === userId)
     const accountById = new Map(accounts.map(a => [a.id, a]))
     // La couleur n'est PAS résolue ici : la liste des boîtes part avec la couleur
     // CHOISIE et son RANG (l'ordre de `accountOrderBy`), et chaque vignette de mail

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import { COMPOSE_EVENT, COMPOSE_QUERY, MAIL_PATH } from '@/lib/compose'
 import { SCOPE_PARAM, SEARCH_PARAM, focusSearch, readScope } from '@/lib/search'
 import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, mailboxSwitchHref } from './mailboxUrl'
@@ -30,6 +31,7 @@ type SelectionMode = 'none' | 'single' | 'thread'
 type ComposeKind = 'reply' | 'replyAll' | 'forward'
 
 export function MailClient() {
+  const t = useTranslations('mail')
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('none')
   /**
    * Message ouvert, par son ORIGINE (compte, dossier, uid) : ouvrir un résultat
@@ -472,7 +474,7 @@ export function MailClient() {
           <div className="lg:hidden flex items-center gap-2 px-4 py-2 border-b border-border shrink-0">
             <button onClick={handleBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
               <ArrowLeft className="w-4 h-4" />
-              Retour
+              {t('back')}
             </button>
           </div>
         )}

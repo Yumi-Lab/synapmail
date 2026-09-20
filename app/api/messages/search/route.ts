@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
-import { ACCESSIBLE_ACCOUNT_IDS, ACCESSIBLE_ORDER_BY, getAccessibleAccount } from '@/lib/accountAccess'
+import { getAccessibleAccount, listAccessibleAccounts } from '@/lib/accountAccess'
+import type { DbEmailAccount } from '@/lib/accounts'
 import { listFolderPasses, listFolders, listFoldersRanked, searchMessagesByFolder, searchMessagesIn } from '@/lib/imap'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import {
@@ -12,15 +13,8 @@ import {
 
 export const dynamic = 'force-dynamic'
 
-type AccountRow = {
-  id: string; email: string; imap_host: string; imap_port: number; imap_secure: boolean;
-  username: string; password_encrypted: string; prompt_guard: boolean;
-  oauth_provider: string | null; oauth_access_token: string | null;
-  oauth_refresh_token: string | null; oauth_expires_at: number | null;
-}
-
 /** La configuration IMAP d'une boîte — même forme pour les trois portées. */
-function imapConfig(row: AccountRow) {
+function imapConfig(row: DbEmailAccount) {
   return {
     id: row.id,
     imapHost: row.imap_host,
@@ -48,22 +42,6 @@ function streamedMessages<T extends { date: string }>(messages: T[], accountId: 
     .map(m => ({ ...m, accountId }))
 }
 
-/**
- * Les boîtes que cet utilisateur peut RÉELLEMENT balayer, avec leurs identifiants de
- * connexion. La RÈGLE d'accès et l'ORDRE ne sont pas réécrits ici : ce sont ceux de
- * `lib/accountAccess.ts`, les mêmes que ceux dont le tableau de bord tire les rangs de
- * couleur. Seules les colonnes projetées changent.
- * Aucun identifiant venu du client n'entre ici : la liste vient de la base.
- */
-async function listSweepableAccounts(userId: string): Promise<AccountRow[]> {
-  return query<AccountRow>(
-    `SELECT a.* FROM email_accounts a
-      WHERE a.id IN ${ACCESSIBLE_ACCOUNT_IDS}
-      ${ACCESSIBLE_ORDER_BY}`,
-    [userId]
-  )
-}
-
 export async function GET(req: Request) {
   const authCtx = await authenticate(req)
   if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -82,11 +60,11 @@ export async function GET(req: Request) {
   }
 
   try {
-    let account: AccountRow | null
+    let account: DbEmailAccount | null
     if (accountParam) {
       account = await getAccessibleAccount(accountParam, authCtx.id, [])
     } else {
-      const rows = await query<AccountRow>(
+      const rows = await query<DbEmailAccount>(
         `SELECT * FROM email_accounts WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1`,
         [authCtx.id]
       )
@@ -104,12 +82,12 @@ export async function GET(req: Request) {
     // secondes même avec beaucoup de boîtes (mesuré le 20/09/2026 sur le compte de
     // test : 7 boîtes, 185 dossiers, 50,7 s boîte par boîte en série).
     if (scope === SCOPE_ACCOUNTS && searchParams.get(STREAM_PARAM)) {
-      const accessible = await listSweepableAccounts(authCtx.id)
+      const accessible = await listAccessibleAccounts(authCtx.id)
       // L'identifiant reçu du client ne sert QU'À ordonner : il n'ouvre aucune
-      // boîte par lui-même, seules celles de `listSweepableAccounts` sont balayées.
+      // boîte par lui-même, seules celles de `listAccessibleAccounts` sont balayées.
       const order = orderAccountsForSearch(accessible, account.id)
       const byId = new Map(accessible.map(a => [a.id, a]))
-      const accounts = order.map(id => byId.get(id)).filter((a): a is AccountRow => !!a)
+      const accounts = order.map(id => byId.get(id)).filter((a): a is DbEmailAccount => !!a)
       const machine = isMachineRequest(req)
       const encoder = new TextEncoder()
       const sweep = new AbortController()
@@ -127,7 +105,7 @@ export async function GET(req: Request) {
             // Les passes d'une boîte sont calculées UNE fois : la deuxième réutilise
             // la liste de dossiers de la première, sans second LIST-STATUS.
             const passes = new Map<string, { first: string[]; rest: string[] }>()
-            const sweepFolders = (row: AccountRow, list: string[]) => async function* () {
+            const sweepFolders = (row: DbEmailAccount, list: string[]) => async function* () {
               if (!list.length) return
               const guard = { enabled: machine && row.prompt_guard }
               for await (const chunk of searchMessagesByFolder(imapConfig(row), list, terms, sweep.signal)) {

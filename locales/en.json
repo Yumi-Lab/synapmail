@@ -162,6 +162,7 @@
       "gray": "Grey"
     },
     "noFolders": "No folder",
+    "filterFolders": "Filter folders",
     "messageList": "Message list",
     "folderNew": "New folder…",
     "folderNewChild": "New subfolder…",
@@ -203,7 +204,8 @@
       "resultSummary": "Summary",
       "resultTranslation": "Translation",
       "resultReply": "AI draft, opened in the composer"
-    }
+    },
+    "back": "Back"
   },
   "compose": {
     "newMessage": "New message",
@@ -273,7 +275,8 @@
       "ai": "AI Copilot",
       "pgp": "PGP Encryption",
       "apiKeys": "API Keys",
-      "admin": "Administration"
+      "admin": "Administration",
+      "branding": "Tab name and icon"
     },
     "common": {
       "save": "Save",
@@ -299,6 +302,7 @@
     },
     "accounts": {
       "title": "Email accounts",
+      "description": "Your IMAP / SMTP accounts connected to {appName}",
       "add": "Add account",
       "edit": "Edit",
       "setDefault": "Set as default",
@@ -814,7 +818,9 @@
       "rules": "rules, filters, sieve, automation",
       "ai": "ai, copilot, assistant, llm, model",
       "pgp": "pgp, encryption, gpg, key, privacy",
-      "apiKeys": "api, key, token, bearer, mcp, agent, integration"
+      "apiKeys": "api, key, token, bearer, mcp, agent, integration",
+      "admin": "admin, users, roles, accounts, administration",
+      "branding": "tab, icon, favicon, title, site name, branding, logo"
     }
   }
 }

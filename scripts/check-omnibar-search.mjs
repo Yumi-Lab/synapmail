@@ -32,6 +32,10 @@ const MIN_LENGTH = Number(constant('MIN_QUERY_LENGTH', /MIN_QUERY_LENGTH = (\d+)
 
 const SEARCH = '[data-omnibar-search]'
 const SUMMARY = '[data-search-summary]'
+// Lot H3g : la portée n'est plus un contrôle segmenté posé à côté du champ, c'est une
+// puce DANS le champ qui ouvre un menu. Le banc CLIQUE donc la puce d'abord ; les
+// entrées gardent `data-omnibar-scope="<valeur>"`, ce que ce banc désignait déjà.
+const SCOPE_TRIGGER = '[data-omnibar-scope-trigger]'
 const scopeBtn = v => `[data-omnibar-scope="${v}"]`
 // A query that matches nothing in a real mailbox would leave an empty list, which
 // says nothing about the wiring; what is measured is the REQUEST the field issues
@@ -151,6 +155,8 @@ try {
 
   // --- The scope toggle widens the search to every folder ---
   const callsBeforeScope = searchCalls.length
+  await page.waitForSelector(SCOPE_TRIGGER, { timeout: 5000 })
+  await page.click(SCOPE_TRIGGER)
   await page.waitForSelector(scopeBtn(SCOPE_ALL), { timeout: 5000 })
   await page.click(scopeBtn(SCOPE_ALL))
   await new Promise(r => setTimeout(r, SEARCH_SETTLE_MS))
@@ -199,9 +205,13 @@ try {
   await visit(`/mail?${SEARCH_PARAM}=${QUERY}&${SCOPE_PARAM}=${SCOPE_ALL}`)
   await new Promise(r => setTimeout(r, SEARCH_SETTLE_MS))
   const restored = await page.$eval(SEARCH, el => el.value)
-  const restoredScope = await page.$eval(scopeBtn(SCOPE_ALL), el => el.getAttribute('aria-pressed'))
+  // Lot H3g : la coche vit sur l'entrée du MENU, qu'il faut donc ouvrir pour la lire.
+  await page.click(SCOPE_TRIGGER)
+  await page.waitForSelector(scopeBtn(SCOPE_ALL), { timeout: 5000 })
+  const restoredScope = await page.$eval(scopeBtn(SCOPE_ALL), el => el.getAttribute('aria-checked'))
+  await page.keyboard.press('Escape')
   const restoredBanner = await page.$eval(SUMMARY, el => el.textContent.trim()).catch(() => null)
-  console.log(`deep link -> field="${restored}", "all folders" pressed=${restoredScope}, banner=${restoredBanner === null ? '(absent)' : `"${restoredBanner}"`}`)
+  console.log(`deep link -> field="${restored}", "all folders" checked=${restoredScope}, banner=${restoredBanner === null ? '(absent)' : `"${restoredBanner}"`}`)
   if (restored !== QUERY) failures.push(`a deep link left "${restored}" in the field, expected "${QUERY}"`)
   if (restoredScope !== 'true') failures.push('a deep link did not restore the "all folders" scope')
   if (restoredBanner === null) failures.push('a deep link did not put the list in search mode')

@@ -6,12 +6,17 @@ import { useTranslations } from 'next-intl'
 import {
   User, Palette, BookOpen, Bell, PenSquare,
   Mail, FileSignature, ArrowLeft, ShieldCheck, Users, Filter, LayoutTemplate, Bot, KeyRound, Terminal,
+  Image as ImageIcon,
 } from 'lucide-react'
+import { BRANDING_ANCHOR } from '@/components/admin/BrandingSection'
 import { cn } from '@/lib/utils'
 import { useAppName } from '@/components/providers'
 
 /** Where an account's sharing is managed — the one place the bar's shared mark points to. */
 export const ACCOUNTS_SETTINGS_HREF = '/settings/accounts'
+
+/** La page d'administration — la seule, et le seul endroit où son chemin s'écrit. */
+export const ADMIN_HREF = '/admin/users'
 
 /**
  * Source UNIQUE des entrees de reglages : cette barre les rend, et l'omnibar
@@ -34,6 +39,18 @@ export const SETTINGS_NAV = [
   { href: '/settings/ai',            key: 'ai',            icon: Bot },
   { href: '/settings/pgp',           key: 'pgp',           icon: KeyRound },
   { href: '/settings/api-keys',      key: 'apiKeys',       icon: Terminal },
+] as const
+
+/**
+ * Les entrées réservées à l'ADMINISTRATEUR, même forme que `SETTINGS_NAV` et même
+ * rôle de source unique : cette barre les rend et l'omnibar (lot H3h) les propose,
+ * les deux pour un administrateur SEULEMENT. « Nom et icône de l'onglet » pointe sur
+ * l'ancre de la section qui les règle (`BRANDING_ANCHOR`) et non sur le haut de la
+ * page d'administration, où rien ne la nomme — c'est le défaut que le lot corrige.
+ */
+export const ADMIN_NAV = [
+  { href: ADMIN_HREF,                          key: 'admin',    icon: ShieldCheck },
+  { href: `${ADMIN_HREF}#${BRANDING_ANCHOR}`,  key: 'branding', icon: ImageIcon },
 ] as const
 
 export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
@@ -77,10 +94,14 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
         {isAdmin && (
           <>
             <div className="my-2 border-t border-border" />
-            <Link href="/admin/users" className={linkClass(pathname.startsWith('/admin'))}>
-              <ShieldCheck className="h-4 w-4 shrink-0" />
-              <span>{t('admin')}</span>
-            </Link>
+            {ADMIN_NAV.map(({ href, key, icon: Icon }) => (
+              // Même motif de ligne que les réglages ci-dessus. L'état actif se lit
+              // sur le CHEMIN seul : une ancre ne change pas la page où l'on est.
+              <Link key={href} href={href} className={linkClass(pathname.startsWith(ADMIN_HREF))}>
+                <Icon className="h-4 w-4 shrink-0" />
+                <span>{t(key)}</span>
+              </Link>
+            ))}
           </>
         )}
       </nav>

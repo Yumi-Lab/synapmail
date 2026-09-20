@@ -21,6 +21,8 @@ export interface DbEmailAccount {
   oauth_expires_at: number | null
   is_default: boolean
   color: string
+  /** La couleur CHOISIE pour la pastille, ou null quand c'est celle du rang. */
+  badge_color: string | null
   /** Prompt-injection guard for this mailbox — see lib/promptGuard.ts. */
   prompt_guard: boolean
   created_at: string

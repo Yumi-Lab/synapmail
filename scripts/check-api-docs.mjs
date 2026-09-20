@@ -11,6 +11,11 @@
  *     read INSIDE that method's own body — a sibling method calling
  *     `authenticate()` must never make its neighbour look Bearer-eligible.
  *
+ * Then the same treatment for `docs/openapi.json`: every Bearer route of the
+ * code is an operation of the contract, the contract holds NO operation for a
+ * route a key cannot call, and the document is structurally sound (3.1, every
+ * operation answered and secured, every `$ref` resolving).
+ *
  *   node scripts/check-api-docs.mjs
  *   node scripts/check-api-docs.mjs --break=missing   (a route dropped from the doc)
  *   node scripts/check-api-docs.mjs --break=ghost     (a heading for a dead route)
@@ -18,12 +23,16 @@
  *   node scripts/check-api-docs.mjs --break=origin    (links built from the request host)
  *   node scripts/check-api-docs.mjs --break=prefix    (a public entry matched by prefix)
  *   node scripts/check-api-docs.mjs --break=inline    (the address frozen at build time)
+ *   node scripts/check-api-docs.mjs --break=contract  (a Bearer route absent from the contract)
+ *   node scripts/check-api-docs.mjs --break=session   (a session-only route inside the contract)
+ *   node scripts/check-api-docs.mjs --break=ref       (a $ref that resolves to nothing)
+ *   node scripts/check-api-docs.mjs --break=servers  (the contract served with its disk servers)
  * The `--break` forms damage a COPY of one input and EXPECT the run to fail: a
  * battery that cannot fail proves nothing.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
-import { API_DOC_PATH, LLMS_TXT_PATH } from '../lib/apiDocs.ts'
+import { API_DOC_PATH, LLMS_TXT_PATH, OPENAPI_FILE, OPENAPI_PATH, withServedOrigin } from '../lib/apiDocs.ts'
 import { isPublicPath, PUBLIC_PATHS } from '../lib/publicPaths.ts'
 import { appOrigin } from '../lib/appOrigin.ts'
 import { fileURLToPath } from 'node:url'
@@ -335,6 +344,132 @@ const originModule = withoutComments(
 check(
   !/process\.env\s*\.\s*NEXT_PUBLIC_APP_URL/.test(originModule),
   'the address is read at run time, not frozen into the image at build time',
+)
+
+// ---- The OpenAPI contract describes the Bearer routes, and ONLY those --------
+// A contract holding a session-only route generates calls that answer 401; a
+// contract missing a Bearer route hides a capability an agent could have used.
+const contract = JSON.parse(
+  BREAK === 'ref'
+    ? readFileSync(join(ROOT, OPENAPI_FILE), 'utf8').replace('#/components/schemas/Error', '#/components/schemas/Nowhere')
+    : readFileSync(join(ROOT, OPENAPI_FILE), 'utf8'),
+)
+
+/** `/api/messages/{id}` in the contract is `/api/messages/[id]` in the tree. */
+const codePathOf = contractPath => contractPath.replace(/\{(\w+)\}/g, '[$1]')
+
+/** `{ 'GET /api/messages': operation }`, the contract read the way the code is. */
+const operations = {}
+for (const [path, item] of Object.entries(contract.paths)) {
+  for (const [method, operation] of Object.entries(item)) {
+    if (!HTTP_METHODS.includes(method.toUpperCase())) continue
+    operations[`${method.toUpperCase()} ${codePathOf(path)}`] = operation
+  }
+}
+
+let bearerRoutes = Object.entries(code)
+  .filter(([, { mode }]) => mode === 'bearer')
+  .map(([key]) => key)
+if (BREAK === 'contract') bearerRoutes = [...bearerRoutes, 'GET /api/not-in-the-contract']
+if (BREAK === 'session') {
+  const sessionRoute = Object.entries(code).find(([, { mode }]) => mode === 'session')[0]
+  operations[sessionRoute] = { operationId: 'smuggled', responses: { 200: {} }, security: [] }
+}
+
+console.log(
+  `openapi — ${bearerRoutes.length} Bearer method/route pairs in the code, ${Object.keys(operations).length} operations in the contract`,
+)
+
+const absent = bearerRoutes.filter(key => !operations[key]).sort()
+check(absent.length === 0, 'every Bearer route of the code is an operation of the contract', absent.join('\n      '))
+
+const strangers = Object.keys(operations)
+  .filter(key => code[key]?.mode !== 'bearer')
+  .map(key => `${key}: the contract describes it, ${code[key] ? `${code[key].file} enforces ${code[key].mode}` : 'no route exports it'}`)
+check(strangers.length === 0, 'the contract describes nothing a key cannot call', strangers.join('\n      '))
+
+// ---- The contract is structurally sound, without a new dependency -----------
+check(/^3\.1\.\d+$/.test(contract.openapi ?? ''), `the contract declares OpenAPI 3.1 (got ${contract.openapi})`)
+check(
+  contract.components?.securitySchemes?.bearerAuth?.scheme === 'bearer',
+  'the contract declares the bearerAuth scheme the routes actually use',
+)
+check(
+  Array.isArray(contract.security) && contract.security.some(entry => 'bearerAuth' in entry),
+  'the contract requires that scheme by default, so no operation reads as open',
+)
+
+const unanswered = Object.entries(operations)
+  .filter(([, operation]) => Object.keys(operation.responses ?? {}).length === 0)
+  .map(([key]) => key)
+check(unanswered.length === 0, 'every operation says what it answers', unanswered.join('\n      '))
+
+const unidentified = Object.entries(operations)
+  .filter(([, operation]) => !operation.operationId)
+  .map(([key]) => key)
+check(unidentified.length === 0, 'every operation carries an operationId, which generators name calls after', unidentified.join('\n      '))
+
+const unsecured = Object.entries(operations)
+  .filter(([, operation]) => Array.isArray(operation.security) && operation.security.length === 0)
+  .map(([key]) => key)
+check(unsecured.length === 0, 'no operation opts out of authentication', unsecured.join('\n      '))
+
+/** Every `$ref` of the document, wherever it sits. */
+const refsOf = node =>
+  node && typeof node === 'object'
+    ? Object.entries(node).flatMap(([key, value]) => (key === '$ref' ? [value] : refsOf(value)))
+    : []
+
+const resolve = ref =>
+  ref.startsWith('#/') &&
+  ref
+    .slice(2)
+    .split('/')
+    .reduce((node, segment) => (node == null ? undefined : node[segment]), contract) !== undefined
+
+const danglingRefs = [...new Set(refsOf(contract))].filter(ref => !resolve(ref)).sort()
+check(danglingRefs.length === 0, 'every $ref of the contract resolves', danglingRefs.join('\n      '))
+
+// The contract is SERVED, and reachable before a key exists.
+check(
+  source(join('lib', 'publicPaths.ts')).includes(`'${OPENAPI_PATH}'`),
+  `${OPENAPI_PATH} is public, so an agent can read the contract before it has a key`,
+)
+check(publicPathOf(OPENAPI_PATH) === true, `${OPENAPI_PATH} itself is public`)
+check(publicPathOf(`${OPENAPI_PATH}-probe`) === false, `${OPENAPI_PATH}-probe is NOT public`)
+check(llms.includes(`https://example.test${OPENAPI_PATH}`), 'llms.txt links the contract at the calling origin')
+
+// A host written into the FILE would send every agent to somebody else's
+// mailbox. The file names none; the route puts this instance's own address in
+// as it serves, because several agent-tool importers need an absolute base URL.
+check(
+  contract.servers?.every(server => !/^https?:\/\//i.test(server.url)),
+  'the contract file on disk names no instance host',
+  JSON.stringify(contract.servers),
+)
+
+const served = JSON.parse(
+  (BREAK === 'servers' ? contractText => contractText : withServedOrigin)(
+    readFileSync(join(ROOT, OPENAPI_FILE), 'utf8'),
+    'https://mail.example.test',
+  ),
+)
+check(
+  served.servers?.length === 1 && served.servers[0].url === 'https://mail.example.test',
+  'served, the contract names the address this instance answers on',
+  JSON.stringify(served.servers),
+)
+check(
+  JSON.parse(withServedOrigin(readFileSync(join(ROOT, OPENAPI_FILE), 'utf8'), '')).servers?.[0]?.url === '/',
+  'with no address known, the served contract keeps the relative fallback',
+)
+check(
+  JSON.stringify(Object.keys(served)) === JSON.stringify(Object.keys(contract)),
+  'serving the contract changes its servers entry and nothing else',
+)
+check(
+  source(join('app', 'openapi.json', 'route.ts')).includes('withServedOrigin('),
+  'the route serves the contract through that one helper, not a copy of it',
 )
 
 if (BREAK) {

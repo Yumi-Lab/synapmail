@@ -7,7 +7,7 @@
  * qui dériverait (deux calculs de bord d'écran, deux façons de se fermer).
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronRight, MoreHorizontal } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -31,6 +31,53 @@ export const MENU_ICON = 'w-3.5 h-3.5 shrink-0'
  *  Tailwind ne compile pas une valeur calculée, et deux écritures dériveraient. */
 export const MENU_MIN_WIDTH = 210
 
+/** Délai avant qu'un sous-menu OUVERT cède la place, en ms : le pointeur est passé sur une
+ *  autre entrée du menu parent. Il existe parce qu'une traversée en diagonale vers le
+ *  panneau passe forcément au-dessus des entrées voisines — changer à l'instant même rendait
+ *  le sous-menu inatteignable à la souris (mesuré : panneau fermé avant l'arrivée, banc
+ *  scripts/check-move-menu.mjs). Atteindre le panneau pendant ce délai annule le changement.
+ *  Rien à attendre à la PREMIÈRE ouverture : aucun panneau n'est encore posé.
+ *  ponytail: valeur posée à la main ; à recalibrer si un banc mesure une traversée plus lente. */
+const SUBMENU_SWITCH_MS = 260
+
+/**
+ * Un menu n'a qu'UN sous-menu ouvert. L'état vit donc sur la SURFACE, pas sur chaque
+ * sous-menu : sans cela deux panneaux pourraient rester ouverts ensemble, et survoler une
+ * autre entrée n'aurait aucun moyen de fermer le panneau du voisin.
+ */
+type SubmenuControl = {
+  openKey: string | null
+  /** Le panneau ouvert, partagé : la surface doit savoir qu'un défilement ou un clic
+   *  dedans lui appartient, alors qu'il n'est pas son descendant (il est porté par le
+   *  même portail, pas par le menu). */
+  panelRef: React.MutableRefObject<HTMLDivElement | null>
+  /** Demande que `key` (ou aucun sous-menu, pour `null`) soit l'ouvert. Immédiat si rien
+   *  n'est ouvert, différé de `SUBMENU_SWITCH_MS` sinon — le temps d'atteindre le panneau. */
+  request: (key: string | null) => void
+  /** Annule un changement en attente : le pointeur a atteint le panneau. */
+  cancelSwitch: () => void
+  open: (key: string) => void
+  close: () => void
+}
+
+const SubmenuContext = createContext<SubmenuControl | null>(null)
+
+/**
+ * Déplace le focus de `step` entrées parmi les `selector` de `container`, en boucle.
+ * Partagé par le menu d'une ligne de réglages et par la liste des dossiers : deux copies
+ * dériveraient sur le cas « rien n'a encore le focus » (le premier ou le dernier ?).
+ */
+/** Les entrees d'un menu qui peuvent recevoir le focus : une seule ecriture. */
+export const MENU_ITEM_SELECTOR = '[data-menu-item]:not([disabled])'
+
+export function focusMenuStep(container: HTMLElement | null, selector: string, step: number) {
+  const items = Array.from(container?.querySelectorAll<HTMLElement>(selector) ?? [])
+  if (items.length === 0) return
+  const at = items.indexOf(document.activeElement as HTMLElement)
+  const next = at === -1 ? (step > 0 ? 0 : items.length - 1) : (at + step + items.length) % items.length
+  items[next].focus()
+}
+
 export function ContextMenuSurface({
   anchor, onClose, ignoreRef, children, ...rest
 }: {
@@ -42,7 +89,29 @@ export function ContextMenuSurface({
   children: React.ReactNode
 } & React.HTMLAttributes<HTMLDivElement>) {
   const ref = useRef<HTMLDivElement>(null)
+  /** Le panneau du sous-menu ouvert. Il vit dans le MÊME portail que la surface mais n'en
+   *  est pas un descendant : sans cette référence, défiler dedans ou y cliquer serait lu
+   *  comme « hors du menu » et fermerait tout. */
+  const panelRef = useRef<HTMLDivElement | null>(null)
   const [pos, setPos] = useState({ x: anchor.x, y: anchor.y })
+  const [openKey, setOpenKey] = useState<string | null>(null)
+  const closeTimer = useRef<ReturnType<typeof setTimeout>>()
+
+  const cancelSwitch = () => clearTimeout(closeTimer.current)
+  const submenu: SubmenuControl = {
+    openKey,
+    panelRef,
+    cancelSwitch,
+    request: key => {
+      cancelSwitch()
+      if (openKey === null) return setOpenKey(key)
+      if (key === openKey) return
+      closeTimer.current = setTimeout(() => setOpenKey(key), SUBMENU_SWITCH_MS)
+    },
+    open: key => { cancelSwitch(); setOpenKey(key) },
+    close: () => { cancelSwitch(); setOpenKey(null) },
+  }
+  useEffect(() => () => clearTimeout(closeTimer.current), [])
 
   // Le menu reste dans l'écran d'après sa taille RÉELLE : une hauteur devinée
   // laisserait les dernières entrées sous le bord dès qu'on en ajoute une.
@@ -56,22 +125,35 @@ export function ContextMenuSurface({
   }, [anchor.x, anchor.y])
 
   useEffect(() => {
+    /** Le menu, sous-menu compris : ce qui s'y passe lui appartient. */
+    const inside = (node: Node) =>
+      !!ref.current?.contains(node) || !!panelRef.current?.contains(node)
+
     // `mousedown` ferme AVANT le `click` : le même clic atteint donc sa cible
     // sous le menu, sans second clic ni zone morte.
     const onDown = (e: MouseEvent) => {
       const node = e.target as Node
       if (ignoreRef?.current?.contains(node)) return
-      if (ref.current && !ref.current.contains(node)) onClose()
+      if (ref.current && !inside(node)) onClose()
     }
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    // Capture : la liste des mails défile dans son propre conteneur, pas sur la fenêtre —
+    // sans capture l'évènement ne remonterait pas jusqu'ici. Mais un défilement DANS le
+    // menu (sa liste de dossiers, son sous-menu) est le geste de quelqu'un qui CHERCHE :
+    // le fermer rendait « Déplacer vers » inutilisable dès que la liste dépassait sa
+    // hauteur (mesuré en prod sur 1 244 dossiers).
+    const onScroll = (e: Event) => {
+      const node = e.target as Node
+      if (node && node.nodeType !== undefined && inside(node)) return
+      onClose()
+    }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
-    // Capture : la liste défile dans son propre conteneur, pas sur la fenêtre.
-    window.addEventListener('scroll', onClose, true)
+    window.addEventListener('scroll', onScroll, true)
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
-      window.removeEventListener('scroll', onClose, true)
+      window.removeEventListener('scroll', onScroll, true)
     }
   }, [onClose, ignoreRef])
 
@@ -83,14 +165,17 @@ export function ContextMenuSurface({
   // et 469 px sous la fenêtre. Le portail sort la surface de tous ces blocs d'un coup,
   // pour les sept écrans de réglages comme pour le clic droit du courrier.
   const surface = (
-    <div
-      ref={ref}
-      className="fixed z-[100] bg-popover border border-border rounded-lg shadow-xl py-1"
-      style={{ left: pos.x, top: pos.y, minWidth: MENU_MIN_WIDTH }}
-      {...rest}
-    >
-      {children}
-    </div>
+    <SubmenuContext.Provider value={submenu}>
+      <div
+        ref={ref}
+        className="fixed z-[100] bg-popover border border-border rounded-lg shadow-xl py-1"
+        style={{ left: pos.x, top: pos.y, minWidth: MENU_MIN_WIDTH }}
+        data-context-menu-surface
+        {...rest}
+      >
+        {children}
+      </div>
+    </SubmenuContext.Provider>
   )
 
   // Le rendu serveur n'a pas de `document` ; la surface n'y paraît jamais, puisqu'elle
@@ -100,7 +185,7 @@ export function ContextMenuSurface({
 }
 
 export function ContextMenuItem({
-  itemKey, icon, label, onClick, onClose, enabled, danger,
+  itemKey, icon, label, onClick, onClose, enabled, danger, ...rest
 }: {
   itemKey: string
   icon: React.ReactNode
@@ -109,13 +194,18 @@ export function ContextMenuItem({
   onClose: () => void
   enabled: boolean
   danger?: boolean
-}) {
+} & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const ctx = useContext(SubmenuContext)
   return (
     <button
       type="button"
       data-menu-item={itemKey}
       disabled={!enabled}
+      // Survoler une entrée ORDINAIRE demande au sous-menu ouvert de céder la place —
+      // après le délai, pour qu'une diagonale qui passe par là puisse encore l'atteindre.
+      onMouseEnter={() => ctx?.request(null)}
       onClick={() => { onClick(); onClose() }}
+      {...rest}
       className={cn(
         'w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-left transition-colors',
         'disabled:opacity-40 disabled:pointer-events-none',
@@ -128,7 +218,16 @@ export function ContextMenuItem({
   )
 }
 
-/** Sous-menu au survol — CSS pur, aucun état : il ne peut pas rester ouvert par erreur. */
+/** Écart entre l'entrée et le panneau de son sous-menu, en px. */
+const SUBMENU_GAP = 2
+
+/**
+ * Une entrée qui ouvre un panneau. Le panneau n'est PLUS un `group-hover` CSS : un
+ * survol pur disparaissait dès que le pointeur quittait l'entrée, donc en attrapant
+ * l'ascenseur du panneau ou en le rejoignant en diagonale. Ici il s'ouvre au survol ET
+ * au clic, et ne se ferme qu'en choisissant, en cliquant dehors, ou après un court délai
+ * passé sur une autre entrée du menu parent.
+ */
 export function ContextMenuSubmenu({
   itemKey, icon, label, enabled, children,
 }: {
@@ -138,24 +237,112 @@ export function ContextMenuSubmenu({
   enabled: boolean
   children: React.ReactNode
 }) {
+  const ctx = useContext(SubmenuContext)
+  const rowRef = useRef<HTMLDivElement>(null)
+  const open = ctx?.openKey === itemKey
+
   return (
-    <div className={cn('group relative', !enabled && 'opacity-40 pointer-events-none')} data-menu-item={itemKey}>
-      <div className="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-foreground hover:bg-accent cursor-default transition-colors">
+    <div
+      className={cn('relative', !enabled && 'opacity-40 pointer-events-none')}
+      data-menu-item={itemKey}
+      onMouseEnter={() => ctx?.request(itemKey)}
+    >
+      <div
+        ref={rowRef}
+        role="button"
+        tabIndex={enabled ? 0 : -1}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => (open ? ctx?.close() : ctx?.open(itemKey))}
+        onKeyDown={e => {
+          if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowRight') return
+          e.preventDefault()
+          ctx?.open(itemKey)
+        }}
+        className={cn(
+          'w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-foreground cursor-default transition-colors',
+          'focus-visible:outline-none focus-visible:bg-accent',
+          open ? 'bg-accent' : 'hover:bg-accent',
+        )}
+      >
         {icon}
         {label}
         <ChevronRight className="w-3 h-3 ml-auto" />
       </div>
-      <div className="absolute left-full top-0 hidden group-hover:block bg-popover border border-border rounded-lg shadow-xl py-1 z-[101]">
-        {children}
-      </div>
+      {open && ctx && <SubmenuPanel rowRef={rowRef} ctx={ctx} itemKey={itemKey}>{children}</SubmenuPanel>}
     </div>
+  )
+}
+
+/**
+ * Le panneau d'un sous-menu, posé dans le portail du menu et recalé dans l'écran à partir
+ * de sa taille RÉELLE : à gauche de l'entrée s'il n'y a pas la place à droite, remonté
+ * s'il déborde en bas. En `absolute left-full top-0` il sortait simplement de la fenêtre
+ * pour un clic droit près du bord.
+ */
+function SubmenuPanel({ rowRef, ctx, itemKey, children }: {
+  rowRef: React.RefObject<HTMLDivElement>
+  ctx: SubmenuControl
+  itemKey: string
+  children: React.ReactNode
+}) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+
+  // Volontairement sans liste de dépendances : le contenu d'un panneau change (une liste
+  // de dossiers qu'on filtre), donc sa hauteur change, et c'est à ce moment qu'il faut le
+  // recaler. `setPos` rend l'état précédent quand rien n'a bougé : pas de boucle.
+  const place = useCallback(() => {
+    const row = rowRef.current?.getBoundingClientRect()
+    const box = ref.current?.getBoundingClientRect()
+    if (!row || !box) return
+    const right = row.right + SUBMENU_GAP
+    const x = right + box.width + EDGE_GAP <= window.innerWidth
+      ? right
+      : Math.max(EDGE_GAP, row.left - SUBMENU_GAP - box.width)
+    const y = Math.max(EDGE_GAP, Math.min(row.top, window.innerHeight - box.height - EDGE_GAP))
+    setPos(prev => (prev && prev.x === x && prev.y === y ? prev : { x, y }))
+  }, [rowRef])
+
+  useLayoutEffect(place)
+
+  const setRef = (node: HTMLDivElement | null) => {
+    ref.current = node
+    ctx.panelRef.current = node
+  }
+
+  if (typeof document === 'undefined') return null
+  return createPortal(
+    <div
+      ref={setRef}
+      data-menu-panel={itemKey}
+      onMouseEnter={ctx.cancelSwitch}
+      onMouseLeave={() => ctx.request(null)}
+      className="fixed z-[101] bg-popover border border-border rounded-lg shadow-xl py-1"
+      // Avant la première mesure le panneau est rendu hors champ plutôt que caché :
+      // `visibility: hidden` lui donnerait une taille, `display: none` non — et sans
+      // taille il n'y a rien à recaler.
+      style={pos ? { left: pos.x, top: pos.y } : { left: -9999, top: 0 }}
+    >
+      {children}
+    </div>,
+    document.body,
   )
 }
 
 export const ContextMenuSeparator = () => <div className="my-1 border-t border-border" />
 
-/** Écart entre le bas du bouton « … » et le haut du menu qu'il ouvre, en px. */
-const ROW_MENU_GAP = 4
+/** Écart entre le bas du bouton qui ouvre un menu et le haut de ce menu, en px. */
+export const MENU_ANCHOR_GAP = 4
+
+/**
+ * Déplace le focus d'une entrée à l'autre dans un menu ouvert, en bouclant. Exporté
+ * parce que DEUX déclencheurs l'utilisent (le « … » d'une ligne de réglages et la
+ * puce de portée de l'omnibar) : une seconde copie dériverait sur ce que « l'entrée
+ * suivante » veut dire quand une entrée est désactivée.
+ */
+export const focusMenuItem = (list: HTMLElement | null, step: number): void =>
+  focusMenuStep(list, MENU_ITEM_SELECTOR, step)
 
 /**
  * Le bouton « … » d'une ligne de réglages, et le menu qu'il ouvre. C'est le MÊME menu
@@ -183,7 +370,7 @@ export function RowMenu({ label, itemsKey, children }: {
 
   const open = () => {
     const box = triggerRef.current?.getBoundingClientRect()
-    if (box) setAnchor({ x: box.right - MENU_MIN_WIDTH, y: box.bottom + ROW_MENU_GAP })
+    if (box) setAnchor({ x: box.right - MENU_MIN_WIDTH, y: box.bottom + MENU_ANCHOR_GAP })
   }
 
   // Fermer rend le focus au bouton : sans cela le focus retombe sur le corps de la
@@ -195,13 +382,7 @@ export function RowMenu({ label, itemsKey, children }: {
 
   // Ouvrir au clavier pose le focus sur la première entrée ; ouvrir à la souris ne le
   // fait pas (le pointeur choisit déjà), sinon la bulle de survol resterait plantée.
-  const focusItem = (step: number) => {
-    const items = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>('[data-menu-item]:not([disabled])') ?? [])
-    if (items.length === 0) return
-    const at = items.indexOf(document.activeElement as HTMLButtonElement)
-    const next = at === -1 ? (step > 0 ? 0 : items.length - 1) : (at + step + items.length) % items.length
-    items[next].focus()
-  }
+  const focusItem = (step: number) => focusMenuItem(listRef.current, step)
 
   return (
     <>
