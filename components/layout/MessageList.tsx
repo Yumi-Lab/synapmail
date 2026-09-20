@@ -837,13 +837,9 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const handleRowClick = (thread: ThreadGroup, e: React.MouseEvent) => {
     if (marqueeDrewRef.current) { marqueeDrewRef.current = false; return }
     const key = originKey(originOf(thread.lastMessage))
-    if (e.metaKey || e.ctrlKey) {
-      toggleChecked(key)
-      rangeAnchorKey.current = key
-      return
-    }
-    if (e.shiftKey) {
-      selectRangeTo(key)
+    const gesture = gestureOf(e.nativeEvent)
+    if (gesture !== 'replace') {
+      clickRow(key, gesture)
       return
     }
     // L'ancre est posée APRÈS l'ouverture : `handleSelectThread` vide la
@@ -876,10 +872,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     e.preventDefault()
     const msg = thread.lastMessage
     const key = originKey(originOf(msg))
-    if (!checkedKeys.has(key)) {
-      setCheckedKeys(new Set([key]))
-      rangeAnchorKey.current = key
-    }
+    if (!checkedKeys.has(key)) clickRow(key, 'replace')
     setContextMenu({
       x: e.clientX,
       y: e.clientY,
@@ -973,7 +966,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
         if (allVisibleKeys.length === 0) return
         e.preventDefault()
-        setCheckedKeys(new Set(allVisibleKeys))
+        applySelection(selectAll(allVisibleKeys, false))
         return
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return
