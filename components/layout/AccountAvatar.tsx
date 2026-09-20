@@ -221,7 +221,13 @@ export function UnreadBadge({ count, colour }: { count: number; colour?: string 
         'text-[9px] font-semibold leading-none flex items-center justify-center tabular-nums',
         !colour && ACCENT.solid,
       )}
-      data-unread-badge
+      // Le compteur DIT a quel titre il est peint : `account` quand il porte la couleur
+      // de sa boite (donc volontairement hors de l'accent de la barre), `folder` quand il
+      // suit l'accent du compte actif, ce qui est correct pour un dossier de CE compte.
+      // Sans cette distinction, le banc d'unite d'accent de la barre
+      // (`check-sidebar-collapse.mjs`) devrait exclure TOUS les compteurs, et ne verrait
+      // plus un compteur de dossier qui partirait dans une seconde famille de teintes.
+      data-unread-badge={colour ? 'account' : 'folder'}
     >
       {formatUnread(count)}
     </span>
