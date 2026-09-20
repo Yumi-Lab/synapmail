@@ -46,6 +46,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   qui refuse toute nouvelle copie et vérifie que les quatre appelants passent bien par la source.
 
 ### Fixed
+- **Le compteur de non-lus s'affiche aussi dans Réglages → Comptes et dans la palette**
+  (`app/(app)/settings/accounts/AccountsClient.tsx`, `components/layout/Omnibar.tsx`) — la demande
+  visait quatre écrans ; la couleur avait bien été unifiée partout, mais sur ces deux-là la bulle était
+  peinte sans jamais recevoir le NOMBRE (`unread={0}` en dur dans la palette, prop absente dans les
+  réglages). Ils reçoivent maintenant `unreadCount`, que `/api/accounts` rendait déjà et que ces deux
+  écrans abonnaient déjà — même composant, même source de couleur, aucun second calcul. Les deux
+  surfaces publient au passage leur `--synap-surface` (la variable du thème, `var(--card)` et
+  `var(--popover)`), dont le compteur tire son cercle, et le panneau de la palette réserve
+  `BADGE_OFFSET_PX` en haut et en bas pour ne pas rogner le compteur de sa première et de sa dernière
+  ligne. Mesuré : Réglages → Comptes passe de 0 à 8 compteurs sur 8 boîtes, la palette de 0 à 3 sur 3.
+- **`scripts/check-account-badge-color.mjs` voit désormais un compteur ABSENT** — il ne contrôlait que
+  les compteurs déjà présents, donc un écran qui n'en peignait aucun sortait vert : c'est ce trou qui a
+  laissé passer les deux écrans ci-dessus. Le critère ajouté compare à une référence du MÊME passage
+  (les non-lus que `/api/accounts` annonce, jamais une constante écrite à la main) et vient avec son
+  propre contrôle négatif (`--negative-missing`).
 - **En fenêtre étroite, on arrive sur la LISTE et non sur le volet de lecture**
   (`app/(app)/mail/MailClient.tsx`) — `showReadingPane` ne dit qu'une chose, « un message est ouvert » :
   au-dessus du `lg` de Tailwind il n'a aucun effet de disposition (les deux colonnes sont montrées dans

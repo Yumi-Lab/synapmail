@@ -282,12 +282,17 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
           {accounts?.map(account => (
             <div key={account.id}>
               <div className="rounded-xl border border-border bg-card shadow-sm">
-                {/* Cliquer la ligne ouvre « Modifier » : c'est l'action évidente d'une boîte.
+                {/* La ligne publie SA surface (`--synap-surface`) : le compteur épinglé sur
+                    la bulle se cercle de la couleur réellement derrière lui — ici la carte —
+                    comme la barre latérale le fait déjà avec `var(--sidebar)`. Sans elle, le
+                    cercle du compteur n'a aucune couleur à résoudre sur cet écran.
+                    Cliquer la ligne ouvre « Modifier » : c'est l'action évidente d'une boîte.
                     Le geste part du fond de la ligne seul (`e.target === e.currentTarget` ne
                     tiendrait pas : le nom et l'adresse en font partie), donc un clic sur la
                     pastille de couleur, l'interrupteur ou « … » garde SON action. */}
                 <div
                   className="flex items-center gap-3 p-4 cursor-pointer"
+                  style={{ ['--synap-surface' as string]: 'var(--card)' }}
                   data-account-row={account.id}
                   onClick={e => {
                     if ((e.target as HTMLElement).closest('button,input,a,[role="menu"]')) return
@@ -297,6 +302,7 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
                   <AccountAvatar
                     account={account}
                     colorIndex={rankOf(account)}
+                    unread={account.unreadCount ?? 0}
                     size="md"
                   />
                   <div className="flex-1 min-w-0">
