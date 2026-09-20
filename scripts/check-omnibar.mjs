@@ -162,6 +162,9 @@ const probeBar = sel => {
     field: box('[data-omnibar-search]'),
     // Lot H3: the mail toolbar sits between the left group and the field.
     toolbar: box('[data-mail-toolbar]'),
+    // Lot H4b: hors de la boîte la barre n'agit plus mais sa PLACE reste prise —
+    // le gabarit réel, rendu invisible. Ce marqueur dit laquelle des deux on mesure.
+    toolbarReserved: !!document.querySelector('[data-mail-toolbar-reserved]'),
     // Lot H3c: le champ se colle à la dernière ICÔNE, pas au conteneur de la barre
     // (qui est `flex-1` et s'étend donc jusqu'au champ).
     lastToolbarButton: (() => {
@@ -259,9 +262,13 @@ page.setDefaultNavigationTimeout(120000)
     const missing = await page.evaluate(sels => sels.filter(s => !document.querySelector(s)), [SEARCH, action('dashboard'), action('compose'), USER_TRIGGER])
     if (missing.length) failures.push(`${path}: missing from the header: ${missing.join(', ')}`)
     // One door to the settings (lot H2): the left group no longer carries the action.
-    // Hors de la boîte, le groupe courrier n'existe pas (rien à griser inutilement).
+    // Lot H4b : hors de la boîte la barre est RÉSERVÉE, pas retirée — sa boîte reste
+    // dans le flux (le champ ne bouge plus d'une page à l'autre) mais elle est
+    // invisible et hors d'atteinte. Le banc distingue les deux par le marqueur, et
+    // `check-header-stability.mjs` mesure l'écart page à page qui le justifie.
     if (path === '/mail' && !bar.toolbar) failures.push(`${path}: no mail toolbar in the header`)
-    if (path !== '/mail' && bar.toolbar) failures.push(`${path}: the mail toolbar shows outside the mailbox`)
+    if (path === '/mail' && bar.toolbarReserved) failures.push(`${path}: the mail toolbar is reserved inside the mailbox, it must be live`)
+    if (path !== '/mail' && !bar.toolbarReserved) failures.push(`${path}: the mail toolbar's place is not reserved outside the mailbox`)
     if (bar.strayActions.includes('settings')) failures.push(`${path}: the header still carries a "settings" action on the left`)
     // The user bubble is the RIGHTMOST thing in the header, past the field, with two letters.
     if (!bar.user) failures.push(`${path}: no user bubble in the header`)
