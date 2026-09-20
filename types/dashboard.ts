@@ -23,7 +23,9 @@ export interface DashboardAccount {
   id: string
   name: string
   email: string
-  color: string
+  // Résolue par le serveur via `accountColor()` — même nom que sur les autres
+  // lignes du tableau de bord, et jamais la vieille colonne `email_accounts.color`.
+  accountColor: string
   unread: number
 }
 

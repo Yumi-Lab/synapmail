@@ -547,14 +547,14 @@ export function DashboardClient() {
                       >
                         <div className="flex items-center justify-between gap-2 text-sm">
                           <span className="flex min-w-0 items-center gap-2 font-semibold">
-                            <AccountDot color={a.color} />
+                            <AccountDot color={a.accountColor} />
                             <span className="truncate">{a.name}</span>
                           </span>
                           <span className="font-mono text-sm font-semibold tabular-nums">{a.unread}</span>
                         </div>
                         <div className="truncate pl-3.5 font-mono text-xs text-muted-foreground">{a.email}</div>
                         <div className="mt-1.5 h-[5px] overflow-hidden rounded-full bg-muted">
-                          <div className="h-full rounded-full" style={{ width: `${(a.unread / maxUnread) * 100}%`, background: a.color }} />
+                          <div className="h-full rounded-full" style={{ width: `${(a.unread / maxUnread) * 100}%`, background: a.accountColor }} />
                         </div>
                       </button>
                     </li>

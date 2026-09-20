@@ -274,7 +274,7 @@ export async function GET(req: Request) {
         id: a.id,
         name: a.name,
         email: a.email,
-        color: accountColor({ badgeColor: a.badge_color }, rank),
+        accountColor: accountColor({ badgeColor: a.badge_color }, rank),
         unread: unreadByAccount.get(a.id) ?? 0,
       })),
       activity,
