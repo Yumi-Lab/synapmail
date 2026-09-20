@@ -5,7 +5,7 @@ import type {
   DashboardData, ActivityPoint,
 } from '@/types/dashboard'
 import { scoreFocus } from '@/lib/focus'
-import { accountOrderBy } from '@/lib/accountColor'
+import { listAccessibleAccounts } from '@/lib/accountAccess'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,7 +21,6 @@ type FocusRow = {
   from_name: string | null; from_address: string | null; date: string
   is_starred: boolean; has_attachments: boolean
 }
-type AccountRow = { id: string; name: string; email: string; badge_color: string | null }
 type ContactRow = { email: string; frequency: number; is_starred: boolean }
 type ReceiptRow = {
   subject: string | null; sent_to: string; opened_at: string; open_count: number
@@ -74,11 +73,12 @@ export async function GET(req: Request) {
       ruleRows,
       followUpRows,
     ] = await Promise.all([
-      query<AccountRow>(
-        `SELECT id, name, email, badge_color FROM email_accounts
-         WHERE user_id = $1 ${accountOrderBy()}`,
-        [userId]
-      ),
+      // Le RANG dans CETTE liste décide de la couleur automatique d'une boîte. Elle
+      // est donc lue par la règle PARTAGÉE — mêmes boîtes, même ordre que la barre
+      // latérale et les réglages, qui lisent `/api/accounts`. Une liste réduite aux
+      // boîtes possédées ferait glisser les rangs dès qu'une boîte est partagée, et
+      // la même boîte porterait deux couleurs selon l'écran.
+      listAccessibleAccounts(userId),
       // Always global — feeds the account list / switcher context.
       query<UnreadRow>(
         `SELECT mc.account_id, COUNT(*)::text AS n
@@ -183,6 +183,13 @@ export async function GET(req: Request) {
       ),
     ])
 
+    // Le RANG vient de la liste PARTAGÉE (boîtes possédées + partages actifs) ; le
+    // tableau de bord, lui, ne montre que les boîtes POSSÉDÉES, puisque tous ses
+    // chiffres sont comptés sur `user_id = $1`. Le rang part donc avec chaque boîte
+    // au lieu d'être recalculé côté client sur cette liste réduite : recalculé là,
+    // il ne serait plus celui de la barre latérale.
+    const rankById = new Map(accounts.map((a, rank) => [a.id, rank]))
+    const ownedAccounts = accounts.filter(a => a.owner_id === userId)
     const accountById = new Map(accounts.map(a => [a.id, a]))
     // La couleur n'est PAS résolue ici : la liste des boîtes part avec la couleur
     // CHOISIE et son RANG (l'ordre de `accountOrderBy`), et chaque vignette de mail
@@ -266,11 +273,12 @@ export async function GET(req: Request) {
         scheduledPending: Number(scheduledCountRow[0]?.n ?? 0),
         nextScheduledAt: nextScheduledRow[0]?.send_at ?? null,
       },
-      accounts: accounts.map(a => ({
+      accounts: ownedAccounts.map(a => ({
         id: a.id,
         name: a.name,
         email: a.email,
         badgeColor: a.badge_color,
+        rank: rankById.get(a.id) ?? 0,
         unread: unreadByAccount.get(a.id) ?? 0,
       })),
       activity,

@@ -22,7 +22,17 @@ import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
-const SCANNED = ['app', 'components']
+// `lib/` est balayé depuis que le RANG y est calculé : la règle d'accès qui décide
+// de l'ensemble des boîtes vit là, et c'est elle qu'il faut empêcher de se dédoubler.
+const SCANNED = ['app', 'components', 'lib']
+
+/**
+ * `lib/db.ts` porte le SCHÉMA : la vieille colonne `color` y garde sa valeur par défaut
+ * d'origine, puisque le lot ne supprime RIEN de la base — il coupe seulement les écrans
+ * qui la lisaient. C'est le seul fichier où ce hex est une donnée de schéma et non une
+ * couleur peinte.
+ */
+const SCHEMA_FILE = join('lib', 'db.ts')
 
 /**
  * Les SEULS fichiers autorisés à porter une couleur de boîte ou à dessiner sa bulle.
@@ -31,6 +41,12 @@ const SCANNED = ['app', 'components']
 const OWNERS = [
   join('components', 'layout', 'AccountAvatar.tsx'),
   join('components', 'settings', 'AccountColorPicker.tsx'),
+  join('lib', 'accountColor.ts'),
+  // La règle d'accès qui décide de l'ENSEMBLE des boîtes, et donc des rangs.
+  join('lib', 'accountAccess.ts'),
+  // `/api/accounts` sert la liste que lisent la barre latérale et les réglages : c'est
+  // l'autre projection de la même règle, en UNION pour porter les permissions de partage.
+  join('app', 'api', 'accounts', 'route.ts'),
 ]
 
 /** Le vieux repli codé en dur, supprimé par le lot : il ne doit jamais revenir. */
@@ -59,6 +75,22 @@ const RULES = [
         /SELECT[^\n]*\bcolor\b[^\n]*FROM\s+email_accounts/i.test(line)
         || /\bemail_accounts\b[^\n]*\bSET\b[^\n]*\bcolor\s*=/i.test(line)),
     hint: 'lecture de `email_accounts.color` : lire `badge_color` et passer par `accountColor()`',
+  },
+  {
+    id: 'liste de boîtes réécrite',
+    // La couleur automatique est une fonction du RANG d'une boîte dans la liste de son
+    // utilisateur. Deux écrans qui classent deux ENSEMBLES différents peignent donc la
+    // même boîte de deux couleurs — le défaut mesuré au banc navigateur le 20/09/2026 :
+    // le tableau de bord listait `WHERE user_id = $1` seul, sans les boîtes reçues en
+    // partage, et ses pastilles glissaient d'un cran. Une seule règle a le droit de dire
+    // quelles boîtes un utilisateur voit : `ACCESSIBLE_ACCOUNT_IDS` (`lib/accountAccess.ts`).
+    // Le critère est l'ORDRE, pas la simple lecture d'une boîte : c'est classer une
+    // liste qui attribue un rang, donc une couleur. Une requête qui lit UNE boîte ou en
+    // compte sans les ordonner ne décide d'aucune couleur et n'est pas visée.
+    test: src => /accountOrderBy\s*\(/.test(src)
+      || src.split('\n').some(line =>
+        /\bORDER\s+BY\b/i.test(line) && /\bis_default\b/i.test(line)),
+    hint: 'liste ou ordre des boîtes réécrit : passer par `listAccessibleAccounts()` / `ACCESSIBLE_ACCOUNT_IDS` (`lib/accountAccess.ts`)',
   },
   {
     id: 'bulle dessinée à la main',
@@ -108,6 +140,7 @@ for (const { path, src } of sources) {
   // Le verrou se lit lui-même sans se déclencher : ses propres motifs sont des chaînes.
   if (path.split(sep).includes('scripts')) continue
   for (const rule of RULES) {
+    if (path === SCHEMA_FILE && rule.id !== 'liste de boîtes réécrite') continue
     if (rule.test(src)) failures.push(`${path} — ${rule.id} : ${rule.hint}`)
   }
 }

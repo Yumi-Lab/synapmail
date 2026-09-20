@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server'
 import { authenticate } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
-import { getAccessibleAccount } from '@/lib/accountAccess'
+import { ACCESSIBLE_ACCOUNT_IDS, ACCESSIBLE_ORDER_BY, getAccessibleAccount } from '@/lib/accountAccess'
 import { listFolderPasses, listFolders, listFoldersRanked, searchMessagesByFolder, searchMessagesIn } from '@/lib/imap'
-import { accountOrderBy } from '@/lib/accountColor'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import {
   ACCOUNT_CONCURRENCY, MIN_QUERY_LENGTH, SCOPE_ACCOUNTS, SCOPE_ALL, SCOPE_PARAM, SEARCH_FIELDS,
@@ -50,20 +49,17 @@ function streamedMessages<T extends { date: string }>(messages: T[], accountId: 
 }
 
 /**
- * Les boîtes que cet utilisateur peut RÉELLEMENT balayer : les siennes, plus
- * celles reçues en partage actif et non expiré — la même condition que
- * `getAccessibleAccount`, appliquée en une seule requête au lieu d'une par boîte.
+ * Les boîtes que cet utilisateur peut RÉELLEMENT balayer, avec leurs identifiants de
+ * connexion. La RÈGLE d'accès et l'ORDRE ne sont pas réécrits ici : ce sont ceux de
+ * `lib/accountAccess.ts`, les mêmes que ceux dont le tableau de bord tire les rangs de
+ * couleur. Seules les colonnes projetées changent.
  * Aucun identifiant venu du client n'entre ici : la liste vient de la base.
  */
-async function listAccessibleAccounts(userId: string): Promise<AccountRow[]> {
+async function listSweepableAccounts(userId: string): Promise<AccountRow[]> {
   return query<AccountRow>(
-    `SELECT a.* FROM email_accounts a WHERE a.user_id = $1
-     UNION
-     SELECT a.* FROM email_accounts a
-       JOIN account_shares sh ON sh.account_id = a.id
-      WHERE sh.invitee_user_id = $1 AND sh.status = 'active'
-        AND (sh.expires_at IS NULL OR sh.expires_at > NOW())
-     ${accountOrderBy({ isDefault: 'is_default', createdAt: 'created_at', id: 'id' })}`,
+    `SELECT a.* FROM email_accounts a
+      WHERE a.id IN ${ACCESSIBLE_ACCOUNT_IDS}
+      ${ACCESSIBLE_ORDER_BY}`,
     [userId]
   )
 }
@@ -108,9 +104,9 @@ export async function GET(req: Request) {
     // secondes même avec beaucoup de boîtes (mesuré le 20/09/2026 sur le compte de
     // test : 7 boîtes, 185 dossiers, 50,7 s boîte par boîte en série).
     if (scope === SCOPE_ACCOUNTS && searchParams.get(STREAM_PARAM)) {
-      const accessible = await listAccessibleAccounts(authCtx.id)
+      const accessible = await listSweepableAccounts(authCtx.id)
       // L'identifiant reçu du client ne sert QU'À ordonner : il n'ouvre aucune
-      // boîte par lui-même, seules celles de `listAccessibleAccounts` sont balayées.
+      // boîte par lui-même, seules celles de `listSweepableAccounts` sont balayées.
       const order = orderAccountsForSearch(accessible, account.id)
       const byId = new Map(accessible.map(a => [a.id, a]))
       const accounts = order.map(id => byId.get(id)).filter((a): a is AccountRow => !!a)

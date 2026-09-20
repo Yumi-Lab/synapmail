@@ -27,6 +27,11 @@ export interface DashboardAccount {
   // qui tranche entre elle et celle du RANG, du même côté que la barre latérale.
   // Jamais la vieille colonne `email_accounts.color`.
   badgeColor: string | null
+  // Le RANG de la boîte dans la liste PARTAGÉE de l'utilisateur (`listAccessibleAccounts`),
+  // celle que sert aussi `/api/accounts`. La couleur automatique est une fonction de ce
+  // rang : le recalculer sur la liste du tableau de bord, plus courte, repeindrait la
+  // même boîte d'une autre couleur que la barre latérale.
+  rank: number
   unread: number
 }
 

@@ -774,13 +774,16 @@ function Kpi({
 }
 
 /**
- * Le RANG d'une boîte : sa place dans la liste que le serveur a déjà ordonnée
- * (`accountOrderBy`). C'est lui qui décide de la couleur automatique, donc il se lit
- * dans la liste COMPLÈTE et jamais dans une liste filtrée — sinon une frappe dans le
- * champ de filtre repeindrait les lignes. `-1` quand la ligne ne porte pas de boîte.
+ * La boîte que porte une ligne, cherchée par son identifiant. `null` quand la ligne n'en
+ * porte pas, ou quand elle en nomme une que cet écran ne liste pas. Tout ce qui peint une
+ * boîte ici passe par elle, puis par SON rang (`account.rank`) : celui que le serveur a
+ * calculé sur la liste partagée (boîtes possédées + partages actifs), jamais l'index dans
+ * la liste de cet écran. Celle-ci ne montre que les boîtes possédées, donc un index local
+ * glisserait d'un cran par boîte partagée et repeindrait la même boîte d'une autre couleur
+ * que la barre latérale et les réglages — c'est le défaut mesuré au banc le 20/09/2026.
  */
-const rankOf = (accounts: DashboardAccount[], id: string | null) =>
-  (id ? accounts.findIndex(a => a.id === id) : -1)
+const accountOf = (accounts: DashboardAccount[], id: string | null) =>
+  (id ? accounts.find(a => a.id === id) ?? null : null)
 
 /**
  * La couleur d'une boîte, pour ce que le tableau de bord peint À CÔTÉ de sa bulle
@@ -788,8 +791,8 @@ const rankOf = (accounts: DashboardAccount[], id: string | null) =>
  * fonction que la bulle elle-même, donc jamais une seconde teinte pour la même boîte.
  */
 const colorOf = (accounts: DashboardAccount[], id: string | null) => {
-  const rank = rankOf(accounts, id)
-  return rank < 0 ? null : accountColor(accounts[rank], rank)
+  const account = accountOf(accounts, id)
+  return account ? accountColor(account, account.rank) : null
 }
 
 /**
@@ -798,11 +801,11 @@ const colorOf = (accounts: DashboardAccount[], id: string | null) => {
  * donc les mêmes initiales et la même couleur des deux côtés de l'écran.
  */
 function AccountBubble({ accounts, id }: { accounts: DashboardAccount[]; id: string | null }) {
-  const rank = rankOf(accounts, id)
+  const account = accountOf(accounts, id)
   // Une ligne sans boîte (l'enregistrement n'en porte pas) ne montre RIEN plutôt
   // qu'un repli qui ferait croire à une vraie boîte.
-  if (rank < 0) return null
-  return <AccountAvatar account={accounts[rank]} colorIndex={rank} size="xs" />
+  if (!account) return null
+  return <AccountAvatar account={account} colorIndex={account.rank} size="xs" />
 }
 
 function Empty({ children }: { children: React.ReactNode }) {
@@ -851,8 +854,7 @@ function AccountFilter({
     if (box) setAnchor({ x: box.left, y: box.bottom + PICKER_GAP })
   }
 
-  const current = accounts.find(a => a.id === value) ?? null
-  const currentRank = rankOf(accounts, value)
+  const current = accountOf(accounts, value)
 
   const row = (
     id: string | null,
@@ -890,7 +892,7 @@ function AccountFilter({
         className="mt-2 inline-flex items-center gap-2 rounded-lg border border-border bg-card/70 px-2.5 py-1.5 text-xs font-medium backdrop-blur-sm transition-colors hover:bg-card"
       >
         {current
-          ? <AccountAvatar account={current} colorIndex={currentRank} size="sm" />
+          ? <AccountAvatar account={current} colorIndex={current.rank} size="sm" />
           : <Filter className="h-3.5 w-3.5 text-muted-foreground" />}
         {current ? current.name : allLabel}
         <ChevronDown className={cn('h-3.5 w-3.5 text-muted-foreground transition-transform', open && 'rotate-180')} />
@@ -933,7 +935,7 @@ function AccountFilter({
             a.id === value,
             i === highlight,
             <>
-              <AccountAvatar account={a} colorIndex={rankOf(accounts, a.id)} unread={a.unread} size="sm" />
+              <AccountAvatar account={a} colorIndex={a.rank} unread={a.unread} size="sm" />
               <AccountPickerText account={a} />
             </>,
           ))}

@@ -1,5 +1,6 @@
 import { query } from './db'
-import { accountColor, accountOrderBy } from './accountColor'
+import { accountColor } from './accountColor'
+import { listAccessibleAccounts } from './accountAccess'
 import type { FocusReason } from '@/types/dashboard'
 
 /**
@@ -67,7 +68,6 @@ export interface FocusItem {
   reason: FocusReason
 }
 
-type AccountRow = { id: string; name: string; badge_color: string | null }
 type ContactRow = { email: string; frequency: number; is_starred: boolean }
 
 /**
@@ -80,12 +80,11 @@ export async function getFocusItems(userId: string, accountId?: string | null, l
   const byEa = scoped ? 'AND ea.id = $2' : ''
 
   const [accounts, focusRows, contactRows] = await Promise.all([
-    query<AccountRow>(
-      // Le RANG de la boîte décide sa couleur automatique : la liste est donc lue dans
-      // l'ordre TOTAL partagé, le même que celui du tableau de bord et de la barre.
-      `SELECT id, name, badge_color FROM email_accounts WHERE user_id = $1 ${accountOrderBy()}`,
-      [userId],
-    ),
+    // Le RANG de la boîte décide de sa couleur automatique : la liste est donc lue par
+    // la règle PARTAGÉE — mêmes boîtes et même ordre que le tableau de bord, la barre
+    // latérale et les réglages. Réduite aux boîtes possédées, elle ferait glisser les
+    // rangs dès qu'une boîte est partagée, et la même boîte porterait deux couleurs.
+    listAccessibleAccounts(userId),
     query<FocusRow>(
       `SELECT mc.uid, mc.account_id, mc.folder, mc.subject, mc.from_name, mc.from_address,
               mc.date, mc.is_starred, mc.has_attachments
