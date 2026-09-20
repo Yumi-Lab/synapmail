@@ -610,7 +610,10 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                 data-account-list-open={accountOpen ? 'true' : 'false'}
               >
                 {showAccountFilter && (
-                  <div className="px-1.5 pb-1.5">
+                  // `p-1.5`, not `px-1.5 pb-1.5`: the accordion clips (`overflow-hidden`,
+                  // needed by the `0fr → 1fr` animation) and the focus ring is painted
+                  // OUTSIDE the field's border — with no top margin it was cut by 1–2 px.
+                  <div className="p-1.5">
                     <AccountPickerFilter
                       value={accountFilter}
                       onChange={setAccountFilter}
