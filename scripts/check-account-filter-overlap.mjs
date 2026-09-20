@@ -70,11 +70,20 @@ const MEASURE = () => {
   for (const el of bar.querySelectorAll('[data-unread-badge]')) {
     if (!vis(el)) continue
     const rect = R(el)
+    // Le compteur n'est juge que si SA rangee est ENTIEREMENT visible dans chaque boite
+    // qui coupe. Une rangee a demi defilee emporte son compteur hors du cadre : c'est le
+    // defilement, pas un rognage (mesure : 9 etats ainsi comptes en echec, tous des
+    // rangees deja sorties du cadre — le critere etait le defaut, pas le produit).
+    const row = el.closest('[data-sidebar-row]')
     let cut = null
     for (let p = el.parentElement; p && p !== bar.parentElement; p = p.parentElement) {
       const cs = getComputedStyle(p)
       if (!/hidden|auto|scroll|clip/.test(cs.overflowX + cs.overflowY)) continue
       const c = R(p)
+      if (row) {
+        const rr = R(row)
+        if (rr.t < c.t - 0.5 || rr.b > c.b + 0.5 || rr.l < c.l - 0.5 || rr.r > c.r + 0.5) continue
+      }
       const sides = Object.entries({ left: c.l - rect.l, top: c.t - rect.t, right: rect.r - c.r, bottom: rect.b - c.b })
         .filter(([, v]) => v > 0.5).map(([k, v]) => [k, +v.toFixed(1)])
       if (sides.length && !cut) cut = { by: p.className.toString().slice(0, 40), sides: Object.fromEntries(sides) }
@@ -163,6 +172,15 @@ try {
 
         // La rangée à cliquer est celle de la barre VISIBLE. On la SURVOLE ensuite : le
         // compteur du compte actif déborde vers le haut, c'est le suspect n°1.
+        // La barre arrive avec ses comptes (SWR) : on l'ATTEND au lieu de la lire une fois.
+        // Sans cette attente le banc echouait au tout premier etat, apres un `goto` pourtant
+        // resolu — le squelette etait rendu, pas encore la rangee du compte.
+        await page.waitForFunction(() => {
+          const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
+          const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
+          const el = bar && bar.querySelector('[data-sidebar-row="account"]')
+          return !!el && vis(el) && Object.keys(el).some(k => k.startsWith('__reactProps$'))
+        }, { timeout: 30000 }).catch(() => {})
         const row = await page.evaluate(() => {
           const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
           const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
