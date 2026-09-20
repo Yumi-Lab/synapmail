@@ -9,11 +9,12 @@ import { useTranslations, useLocale } from 'next-intl'
 import {
   Mail, Send, Eye, Clock, Sparkles, BarChart3, Users, Filter,
   PenSquare, RefreshCw, ArrowUpRight, Minus, CheckCheck,
-  Paperclip, Star, FileText, AlarmClock, ChevronRight, ChevronDown, Check,
+  Paperclip, Star, FileText, AlarmClock, ChevronRight, ChevronDown, Check, MailX,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AccountAvatar } from '@/components/layout/AccountAvatar'
 import { AccountPickerFilter, AccountPickerText, useAccountPicker } from '@/components/layout/AccountPicker'
+import { SubscriptionsCard } from './SubscriptionsCard'
 import { ContextMenuSurface, type ContextMenuAnchor } from '@/components/ui/ContextMenu'
 import { accountColor } from '@/lib/accountColor'
 import type { DashboardData, DashboardAccount, FocusReason, ActivityPoint } from '@/types/dashboard'
@@ -701,9 +702,26 @@ export function DashboardClient() {
             )}
           </Card>
 
+          {/* Abonnements */}
+          <SubscriptionsCard
+            accounts={d.accounts}
+            filterAccount={filterAccount}
+            renderCard={({ title, action, children }) => (
+              <Card
+                index={7}
+                className="col-span-12 lg:col-span-8"
+                icon={<MailX className="h-[15px] w-[15px]" />}
+                title={title}
+                action={action}
+              >
+                {children}
+              </Card>
+            )}
+          />
+
           {/* Quick compose */}
           <Card
-            index={7}
+            index={8}
             className="col-span-12"
             icon={<PenSquare className="h-[15px] w-[15px]" />}
             title={t('quickComposeTitle')}

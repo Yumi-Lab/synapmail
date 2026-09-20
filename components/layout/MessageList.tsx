@@ -6,6 +6,10 @@ import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
 import { MAIL_ORIGIN_ATTR, groupByOrigin, groupsToMove, originKey, type MessageOrigin } from '@/lib/mailOrigin'
 import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } from '@/lib/flags'
+import {
+  explorerSelect, gestureOf, isAllSelected, selectAll,
+  type ExplorerGesture, type ExplorerSelection,
+} from '@/lib/explorerSelection'
 import { cn } from '@/lib/utils'
 import { formatRowDate } from '@/lib/dates'
 import {
@@ -510,41 +514,30 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     () => threads.map(t => originKey(originOf(t.lastMessage))),
     [threads, originOf]
   )
-  const isAllChecked = allVisibleKeys.length > 0 && allVisibleKeys.every(key => checkedKeys.has(key))
+  const isAllChecked = isAllSelected(allVisibleKeys, checkedKeys)
   const isIndeterminate = !isAllChecked && allVisibleKeys.some(key => checkedKeys.has(key))
 
-  const toggleAll = () => {
-    setCheckedKeys(isAllChecked ? new Set() : new Set(allVisibleKeys))
+  /**
+   * La RÈGLE (clic, Cmd/Ctrl-clic, Maj-clic, tout prendre) vit dans
+   * `lib/explorerSelection.ts` et sert aussi la liste des abonnements du
+   * tableau de bord. Ici on ne fait que ranger le résultat : l'ensemble dans
+   * l'état, l'ancre dans sa référence.
+   */
+  const applySelection = (next: ExplorerSelection) => {
+    setCheckedKeys(next.selected)
+    rangeAnchorKey.current = next.anchor
   }
 
-  const toggleChecked = (key: string) => {
-    setCheckedKeys(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
+  const currentSelection = (): ExplorerSelection => ({ selected: checkedKeys, anchor: rangeAnchorKey.current })
+
+  const clickRow = (key: string, gesture: ExplorerGesture) =>
+    applySelection(explorerSelect(allVisibleKeys, currentSelection(), key, gesture))
+
+  const toggleAll = () => applySelection(selectAll(allVisibleKeys, isAllChecked))
 
   const toggleRow = (key: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    rangeAnchorKey.current = key
-    toggleChecked(key)
-  }
-
-  /** Maj-clic : plage depuis l'ancre, dans l'ordre affiché. Sans ancre, la ligne seule. */
-  const selectRangeTo = (key: string) => {
-    const anchor = rangeAnchorKey.current
-    const from = anchor ? allVisibleKeys.indexOf(anchor) : -1
-    const to = allVisibleKeys.indexOf(key)
-    if (to < 0) return
-    if (from < 0) {
-      rangeAnchorKey.current = key
-      setCheckedKeys(new Set([key]))
-      return
-    }
-    const [lo, hi] = from <= to ? [from, to] : [to, from]
-    setCheckedKeys(new Set(allVisibleKeys.slice(lo, hi + 1)))
+    clickRow(key, 'toggle')
   }
 
   const clearSelection = () => {
@@ -844,13 +837,9 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const handleRowClick = (thread: ThreadGroup, e: React.MouseEvent) => {
     if (marqueeDrewRef.current) { marqueeDrewRef.current = false; return }
     const key = originKey(originOf(thread.lastMessage))
-    if (e.metaKey || e.ctrlKey) {
-      toggleChecked(key)
-      rangeAnchorKey.current = key
-      return
-    }
-    if (e.shiftKey) {
-      selectRangeTo(key)
+    const gesture = gestureOf(e.nativeEvent)
+    if (gesture !== 'replace') {
+      clickRow(key, gesture)
       return
     }
     // L'ancre est posée APRÈS l'ouverture : `handleSelectThread` vide la
@@ -883,10 +872,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     e.preventDefault()
     const msg = thread.lastMessage
     const key = originKey(originOf(msg))
-    if (!checkedKeys.has(key)) {
-      setCheckedKeys(new Set([key]))
-      rangeAnchorKey.current = key
-    }
+    if (!checkedKeys.has(key)) clickRow(key, 'replace')
     setContextMenu({
       x: e.clientX,
       y: e.clientY,
@@ -980,7 +966,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
         if (allVisibleKeys.length === 0) return
         e.preventDefault()
-        setCheckedKeys(new Set(allVisibleKeys))
+        applySelection(selectAll(allVisibleKeys, false))
         return
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return
