@@ -295,7 +295,6 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
                     account={account}
                     colorIndex={rankOf(account)}
                     size="md"
-                    data-account-badge={account.id}
                   />
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-sm">{account.name}</div>

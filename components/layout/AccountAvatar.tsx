@@ -220,7 +220,7 @@ export function UnreadBadge({ count }: { count: number }) {
 }
 
 interface AccountAvatarProps extends React.HTMLAttributes<HTMLSpanElement> {
-  account: Pick<EmailAccount, 'name' | 'email'> & ColorableAccount
+  account: Pick<EmailAccount, 'name' | 'email'> & ColorableAccount & { id?: string }
   /** Rank of the account in the list — used only when its owner picked no colour. */
   colorIndex: number
   unread?: number
@@ -241,6 +241,12 @@ export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', ..
     <span className="relative inline-flex shrink-0">
       <span
         {...rest}
+        // La bulle publie QUELLE boîte elle peint, sur TOUS les écrans : c'est ce qui
+        // permet de comparer la couleur RENDUE d'une même boîte d'un écran à l'autre
+        // (banc `scripts/check-account-badge-parity.mjs`). Portée ici plutôt que par chaque
+        // appelant : posée écran par écran, elle manquait justement là où les rangs
+        // divergeaient (tableau de bord), et l'écart ne se voyait plus qu'à l'œil.
+        data-account-badge={account.id}
         className={cn(
           'rounded-full flex items-center justify-center font-semibold select-none tracking-[0.02em]',
           SIZES[size],
