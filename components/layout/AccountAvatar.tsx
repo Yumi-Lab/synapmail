@@ -133,10 +133,23 @@ type AvatarSize = 'xs' | 'sm' | 'md'
  * `scripts/check-sidebar-collapse.mjs` measures the rendered glyph box against the
  * bubble, so the fit is enforced, not assumed.
  */
+/**
+ * La BOÎTE de la bulle, séparée de sa graisse de texte : un habillage qui doit
+ * couvrir exactement la bulle (la case à cocher de `SelectableBubble`) lit cette
+ * carte plutôt que de recopier `w-5 h-5`, sinon les deux tailles divergent au
+ * premier changement. Les classes restent littérales : Tailwind lit le texte
+ * source, une classe composée par interpolation ne serait jamais émise.
+ */
+export const BUBBLE_BOX: Record<AvatarSize, string> = {
+  xs: 'w-5 h-5',
+  sm: 'w-7 h-7',
+  md: 'w-8 h-8',
+}
+
 const SIZES: Record<AvatarSize, string> = {
-  xs: 'w-5 h-5 text-[8px]',
-  sm: 'w-7 h-7 text-[10px]',
-  md: 'w-8 h-8 text-[11px]',
+  xs: `${BUBBLE_BOX.xs} text-[8px]`,
+  sm: `${BUBBLE_BOX.sm} text-[10px]`,
+  md: `${BUBBLE_BOX.md} text-[11px]`,
 }
 
 /** Letters kept in a bubble. Two, always — one letter reads as an accident, not an identity. */

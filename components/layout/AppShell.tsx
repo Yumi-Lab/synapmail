@@ -41,7 +41,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     // A ROW: the bar owns the full height, the header starts at its right edge and
     // follows the width animation on its own (no offset to keep in sync, no jump).
-    <div className="relative flex h-screen overflow-hidden bg-muted/30">
+    <div
+      className="relative flex h-screen overflow-hidden bg-muted/30"
+      // Lot H3k : l'en-tete commence au bord droit de la barre, donc son centre
+      // n'est PAS celui de l'ecran. La largeur de la barre est publiee ici, a sa
+      // source unique, pour que l'en-tete puisse rattraper l'ecart en CSS seul —
+      // aucune mesure JavaScript au redimensionnement.
+      style={{ ['--synap-bar-w' as string]: `${sidebarCollapsed ? SIDEBAR.collapsedWidth : SIDEBAR.expandedWidth}px` }}
+    >
       {/* Desktop sidebar — width animated from the single geometry source */}
       <aside
         className="hidden lg:flex shrink-0 flex-col overflow-hidden border-r border-border transition-[width]"

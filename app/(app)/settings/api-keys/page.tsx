@@ -274,27 +274,28 @@ export default function ApiKeysPage() {
           return (
             <div key={key.id} className="border border-border rounded-xl bg-card shadow-sm p-4">
               <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
+                {/* La carte EST le bouton : cliquer une clé déplie ses autorisations, sans
+                    passer par un bouton séparé. L'action évidente d'un objet est son clic. */}
+                <button
+                  type="button"
+                  onClick={() => setEditingScopesFor(editingScopes ? null : key.id)}
+                  aria-expanded={editingScopes}
+                  className="min-w-0 flex-1 text-left cursor-pointer rounded"
+                  data-api-key-row={key.id}
+                >
                   <div className="font-medium text-sm">{key.name}</div>
                   <div className="text-xs text-muted-foreground mt-0.5 font-mono">{key.keyPrefix}…</div>
                   <div className="text-xs text-muted-foreground mt-1">
                     Créée le {formatDate(key.createdAt)}
                     {key.lastUsedAt ? ` · Dernière utilisation le ${formatDate(key.lastUsedAt)}` : ' · Jamais utilisée'}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">
+                  <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                    <KeyRound className="w-3 h-3" />
                     {key.scopes.length} autorisation{key.scopes.length > 1 ? 's' : ''}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => setEditingScopesFor(editingScopes ? null : key.id)}
-                    className="h-8 px-2.5 flex items-center gap-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                    title="Modifier les autorisations"
-                  >
-                    <KeyRound className="w-3.5 h-3.5" />
-                    Autorisations
                     <ChevronDown className={cn('w-3 h-3 transition-transform', editingScopes && 'rotate-180')} />
-                  </button>
+                  </div>
+                </button>
+                <div className="flex items-center gap-1 shrink-0">
                   <button
                     onClick={() => setExpandedKeyId(expanded ? null : key.id)}
                     className="h-8 px-2.5 flex items-center gap-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"

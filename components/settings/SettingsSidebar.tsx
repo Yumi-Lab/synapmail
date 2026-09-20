@@ -1,5 +1,6 @@
 'use client'
 
+import { ThinScroll } from '@/components/layout/ThinScroll'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
@@ -86,7 +87,8 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-3">
+      <ThinScroll className="flex-1" viewportClassName="px-3 py-3">
+        <nav className="space-y-0.5">
         {SETTINGS_NAV.map(({ href, key, icon: Icon }) => {
           const active = pathname.startsWith(href)
           return (
@@ -111,6 +113,7 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
           </>
         )}
       </nav>
+      </ThinScroll>
 
       {/* Footer */}
       <div className="border-t border-border px-4 pb-4 pt-2">
