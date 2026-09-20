@@ -1,5 +1,6 @@
 'use client'
 
+import { ThinScroll } from '@/components/layout/ThinScroll'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useTranslations } from 'next-intl'
@@ -91,8 +92,9 @@ export function SettingsModal() {
             )}
           </nav>
 
-          {/* Panel */}
-          <div className="relative min-w-0 flex-1 overflow-y-auto">
+          {/* Panel — l'ascenseur du thème, pas celui du système : le reste de
+              l'application défile déjà avec `ThinScroll`, cette modale faisait exception. */}
+          <ThinScroll className="relative min-w-0 flex-1">
             <DialogPrimitive.Close
               aria-label="Fermer"
               className="absolute right-3 top-3 z-10 grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -100,7 +102,7 @@ export function SettingsModal() {
               <X className="h-4 w-4" />
             </DialogPrimitive.Close>
             <SettingsModalPanel segment={segment} />
-          </div>
+          </ThinScroll>
         </DialogPrimitive.Popup>
       </DialogPortal>
     </Dialog>
