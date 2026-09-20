@@ -84,12 +84,14 @@ const RULES = [
     // le tableau de bord listait `WHERE user_id = $1` seul, sans les boîtes reçues en
     // partage, et ses pastilles glissaient d'un cran. Une seule règle a le droit de dire
     // quelles boîtes un utilisateur voit : `ACCESSIBLE_ACCOUNT_IDS` (`lib/accountAccess.ts`).
-    // Le critère est l'ORDRE, pas la simple lecture d'une boîte : c'est classer une
-    // liste qui attribue un rang, donc une couleur. Une requête qui lit UNE boîte ou en
-    // compte sans les ordonner ne décide d'aucune couleur et n'est pas visée.
+    // Le critère est de CLASSER une liste de boîtes : c'est cela qui attribue un rang,
+    // donc une couleur. Choisir LA boîte par défaut (`ORDER BY … LIMIT 1`) n'en classe
+    // aucune et n'est pas visé ; ordonner une autre table non plus.
     test: src => /accountOrderBy\s*\(/.test(src)
       || src.split('\n').some(line =>
-        /\bORDER\s+BY\b/i.test(line) && /\bis_default\b/i.test(line)),
+        /\bFROM\s+email_accounts\b/i.test(line)
+        && /\bORDER\s+BY\b/i.test(line)
+        && !/\bLIMIT\s+1\b/i.test(line)),
     hint: 'liste ou ordre des boîtes réécrit : passer par `listAccessibleAccounts()` / `ACCESSIBLE_ACCOUNT_IDS` (`lib/accountAccess.ts`)',
   },
   {
@@ -130,6 +132,14 @@ if (BREAK) {
       // La pastille telle que le lot l'a supprimée du tableau de bord : plus aucune
       // colonne `color`, la couleur vient du helper — c'est la forme qui rechuterait.
       + `const dot = <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: colorOf(id) }} />\n`,
+  })
+  // La liste des boîtes telle que le tableau de bord la CLASSAIT pour lui seul :
+  // sans les boîtes reçues en partage, donc avec des rangs — et des couleurs —
+  // différents de ceux de la barre latérale. C'est le défaut du 20/09/2026.
+  sources.push({
+    path: join('app', 'api', 'dashboard', '__break__.ts'),
+    src: 'const q = `SELECT id, name, badge_color FROM email_accounts'
+      + ' WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC, id ASC`\n',
   })
 }
 

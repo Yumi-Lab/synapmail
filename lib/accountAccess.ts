@@ -89,6 +89,19 @@ export const ACCESSIBLE_ACCOUNT_IDS = `(
  * c'est pourquoi le premier terme teste la propriété en plus du drapeau. Il va avec
  * `ACCESSIBLE_ACCOUNT_IDS` : les deux se lisent ensemble ou pas du tout.
  */
+/**
+ * Le même ordre, exprimé sur les noms de SORTIE camelCase : un `UNION` ne peut être
+ * classé que par les colonnes qu'il produit, et c'est la forme dont `/api/accounts` a
+ * besoin — la liste que lisent la barre latérale et les réglages. Les deux clauses
+ * disent la MÊME chose : une boîte reçue n'est jamais la boîte par défaut (la branche
+ * partagée publie déjà `false AS "isDefault"`), puis la plus ancienne, puis l'identifiant.
+ */
+export const ACCESSIBLE_ORDER_BY_ALIASED = accountOrderBy({
+  isDefault: '"isDefault"',
+  createdAt: '"createdAt"',
+  id: 'id',
+})
+
 export const ACCESSIBLE_ORDER_BY = accountOrderBy({
   isDefault: '(a.user_id = $1 AND a.is_default)',
   createdAt: 'a.created_at',
