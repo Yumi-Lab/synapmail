@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { imapConfigOf, purgeSubscriptionHistory } from '@/lib/subscriptions'
 
@@ -20,8 +20,12 @@ export const dynamic = 'force-dynamic'
 // refuses when the mailbox no longer holds that number: the caller only ever
 // consented to what it saw.
 export async function POST(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // `authorize` et non `authenticate` : le refus doit NOMMER ce qui manque, la portée ou la
+  // boîte. Un 401 muet laisse un agent deviner, et surtout il masque le fait que la barrière
+  // par boîte s'est bien appliquée.
+  const acces = await authorize(req)
+  if ('denied' in acces) return acces.denied
+  const authCtx = acces.ctx
 
   const body = (await req.json().catch(() => null)) as
     | { account?: string; id?: string; expected?: unknown; folder?: string }

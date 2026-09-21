@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import { countSubscriptionHistory, imapConfigOf } from '@/lib/subscriptions'
@@ -14,8 +14,12 @@ export const dynamic = 'force-dynamic'
 // Bearer or session, SAME access rule as `GET /api/subscriptions`: counting is
 // reading. The purge below asks for more.
 export async function GET(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // `authorize` et non `authenticate` : le refus doit NOMMER ce qui manque, la portée ou la
+  // boîte. Un 401 muet laisse un agent deviner, et surtout il masque le fait que la barrière
+  // par boîte s'est bien appliquée.
+  const acces = await authorize(req)
+  if ('denied' in acces) return acces.denied
+  const authCtx = acces.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
