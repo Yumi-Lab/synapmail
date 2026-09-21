@@ -37,6 +37,7 @@ export const API_SCOPES = {
   'settings:write': "Modifier les réglages de l'utilisateur",
   'subscriptions:read': 'Lire les abonnements aux newsletters',
   'subscriptions:write': 'Se désabonner des newsletters',
+  'subscriptions:purge': "Vider l'historique d'une newsletter",
   'ai:use': "Utiliser les actions d'assistance",
 } as const
 
@@ -122,6 +123,10 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'GET /api/subscriptions': 'subscriptions:read',
   'GET /api/subscriptions/unsubscribed': 'subscriptions:read',
   'POST /api/subscriptions/unsubscribe': 'subscriptions:write',
+  'GET /api/subscriptions/history': 'subscriptions:read',
+  // La purge DÉPLACE du courrier vers la corbeille : sa propre portée, jamais celle du
+  // désabonnement. Une clé autorisée à se désinscrire ne doit pas pouvoir vider un historique.
+  'POST /api/subscriptions/purge': 'subscriptions:purge',
   'POST /api/ai/action': 'ai:use',
 }
 

@@ -53,6 +53,7 @@ A key that is valid but too narrow gets **`403`**, naming what it lacks — neve
 | `rules:read` / `rules:write` | list filter rules / create, edit and delete them |
 | `settings:read` / `settings:write` | read the user's settings / change them |
 | `subscriptions:read` / `subscriptions:write` | list newsletters / unsubscribe |
+| `subscriptions:purge` | move a newsletter's whole history to the trash — destructive, never granted by unsubscribing |
 | `ai:use` | the assistance actions |
 
 A **human session is never limited by a scope**: scopes apply to keys only. Keys created before scopes existed keep exactly the routes they could already call; writing to mailboxes is granted to nobody by default and has to be ticked.
@@ -971,7 +972,7 @@ curl -s -H "Authorization: Bearer $SYN_KEY" \
   "$BASE/api/subscriptions/unsubscribed?account=$ACCOUNT" | jq '.data[] | {sender: .sender.address, method, unsubscribedAt}'
 ```
 
-### `GET /api/subscriptions/history?account=<id>&id=<subscription>[&folder=INBOX]` — Bearer or session
+### `GET /api/subscriptions/history?account=<id>&id=<subscription>[&folder=INBOX]` — Bearer or session (`subscriptions:read`)
 Counts, across the **whole mailbox**, the messages of one newsletter — including the ones `GET /api/subscriptions` never sees, since that route reads only the 400 most recent messages of a single folder. Same access rule as `GET /api/subscriptions`: counting is reading. **Read only**: nothing is moved and nothing is deleted.
 
 `id` is an id `GET /api/subscriptions` answered, and `folder` is the folder it was listed from — that is where the id is resolved back to a newsletter. The search then uses the identity that group already carries: `List-Id` when the sender declares one (stable across a sender's address rotations), the `From` address otherwise.
@@ -998,7 +999,7 @@ interface SubscriptionHistory {
 
 A search by header is a server-side `SEARCH HEADER`, folder by folder, over 4 shared connections — the same shape and the same budget as `GET /api/messages/search`. On a mailbox with many folders it is a **slow call**: count once, then purge.
 
-### `POST /api/subscriptions/purge` — Bearer or session
+### `POST /api/subscriptions/purge` — Bearer or session (`subscriptions:purge`)
 Moves a newsletter's whole history to the mailbox's **trash**. Access rule `delete` — strictly above the `send` an unsubscribe asks for, because this repeats what `DELETE /api/messages/bulk` does on messages the caller never listed one by one.
 
 **Never a permanent deletion and never an expunge**: everything lands in the trash, so a mistake stays recoverable by the mailbox's owner.
