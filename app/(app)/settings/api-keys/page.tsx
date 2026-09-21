@@ -10,6 +10,8 @@ import type { ApiKey, ApiKeyRequestLog } from '@/types/account'
 import { SettingsPage, SettingsHeader, SettingsSection } from '@/components/settings/primitives'
 import { API_DOC_PATH } from '@/lib/apiDocs'
 import { ALL_SCOPES, API_SCOPES, type ApiScope } from '@/lib/apiScopes'
+import { AccountAvatar } from '@/components/layout/AccountAvatar'
+import type { EmailAccount } from '@/types/account'
 import { RowMenu, ContextMenuItem, MENU_ICON } from '@/components/ui/ContextMenu'
 import { cn } from '@/lib/utils'
 
@@ -19,7 +21,70 @@ const fetcher = (url: string) => fetch(url).then(r => r.json())
  * `ApiKey` vit dans `types/account.ts`, hors du périmètre de ce lot : la portée
  * est ajoutée ici, là où elle est consommée, plutôt qu'en touchant un type partagé.
  */
-type ScopedApiKey = ApiKey & { scopes: ApiScope[] }
+type ScopedApiKey = ApiKey & {
+  scopes: ApiScope[]
+  /** Les boîtes cochées pour cette clé. */
+  accountIds: string[]
+  /** Les boîtes que la clé a CONNECTÉES : à elle, sans qu'on ait rien coché. */
+  ownedAccountIds: string[]
+}
+
+/**
+ * Les boîtes sur lesquelles la clé a le droit d'agir. Les portées disent quelle
+ * capacité, cette liste dit sur quelle boîte — les deux sont exigées.
+ *
+ * La pastille est `AccountAvatar`, la MÊME que la barre latérale et le tableau de
+ * bord : sa couleur vient du RANG de la boîte dans la liste servie par
+ * `/api/accounts`, donc une boîte garde ici la couleur qu'elle a partout ailleurs.
+ * Une boîte connectée PAR la clé lui appartient : cochée, verrouillée, et dite
+ * telle — la décocher n'aurait aucun effet, mieux vaut ne pas le laisser croire.
+ */
+function AccountPicker({
+  accounts, value, owned = [], onChange,
+}: {
+  accounts: EmailAccount[]
+  value: string[]
+  owned?: string[]
+  onChange: (next: string[]) => void
+}) {
+  if (!accounts.length) {
+    return <p className="text-xs text-muted-foreground">Aucune boîte à autoriser.</p>
+  }
+  const toggle = (id: string) =>
+    onChange(value.includes(id) ? value.filter(a => a !== id) : [...value, id])
+
+  return (
+    <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+      {accounts.map((account, rank) => {
+        const isOwned = owned.includes(account.id)
+        return (
+          <label
+            key={account.id}
+            className={cn(
+              'flex items-center gap-2 rounded-lg px-2 py-1.5',
+              isOwned ? 'opacity-70' : 'cursor-pointer hover:bg-muted',
+            )}
+          >
+            <input
+              type="checkbox"
+              checked={isOwned || value.includes(account.id)}
+              disabled={isOwned}
+              onChange={() => toggle(account.id)}
+              className="h-3.5 w-3.5 shrink-0 accent-violet-600"
+            />
+            <AccountAvatar account={account} colorIndex={rank} size="sm" />
+            <span className="min-w-0">
+              <span className="block truncate text-sm leading-tight">{account.name || account.email}</span>
+              <span className="block truncate text-[11px] text-muted-foreground">
+                {isOwned ? 'Connectée par cette clé' : account.email}
+              </span>
+            </span>
+          </label>
+        )
+      })}
+    </div>
+  )
+}
 
 /** Ce qu'une clé reçoit quand on n'y touche pas : lire, rien d'autre. */
 const DEFAULT_SCOPES: ApiScope[] = ['accounts:read', 'messages:read', 'folders:read']
@@ -87,19 +152,31 @@ function ActivityPanel({ keyId }: { keyId: string }) {
 }
 
 /** Les autorisations d'une clé existante, modifiables sans la recréer. */
-function ScopeEditor({ apiKey, onSave }: { apiKey: ScopedApiKey; onSave: (scopes: ApiScope[]) => Promise<void> }) {
+function ScopeEditor({ apiKey, accounts, onSave }: {
+  apiKey: ScopedApiKey
+  accounts: EmailAccount[]
+  onSave: (scopes: ApiScope[], accountIds: string[]) => Promise<void>
+}) {
   const [draft, setDraft] = useState<ApiScope[]>(apiKey.scopes)
+  const [accountDraft, setAccountDraft] = useState<string[]>(apiKey.accountIds)
+  const same = (a: string[], b: string[]) => a.length === b.length && a.every(v => b.includes(v))
   const [saving, setSaving] = useState(false)
-  const dirty = draft.length !== apiKey.scopes.length || draft.some(s => !apiKey.scopes.includes(s))
+  const dirty = !same(draft, apiKey.scopes) || !same(accountDraft, apiKey.accountIds)
 
   return (
     <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3">
       <ScopePicker value={draft} onChange={setDraft} />
+      <div className="mt-3 border-t border-border pt-3">
+        <p className="mb-2 text-xs text-muted-foreground">
+          Boîtes autorisées. Une boîte non cochée reste fermée, quelles que soient les autorisations.
+        </p>
+        <AccountPicker accounts={accounts} value={accountDraft} owned={apiKey.ownedAccountIds} onChange={setAccountDraft} />
+      </div>
       <div className="mt-3 flex items-center gap-2">
         <Button
           size="sm"
           disabled={!dirty || !draft.length || saving}
-          onClick={async () => { setSaving(true); try { await onSave(draft) } finally { setSaving(false) } }}
+          onClick={async () => { setSaving(true); try { await onSave(draft, accountDraft) } finally { setSaving(false) } }}
         >
           {saving ? 'Enregistrement…' : 'Enregistrer'}
         </Button>
@@ -116,10 +193,17 @@ export default function ApiKeysPage() {
   const tDocs = useTranslations('settings.apiKeys')
   const { data, mutate } = useSWR<{ data: ScopedApiKey[] }>('/api/api-keys', fetcher)
   const keys = data?.data ?? []
+  // La MÊME liste que la barre latérale : son ORDRE décide de la couleur des pastilles,
+  // donc une boîte est de la même couleur ici que partout ailleurs.
+  const { data: accountsData } = useSWR<{ data: EmailAccount[] }>('/api/accounts', fetcher)
+  const accounts = accountsData?.data ?? []
 
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newScopes, setNewScopes] = useState<ApiScope[]>(DEFAULT_SCOPES)
+  // Rien de coché par défaut : une clé neuve n'atteint que les boîtes qu'elle connecte
+  // elle-même, jamais celles de quelqu'un d'autre sans un geste explicite.
+  const [newAccounts, setNewAccounts] = useState<string[]>([])
   const [editingScopesFor, setEditingScopesFor] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -136,7 +220,7 @@ export default function ApiKeysPage() {
       const res = await fetch('/api/api-keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName, scopes: newScopes }),
+        body: JSON.stringify({ name: newName, scopes: newScopes, accountIds: newAccounts }),
       })
       const d = await res.json()
       if (!res.ok) throw new Error(d.error ?? 'Erreur')
@@ -144,6 +228,7 @@ export default function ApiKeysPage() {
       setCreating(false)
       setNewName('')
       setNewScopes(DEFAULT_SCOPES)
+      setNewAccounts([])
       setRevealedKey(d.data.key)
     } catch (err) {
       setError(String(err))
@@ -152,11 +237,11 @@ export default function ApiKeysPage() {
     }
   }
 
-  const saveScopes = async (key: ScopedApiKey, scopes: ApiScope[]) => {
+  const saveScopes = async (key: ScopedApiKey, scopes: ApiScope[], accountIds: string[]) => {
     const res = await fetch(`/api/api-keys/${key.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scopes }),
+      body: JSON.stringify({ scopes, accountIds }),
     })
     if (!res.ok) { setError((await res.json()).error ?? 'Erreur'); return }
     setError(null)
@@ -252,6 +337,13 @@ export default function ApiKeysPage() {
             </p>
             <ScopePicker value={newScopes} onChange={setNewScopes} />
           </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Boîtes autorisées</label>
+            <p className="mb-2 text-xs text-muted-foreground">
+              La clé n&apos;atteindra que les boîtes cochées, plus celles qu&apos;elle connecte elle-même.
+            </p>
+            <AccountPicker accounts={accounts} value={newAccounts} onChange={setNewAccounts} />
+          </div>
           <div className="flex gap-2">
             <Button size="sm" onClick={createKey} disabled={saving}>
               {saving ? 'Création…' : 'Créer'}
@@ -292,6 +384,9 @@ export default function ApiKeysPage() {
                   <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
                     <KeyRound className="w-3 h-3" />
                     {key.scopes.length} autorisation{key.scopes.length > 1 ? 's' : ''}
+                    {' · '}
+                    {key.accountIds.length + key.ownedAccountIds.length} boîte
+                    {key.accountIds.length + key.ownedAccountIds.length > 1 ? 's' : ''}
                     <ChevronDown className={cn('w-3 h-3 transition-transform', editingScopes && 'rotate-180')} />
                   </div>
                 </button>
@@ -315,7 +410,12 @@ export default function ApiKeysPage() {
                   </RowMenu>
                 </div>
               </div>
-              {editingScopes && <ScopeEditor apiKey={key} onSave={scopes => saveScopes(key, scopes)} />}
+              {editingScopes && (
+                <ScopeEditor
+                  apiKey={key} accounts={accounts}
+                  onSave={(scopes, accountIds) => saveScopes(key, scopes, accountIds)}
+                />
+              )}
               {expanded && <ActivityPanel keyId={key.id} />}
             </div>
           )

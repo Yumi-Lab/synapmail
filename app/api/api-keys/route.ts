@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { sanitizeScopes } from '@/lib/apiScopes'
+import { grantAccounts } from '@/lib/apiKeyAccounts'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,6 +15,8 @@ type ApiKeyRow = {
   created_at: string
   scopes: string[] | null
   request_count_24h?: string
+  account_ids?: string[] | null
+  owned_account_ids?: string[] | null
 }
 
 function toApi(r: ApiKeyRow) {
@@ -25,6 +28,10 @@ function toApi(r: ApiKeyRow) {
     createdAt: r.created_at,
     scopes: sanitizeScopes(r.scopes),
     requestCount24h: r.request_count_24h ? parseInt(r.request_count_24h) : 0,
+    accountIds: (r.account_ids ?? []).filter(Boolean),
+    // Les boîtes que la clé a CONNECTÉES : elles lui appartiennent, donc l'écran les
+    // montre cochées et verrouillées plutôt que de laisser croire qu'on peut les retirer.
+    ownedAccountIds: (r.owned_account_ids ?? []).filter(Boolean),
   }
 }
 
@@ -35,7 +42,9 @@ export async function GET() {
   try {
     const rows = await query<ApiKeyRow>(
       `SELECT ak.id, ak.name, ak.key_prefix, ak.last_used_at, ak.created_at, ak.scopes,
-              COUNT(r.id) FILTER (WHERE r.created_at >= NOW() - INTERVAL '24 hours')::text AS request_count_24h
+              COUNT(r.id) FILTER (WHERE r.created_at >= NOW() - INTERVAL '24 hours')::text AS request_count_24h,
+              ARRAY(SELECT g.account_id::text FROM api_key_accounts g WHERE g.api_key_id = ak.id) AS account_ids,
+              ARRAY(SELECT a.id::text FROM email_accounts a WHERE a.created_by_api_key = ak.id) AS owned_account_ids
        FROM api_keys ak
        LEFT JOIN api_key_requests r ON r.api_key_id = ak.id
        WHERE ak.user_id = $1 AND ak.revoked_at IS NULL
@@ -55,7 +64,7 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json()
-    const { name, scopes } = body as { name?: string; scopes?: unknown }
+    const { name, scopes, accountIds } = body as { name?: string; scopes?: unknown; accountIds?: unknown }
     if (!name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })
 
     // Une clé sans portée ne peut rien faire : ce serait une clé morte, jamais un
@@ -68,11 +77,16 @@ export async function POST(req: Request) {
     const keyPrefix = rawKey.slice(0, 12)
 
     const rows = await query<ApiKeyRow>(
-      `INSERT INTO api_keys (user_id, name, key_prefix, key_hash, scopes, scopes_migrated_at)
-       VALUES ($1, $2, $3, $4, $5::text[], NOW())
+      `INSERT INTO api_keys (user_id, name, key_prefix, key_hash, scopes, scopes_migrated_at, accounts_migrated_at)
+       VALUES ($1, $2, $3, $4, $5::text[], NOW(), NOW())
        RETURNING id, name, key_prefix, last_used_at, created_at, scopes`,
       [session.user.id, name.trim(), keyPrefix, keyHash, granted]
     )
+
+    // Les boîtes cochées à la création. `accounts_migrated_at` est posé ci-dessus pour
+    // qu'un redémarrage ne vienne PAS lui accorder toutes les boîtes au titre de la
+    // migration : une clé neuve n'a que ce qu'on lui a coché.
+    await grantAccounts(rows[0].id, session.user.id, accountIds)
 
     // rawKey is returned once, here, and never stored or logged in cleartext.
     return NextResponse.json({ data: { ...toApi(rows[0]), key: rawKey } }, { status: 201 })

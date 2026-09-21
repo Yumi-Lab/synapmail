@@ -109,3 +109,38 @@ export async function keyAccountIds(apiKeyId: string): Promise<Set<string>> {
   )
   return new Set(rows.map(r => r.id))
 }
+
+/**
+ * Remplace les boîtes COCHÉES d'une clé, et rend la liste effectivement écrite.
+ *
+ * `undefined` = l'appelant ne parle pas des boîtes : on ne touche à rien. Une liste,
+ * même VIDE, remplace — c'est ainsi qu'on retire la dernière boîte d'une clé.
+ *
+ * Seules les boîtes de `userId` sont retenues : une liste d'identifiants venue du
+ * client ne peut pas cocher la boîte de quelqu'un d'autre. Les boîtes que la clé a
+ * CONNECTÉES ne passent pas par ici — elles lui appartiennent déjà.
+ */
+export async function grantAccounts(
+  apiKeyId: string,
+  userId: string,
+  accountIds: unknown
+): Promise<string[] | undefined> {
+  if (accountIds === undefined) return undefined
+  const wanted = Array.isArray(accountIds) ? accountIds.filter((v): v is string => typeof v === 'string') : []
+
+  const owned = await query<{ id: string }>(
+    'SELECT id FROM email_accounts WHERE user_id = $1 AND id = ANY($2::uuid[])',
+    [userId, wanted]
+  )
+  const granted = owned.map(r => r.id)
+
+  await query('DELETE FROM api_key_accounts WHERE api_key_id = $1 AND NOT (account_id = ANY($2::uuid[]))', [apiKeyId, granted])
+  if (granted.length) {
+    await query(
+      `INSERT INTO api_key_accounts (api_key_id, account_id)
+       SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING`,
+      [apiKeyId, granted]
+    )
+  }
+  return granted
+}
