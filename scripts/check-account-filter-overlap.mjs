@@ -16,6 +16,7 @@
  */
 import { readFileSync } from 'node:fs'
 import puppeteer from 'puppeteer-core'
+import { installVisible, openAccountList, visibleBox, VISIBLE } from './bench-visible.mjs'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
@@ -54,11 +55,18 @@ for (const [k, v] of Object.entries({ SYNAPMAIL_TEST_URL: BASE, SYNAPMAIL_TEST_E
  * n'existent sur AUCUN écran (mesuré : une puce du tiroir « recouvrant » le champ de la
  * barre cachée). Une seule barre, donc, et la liste doit être OUVERTE.
  */
-const MEASURE = () => {
+/**
+ * Instance VISIBLE, via le helper partage (lot H4h-bis) : sous `lg` la barre vit dans un
+ * TIROIR et l'instance de bureau reste au DOM a 0 px — un `querySelector` nu attrape celle
+ * que personne ne regarde. `vis` reste local pour les rangees DEJA prises dans la barre
+ * choisie : une fois la bonne instance tenue, un test de taille suffit.
+ */
+const MEASURE = (name) => {
   const R = el => { const r = el.getBoundingClientRect(); return { t: +r.top.toFixed(1), l: +r.left.toFixed(1), b: +r.bottom.toFixed(1), r: +r.right.toFixed(1) } }
-  const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-  const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
-  if (!bar) return { error: 'aucune barre visible' }
+  const V = window[name]
+  const vis = el => V.drawnRect(el).area >= 1
+  let bar
+  try { bar = V.one('[data-sidebar]') } catch (e) { return { error: e.message.split('\n')[0] } }
   const list = bar.querySelector('[data-account-list]')
   if (!list || list.getAttribute('data-account-list-open') !== 'true' || !vis(list)) return { error: 'liste des boîtes fermée' }
   const fieldEl = bar.querySelector('[data-account-filter]')
@@ -103,6 +111,7 @@ const check = (label, ok, detail = '') => {
 
 try {
   const page = await browser.newPage()
+  await installVisible(page)
   await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' })
   const loggedIn = await page.evaluate(async ({ base, email, password }) => {
     const { csrfToken } = await (await fetch(`${base}/api/auth/csrf`)).json()
@@ -160,53 +169,27 @@ try {
           { timeout: 30000 },
         ).catch(() => {})
 
-        // Sous `lg`, la barre vit dans un tiroir : il faut l'ouvrir avant de mesurer.
-        if (width < 1024) {
-          const menu = await page.$('[data-omnibar-menu]')
-          if (menu) {
-            const m = await menu.evaluate(el => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })
-            await page.mouse.click(m.x, m.y)
-            await new Promise(r => setTimeout(r, 500))
-          }
-        }
+        // Instance VISIBLE + depliage, une seule fois pour les trois bancs (lot H4h-bis) :
+        // sous `lg` la barre vit dans un TIROIR et l'instance de bureau reste au DOM a 0 px.
+        const { surface } = await openAccountList(page, { width })
 
-        // La rangée à cliquer est celle de la barre VISIBLE. On la SURVOLE ensuite : le
-        // compteur du compte actif déborde vers le haut, c'est le suspect n°1.
-        // La barre arrive avec ses comptes (SWR) : on l'ATTEND au lieu de la lire une fois.
-        // Sans cette attente le banc echouait au tout premier etat, apres un `goto` pourtant
-        // resolu — le squelette etait rendu, pas encore la rangee du compte.
-        await page.waitForFunction(() => {
-          const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-          const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
-          const el = bar && bar.querySelector('[data-sidebar-row="account"]')
-          return !!el && vis(el) && Object.keys(el).some(k => k.startsWith('__reactProps$'))
-        }, { timeout: 30000 }).catch(() => {})
-        const row = await page.evaluate(() => {
-          const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-          const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
-          const el = bar && bar.querySelector('[data-sidebar-row="account"]')
-          if (!el || !vis(el)) return null
-          const r = el.getBoundingClientRect()
-          return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
-        })
-        if (!row) { console.error(`HARNESS: aucune rangée de compte visible à ${width} px / zoom ${zoom} / replié=${collapsed}`); process.exit(2) }
-        await page.mouse.click(row.x, row.y)
-        await new Promise(r => setTimeout(r, 700))
+        // On SURVOLE ensuite la rangee du compte actif : son compteur deborde vers le haut,
+        // c'est le suspect n°1 du chevauchement que ce banc cherche.
+        const row = await visibleBox(page, '[data-sidebar-row="account"]')
         await page.mouse.move(row.x, row.y)
         await new Promise(r => setTimeout(r, 200))
 
         for (const state of ['repos', 'défilée']) {
           if (state === 'défilée') {
-            await page.evaluate(() => {
-              const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-              const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
-              const vp = bar && bar.querySelector('[data-account-list] [data-thin-scroll-viewport]')
+            await page.evaluate((name) => {
+              const V = window[name]
+              const vp = V.one('[data-sidebar]').querySelector('[data-account-list] [data-thin-scroll-viewport]')
               if (vp) vp.scrollTop = vp.scrollHeight
-            })
+            }, VISIBLE)
             await new Promise(r => setTimeout(r, 250))
           }
-          const m = await page.evaluate(MEASURE)
-          const where = `${width} px / zoom ${zoom} / replié=${collapsed} / ${state}`
+          const m = await page.evaluate(MEASURE, VISIBLE)
+          const where = `${width} px / zoom ${zoom} / replié=${collapsed} / ${state} / ${surface}`
           if (m.error) { console.error(`HARNESS: ${where} — ${m.error}`); process.exit(2) }
           if (!m.badges.length) { console.error(`HARNESS: ${where} — aucun compteur rendu`); process.exit(2) }
           measured++

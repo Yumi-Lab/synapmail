@@ -22,7 +22,6 @@ import type { Message, Folder, ReadReceipt } from '@/types/email'
 import type { EmailAccount } from '@/types/account'
 import { MessageContextMenu, type ContextMenuState } from '@/components/ui/MessageContextMenu'
 import { IconTooltip } from '@/components/ui/IconTooltip'
-import { SelectableBubble } from '@/components/ui/SelectableBubble'
 import { ThinScroll } from './ThinScroll'
 import { accountColor, accountInitials, readableInk, useAccountAccent } from './AccountAvatar'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
@@ -1018,24 +1017,34 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
         onClick={e => handleRowClick(thread, e)}
       >
         {/* Avatar / Checkbox */}
-        <SelectableBubble
-          checked={isChecked}
-          onToggle={e => toggleRow(rowKey, e)}
-          className={compact ? 'w-7 h-7' : 'w-9 h-9'}
+        <div
+          className={cn('relative shrink-0 group/avatar', compact ? 'w-7 h-7' : 'w-9 h-9')}
+          onClick={e => toggleRow(rowKey, e)}
         >
-          <div className={cn(
-            'w-full h-full rounded-full flex items-center justify-center font-semibold',
-            compact ? 'text-xs' : 'text-sm',
-            avatarColor,
-          )}>
-            {initial}
-          </div>
-          {count > 1 && (
+          {isChecked ? (
+            <div className="w-full h-full rounded-full flex items-center justify-center bg-primary/10 text-primary">
+              <CheckSquare className="w-4 h-4" />
+            </div>
+          ) : (
+            <>
+              <div className={cn(
+                'w-full h-full rounded-full flex items-center justify-center font-semibold group-hover/avatar:opacity-0 transition-opacity',
+                compact ? 'text-xs' : 'text-sm',
+                avatarColor,
+              )}>
+                {initial}
+              </div>
+              <div className="absolute inset-0 rounded-full flex items-center justify-center bg-muted/60 opacity-0 group-hover/avatar:opacity-100 transition-opacity">
+                <Square className="w-4 h-4 text-muted-foreground" />
+              </div>
+            </>
+          )}
+          {count > 1 && !isChecked && (
             <span className="absolute -bottom-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-white text-[10px] font-bold flex items-center justify-center leading-none shadow-sm">
               {count}
             </span>
           )}
-        </SelectableBubble>
+        </div>
 
         <div className="min-w-0">
           {/* line 1 — sender (truncates first) + full date and time */}
