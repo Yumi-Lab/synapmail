@@ -303,13 +303,20 @@ check(
 
 // The mode reader must look inside the method, not across the file: a route file
 // holding one Bearer method and one session method must report both truthfully.
-const mixed = Object.entries(code).reduce((seen, [key, { file, mode }]) => {
-  const modes = seen.get(file) ?? new Set()
-  return seen.set(file, modes.add(mode)) && seen
-}, new Map())
+// Mesuré sur une SOURCE FICTIVE, et non sur un fichier du dépôt qui se trouverait
+// mélanger les deux : cette propriété du lecteur doit rester vérifiée même quand
+// plus aucune route n'est mixte — ce fut le cas de `app/api/contacts/route.ts`
+// jusqu'à ce que ses écritures s'ouvrent aux clés (lot P12), et l'assertion serait
+// alors devenue verte par disparition de son sujet.
+const MIXED_FIXTURE = `
+async function getHandler(req) { const gate = await authorize(req); return gate }
+export async function POST(req) { const session = await auth(); return session }
+export const GET = withApiLog(getHandler)
+`
 check(
-  [...mixed.values()].some(modes => modes.size > 1),
-  'at least one route file mixes two access modes, so the per-method read is exercised',
+  modeOf(MIXED_FIXTURE, 'GET') === 'bearer' && modeOf(MIXED_FIXTURE, 'POST') === 'session',
+  'the mode is read inside each method, so two modes in one file are told apart',
+  `GET read as ${modeOf(MIXED_FIXTURE, 'GET')}, POST read as ${modeOf(MIXED_FIXTURE, 'POST')}`,
 )
 
 // ---- The document is SERVED, and packaged so it can be ----------------------

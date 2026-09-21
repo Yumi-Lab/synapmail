@@ -26,6 +26,15 @@ export const API_SCOPES = {
   'folders:read': 'Lire les dossiers',
   'folders:write': 'Créer, renommer et supprimer des dossiers',
   'contacts:read': 'Lire les contacts',
+  'contacts:write': 'Ajouter, modifier et supprimer des contacts',
+  'signatures:read': 'Lire les signatures',
+  'signatures:write': 'Créer, modifier et supprimer des signatures',
+  'templates:read': 'Lire les modèles de message',
+  'templates:write': 'Créer, modifier et supprimer des modèles',
+  'rules:read': 'Lire les règles de tri',
+  'rules:write': 'Créer, modifier et supprimer des règles de tri',
+  'settings:read': "Lire les réglages de l'utilisateur",
+  'settings:write': "Modifier les réglages de l'utilisateur",
   'subscriptions:read': 'Lire les abonnements aux newsletters',
   'subscriptions:write': 'Se désabonner des newsletters',
   'ai:use': "Utiliser les actions d'assistance",
@@ -35,8 +44,27 @@ export type ApiScope = keyof typeof API_SCOPES
 
 export const ALL_SCOPES = Object.keys(API_SCOPES) as ApiScope[]
 
-/** Les portées nouvelles de ce lot, accordées à personne par défaut. */
+/** Le cycle de vie d'une boîte, ouvert au lot P8. */
 export const ACCOUNT_WRITE_SCOPES: ApiScope[] = ['accounts:create', 'accounts:update', 'accounts:delete']
+
+/**
+ * Les portées apparues APRÈS la migration des clés, donc accordées à PERSONNE par
+ * défaut : il faut les cocher. C'est cette liste — et non son complément — qui est
+ * tenue à jour, pour qu'ajouter une portée ici ne la distribue jamais en silence aux
+ * clés existantes. `LEGACY_SCOPES` s'en déduit.
+ */
+export const OPT_IN_SCOPES: ApiScope[] = [
+  ...ACCOUNT_WRITE_SCOPES,
+  'contacts:write',
+  'signatures:read',
+  'signatures:write',
+  'templates:read',
+  'templates:write',
+  'rules:read',
+  'rules:write',
+  'settings:read',
+  'settings:write',
+]
 
 /**
  * Ce qu'une clé créée AVANT les portées pouvait déjà faire : les 14 routes qui
@@ -44,7 +72,7 @@ export const ACCOUNT_WRITE_SCOPES: ApiScope[] = ['accounts:create', 'accounts:up
  * donc aucune ne cesse de fonctionner. Les capacités NOUVELLES — l'écriture sur
  * les boîtes — n'y sont pas : il faut les cocher.
  */
-export const LEGACY_SCOPES: ApiScope[] = ALL_SCOPES.filter(s => !ACCOUNT_WRITE_SCOPES.includes(s))
+export const LEGACY_SCOPES: ApiScope[] = ALL_SCOPES.filter(s => !OPT_IN_SCOPES.includes(s))
 
 /**
  * La portée exigée par chaque méthode de chaque route ouverte au Bearer.
@@ -72,6 +100,25 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'DELETE /api/folders': 'folders:write',
   'POST /api/folders/actions': 'folders:write',
   'GET /api/contacts': 'contacts:read',
+  'POST /api/contacts': 'contacts:write',
+  'DELETE /api/contacts': 'contacts:write',
+  'PATCH /api/contacts/[id]': 'contacts:write',
+  'DELETE /api/contacts/[id]': 'contacts:write',
+  'GET /api/signatures': 'signatures:read',
+  'POST /api/signatures': 'signatures:write',
+  'PATCH /api/signatures/[id]': 'signatures:write',
+  'DELETE /api/signatures/[id]': 'signatures:write',
+  'GET /api/templates': 'templates:read',
+  'POST /api/templates': 'templates:write',
+  'PATCH /api/templates/[id]': 'templates:write',
+  'DELETE /api/templates/[id]': 'templates:write',
+  'GET /api/rules': 'rules:read',
+  'GET /api/rules/[id]': 'rules:read',
+  'POST /api/rules': 'rules:write',
+  'PATCH /api/rules/[id]': 'rules:write',
+  'DELETE /api/rules/[id]': 'rules:write',
+  'GET /api/settings': 'settings:read',
+  'PATCH /api/settings': 'settings:write',
   'GET /api/subscriptions': 'subscriptions:read',
   'GET /api/subscriptions/unsubscribed': 'subscriptions:read',
   'POST /api/subscriptions/unsubscribe': 'subscriptions:write',

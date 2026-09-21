@@ -39,6 +39,38 @@ const ACCOUNT_PATH_PREFIX = '/api/accounts/'
 const ACCOUNT_PATH_EXCEPTIONS = ['test']
 
 /**
+ * Les objets qui désignent leur boîte INDIRECTEMENT : `PATCH /api/rules/<id>` ne
+ * nomme aucune boîte, mais la règle en vise une, et agir sur la règle c'est agir
+ * sur cette boîte. Sans cette table, une clé sans la boîte B modifierait le tri de
+ * B en passant par l'identifiant de la règle — la barrière serait contournée par
+ * l'objet plutôt que par la route.
+ *
+ * Une entrée = un préfixe de chemin et la requête qui rend la boîte de l'objet.
+ * `null` en réponse (objet inconnu, ou sans boîte comme une signature globale) ne
+ * désigne aucune boîte : la route rendra elle-même son 404, ce n'est pas à la
+ * barrière de trancher l'existence.
+ */
+const ACCOUNT_BY_OBJECT: { prefix: string; sql: string }[] = [
+  { prefix: '/api/rules/', sql: 'SELECT account_id AS id FROM email_rules WHERE id = $1' },
+  { prefix: '/api/signatures/', sql: 'SELECT account_id AS id FROM signatures WHERE id = $1' },
+]
+
+/** Un identifiant d'objet est un UUID : tout le reste est un sous-chemin (`/run`, `/test`). */
+const OBJECT_ID = /^[0-9a-f-]{36}$/i
+
+/** La boîte visée à travers l'objet nommé dans le chemin, ou `null`. */
+async function accountIdFromObject(path: string): Promise<string | null> {
+  for (const { prefix, sql } of ACCOUNT_BY_OBJECT) {
+    if (!path.startsWith(prefix)) continue
+    const segment = path.slice(prefix.length)
+    if (!OBJECT_ID.test(segment)) continue
+    const rows = await query<{ id: string | null }>(sql, [segment])
+    return rows[0]?.id ?? null
+  }
+  return null
+}
+
+/**
  * La boîte que cette requête désigne, ou `null` si elle n'en désigne aucune.
  *
  * Le corps est lu sur un CLONE : la route le relira intact derrière nous. Un corps
@@ -57,6 +89,9 @@ export async function accountIdFromRequest(req: Request): Promise<string | null>
     const segment = path.slice(ACCOUNT_PATH_PREFIX.length)
     if (segment && !segment.includes('/') && !ACCOUNT_PATH_EXCEPTIONS.includes(segment)) return segment
   }
+
+  const byObject = await accountIdFromObject(path)
+  if (byObject) return byObject
 
   if (req.method === 'GET' || req.method === 'HEAD') return null
   if (!req.headers.get('content-type')?.includes('application/json')) return null

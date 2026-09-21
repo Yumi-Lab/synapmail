@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import { normalizeEmail } from '@/lib/emailAddress'
-import { auth } from '@/lib/auth'
 import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { withApiLog } from '@/lib/apiLog'
@@ -99,9 +98,10 @@ async function getHandler(req: Request) {
 }
 
 // POST /api/contacts — create manual contact
-export async function POST(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function postHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   const body = await req.json()
   const { name, email, notes } = body as { name?: string; email: string; notes?: string }
@@ -122,16 +122,17 @@ export async function POST(req: Request) {
        is_manual  = true,
        updated_at = NOW()
      RETURNING id`,
-    [session.user?.id, resolvedName, normalizedEmail, notes ?? null]
+    [userId, resolvedName, normalizedEmail, notes ?? null]
   )
 
   return NextResponse.json({ data: { id: rows[0].id } }, { status: 201 })
 }
 
 // DELETE /api/contacts?oneshots=true — bulk clean one-shot contacts
-export async function DELETE(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function deleteHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   const { searchParams } = new URL(req.url)
   if (searchParams.get('oneshots') !== 'true') {
@@ -148,7 +149,7 @@ export async function DELETE(req: Request) {
        RETURNING id
      )
      SELECT COUNT(*) AS count FROM deleted`,
-    [session.user?.id]
+    [userId]
   )
 
   return NextResponse.json({ data: { deleted: parseInt(result[0]?.count ?? '0') } })
@@ -156,3 +157,5 @@ export async function DELETE(req: Request) {
 
 // Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
 export const GET = withApiLog(getHandler)
+export const POST = withApiLog(postHandler)
+export const DELETE = withApiLog(deleteHandler)

@@ -1,22 +1,21 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authorize } from '@/lib/apiAuth'
+import { withApiLog } from '@/lib/apiLog'
 import { query } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
 // PATCH /api/contacts/[id] — update name, notes, isStarred
-export async function PATCH(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function patchHandler(req: Request, { params }: { params: { id: string } }) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   const body = await req.json() as { name?: string; notes?: string; isStarred?: boolean }
   const { name, notes, isStarred } = body
 
   const sets: string[] = ['updated_at = NOW()']
-  const values: unknown[] = [params.id, session.user?.id]
+  const values: unknown[] = [params.id, userId]
   let i = 3
 
   if (name !== undefined) {
@@ -36,17 +35,19 @@ export async function PATCH(
 }
 
 // DELETE /api/contacts/[id]
-export async function DELETE(
-  _req: Request,
-  { params }: { params: { id: string } }
-) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function deleteHandler(req: Request, { params }: { params: { id: string } }) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   await query(
     'DELETE FROM contacts WHERE id = $1 AND user_id = $2',
-    [params.id, session.user?.id]
+    [params.id, userId]
   )
 
   return NextResponse.json({ success: true })
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const PATCH = withApiLog(patchHandler)
+export const DELETE = withApiLog(deleteHandler)
