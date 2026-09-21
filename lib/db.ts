@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import { LEGACY_SCOPES } from '@/lib/apiScopes'
+import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -344,6 +344,22 @@ export async function initDb(): Promise<void> {
   await query(
     `UPDATE api_keys SET scopes = $1::text[], scopes_migrated_at = NOW() WHERE scopes_migrated_at IS NULL`,
     [LEGACY_SCOPES]
+  )
+
+  // Une portée OPTIONNELLE ne s'obtient qu'en la cochant (règle : « les capacités
+  // nouvelles ne sont accordées à personne par défaut »). Or une migration antérieure
+  // en a distribué : `contacts:write` a brièvement fait partie de LEGACY_SCOPES, et
+  // les clés créées avant l'ont reçue sans que personne ne la coche — inoffensif tant
+  // qu'aucune route d'écriture n'acceptait de clé, plus du tout depuis qu'elles s'ouvrent.
+  // Ce rattrapage passe UNE fois par clé (le marqueur le garantit) : une portée cochée
+  // APRÈS ce passage n'est jamais reprise.
+  await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS optin_scopes_revoked_at TIMESTAMPTZ`)
+  await query(
+    `UPDATE api_keys
+        SET scopes = ARRAY(SELECT unnest(scopes) EXCEPT SELECT unnest($1::text[])),
+            optin_scopes_revoked_at = NOW()
+      WHERE optin_scopes_revoked_at IS NULL`,
+    [OPT_IN_SCOPES]
   )
 
   // Journal des requêtes Bearer par clé — un log léger (méthode + chemin + IP), pas les
