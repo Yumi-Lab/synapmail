@@ -243,6 +243,7 @@ export function SubscriptionsCard({
               <li
                 key={r.id}
                 data-subs-row={r.id}
+                data-subs-count={r.count}
                 data-subs-selected={picked ? 'true' : 'false'}
                 onClick={e => click(r, e)}
                 className={cn(
