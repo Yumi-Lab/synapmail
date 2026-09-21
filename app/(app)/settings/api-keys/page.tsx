@@ -125,7 +125,64 @@ function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
-function ActivityPanel({ keyId }: { keyId: string }) {
+/**
+ * Ce qu'un refus veut dire, en clair. Le motif vient de la barrière elle-même
+ * (`lib/apiLog.ts`), le détail porte ce qui manquait : une portée — dont le libellé
+ * est celui de `API_SCOPES`, jamais réécrit ici — ou une boîte, nommée par sa bulle.
+ */
+function denialLabel(log: ApiKeyRequestLog): string | null {
+  if (!log.denialReason) return null
+  if (log.denialReason === 'scope') {
+    const scope = log.denialDetail as ApiScope | null
+    return scope && scope in API_SCOPES ? `Autorisation manquante : ${API_SCOPES[scope]}` : 'Autorisation manquante'
+  }
+  if (log.denialReason === 'account') return 'Boîte non autorisée'
+  return 'Clé non reconnue'
+}
+
+/**
+ * Une requête et CE QU'ELLE A DONNÉ : statut, durée, boîte visée, motif du refus.
+ * Le statut porte la couleur de son issue — un refus se repère sans lire le nombre.
+ * La boîte est la MÊME bulle que partout ailleurs (`AccountAvatar`, rang dans la
+ * liste servie par `/api/accounts`), pas une seconde façon de désigner une boîte.
+ */
+function ActivityRow({ log, accounts }: { log: ApiKeyRequestLog; accounts: EmailAccount[] }) {
+  const rank = accounts.findIndex(a => a.id === log.accountId)
+  const account = rank >= 0 ? accounts[rank] : null
+  const denial = denialLabel(log)
+  const ok = log.status !== null && log.status < 400
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+      <span className="shrink-0 w-14 font-mono font-medium text-muted-foreground">{log.method}</span>
+      <span className="min-w-0 flex-1 truncate font-mono">{log.path}</span>
+      <span
+        className={cn(
+          'shrink-0 rounded px-1.5 py-0.5 font-mono font-medium',
+          log.status === null ? 'text-muted-foreground'
+            : ok ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+            : 'bg-red-500/15 text-red-700 dark:text-red-400',
+        )}
+      >
+        {log.status ?? '—'}
+      </span>
+      <span className="shrink-0 tabular-nums text-muted-foreground">
+        {log.durationMs === null ? '—' : `${log.durationMs} ms`}
+      </span>
+      {account && <AccountAvatar account={account} colorIndex={rank} size="xs" />}
+      <span className="shrink-0 text-muted-foreground">{log.ipAddress ?? '—'}</span>
+      <span className="shrink-0 text-muted-foreground">{formatDateTime(log.createdAt)}</span>
+      {denial && (
+        <span className="w-full text-[11px] text-red-700 dark:text-red-400">
+          {denial}
+          {log.denialReason === 'account' && account ? ` — ${account.name || account.email}` : ''}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function ActivityPanel({ keyId, accounts }: { keyId: string; accounts: EmailAccount[] }) {
   const { data, isLoading } = useSWR<{ data: ApiKeyRequestLog[] }>(`/api/api-keys/${keyId}/logs`, fetcher)
   const logs = data?.data ?? []
 
@@ -136,15 +193,8 @@ function ActivityPanel({ keyId }: { keyId: string }) {
         <p className="text-xs text-muted-foreground">Aucune requête enregistrée pour cette clé.</p>
       )}
       {logs.length > 0 && (
-        <div className="space-y-1.5 max-h-64 overflow-y-auto">
-          {logs.map(log => (
-            <div key={log.id} className="flex items-center gap-2 text-xs">
-              <span className="shrink-0 w-14 font-mono font-medium text-muted-foreground">{log.method}</span>
-              <span className="flex-1 min-w-0 truncate font-mono">{log.path}</span>
-              <span className="shrink-0 text-muted-foreground">{log.ipAddress ?? '—'}</span>
-              <span className="shrink-0 text-muted-foreground">{formatDateTime(log.createdAt)}</span>
-            </div>
-          ))}
+        <div className="space-y-2 max-h-64 overflow-y-auto">
+          {logs.map(log => <ActivityRow key={log.id} log={log} accounts={accounts} />)}
         </div>
       )}
     </div>
@@ -416,7 +466,7 @@ export default function ApiKeysPage() {
                   onSave={(scopes, accountIds) => saveScopes(key, scopes, accountIds)}
                 />
               )}
-              {expanded && <ActivityPanel keyId={key.id} />}
+              {expanded && <ActivityPanel keyId={key.id} accounts={accounts} />}
             </div>
           )
         })}

@@ -89,4 +89,12 @@ export interface ApiKeyRequestLog {
   path: string
   ipAddress: string | null
   createdAt: string
+  /** Ce qui s'est PASSÉ — complété au retour de la requête, voir lib/apiLog.ts. */
+  status: number | null
+  durationMs: number | null
+  /** La boîte visée, quand la requête en désignait une. */
+  accountId: string | null
+  /** Le motif du refus et ce qui manquait : la portée, ou la boîte fermée. */
+  denialReason: 'unauthenticated' | 'scope' | 'account' | null
+  denialDetail: string | null
 }
