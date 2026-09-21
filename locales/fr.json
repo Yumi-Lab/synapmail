@@ -573,6 +573,7 @@
       "description": "Le nom et l'icône que cette instance affiche dans l'onglet du navigateur, pour tout le monde.",
       "nameLabel": "Nom",
       "iconLabel": "Icône de l'onglet",
+      "iconDrop": "Glissez une icône ici, ou cliquez pour choisir un fichier",
       "iconHint": "PNG, ICO, JPEG ou WebP, 256 Kio au plus.",
       "choose": "Choisir un fichier",
       "save": "Enregistrer",

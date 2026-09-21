@@ -573,6 +573,7 @@
       "description": "The name and the icon this instance shows in the browser tab, for everyone.",
       "nameLabel": "Name",
       "iconLabel": "Tab icon",
+      "iconDrop": "Drop an icon here, or click to choose a file",
       "iconHint": "PNG, ICO, JPEG or WebP, 256 KiB at most.",
       "choose": "Choose a file",
       "save": "Save",

@@ -573,6 +573,7 @@
       "description": "本实例在浏览器标签页中显示的名称和图标，对所有人生效。",
       "nameLabel": "名称",
       "iconLabel": "标签页图标",
+      "iconDrop": "将图标拖到此处，或点击选择文件",
       "iconHint": "支持 PNG、ICO、JPEG 或 WebP，最大 256 KiB。",
       "choose": "选择文件",
       "save": "保存",

@@ -5,6 +5,7 @@ import useSWR from 'swr'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
 import {
   BRANDING_ERRORS,
   DEFAULT_APP_NAME,
@@ -25,8 +26,8 @@ const ROUTE = '/api/admin/branding'
 export const BRANDING_ANCHOR = 'branding'
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
-/** Les deux tailles auxquelles un navigateur affiche réellement une favicon. */
-const PREVIEW_SIZES = [16, 32] as const
+/** La taille à laquelle un navigateur affiche réellement une favicon sur un écran dense. */
+const FAVICON_PREVIEW = 32
 
 const KNOWN_ERRORS: readonly string[] = Object.values(BRANDING_ERRORS)
 const isBrandingError = (value: unknown): value is BrandingError =>
@@ -71,6 +72,8 @@ export function BrandingSection() {
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Survol d'un fichier au-dessus de la zone : le seul retour visuel d'un glisser-déposer. */
+  const [dragging, setDragging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Tant que l'administrateur n'a rien tapé, le champ montre ce qui est enregistré.
@@ -167,29 +170,49 @@ export function BrandingSection() {
 
         <div>
           <span className="mb-1 block text-xs text-muted-foreground">{t('iconLabel')}</span>
-          <div className="flex items-center gap-3">
-            {PREVIEW_SIZES.map(size => (
-              // Aperçu à la taille RÉELLE d'une favicon : c'est là qu'une icône
-              // trop chargée devient illisible, pas dans une vignette agrandie.
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                key={size}
-                src={filePreview ?? iconSrc}
-                alt={t('preview')}
-                width={size}
-                height={size}
-                style={{ width: size, height: size }}
-              />
-            ))}
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/png,image/x-icon,image/vnd.microsoft.icon,image/jpeg,image/webp"
-              onChange={e => { pickFile(e.target.files?.[0] ?? null); setError(null) }}
-              className="text-xs file:mr-2 file:h-7 file:rounded-md file:border file:border-border file:bg-background file:px-2 file:text-xs"
+          {/* Une zone de dépôt plutôt que le champ natif : « Aucun fichier choisi »
+              débordait de la carte, et sa largeur dépend du navigateur et de la langue.
+              Cliquer la zone ouvre le sélecteur, y glisser un fichier le prend
+              directement. Un seul aperçu, à 32 px : deux vignettes côte à côte se
+              lisaient comme un défaut d'affichage. */}
+          <button
+            type="button"
+            data-favicon-drop
+            onClick={() => fileRef.current?.click()}
+            onDragOver={e => { e.preventDefault(); setDragging(true) }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={e => {
+              e.preventDefault()
+              setDragging(false)
+              const file = e.dataTransfer.files?.[0]
+              if (file) { pickFile(file); setError(null) }
+            }}
+            className={cn(
+              'mt-1 flex w-full items-center gap-3 rounded-lg border border-dashed px-3 py-3 text-left transition-colors',
+              dragging ? 'border-[color:var(--synap-account)] bg-muted/50' : 'border-border hover:bg-muted/30',
+            )}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={filePreview ?? iconSrc}
+              alt={t('preview')}
+              width={FAVICON_PREVIEW}
+              height={FAVICON_PREVIEW}
+              style={{ width: FAVICON_PREVIEW, height: FAVICON_PREVIEW }}
+              className="shrink-0"
             />
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">{t('iconHint')}</p>
+            <span className="min-w-0">
+              <span className="block truncate text-xs text-foreground">{file?.name ?? t('iconDrop')}</span>
+              <span className="mt-0.5 block text-[11px] text-muted-foreground">{t('iconHint')}</span>
+            </span>
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/x-icon,image/vnd.microsoft.icon,image/jpeg,image/webp"
+            onChange={e => { pickFile(e.target.files?.[0] ?? null); setError(null) }}
+            className="sr-only"
+          />
           <button
             type="button"
             data-branding-reset="favicon"
