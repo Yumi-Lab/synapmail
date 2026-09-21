@@ -102,14 +102,30 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
         {isAdmin && (
           <>
             <div className="my-2 border-t border-border" />
-            {ADMIN_NAV.map(({ href, key, icon: Icon }) => (
+            {ADMIN_NAV.map(({ href, key, icon: Icon }) => {
               // Même motif de ligne que les réglages ci-dessus. L'état actif se lit
               // sur le CHEMIN seul : une ancre ne change pas la page où l'on est.
-              <Link key={href} href={href} className={linkClass(pathname.startsWith(ADMIN_HREF))}>
-                <Icon className="h-4 w-4 shrink-0" />
-                <span>{t(key)}</span>
-              </Link>
-            ))}
+              //
+              // L'Administration vit HORS du panneau des réglages (`/admin/users`, pleine
+              // page). Ouverte depuis la MODALE, une navigation interne refermait la modale
+              // sans afficher la page : le contenu derrière restait la messagerie, et on
+              // croyait que le lien ne faisait rien. Un lien ORDINAIRE force le chargement
+              // complet, donc la page s'affiche toujours. Les autres entrées, elles, restent
+              // en navigation interne : elles vivent bien dans le panneau.
+              const horsDuPanneau = href.startsWith(ADMIN_HREF)
+              const classe = linkClass(pathname.startsWith(ADMIN_HREF))
+              return horsDuPanneau ? (
+                <a key={href} href={href} className={classe}>
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span>{t(key)}</span>
+                </a>
+              ) : (
+                <Link key={href} href={href} className={classe}>
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span>{t(key)}</span>
+                </Link>
+              )
+            })}
           </>
         )}
       </nav>
