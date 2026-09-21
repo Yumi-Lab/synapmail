@@ -4,9 +4,9 @@ import { getAccountById } from '@/lib/accounts'
 import { decrypt } from '@/lib/encrypt'
 import {
   TEST_DECISION,
-  probeConnection,
   resolveTestPassword,
 } from '@/lib/accountTest'
+import { probeConnection } from '@/lib/accountProbe'
 
 export const dynamic = 'force-dynamic'
 

@@ -3,7 +3,8 @@ import { authenticate, authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { ACCESSIBLE_ORDER_BY_ALIASED, ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
 import { encrypt } from '@/lib/encrypt'
-import { DEFAULT_IMAP_PORT, DEFAULT_SMTP_PORT, probeConnection } from '@/lib/accountTest'
+import { DEFAULT_IMAP_PORT, DEFAULT_SMTP_PORT } from '@/lib/accountTest'
+import { probeConnection } from '@/lib/accountProbe'
 
 export const dynamic = 'force-dynamic'
 
