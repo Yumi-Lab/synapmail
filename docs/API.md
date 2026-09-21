@@ -53,6 +53,25 @@ A key that is valid but too narrow gets **`403`**, naming what it lacks — neve
 
 A **human session is never limited by a scope**: scopes apply to keys only. Keys created before scopes existed keep exactly the routes they could already call; writing to mailboxes is granted to nobody by default and has to be ticked.
 
+### Mailbox access
+
+A scope says WHICH capability; it never says on WHICH mailbox. Both are required: a key holding `messages:read` but not mailbox B reads nothing of B. The check sits next to the scope check, in `lib/apiKeyAccounts.ts`, reading the mailbox out of the request itself (`?account=`, `accountId` in a JSON body, or the id in `/api/accounts/<id>`) — so a route cannot forget it.
+
+Two ways to hold the right, never a third:
+
+- the mailbox was **connected by that key** (`POST /api/accounts`) — it belongs to it, and needs no ticking: an agent manages its own mailboxes without touching anyone else's;
+- the mailbox was **ticked for it** in **Settings → Clés API**, on the key's expanded card.
+
+Every other mailbox is closed. A refusal is a `403` naming the mailbox, the same way a missing scope names the scope:
+
+```json
+{ "error": "API key has no access to mailbox 9f2c…",
+  "missingAccount": "9f2c…",
+  "missingAccountReason": "not_granted" }
+```
+
+`GET /api/accounts` lists only the mailboxes the calling key can reach — reading the list is itself knowing what exists. A **human session is limited neither by a scope nor by this list**. Keys created before this existed keep every mailbox they already reached; mailboxes added afterwards are granted to nobody.
+
 **Bearer-eligible routes** (the complete list — nothing else accepts a key):
 `GET /api/accounts`, `POST /api/accounts`, `PATCH /api/accounts/[id]`, `DELETE /api/accounts/[id]`, `POST /api/accounts/test`, `GET /api/folders`, `POST /api/folders`, `PATCH /api/folders`, `DELETE /api/folders`, `POST /api/folders/actions`, `GET /api/messages`, `GET /api/messages/[id]`, `PATCH /api/messages/[id]`, `DELETE /api/messages/[id]`, `PATCH /api/messages/bulk`, `DELETE /api/messages/bulk`, `GET /api/messages/search`, `GET /api/messages/thread`, `POST /api/messages/send`, `GET /api/contacts`, `GET /api/subscriptions`, `POST /api/subscriptions/unsubscribe`, `GET /api/subscriptions/unsubscribed`, `POST /api/ai/action`.
 
@@ -659,13 +678,13 @@ Import a contact's public key. **Body** `{ email: string; armoredKey: string; fi
 Manage the Bearer keys documented in [Authentication](#authentication) above. This management surface is itself session-only — you can't mint or revoke keys using a key.
 
 ### `GET /api/api-keys` — session only
-`{ data: ApiKey[] }` (active keys only — revoked ones are excluded), where `ApiKey = { id, name, keyPrefix, lastUsedAt: string | null, createdAt, scopes: string[], requestCount24h: number }`. `scopes` is what the key may do — see [Scopes](#scopes). Never includes the raw key or its hash. `requestCount24h` is a live `COUNT` over `api_key_requests` in the last 24h (see the logs endpoint below).
+`{ data: ApiKey[] }` (active keys only — revoked ones are excluded), where `ApiKey = { id, name, keyPrefix, lastUsedAt: string | null, createdAt, scopes: string[], accountIds: string[], ownedAccountIds: string[], requestCount24h: number }`. `accountIds` is what was ticked for the key and `ownedAccountIds` the mailboxes it connected itself — see [Mailbox access](#mailbox-access). `scopes` is what the key may do — see [Scopes](#scopes). Never includes the raw key or its hash. `requestCount24h` is a live `COUNT` over `api_key_requests` in the last 24h (see the logs endpoint below).
 
 ### `POST /api/api-keys` — session only
-**Body** `{ name: string, scopes: string[] }`, both required. `scopes` must hold at least one scope from the [table above](#scopes) — unknown entries are dropped, and an empty result is `400`: a key with no scope could do nothing. Generates `syn_<48 hex chars>`, stores only its SHA-256 hash + 12-char prefix. **Response** `201 { data: ApiKey & { key: string } }` — `key` is the **only time** the raw value is ever returned; it is not retrievable again.
+**Body** `{ name: string, scopes: string[], accountIds?: string[] }`; name and scopes are required. `accountIds` ticks the mailboxes the key may reach (ids not owned by the caller are dropped); omitted or empty, the key reaches only the mailboxes it connects itself. `scopes` must hold at least one scope from the [table above](#scopes) — unknown entries are dropped, and an empty result is `400`: a key with no scope could do nothing. Generates `syn_<48 hex chars>`, stores only its SHA-256 hash + 12-char prefix. **Response** `201 { data: ApiKey & { key: string } }` — `key` is the **only time** the raw value is ever returned; it is not retrievable again.
 
 ### `PATCH /api/api-keys/[id]` — session only
-Re-tick what an existing key may do, without reissuing it. **Body** `{ scopes: string[] }`, same rules as `POST` (at least one known scope, `400` otherwise). **Response** `{ data: { id, scopes } }`, or `404` if the key isn't the caller's or is already revoked. The change takes effect on the key's next request.
+Re-tick what an existing key may do, without reissuing it. **Body** `{ scopes: string[], accountIds?: string[] }`; scopes follow the same rules as `POST` (at least one known scope, `400` otherwise). Omitting `accountIds` leaves the mailbox list untouched; sending one REPLACES it, so an empty array removes every ticked mailbox. **Response** `{ data: { id, scopes, accountIds } }`, or `404` if the key isn't the caller's or is already revoked. The change takes effect on the key's next request.
 
 ### `DELETE /api/api-keys/[id]` — session only
 Soft-revoke (`revoked_at = NOW()`) — the key stops authenticating immediately. `{ success: true }` (idempotent — succeeds even if the id doesn't belong to the caller or doesn't exist, since the `UPDATE` predicate just matches zero rows).
