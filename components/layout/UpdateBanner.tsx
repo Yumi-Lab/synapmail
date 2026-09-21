@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import useSWR, { mutate as globalMutate } from 'swr'
 import { useTranslations } from 'next-intl'
+import { ACCENT } from './AccountAvatar'
+import { cn } from '@/lib/utils'
 import { X, Sparkles, Terminal, AlertCircle } from 'lucide-react'
 import {
   Dialog,
@@ -125,9 +127,13 @@ export function UpdateBanner() {
       {/* ── Bandeau pleine largeur ─────────────────────────────────────────── */}
       <div
         role="alert"
-        className="relative flex items-center justify-between gap-3 w-full
-                   bg-gradient-to-r from-violet-600 to-indigo-600
-                   text-white px-4 py-2.5 text-sm shrink-0 z-40"
+        // Le bandeau porte la couleur du compte ACTIF, pas un violet figé : c'est la même
+        // source que la bulle du compte et que les compteurs (`--synap-account`), et l'encre
+        // suit automatiquement pour rester lisible sur une couleur claire comme sur une foncée.
+        className={cn(
+          'relative flex items-center justify-between gap-3 w-full px-4 py-2.5 text-sm shrink-0 z-40',
+          ACCENT.solid,
+        )}
       >
         {/* Icône + texte */}
         <div className="flex items-center gap-2 min-w-0">
@@ -141,15 +147,17 @@ export function UpdateBanner() {
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => { setActiveTab('releases'); setModalOpen(true) }}
-            className="rounded-md border border-white/40 bg-white/10 px-3 py-1
-                       text-xs font-medium hover:bg-white/20 transition-colors"
+            className="rounded-md border border-[color-mix(in_oklab,var(--synap-account-ink)_40%,transparent)]
+                       bg-[color-mix(in_oklab,var(--synap-account-ink)_12%,transparent)] px-3 py-1
+                       text-xs font-medium hover:bg-[color-mix(in_oklab,var(--synap-account-ink)_22%,transparent)]
+                       transition-colors"
           >
             {t('moreInfo')}
           </button>
           <button
             onClick={handleDismiss}
             aria-label={t('dismiss')}
-            className="rounded-md p-1 hover:bg-white/20 transition-colors"
+            className="rounded-md p-1 hover:bg-[color-mix(in_oklab,var(--synap-account-ink)_22%,transparent)] transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
