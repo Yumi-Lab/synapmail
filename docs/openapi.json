@@ -1437,6 +1437,93 @@
         }
       }
     },
+    "/api/subscriptions/history": {
+      "get": {
+        "tags": ["Subscriptions"],
+        "operationId": "countSubscriptionHistory",
+        "summary": "Count one newsletter's whole history",
+        "description": "Counts, across every folder of the mailbox except the sent, the drafts and the trash, the messages of one newsletter — including the ones the list route never sees, since it reads only the most recent messages of a single folder. Read only: nothing is moved. A slow call on a mailbox with many folders, so count once and then purge.",
+        "parameters": [
+          { "name": "account", "in": "query", "required": true, "schema": { "type": "string" }, "description": "The mailbox id." },
+          { "name": "id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "An id the list route answered." },
+          { "name": "folder", "in": "query", "schema": { "type": "string", "default": "INBOX" }, "description": "The folder the id was listed from — where it is resolved back to a newsletter." }
+        ],
+        "responses": {
+          "200": {
+            "description": "The count, per folder and in total, with the date bounds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/SubscriptionHistory" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/api/subscriptions/purge": {
+      "post": {
+        "tags": ["Subscriptions"],
+        "operationId": "purgeSubscriptionHistory",
+        "summary": "Move one newsletter's whole history to the trash",
+        "description": "Moves every message of a newsletter to the mailbox's trash — never a permanent deletion, never an expunge, so a mistake stays recoverable. `expected` is the total the count route answered; the purge refuses and moves nothing when the mailbox no longer holds that number. Needs the `delete` permission.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["account", "id", "expected"],
+                "properties": {
+                  "account": { "type": "string" },
+                  "id": { "type": "string", "description": "An id the list route answered." },
+                  "expected": { "type": "integer", "minimum": 0, "description": "The `total` answered by the count route. A different number refuses." },
+                  "folder": { "type": "string", "default": "INBOX" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was moved, per folder and in total.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/PurgeReport" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": {
+            "description": "The purge refused and moved nothing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/PurgeRefused" } }
+                }
+              }
+            }
+          },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
     "/api/ai/action": {
       "post": {
         "tags": [
@@ -3493,6 +3580,59 @@
             "type": "string",
             "format": "date-time"
           }
+        }
+      },
+      "SubscriptionHistory": {
+        "type": "object",
+        "required": ["id", "sender", "header", "value", "total", "folders"],
+        "properties": {
+          "id": { "type": "string" },
+          "sender": { "$ref": "#/components/schemas/EmailAddress" },
+          "listId": { "type": ["string", "null"] },
+          "header": { "type": "string", "enum": ["list-id", "from"], "description": "What was searched. The purge replays the same criterion." },
+          "value": { "type": "string" },
+          "total": { "type": "integer", "description": "Across every folder of the scope." },
+          "oldest": { "type": ["string", "null"], "description": "Server date (INTERNALDATE), not the sender's Date header." },
+          "newest": { "type": ["string", "null"] },
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["folder", "count"],
+              "properties": {
+                "folder": { "type": "string" },
+                "count": { "type": "integer" },
+                "oldest": { "type": ["string", "null"] },
+                "newest": { "type": ["string", "null"] }
+              }
+            }
+          }
+        }
+      },
+      "PurgeReport": {
+        "type": "object",
+        "required": ["id", "moved", "trash", "folders"],
+        "properties": {
+          "id": { "type": "string" },
+          "moved": { "type": "integer" },
+          "trash": { "type": "string", "description": "The folder everything was moved to." },
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["folder", "moved"],
+              "properties": { "folder": { "type": "string" }, "moved": { "type": "integer" } }
+            }
+          }
+        }
+      },
+      "PurgeRefused": {
+        "type": "object",
+        "required": ["id", "refused"],
+        "properties": {
+          "id": { "type": "string" },
+          "refused": { "type": "string", "enum": ["not_found", "count_changed", "no_trash"] },
+          "total": { "type": "integer", "description": "On `count_changed`: what the mailbox holds now, to replay with." }
         }
       },
       "AssistantResult": {

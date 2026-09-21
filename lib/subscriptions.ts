@@ -17,7 +17,9 @@
 import crypto from 'node:crypto'
 import dns from 'node:dns/promises'
 import https from 'node:https'
-import type { AccountConfig } from './imap'
+import type { AccountConfig, HeaderMatches } from './imap'
+import type { SpecialType } from './specialFolders'
+import type { Folder } from '@/types/email'
 
 /**
  * How many of the most recent messages of the folder are scanned for
@@ -717,6 +719,30 @@ export const MAILTO_SUBJECT = 'unsubscribe'
 export const MAILTO_BODY = 'unsubscribe'
 
 /**
+ * Les groupes d'une boîte, indexés par leur id public, chacun avec la clé de
+ * groupement et le message le PLUS RÉCENT du groupe (celui dont les en-têtes
+ * décident, car un expéditeur peut changer d'adresse ou de moyen de départ).
+ *
+ * Extrait de `planUnsubscribe`, qui le construisait en place, parce que le
+ * dénombrement d'historique résout exactement le même id : il ne doit pas
+ * exister une deuxième façon de passer d'un id à une newsletter.
+ */
+export function groupsById(
+  accountId: string,
+  headers: SubscriptionHeaders[]
+): Map<string, { key: string; h: SubscriptionHeaders }> {
+  const newest = new Map<string, SubscriptionHeaders>()
+  for (const h of headers) {
+    const key = groupingKey(h)
+    const current = newest.get(key)
+    if (!current || dateRank(h.date) > dateRank(current.date)) newest.set(key, h)
+  }
+  return new Map(
+    Array.from(newest.entries()).map(([key, h]) => [subscriptionId(accountId, key), { key, h }])
+  )
+}
+
+/**
  * Decides what each requested id leads to, from a read of the folder's headers.
  * PURE: no network, no mailbox, no database — so the whole decision, including
  * the refusal to automate a bare link, is measurable on its own.
@@ -733,15 +759,7 @@ export function planUnsubscribe(
   headers: SubscriptionHeaders[],
   ids: string[]
 ): UnsubscribePlan[] {
-  const newest = new Map<string, SubscriptionHeaders>()
-  for (const h of headers) {
-    const key = groupingKey(h)
-    const current = newest.get(key)
-    if (!current || dateRank(h.date) > dateRank(current.date)) newest.set(key, h)
-  }
-  const byId = new Map(
-    Array.from(newest.entries()).map(([key, h]) => [subscriptionId(accountId, key), { key, h }])
-  )
+  const byId = groupsById(accountId, headers)
 
   return ids.map((id): UnsubscribePlan => {
     const group = byId.get(id)
@@ -895,4 +913,208 @@ export async function listUnsubscribed(accountIds: string[]): Promise<Unsubscrib
     method: r.method,
     unsubscribedAt: new Date(r.created_at).toISOString(),
   }))
+}
+
+// ---------------------------------------------------------------------------
+// Newsletter history — count everywhere, then move to the trash (lot N6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Le rôle des dossiers qu'un nettoyage d'historique n'ouvre JAMAIS.
+ *
+ * Les envoyés et les brouillons portent ce que Nicolas a écrit lui-même : une
+ * réponse à une newsletter est son courrier, pas celui de la liste. La corbeille
+ * est la DESTINATION du nettoyage — la reprendre en source ferait d'un second
+ * appel un déplacement de la corbeille vers elle-même.
+ */
+export const HISTORY_EXCLUDED_SPECIALS = ['sent', 'drafts', 'trash'] as const
+
+/** Pourquoi une purge a refusé d'agir. Noms lus par l'appelant, donc du contrat. */
+export const PURGE_REFUSALS = ['not_found', 'count_changed', 'no_trash'] as const
+export type PurgeRefusal = (typeof PURGE_REFUSALS)[number]
+
+/** Ce qu'un dossier porte d'une newsletter. Rendu par le dénombrement. */
+export interface HistoryFolder {
+  folder: string
+  count: number
+  oldest: string | null
+  newest: string | null
+}
+
+/** Le dénombrement d'UNE newsletter sur toute la boîte. Lecture seule. */
+export interface SubscriptionHistory {
+  id: string
+  sender: EmailAddress
+  listId: string | null
+  /** L'en-tête interrogé et sa valeur : ce que la purge rejouera à l'identique. */
+  header: string
+  value: string
+  total: number
+  oldest: string | null
+  newest: string | null
+  folders: HistoryFolder[]
+}
+
+/** Ce qu'une purge a fait. `moved` compte les messages réellement déplacés. */
+export interface PurgeReport {
+  id: string
+  moved: number
+  trash: string
+  folders: Array<{ folder: string; moved: number }>
+}
+
+/** Une purge qui n'a rien déplacé, et la raison lisible de son refus. */
+export interface PurgeRefused {
+  id: string
+  refused: PurgeRefusal
+  /** Sur `count_changed` : ce que la boîte porte maintenant, pour rejouer. */
+  total?: number
+}
+
+/**
+ * L'en-tête qui identifie une newsletter, déduit de la clé de groupement — il
+ * n'y a donc pas de seconde façon de nommer une liste.
+ *
+ * `list:<identifiant>` → `List-Id`, stable quand l'expéditeur fait tourner ses
+ * adresses d'envoi. Sinon `From`, seul repli possible : un message sans `List-Id`
+ * n'offre rien d'autre de stable.
+ */
+export function historyCriterion(key: string): { header: string; value: string } {
+  return key.startsWith('list:')
+    ? { header: 'list-id', value: key.slice('list:'.length) }
+    : { header: 'from', value: key.replace(/^from:/, '') }
+}
+
+/** Ce que les deux routes d'historique ont besoin de savoir faire. */
+export interface HistoryRequest {
+  imap: AccountConfig
+  accountId: string
+  /** Le dossier dont la LISTE vient, donc celui où l'id a été vu. */
+  folder: string
+  id: string
+  /** Injectés par le banc : aucune boîte réelle n'est ouverte pendant un essai. */
+  read?: (imap: AccountConfig, folder: string) => Promise<SubscriptionHeaders[]>
+  folders?: (imap: AccountConfig) => Promise<Folder[]>
+  search?: (
+    imap: AccountConfig,
+    folders: string[],
+    header: string,
+    value: string
+  ) => Promise<HeaderMatches[]>
+  move?: (imap: AccountConfig, folder: string, uids: string[], destination: string) => Promise<void>
+  specials?: (folders: Folder[]) => Map<string, SpecialType>
+}
+
+/**
+ * La porte de la boîte : les fonctions injectées quand il y en a, le vrai module
+ * IMAP sinon — et il n'est CHARGÉ que dans ce second cas. Un banc qui fournit
+ * les trois n'ouvre donc aucune socket et ne peut pas en ouvrir une par erreur.
+ */
+async function imapDoor(req: HistoryRequest) {
+  const specials = req.specials ?? (await import('./specialFolders')).detectSpecials
+  if (req.folders && req.search && req.move) {
+    return { folders: req.folders, search: req.search, move: req.move, specials }
+  }
+  const imap = await import('./imap')
+  return {
+    folders: req.folders ?? imap.listFolders,
+    search: req.search ?? imap.searchHeaderIn,
+    move: req.move ?? imap.moveMessagesBulk,
+    specials,
+  }
+}
+
+/** Les dossiers à couvrir et celui qui sert de corbeille, décidés ensemble. */
+async function historyScope(
+  req: HistoryRequest,
+  door: Awaited<ReturnType<typeof imapDoor>>
+): Promise<{ folders: string[]; trash: string | null }> {
+  const all = await door.folders(req.imap)
+  const specials = door.specials(all)
+  const excluded = new Set<string>(HISTORY_EXCLUDED_SPECIALS)
+  return {
+    folders: all.filter(f => !excluded.has(specials.get(f.path) ?? '')).map(f => f.path),
+    trash: all.find(f => specials.get(f.path) === 'trash')?.path ?? null,
+  }
+}
+
+/** Résout un id en critère de recherche, à partir du dossier où il a été listé. */
+async function historyTarget(
+  req: HistoryRequest
+): Promise<{ key: string; h: SubscriptionHeaders } | null> {
+  const headers = await (req.read ?? readSubscriptionHeaders)(req.imap, req.folder)
+  return groupsById(req.accountId, headers).get(req.id) ?? null
+}
+
+/**
+ * Compte, sur TOUTE la boîte, les messages d'une newsletter — y compris ceux que
+ * le listing ne voit pas, puisqu'il ne lit que les `RECENT_MESSAGES_SCANNED`
+ * derniers messages d'un seul dossier. LECTURE SEULE : rien n'est déplacé ici.
+ *
+ * Deux temps obligatoires : ce dénombrement d'abord, la purge ensuite, avec le
+ * total vu ici. On ne supprime jamais plus que ce que l'utilisateur a vu.
+ */
+export async function countSubscriptionHistory(
+  req: HistoryRequest
+): Promise<SubscriptionHistory | null> {
+  const target = await historyTarget(req)
+  if (!target) return null
+
+  const door = await imapDoor(req)
+  const { header, value } = historyCriterion(target.key)
+  const { folders } = await historyScope(req, door)
+  const matches = await door.search(req.imap, folders, header, value)
+
+  const dates = matches.flatMap(m => [m.oldest, m.newest]).filter((d): d is string => !!d).sort()
+  return {
+    id: req.id,
+    sender: target.h.from,
+    listId: target.h.listId ?? null,
+    header,
+    value,
+    total: matches.reduce((sum, m) => sum + m.uids.length, 0),
+    oldest: dates[0] ?? null,
+    newest: dates[dates.length - 1] ?? null,
+    folders: matches.map(m => ({
+      folder: m.folder,
+      count: m.uids.length,
+      oldest: m.oldest,
+      newest: m.newest,
+    })),
+  }
+}
+
+/**
+ * Déplace vers la CORBEILLE du compte tout l'historique d'une newsletter.
+ * Jamais de suppression définitive, jamais d'expunge : une erreur reste
+ * rattrapable depuis la corbeille.
+ *
+ * `expected` est le total rendu par le dénombrement. La purge REFUSE d'agir si
+ * la boîte n'en porte plus le même nombre : entre les deux appels un message a
+ * pu arriver ou partir, et l'utilisateur n'a consenti qu'à ce qu'il a vu.
+ */
+export async function purgeSubscriptionHistory(
+  req: HistoryRequest & { expected: number }
+): Promise<PurgeReport | PurgeRefused> {
+  const target = await historyTarget(req)
+  if (!target) return { id: req.id, refused: 'not_found' }
+
+  const door = await imapDoor(req)
+  const { header, value } = historyCriterion(target.key)
+  const { folders, trash } = await historyScope(req, door)
+  if (!trash) return { id: req.id, refused: 'no_trash' }
+
+  const matches = await door.search(req.imap, folders, header, value)
+  const total = matches.reduce((sum, m) => sum + m.uids.length, 0)
+  if (total !== req.expected) return { id: req.id, refused: 'count_changed', total }
+
+  const moved: Array<{ folder: string; moved: number }> = []
+  for (const m of matches) {
+    // Un dossier à la fois, en série : `moveMessagesBulk` ouvre sa propre
+    // connexion, et un compte de test porte 1 226 dossiers — les ouvrir en
+    // parallèle ferait refuser les connexions par le serveur.
+    await door.move(req.imap, m.folder, m.uids, trash)
+    moved.push({ folder: m.folder, moved: m.uids.length })
+  }
+  return { id: req.id, moved: total, trash, folders: moved }
 }
