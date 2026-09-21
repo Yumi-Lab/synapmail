@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { sendMail } from '@/lib/smtp'
@@ -27,8 +27,9 @@ function injectTrackingPixel(html: string, pixelUrl: string): string {
 }
 
 export async function POST(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   try {
     const body = await req.json()

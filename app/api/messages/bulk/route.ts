@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { markReadBulk, deleteMessagesBulk, moveMessagesBulk, setFlagBulk } from '@/lib/imap'
 import { flagByKey } from '@/lib/flags'
@@ -30,8 +30,9 @@ function accountConfig(a: AccountRow) {
 
 // PATCH — mark read/unread or move
 export async function PATCH(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const body = await req.json()
   const { uids, action, accountId, folder, destination, flag } = body as {
@@ -77,8 +78,9 @@ export async function PATCH(req: Request) {
 
 // DELETE — delete multiple messages
 export async function DELETE(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const body = await req.json()
   const { uids, accountId, folder } = body as {

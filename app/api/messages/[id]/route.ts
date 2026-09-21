@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { getMessage, deleteMessage, markRead, setFlagBulk } from '@/lib/imap'
@@ -33,8 +33,9 @@ export async function GET(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -61,8 +62,9 @@ export async function PATCH(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -104,8 +106,9 @@ export async function DELETE(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')

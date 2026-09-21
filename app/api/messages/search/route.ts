@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount, listAccessibleAccounts } from '@/lib/accountAccess'
 import type { DbEmailAccount } from '@/lib/accounts'
@@ -43,8 +43,9 @@ function streamedMessages<T extends { date: string }>(messages: T[], accountId: 
 }
 
 export async function GET(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const q = searchParams.get(SEARCH_PARAM)?.trim()

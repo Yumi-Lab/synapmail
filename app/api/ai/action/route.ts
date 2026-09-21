@@ -1,4 +1,4 @@
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import {
   callAI, buildMessages, isLoopbackUrl,
@@ -8,8 +8,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { promptGuardApplies } from '@/lib/accounts'
 
 export async function POST(req: NextRequest) {
-  const user = await authenticate(req)
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const user = gate.ctx
 
   const body = await req.json() as {
     action: AIAction

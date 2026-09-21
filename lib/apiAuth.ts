@@ -3,19 +3,25 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { API_SCOPES, type ApiScope, scopeForRequest } from '@/lib/apiScopes'
+import { accountIdFromRequest, keyReachesAccount } from '@/lib/apiKeyAccounts'
 
 export interface AuthContext {
   id: string
   role: string
   /** `null` pour une session humaine : elle n'est jamais limitée par une portée. */
   scopes: ApiScope[] | null
+  /** La clé qui parle, ou `null` pour une session humaine. */
+  apiKeyId: string | null
 }
 
 /**
  * Pourquoi l'accès est refusé. `scope` porte la portée manquante quand la clé
  * est valide mais trop étroite ; `unauthenticated` couvre tout le reste.
  */
-type Denial = { reason: 'unauthenticated' } | { reason: 'scope'; scope: ApiScope }
+type Denial =
+  | { reason: 'unauthenticated' }
+  | { reason: 'scope'; scope: ApiScope }
+  | { reason: 'account'; accountId: string }
 type Resolution = { ctx: AuthContext } | { denied: Denial }
 
 /**
@@ -29,7 +35,7 @@ async function resolve(req: Request): Promise<Resolution> {
   const session = await auth()
   if (session?.user?.id) {
     const role = (session.user as { role?: string }).role ?? 'user'
-    return { ctx: { id: session.user.id, role, scopes: null } }
+    return { ctx: { id: session.user.id, role, scopes: null, apiKeyId: null } }
   }
 
   const header = req.headers.get('authorization')
@@ -64,7 +70,16 @@ async function resolve(req: Request): Promise<Resolution> {
   const scopes = (rows[0].scopes ?? []) as ApiScope[]
   if (!scopes.includes(required)) return { denied: { reason: 'scope', scope: required } }
 
-  return { ctx: { id: rows[0].user_id, role: rows[0].role, scopes } }
+  // La SECONDE moitié de la barrière, au même endroit que la première : la portée dit
+  // quelle capacité, celle-ci dit sur quelle boîte. Une requête qui ne désigne aucune
+  // boîte passe — c'est le cas de `POST /api/accounts`, qui en CRÉE une, et des routes
+  // qui n'en prennent pas. Voir lib/apiKeyAccounts.ts.
+  const accountId = await accountIdFromRequest(req)
+  if (accountId && !(await keyReachesAccount(apiKeyId, accountId))) {
+    return { denied: { reason: 'account', accountId } }
+  }
+
+  return { ctx: { id: rows[0].user_id, role: rows[0].role, scopes, apiKeyId } }
 }
 
 /**
@@ -88,6 +103,19 @@ export async function authorize(req: Request): Promise<{ ctx: AuthContext } | { 
   if ('ctx' in result) return result
   if (result.denied.reason === 'unauthenticated') {
     return { denied: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  }
+  if (result.denied.reason === 'account') {
+    const accountId = result.denied.accountId
+    return {
+      denied: NextResponse.json(
+        {
+          error: `API key has no access to mailbox ${accountId}`,
+          missingAccount: accountId,
+          missingAccountReason: 'not_granted',
+        },
+        { status: 403 }
+      ),
+    }
   }
   const scope = result.denied.scope
   return {

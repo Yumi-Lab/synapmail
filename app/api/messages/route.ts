@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { MailListFilter } from '@/lib/flags'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { listMessages } from '@/lib/imap'
@@ -9,8 +9,9 @@ import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const folder = searchParams.get('folder') ?? 'INBOX'

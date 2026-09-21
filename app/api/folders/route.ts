@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { listFolders, createFolder, renameFolder, deleteFolder } from '@/lib/imap'
@@ -10,8 +10,9 @@ import { detectSpecials } from '@/lib/specialFolders'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -134,8 +135,9 @@ const asString = (v: unknown) => (typeof v === 'string' && v ? v : null)
 
 // POST — crée un dossier à la racine, ou sous `parent` quand il est fourni.
 export async function POST(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return refuse('unauthorized')
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const body = await readBody(req)
   const parent = asString(body.parent)
@@ -159,8 +161,9 @@ export async function POST(req: Request) {
 
 // PATCH — renomme un dossier sur place (il reste chez son parent).
 export async function PATCH(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return refuse('unauthorized')
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const body = await readBody(req)
 
@@ -192,8 +195,9 @@ export async function PATCH(req: Request) {
 
 // DELETE — supprime un dossier (jamais un spécial, jamais un parent).
 export async function DELETE(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return refuse('unauthorized')
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
 

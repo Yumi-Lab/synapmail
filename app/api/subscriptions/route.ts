@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import { imapConfigOf, listSubscriptions } from '@/lib/subscriptions'
@@ -11,8 +11,9 @@ export const dynamic = 'force-dynamic'
 // Bearer or session, SAME access rule as GET /api/messages (read access is an
 // active share or ownership — `getAccessibleAccount` with no extra permission).
 export async function GET(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')

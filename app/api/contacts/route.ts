@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { normalizeEmail } from '@/lib/emailAddress'
 import { auth } from '@/lib/auth'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
@@ -42,8 +42,9 @@ function toApi(r: ContactRow) {
 // - all: if true, bypass frequency >= 2 filter (for Settings page)
 // - account: if set, only return contacts seen on this account (via messages_cache)
 export async function GET(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const q = searchParams.get('q') ?? ''

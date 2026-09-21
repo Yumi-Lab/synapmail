@@ -361,6 +361,35 @@ export async function initDb(): Promise<void> {
   `)
   await query(`CREATE INDEX IF NOT EXISTS api_key_requests_key_idx ON api_key_requests(api_key_id, created_at DESC)`)
 
+  // Boîtes autorisées PAR CLÉ (lot P10) : les portées disent quelle capacité, cette table
+  // dit sur quelle boîte. Les deux sont exigées — voir lib/apiKeyAccounts.ts, qui est la
+  // SEULE barrière, appelée depuis lib/apiAuth.ts. Une boîte connectée PAR une clé lui
+  // appartient (colonne ci-dessous) et n'a pas besoin d'y figurer.
+  await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS created_by_api_key UUID REFERENCES api_keys(id) ON DELETE SET NULL`)
+  await query(`
+    CREATE TABLE IF NOT EXISTS api_key_accounts (
+      api_key_id UUID NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (api_key_id, account_id)
+    )
+  `)
+
+  // Migration : une clé qui existait avant cette barrière atteignait TOUTES les boîtes de
+  // son propriétaire. On lui coche exactement celles-là, sinon `yumi-ai` et `scripts-import`
+  // cessent de fonctionner en production. Les boîtes créées APRÈS ne sont accordées à
+  // personne : il faut les cocher. Le drapeau porte la date pour ne migrer qu'une fois —
+  // sans lui, un redémarrage re-cocherait ce que Nicolas vient de décocher.
+  await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS accounts_migrated_at TIMESTAMPTZ`)
+  await query(`
+    INSERT INTO api_key_accounts (api_key_id, account_id)
+    SELECT ak.id, a.id FROM api_keys ak
+      JOIN email_accounts a ON a.user_id = ak.user_id
+     WHERE ak.accounts_migrated_at IS NULL
+    ON CONFLICT DO NOTHING
+  `)
+  await query(`UPDATE api_keys SET accounts_migrated_at = NOW() WHERE accounts_migrated_at IS NULL`)
+
   // Invité en attente d'acceptation : bloque la connexion tant que le mot de passe placeholder
   // n'a pas été remplacé via /api/invites/[token] (voir account_shares ci-dessous)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'`)

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import { accessibleAccountIds, listUnsubscribed } from '@/lib/subscriptions'
@@ -14,8 +14,9 @@ export const dynamic = 'force-dynamic'
 // /api/messages/bulk the group is gone from GET /api/subscriptions, but its
 // entry stays here — that is how an agent knows not to start over.
 export async function GET(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const accountId = new URL(req.url).searchParams.get('account')
 
