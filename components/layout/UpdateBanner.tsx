@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import useSWR, { mutate as globalMutate } from 'swr'
 import { useTranslations } from 'next-intl'
-import { ACCENT } from './AccountAvatar'
+import { ACCENT, useAccountAccent } from './AccountAvatar'
 import { cn } from '@/lib/utils'
 import { X, Sparkles, Terminal, AlertCircle } from 'lucide-react'
 import {
@@ -68,6 +68,10 @@ function renderMarkdown(md: string): string {
 // ── Composant principal ──────────────────────────────────────────────────────
 export function UpdateBanner() {
   const t = useTranslations('updates')
+  // Les variables de couleur du compte sont posées par la barre latérale SUR ELLE-MÊME :
+  // hors de son arbre, `var(--synap-account)` ne vaut rien. On les repose ici, depuis la
+  // MÊME source (`useAccountAccent`), au lieu d'inventer une seconde palette.
+  const { vars: accentStyle } = useAccountAccent()
   const [modalOpen, setModalOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'releases' | 'howto'>('releases')
 
@@ -130,6 +134,7 @@ export function UpdateBanner() {
         // Le bandeau porte la couleur du compte ACTIF, pas un violet figé : c'est la même
         // source que la bulle du compte et que les compteurs (`--synap-account`), et l'encre
         // suit automatiquement pour rester lisible sur une couleur claire comme sur une foncée.
+        style={accentStyle}
         className={cn(
           'relative flex items-center justify-between gap-3 w-full px-4 py-2.5 text-sm shrink-0 z-40',
           ACCENT.solid,
