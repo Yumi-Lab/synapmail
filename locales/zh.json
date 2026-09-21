@@ -729,7 +729,20 @@
     "subsResultDone": "已退订。",
     "subsResultManual": "需在发件人页面手动完成：",
     "subsResultFailed": "失败：{reason}",
-    "subsResultNotFound": "已不在此邮箱中。"
+    "subsResultNotFound": "已不在此邮箱中。",
+    "subsPurge": "清空历史邮件",
+    "subsPurgeOnlyOne": "每次只能处理一份订阅：请只保留一项选中。",
+    "subsPurgeCounting": "正在统计整个邮箱，可能需要一些时间。",
+    "subsPurgeCount": "{folders, plural, other {# 个文件夹}}中共 {count, plural, other {# 封邮件}}",
+    "subsPurgeRange": "从 {oldest} 到 {newest}",
+    "subsPurgeConfirm": "{count, plural, other {# 封邮件将移入回收站，之后仍可从回收站中恢复。不会被永久删除。}}",
+    "subsPurgeGo": "将 {count, plural, other {# 封邮件}} 移入回收站",
+    "subsPurgeCancel": "取消",
+    "subsPurgeDone": "已将 {count, plural, other {# 封邮件}} 移至 {trash}。",
+    "subsPurgeChanged": "统计期间邮箱发生了变化：现在共有 {total} 封。请重新统计后再清空。",
+    "subsPurgeRefused_not_found": "此订阅已不在该邮箱中。",
+    "subsPurgeRefused_no_trash": "该邮箱没有回收站文件夹：未移动任何邮件。",
+    "subsPurgeError": "失败：{reason}"
   },
   "pgp": {
     "title": "PGP 加密",

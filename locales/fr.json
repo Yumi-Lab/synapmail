@@ -729,7 +729,20 @@
     "subsResultDone": "Désabonné.",
     "subsResultManual": "À terminer à la main sur la page de l’expéditeur :",
     "subsResultFailed": "Échec : {reason}",
-    "subsResultNotFound": "N’est plus dans cette boîte."
+    "subsResultNotFound": "N’est plus dans cette boîte.",
+    "subsPurge": "Vider l’historique",
+    "subsPurgeOnlyOne": "Une newsletter à la fois : n’en gardez qu’une sélectionnée.",
+    "subsPurgeCounting": "Dénombrement de toute la boîte. Cela peut prendre un moment.",
+    "subsPurgeCount": "{count, plural, one {# message} other {# messages}} dans {folders, plural, one {# dossier} other {# dossiers}}",
+    "subsPurgeRange": "du {oldest} au {newest}",
+    "subsPurgeConfirm": "{count, plural, one {# message part dans la CORBEILLE et reste récupérable depuis là. Rien n’est supprimé définitivement.} other {# messages partent dans la CORBEILLE et restent récupérables depuis là. Rien n’est supprimé définitivement.}}",
+    "subsPurgeGo": "Mettre {count, plural, one {# message} other {# messages}} à la corbeille",
+    "subsPurgeCancel": "Annuler",
+    "subsPurgeDone": "{count, plural, one {# message déplacé} other {# messages déplacés}} vers {trash}.",
+    "subsPurgeChanged": "La boîte a bougé pendant le dénombrement : elle en porte {total} maintenant. Dénombrez à nouveau avant de vider.",
+    "subsPurgeRefused_not_found": "Cette newsletter n’est plus dans cette boîte.",
+    "subsPurgeRefused_no_trash": "Cette boîte n’expose aucune corbeille : rien n’a été déplacé.",
+    "subsPurgeError": "Échec : {reason}"
   },
   "pgp": {
     "title": "Chiffrement PGP",

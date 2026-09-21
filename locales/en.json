@@ -729,7 +729,20 @@
     "subsResultDone": "Unsubscribed.",
     "subsResultManual": "To finish by hand on the sender’s page:",
     "subsResultFailed": "Failed: {reason}",
-    "subsResultNotFound": "No longer in this mailbox."
+    "subsResultNotFound": "No longer in this mailbox.",
+    "subsPurge": "Clear history",
+    "subsPurgeOnlyOne": "One newsletter at a time: keep only one selected.",
+    "subsPurgeCounting": "Counting the whole mailbox. This can take a while.",
+    "subsPurgeCount": "{count, plural, one {# message} other {# messages}} in {folders, plural, one {# folder} other {# folders}}",
+    "subsPurgeRange": "from {oldest} to {newest}",
+    "subsPurgeConfirm": "{count, plural, one {# message goes to the TRASH and stays recoverable from there. Nothing is deleted for good.} other {# messages go to the TRASH and stay recoverable from there. Nothing is deleted for good.}}",
+    "subsPurgeGo": "Move {count, plural, one {# message} other {# messages}} to trash",
+    "subsPurgeCancel": "Cancel",
+    "subsPurgeDone": "Moved {count, plural, one {# message} other {# messages}} to {trash}.",
+    "subsPurgeChanged": "The mailbox changed while counting: it now holds {total}. Count again before clearing.",
+    "subsPurgeRefused_not_found": "This newsletter is no longer in this mailbox.",
+    "subsPurgeRefused_no_trash": "This mailbox exposes no trash folder: nothing was moved.",
+    "subsPurgeError": "Failed: {reason}"
   },
   "pgp": {
     "title": "PGP Encryption",
