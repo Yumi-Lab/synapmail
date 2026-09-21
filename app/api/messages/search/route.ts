@@ -10,6 +10,7 @@ import {
   SEARCH_PARAM, SEARCH_RESULT_LIMIT, STREAM_PARAM, mergeGenerators, orderAccountsForSearch,
   parseQuery, readScope,
 } from '@/lib/search'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,7 +43,7 @@ function streamedMessages<T extends { date: string }>(messages: T[], accountId: 
     .map(m => ({ ...m, accountId }))
 }
 
-export async function GET(req: Request) {
+async function getHandler(req: Request) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const authCtx = gate.ctx
@@ -251,3 +252,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: String(err), messages: [], total: 0, fields: SEARCH_FIELDS }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)

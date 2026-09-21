@@ -14,6 +14,7 @@ import {
 import { upsertContactsFromAddresses } from '@/lib/contacts'
 import { randomUUID } from 'crypto'
 import { appOrigin } from '@/lib/appOrigin'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,7 +27,7 @@ function injectTrackingPixel(html: string, pixelUrl: string): string {
   return html + pixel
 }
 
-export async function POST(req: Request) {
+async function postHandler(req: Request) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const authCtx = gate.ctx
@@ -189,3 +190,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const POST = withApiLog(postHandler)

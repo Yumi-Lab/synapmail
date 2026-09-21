@@ -6,8 +6,9 @@ import {
 } from '@/lib/ai'
 import { NextRequest, NextResponse } from 'next/server'
 import { promptGuardApplies } from '@/lib/accounts'
+import { withApiLog } from '@/lib/apiLog'
 
-export async function POST(req: NextRequest) {
+async function postHandler(req: NextRequest) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const user = gate.ctx
@@ -82,3 +83,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const POST = withApiLog(postHandler)

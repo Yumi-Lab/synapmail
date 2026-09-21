@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { API_SCOPES, type ApiScope, scopeForRequest } from '@/lib/apiScopes'
 import { accountIdFromRequest, keyReachesAccount } from '@/lib/apiKeyAccounts'
+import { noteAccount, noteDenial, openLog } from '@/lib/apiLog'
 
 export interface AuthContext {
   id: string
@@ -55,15 +56,10 @@ async function resolve(req: Request): Promise<Resolution> {
   const apiKeyId = rows[0].id
   query('UPDATE api_keys SET last_used_at = NOW() WHERE id = $1', [apiKeyId]).catch(() => { /* best-effort */ })
 
-  const ip =
-    req.headers.get('x-forwarded-for')?.split(',')[0].trim() ??
-    req.headers.get('x-real-ip') ??
-    null
+  // La ligne du journal s'OUVRE ici et se complète au retour de la requête : le
+  // statut, la durée et le motif du refus n'existent pas encore. Voir lib/apiLog.ts.
+  openLog(req, apiKeyId)
   const path = new URL(req.url).pathname
-  query(
-    'INSERT INTO api_key_requests (api_key_id, method, path, ip_address) VALUES ($1, $2, $3, $4)',
-    [apiKeyId, req.method, path, ip?.slice(0, 45) ?? null]
-  ).catch(() => { /* best-effort */ })
 
   const required = scopeForRequest(req.method, path)
   if (!required) return { denied: { reason: 'unauthenticated' } }
@@ -75,11 +71,27 @@ async function resolve(req: Request): Promise<Resolution> {
   // boîte passe — c'est le cas de `POST /api/accounts`, qui en CRÉE une, et des routes
   // qui n'en prennent pas. Voir lib/apiKeyAccounts.ts.
   const accountId = await accountIdFromRequest(req)
+  noteAccount(req, accountId)
   if (accountId && !(await keyReachesAccount(apiKeyId, accountId))) {
     return { denied: { reason: 'account', accountId } }
   }
 
   return { ctx: { id: rows[0].user_id, role: rows[0].role, scopes, apiKeyId } }
+}
+
+/**
+ * `resolve` + la trace de ce qui a été refusé, pour que le journal porte le MOTIF et
+ * pas seulement le statut. Le motif n'est connu qu'ici, au moment où la barrière le
+ * prononce. Avant que la clé ne soit reconnue il n'y a pas de ligne ouverte, et
+ * `noteDenial` ne fait alors rien — une requête sans clé valide n'est pas journalisée.
+ */
+async function resolveAndNote(req: Request): Promise<Resolution> {
+  const result = await resolve(req)
+  if ('denied' in result) {
+    const d = result.denied
+    noteDenial(req, d.reason, d.reason === 'scope' ? d.scope : d.reason === 'account' ? d.accountId : null)
+  }
+  return result
 }
 
 /**
@@ -89,7 +101,7 @@ async function resolve(req: Request): Promise<Resolution> {
  * Une route qui veut annoncer la portée manquante utilise `authorize()`.
  */
 export async function authenticate(req: Request): Promise<AuthContext | null> {
-  const result = await resolve(req)
+  const result = await resolveAndNote(req)
   return 'ctx' in result ? result.ctx : null
 }
 
@@ -99,7 +111,7 @@ export async function authenticate(req: Request): Promise<AuthContext | null> {
  * son propriétaire ce qu'il faut lui cocher, pas se heurter à un 401 muet.
  */
 export async function authorize(req: Request): Promise<{ ctx: AuthContext } | { denied: NextResponse }> {
-  const result = await resolve(req)
+  const result = await resolveAndNote(req)
   if ('ctx' in result) return result
   if (result.denied.reason === 'unauthenticated') {
     return { denied: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }

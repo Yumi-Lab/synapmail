@@ -6,10 +6,11 @@ import { encrypt } from '@/lib/encrypt'
 import { DEFAULT_IMAP_PORT, DEFAULT_SMTP_PORT } from '@/lib/accountTest'
 import { probeConnection } from '@/lib/accountProbe'
 import { keyAccountIds } from '@/lib/apiKeyAccounts'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: Request) {
+async function getHandler(req: Request) {
   const access = await authorize(req)
   if ('denied' in access) return access.denied
   const authCtx = access.ctx
@@ -92,7 +93,7 @@ export async function GET(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
+async function postHandler(req: Request) {
   const access = await authorize(req)
   if ('denied' in access) return access.denied
   const userId = access.ctx.id
@@ -169,3 +170,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)
+export const POST = withApiLog(postHandler)

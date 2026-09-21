@@ -361,6 +361,16 @@ export async function initDb(): Promise<void> {
   `)
   await query(`CREATE INDEX IF NOT EXISTS api_key_requests_key_idx ON api_key_requests(api_key_id, created_at DESC)`)
 
+  // Ce qui s'est PASSÉ (lot P11) : la ligne ouverte à l'entrée se complète au RETOUR avec le
+  // statut HTTP, la durée, la boîte visée et le motif du refus — voir lib/apiLog.ts. Toutes
+  // nullables : une ligne écrite avant ce lot, ou une requête dont la réponse n'est jamais
+  // revenue, reste lisible sans mentir sur ce qu'elle ne sait pas.
+  await query(`ALTER TABLE api_key_requests ADD COLUMN IF NOT EXISTS status INTEGER`)
+  await query(`ALTER TABLE api_key_requests ADD COLUMN IF NOT EXISTS duration_ms INTEGER`)
+  await query(`ALTER TABLE api_key_requests ADD COLUMN IF NOT EXISTS account_id UUID`)
+  await query(`ALTER TABLE api_key_requests ADD COLUMN IF NOT EXISTS denial_reason VARCHAR(20)`)
+  await query(`ALTER TABLE api_key_requests ADD COLUMN IF NOT EXISTS denial_detail TEXT`)
+
   // Boîtes autorisées PAR CLÉ (lot P10) : les portées disent quelle capacité, cette table
   // dit sur quelle boîte. Les deux sont exigées — voir lib/apiKeyAccounts.ts, qui est la
   // SEULE barrière, appelée depuis lib/apiAuth.ts. Une boîte connectée PAR une clé lui

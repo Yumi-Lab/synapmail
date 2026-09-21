@@ -7,10 +7,11 @@ import {
   resolveTestPassword,
 } from '@/lib/accountTest'
 import { probeConnection } from '@/lib/accountProbe'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: Request) {
+async function postHandler(req: Request) {
   const access = await authorize(req)
   if ('denied' in access) return access.denied
   const userId = access.ctx.id
@@ -80,3 +81,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const POST = withApiLog(postHandler)

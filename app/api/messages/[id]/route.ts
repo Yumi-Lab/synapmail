@@ -4,6 +4,7 @@ import { getAccessibleAccount } from '@/lib/accountAccess'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { getMessage, deleteMessage, markRead, setFlagBulk } from '@/lib/imap'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,7 +30,7 @@ function accountConfig(account: AccountRow) {
   }
 }
 
-export async function GET(
+async function getHandler(
   req: Request,
   { params }: { params: { id: string } }
 ) {
@@ -58,7 +59,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function patchHandler(
   req: Request,
   { params }: { params: { id: string } }
 ) {
@@ -102,7 +103,7 @@ export async function PATCH(
   }
 }
 
-export async function DELETE(
+async function deleteHandler(
   req: Request,
   { params }: { params: { id: string } }
 ) {
@@ -126,3 +127,8 @@ export async function DELETE(
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const DELETE = withApiLog(deleteHandler)
+export const GET = withApiLog(getHandler)
+export const PATCH = withApiLog(patchHandler)

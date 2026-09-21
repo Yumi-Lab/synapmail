@@ -3,6 +3,7 @@ import { normalizeEmail } from '@/lib/emailAddress'
 import { auth } from '@/lib/auth'
 import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,7 +42,7 @@ function toApi(r: ContactRow) {
 // - limit: max results (default 8, max 50)
 // - all: if true, bypass frequency >= 2 filter (for Settings page)
 // - account: if set, only return contacts seen on this account (via messages_cache)
-export async function GET(req: Request) {
+async function getHandler(req: Request) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const authCtx = gate.ctx
@@ -152,3 +153,6 @@ export async function DELETE(req: Request) {
 
   return NextResponse.json({ data: { deleted: parseInt(result[0]?.count ?? '0') } })
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)

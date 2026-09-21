@@ -3,6 +3,7 @@ import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import { accessibleAccountIds, listUnsubscribed } from '@/lib/subscriptions'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,7 +14,7 @@ export const dynamic = 'force-dynamic'
 // It OUTLIVES the cleaning: once the messages are filed away with
 // /api/messages/bulk the group is gone from GET /api/subscriptions, but its
 // entry stays here — that is how an agent knows not to start over.
-export async function GET(req: Request) {
+async function getHandler(req: Request) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const authCtx = gate.ctx
@@ -50,3 +51,6 @@ async function anyGuarded(accountIds: string[]): Promise<boolean> {
   )
   return !!rows[0]?.any
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)

@@ -3,6 +3,7 @@ import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { markReadBulk, deleteMessagesBulk, moveMessagesBulk, setFlagBulk } from '@/lib/imap'
 import { flagByKey } from '@/lib/flags'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,7 +30,7 @@ function accountConfig(a: AccountRow) {
 }
 
 // PATCH — mark read/unread or move
-export async function PATCH(req: Request) {
+async function patchHandler(req: Request) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const authCtx = gate.ctx
@@ -77,7 +78,7 @@ export async function PATCH(req: Request) {
 }
 
 // DELETE — delete multiple messages
-export async function DELETE(req: Request) {
+async function deleteHandler(req: Request) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const authCtx = gate.ctx
@@ -103,3 +104,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const DELETE = withApiLog(deleteHandler)
+export const PATCH = withApiLog(patchHandler)

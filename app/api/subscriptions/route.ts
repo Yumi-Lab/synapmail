@@ -3,6 +3,7 @@ import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import { imapConfigOf, listSubscriptions } from '@/lib/subscriptions'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,7 +11,7 @@ export const dynamic = 'force-dynamic'
 // Lists the newsletters of a mailbox, grouped per list, most frequent first.
 // Bearer or session, SAME access rule as GET /api/messages (read access is an
 // active share or ownership — `getAccessibleAccount` with no extra permission).
-export async function GET(req: Request) {
+async function getHandler(req: Request) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const authCtx = gate.ctx
@@ -35,3 +36,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)

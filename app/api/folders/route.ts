@@ -6,10 +6,11 @@ import { listFolders, createFolder, renameFolder, deleteFolder } from '@/lib/ima
 import { sanitizeFolderName, joinFolderPath, renamedPath, rewritePath, samePath, isDescendant, refuse } from '@/lib/folderActions'
 import { resolveFolder } from '@/lib/folderResolve'
 import { detectSpecials } from '@/lib/specialFolders'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: Request) {
+async function getHandler(req: Request) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const authCtx = gate.ctx
@@ -134,7 +135,7 @@ async function readBody(req: Request): Promise<Record<string, unknown>> {
 const asString = (v: unknown) => (typeof v === 'string' && v ? v : null)
 
 // POST — crée un dossier à la racine, ou sous `parent` quand il est fourni.
-export async function POST(req: Request) {
+async function postHandler(req: Request) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const authCtx = gate.ctx
@@ -160,7 +161,7 @@ export async function POST(req: Request) {
 }
 
 // PATCH — renomme un dossier sur place (il reste chez son parent).
-export async function PATCH(req: Request) {
+async function patchHandler(req: Request) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const authCtx = gate.ctx
@@ -194,7 +195,7 @@ export async function PATCH(req: Request) {
 }
 
 // DELETE — supprime un dossier (jamais un spécial, jamais un parent).
-export async function DELETE(req: Request) {
+async function deleteHandler(req: Request) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const authCtx = gate.ctx
@@ -214,3 +215,9 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const DELETE = withApiLog(deleteHandler)
+export const GET = withApiLog(getHandler)
+export const PATCH = withApiLog(patchHandler)
+export const POST = withApiLog(postHandler)

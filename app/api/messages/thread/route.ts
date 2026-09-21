@@ -4,6 +4,7 @@ import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { searchMessages } from '@/lib/imap'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,7 +22,7 @@ function normalizeSubject(subject: string): string {
     .trim()
 }
 
-export async function GET(req: Request) {
+async function getHandler(req: Request) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
   const authCtx = gate.ctx
@@ -89,3 +90,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: String(err), messages: [] }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)
