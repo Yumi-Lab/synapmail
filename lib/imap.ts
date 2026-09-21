@@ -1023,3 +1023,103 @@ async function searchOpenFolder(
     lock.release()
   }
 }
+
+/** Ce qu'un dossier rapporte à une recherche par en-tête : ses uid et les bornes de dates. */
+export type HeaderMatches = {
+  folder: string
+  uids: string[]
+  /** Date du plus ancien et du plus récent, ISO, `null` quand le dossier ne rapporte rien. */
+  oldest: string | null
+  newest: string | null
+}
+
+/**
+ * Cherche dans PLUSIEURS dossiers les messages dont UN en-tête porte `value`,
+ * et rapporte leurs uid dossier par dossier, avec les bornes de dates.
+ *
+ * Même forme que `searchMessagesIn` juste au-dessus — même file de dossiers,
+ * mêmes `SEARCH_CONNECTIONS` ouvriers, même règle d'erreur (un dossier illisible
+ * est ignoré quand d'autres restent à couvrir, propagé quand il est le seul) —
+ * parce que c'est la même contrainte : une connexion n'ouvre qu'un dossier à la
+ * fois, et ouvrir une connexion par dossier rend la couverture d'un compte réel
+ * inutilisable.
+ *
+ * Ce qui diffère : le critère est `HEADER <nom> <valeur>` (RFC 3501 §6.4.4,
+ * sous-chaîne, insensible à la casse chez le serveur) au lieu des champs de
+ * `SEARCH_FIELDS`, et AUCUN message n'est rendu — seulement des uid, une date
+ * de plus ancien et une de plus récent. Un historique de newsletter se compte
+ * en milliers de messages : les rendre coûterait un FETCH complet là où
+ * l'appelant n'a besoin que de savoir COMBIEN et QUOI déplacer.
+ *
+ * Les bornes viennent d'un `FETCH internalDate` — une date du serveur, pas
+ * l'en-tête `Date` que l'expéditeur écrit lui-même.
+ */
+export async function searchHeaderIn(
+  account: AccountConfig,
+  folders: string[],
+  header: string,
+  value: string
+): Promise<HeaderMatches[]> {
+  if (!header || !value || folders.length === 0) return []
+  const queue = [...folders]
+  const worker = async (): Promise<HeaderMatches[]> => {
+    const client = await createClient(account)
+    try {
+      const found: HeaderMatches[] = []
+      for (let folder = queue.shift(); folder !== undefined; folder = queue.shift()) {
+        try {
+          const outcome = await searchHeaderOpenFolder(client, folder, header, value)
+          if (outcome.uids.length > 0) found.push(outcome)
+        } catch (err) {
+          if (folders.length === 1) throw err
+        }
+      }
+      return found
+    } finally {
+      await client.logout().catch(() => {})
+    }
+  }
+  const workers = Array.from({ length: Math.min(SEARCH_CONNECTIONS, folders.length) }, worker)
+  return (await Promise.all(workers)).flat()
+}
+
+/** Un dossier déjà ouvert : les uid dont l'en-tête correspond, et leurs bornes. */
+async function searchHeaderOpenFolder(
+  client: ImapFlow,
+  folder: string,
+  header: string,
+  value: string
+): Promise<HeaderMatches> {
+  const lock = await client.getMailboxLock(folder)
+  try {
+    // `{ uid: true }` est indispensable ici pour la même raison que dans
+    // `searchOpenFolder` : sans lui le serveur renvoie des NUMÉROS DE SÉQUENCE,
+    // que le déplacement relirait comme des uid — donc les mauvais messages.
+    const result = await client.search({ header: { [header]: value } }, { uid: true })
+    const uids = Array.isArray(result) ? result : []
+    if (uids.length === 0) return { folder, uids: [], oldest: null, newest: null }
+
+    // Les deux extrémités seulement : les uid d'un dossier IMAP croissent avec
+    // le dépôt, donc le premier et le dernier bornent l'historique sans lire les
+    // milliers de messages entre les deux.
+    const ends = [uids[0], uids[uids.length - 1]]
+    const dates: string[] = []
+    for await (const msg of client.fetch(
+      Array.from(new Set(ends)).join(','),
+      { uid: true, internalDate: true },
+      { uid: true }
+    )) {
+      const date = messageDate(msg.internalDate)
+      if (date) dates.push(date)
+    }
+    dates.sort()
+    return {
+      folder,
+      uids: uids.map(String),
+      oldest: dates[0] ?? null,
+      newest: dates[dates.length - 1] ?? null,
+    }
+  } finally {
+    lock.release()
+  }
+}
