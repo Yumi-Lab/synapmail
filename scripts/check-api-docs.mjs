@@ -269,10 +269,9 @@ check(
  * se vide quand ces sections reviennent — voir les deux contrôles ci-dessous, qui
  * empêchent aussi bien d'y ajouter une route neuve que de l'y laisser pourrir.
  */
-const SCOPE_PENDING = new Set(Object.keys(ROUTE_SCOPES).filter(key => !key.includes('/api/accounts')))
 
 const wrongScope = bearerKeys
-  .filter(key => doc[key] && !SCOPE_PENDING.has(key) && doc[key].scope !== ROUTE_SCOPES[key])
+  .filter(key => doc[key] && doc[key].scope !== ROUTE_SCOPES[key])
   .map(key => `${key}: the document says ${doc[key].scope ?? 'no scope'}, the code requires ${ROUTE_SCOPES[key]}`)
   .sort()
 check(
@@ -281,13 +280,14 @@ check(
   wrongScope.join('\n      '),
 )
 
-// Une portée déjà annoncée ne doit plus figurer dans la liste d'attente : sans ce
-// contrôle, la liste survivrait au travail qu'elle décrit et couvrirait une dérive.
-const staleePending = [...SCOPE_PENDING].filter(key => doc[key]?.scope).sort()
+// Plus de liste d'attente : au lot P12, TOUTE route Bearer annonce sa portée. Une
+// nouvelle en-tête sans portée tombe désormais sur l'assertion ci-dessus, qui la lit
+// comme « le document ne dit rien, le code exige X » — c'était l'objet de la liste.
+const unannounced = bearerKeys.filter(key => doc[key] && !doc[key].scope).sort()
 check(
-  staleePending.length === 0,
-  'the pending list holds no heading that already announces its scope',
-  staleePending.join('\n      '),
+  unannounced.length === 0,
+  'every Bearer heading announces the scope it requires, none pending',
+  unannounced.join('\n      '),
 )
 
 // Le libellé de `API_SCOPES` est celui de l'ÉCRAN, en français ; le document est en

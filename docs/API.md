@@ -47,7 +47,11 @@ A key that is valid but too narrow gets **`403`**, naming what it lacks — neve
 | `messages:write` | flag, move and delete messages |
 | `messages:send` | send messages |
 | `folders:read` / `folders:write` | list folders / create, rename, delete them |
-| `contacts:read` | list and search contacts |
+| `contacts:read` / `contacts:write` | list and search contacts / add, edit and delete them |
+| `signatures:read` / `signatures:write` | list signatures / create, edit and delete them |
+| `templates:read` / `templates:write` | list compose templates / create, edit and delete them |
+| `rules:read` / `rules:write` | list filter rules / create, edit and delete them |
+| `settings:read` / `settings:write` | read the user's settings / change them |
 | `subscriptions:read` / `subscriptions:write` | list newsletters / unsubscribe |
 | `ai:use` | the assistance actions |
 
@@ -241,7 +245,7 @@ OAuth2 callback. Validates `state` against the cookie, exchanges `code` for toke
 
 ## Folders
 
-### `GET /api/folders?account=<id>` 🔑 Bearer
+### `GET /api/folders?account=<id>` 🔑 Bearer (`folders:read`)
 Lists the IMAP folder tree for one account (defaults to the caller's default account if `account` is omitted). Special-use folders (`inbox`/`sent`/`drafts`/`spam`/`trash`) are detected via RFC 6154 flags first, then a localized (FR/EN) name/path regex fallback, and sorted first in that order; Outlook system folders (Sync Issues, Conflicts, Outbox, Calendar, …) are filtered out entirely.
 
 **Response** `{ data: FolderInfo[] }`
@@ -254,26 +258,26 @@ interface FolderInfo {
 ```
 Returns `{ data: [] }` (not an error) if the account has no folders synced yet or doesn't exist.
 
-### `POST /api/folders` 🔑 Bearer
+### `POST /api/folders` 🔑 Bearer (`folders:write`)
 Creates a folder. With `parent`, it is created underneath that folder, using the server's own hierarchy delimiter — never a slash written by the caller.
 
 **Body** `{ accountId?: string; name: string; parent?: string }` → `{ data: { path, name } }`.
 
 Requires the `organize` permission on the mailbox. Refusals share one shape with the two routes below: `{ error: '<code>' }`, where the code is one of `unauthorized` (401), `notFound` (404), `forbidden` (403), `badName` (400 — empty, or carrying the delimiter), `exists` (409).
 
-### `PATCH /api/folders` 🔑 Bearer
+### `PATCH /api/folders` 🔑 Bearer (`folders:write`)
 Renames a folder in place: it keeps its parent, only the last segment changes.
 
 **Body** `{ accountId?: string; path: string; name: string }` → `{ data: { path, name } }`.
 
 Requires `organize`. A special-use folder (inbox, sent, drafts, spam, trash) is never renamable — the whole client assumes its role. IMAP renames the entire subtree, so `messages_cache` and `mailbox_stats` are rewritten along the same prefix; without that, descendants keep rows under the old path and their unread counts read false.
 
-### `DELETE /api/folders?account=<id>&path=<path>` 🔑 Bearer
+### `DELETE /api/folders?account=<id>&path=<path>` 🔑 Bearer (`folders:write`)
 Deletes a folder, and its cached rows with it. → `{ data: { path } }`.
 
 Requires `delete`. Never a special-use folder, and never a folder that has children — a parent takes its subtree with it.
 
-### `POST /api/folders/actions` 🔑 Bearer
+### `POST /api/folders/actions` 🔑 Bearer (`folders:write`)
 The actions that touch a folder's CONTENT rather than its place in the tree.
 
 **Body** `{ accountId?: string; path: string; action: 'markRead' | 'empty' | 'count' }`
@@ -344,7 +348,7 @@ interface HiddenContentReport {
 
 > The four Bearer-readable routes below (`GET /api/messages`, `/api/messages/[id]`, `/api/messages/search`, `/api/messages/thread`) prefix their response with an `aiSafety` key when the caller uses an API key and the mailbox has the guard on — see [Prompt-injection guard](#prompt-injection-guard).
 
-### `GET /api/messages?account=&folder=&page=&perPage=&filter=` 🔑 Bearer
+### `GET /api/messages?account=&folder=&page=&perPage=&filter=` 🔑 Bearer (`messages:read`)
 Paginated list for one folder. Live IMAP fetch (with `messages_cache` reconciliation on page 1 — see CLAUDE.md's IMAP section), not a DB-only read.
 
 **Query params**: `account` (id, optional — defaults to the default account), `folder` (default `INBOX`), `page` (default `1`), `perPage` (default `30`), `filter` (`all` | `unread` | `starred`, default `all`).
@@ -377,20 +381,20 @@ interface Message {
 }
 ```
 
-### `GET /api/messages/[id]?account=&folder=` 🔑 Bearer
+### `GET /api/messages/[id]?account=&folder=` 🔑 Bearer (`messages:read`)
 Full message (headers + body + attachments metadata), by IMAP UID. `account` is required (`400` if missing). `404` if the account isn't owned, or the message doesn't exist in that folder.
 
 **Response** ⚠ non-standard envelope — the `Message` object directly (spread with `accountId`), not `{ data }`.
 
-### `PATCH /api/messages/[id]?account=&folder=` 🔑 Bearer
+### `PATCH /api/messages/[id]?account=&folder=` 🔑 Bearer (`messages:write`)
 Mark read/unread and/or starred. `account` required.
 
 **Body** `{ isRead?: boolean; isStarred?: boolean }` — either or both. `{ success: true }`.
 
-### `DELETE /api/messages/[id]?account=&folder=` 🔑 Bearer
+### `DELETE /api/messages/[id]?account=&folder=` 🔑 Bearer (`messages:write`)
 Deletes (IMAP `\Deleted` + expunge). `account` required. `{ success: true }`.
 
-### `PATCH /api/messages/bulk` 🔑 Bearer
+### `PATCH /api/messages/bulk` 🔑 Bearer (`messages:write`)
 Mark read/unread, or move, a set of messages in one call.
 
 **Body**
@@ -403,7 +407,7 @@ Mark read/unread, or move, a set of messages in one call.
 ```
 `400` if `uids` is empty or `action`/`accountId`/`folder` missing, or `destination` missing for `move`. `{ success: true }`.
 
-### `DELETE /api/messages/bulk` 🔑 Bearer
+### `DELETE /api/messages/bulk` 🔑 Bearer (`messages:write`)
 **Body** `{ uids: string[]; accountId: string; folder: string }` → `{ success: true }`.
 
 ### `GET /api/messages/[id]/attachment/[partId]?account=&folder=&inline=` — session only
@@ -424,17 +428,17 @@ Hides a message from `GET /api/messages` and the focus list until `until`.
 ### `DELETE /api/messages/[id]/snooze?account=&folder=` — session only
 Un-snoozes (moves the message back to the visible list immediately). `{ success: true }`.
 
-### `GET /api/messages/search?q=&folder=&account=` 🔑 Bearer
+### `GET /api/messages/search?q=&folder=&account=` 🔑 Bearer (`messages:read`)
 Full-text IMAP search (subject/from/body, server-side `SEARCH`) in one folder. `folder` defaults to `INBOX`. Requires `q.length >= 2`, else returns `{ messages: [] }` immediately (not an error).
 
 **Response** ⚠ non-standard envelope — `{ messages: Message[] }` (`accountId` added to each), or `{ messages: [], error }` on IMAP failure.
 
-### `GET /api/messages/thread?subject=&folder=&account=` 🔑 Bearer
+### `GET /api/messages/thread?subject=&folder=&account=` 🔑 Bearer (`messages:read`)
 Groups messages by normalized subject (strips `Re:`/`Fwd:`/`Rép:`/`TR:`/`AW:`/`SV:`/`VS:` prefixes recursively, case-insensitively), sorted oldest→newest. Used to render a conversation thread. Requires `subject`, ≥2 chars after normalization.
 
 **Response** ⚠ non-standard envelope — `{ messages: Message[] }`.
 
-### `POST /api/messages/send` 🔑 Bearer
+### `POST /api/messages/send` 🔑 Bearer (`messages:send`)
 Send (or reply/forward) immediately.
 
 **Body**
@@ -530,7 +534,7 @@ Cancels — only while still `pending` (a race with the scheduler picking it up 
 
 Auto-extracted from sent/received mail (`lib/contacts.ts`), plus manually-added entries.
 
-### `GET /api/contacts?q=&limit=&all=&sort=&account=` 🔑 Bearer
+### `GET /api/contacts?q=&limit=&all=&sort=&account=` 🔑 Bearer (`contacts:read`)
 **Query params**: `q` (fuzzy name/email match, default empty = all), `limit` (default 8, capped at 50), `all` (`true` bypasses the `frequency >= 2 OR is_manual` filter — used by the Settings page's full list), `sort` (`score` default | `name` | `frequency` | `recent`), `account` (id — restricts to contacts seen via `messages_cache.from_address` on that account).
 
 `score` sort = `frequency*0.5 + recency-decay*35 + (bidirectional bonus 15)`, starred always first.
@@ -544,23 +548,23 @@ interface Contact {
 }
 ```
 
-### `POST /api/contacts` — session only
+### `POST /api/contacts` 🔑 Bearer (`contacts:write`)
 Manually add/upsert a contact. **Body** `{ email: string; name?: string; notes?: string }`. `email` required and validated by regex (`400 email invalide` otherwise). On conflict (existing email for this user), merges: keeps the existing name if `name` is blank, sets `isManual: true`. **Response** `201 { data: { id: string } }`.
 
-### `PATCH /api/contacts/[id]` — session only
+### `PATCH /api/contacts/[id]` 🔑 Bearer (`contacts:write`)
 **Body** `{ name?: string; notes?: string; isStarred?: boolean }` — any subset. `400` if `name` is provided but empty. `{ success: true }`.
 
-### `DELETE /api/contacts/[id]` — session only
+### `DELETE /api/contacts/[id]` 🔑 Bearer (`contacts:write`)
 `{ success: true }`.
 
-### `DELETE /api/contacts?oneshots=true` — session only
+### `DELETE /api/contacts?oneshots=true` 🔑 Bearer (`contacts:write`)
 Bulk-cleans low-signal contacts: `frequency < 2 AND is_manual = false AND is_starred = false`. `400` without the `oneshots=true` param (safety — prevents an accidental bare `DELETE /api/contacts`). **Response** `{ data: { deleted: number } }`.
 
 ---
 
 ## Rules (email filters)
 
-### `GET /api/rules?account=` — session only
+### `GET /api/rules?account=` 🔑 Bearer (`rules:read`)
 `{ data: EmailRule[] }`, optionally filtered to one account client-side.
 
 ```ts
@@ -578,16 +582,16 @@ interface EmailRule {
 }
 ```
 
-### `POST /api/rules` — session only
+### `POST /api/rules` 🔑 Bearer (`rules:write`)
 **Body** `{ accountId: string; name: string; conditions: RuleCondition[]; actions: RuleAction[]; enabled?: boolean; conditionLogic?: 'all'|'any'; stopProcessing?: boolean }`. Requires a non-empty `name`, at least one condition, at least one action, and an owned `accountId` (`400`/`404` otherwise). New rule gets `priority = max(existing) + 1` for that account. `201 { data: EmailRule }`.
 
-### `GET /api/rules/[id]` — session only
+### `GET /api/rules/[id]` 🔑 Bearer (`rules:read`)
 `{ data: EmailRule }` or `404`.
 
-### `PATCH /api/rules/[id]` — session only
+### `PATCH /api/rules/[id]` 🔑 Bearer (`rules:write`)
 **Body**: any subset of `EmailRule` fields. `{ data: EmailRule }` or `404`.
 
-### `DELETE /api/rules/[id]` — session only
+### `DELETE /api/rules/[id]` 🔑 Bearer (`rules:write`)
 `{ data: { deleted: true } }` or `404`.
 
 ### `POST /api/rules/[id]/test` — session only
@@ -620,32 +624,32 @@ Downloads the equivalent Sieve script (`.sieve` file download), optionally scope
 
 ## Templates
 
-### `GET /api/templates` — session only
+### `GET /api/templates` 🔑 Bearer (`templates:read`)
 `{ data: ComposeTemplate[] }` where `ComposeTemplate = { id, userId, name, subject, contentHtml, createdAt }`.
 
-### `POST /api/templates` — session only
+### `POST /api/templates` 🔑 Bearer (`templates:write`)
 **Body** `{ name: string; subject?: string; contentHtml?: string }`. `400` if `name` blank. `201 { data: ComposeTemplate }`.
 
-### `PATCH /api/templates/[id]` — session only
+### `PATCH /api/templates/[id]` 🔑 Bearer (`templates:write`)
 **Body**: any subset of `{ name, subject, contentHtml }` (unset fields keep their current value via `COALESCE`). `{ data: ComposeTemplate }` or `404`.
 
-### `DELETE /api/templates/[id]` — session only
+### `DELETE /api/templates/[id]` 🔑 Bearer (`templates:write`)
 `{ success: true }`.
 
 ---
 
 ## Signatures
 
-### `GET /api/signatures` — session only
+### `GET /api/signatures` 🔑 Bearer (`signatures:read`)
 `{ data: Signature[] }` where `Signature = { id, userId, accountId: string | null, name, contentHtml, isDefault }` (`accountId: null` = usable with any account).
 
-### `POST /api/signatures` — session only
+### `POST /api/signatures` 🔑 Bearer (`signatures:write`)
 **Body** `{ name: string; contentHtml?: string; isDefault?: boolean; accountId?: string | null }`. `400` if `name` missing. Setting `isDefault: true` clears the flag on the caller's other signatures first. `201 { data: Signature }`.
 
-### `PATCH /api/signatures/[id]` — session only
+### `PATCH /api/signatures/[id]` 🔑 Bearer (`signatures:write`)
 **Body**: any subset of the `POST` fields (`COALESCE`-merged). `{ data: Signature }` or `404`.
 
-### `DELETE /api/signatures/[id]` — session only
+### `DELETE /api/signatures/[id]` 🔑 Bearer (`signatures:write`)
 `{ success: true }`.
 
 ---
@@ -742,7 +746,7 @@ The same "à traiter" heuristic ranking as the dashboard's `focus` widget (`lib/
 
 ## Settings
 
-### `GET /api/settings` — session only
+### `GET /api/settings` 🔑 Bearer (`settings:read`)
 Returns the caller's row from `user_settings`, or hard-coded defaults if none exists yet (first login).
 
 **Response** `{ data: UserSettings }`
@@ -758,7 +762,7 @@ interface UserSettings {
 ```
 Defaults: `theme: 'system', language: 'fr', messages_per_page: 30, thread_view: true, reading_pane: true, notifications: true, undo_send_delay: 10, start_view: 'inbox', active_account_id: null, sidebar_collapsed: false, mail_density: 'comfortable', list_width: 320, dashboard_account_id: null`.
 
-### `PATCH /api/settings` — session only
+### `PATCH /api/settings` 🔑 Bearer (`settings:write`)
 **Body**: any subset of the fields above (snake_case keys, matching the DB columns — not camelCase). Unrecognized keys are silently ignored; `400 No valid fields` if the body has none of the allowed keys. UPSERTs, then returns the full row.
 
 **Response** `{ data: UserSettings }` (full, post-update).
@@ -824,7 +828,7 @@ Probes common local network locations (`localhost`, `host.docker.internal`, `oll
 
 **Response** `{ data: { found: boolean; url: string | null; models: string[] } }`.
 
-### `POST /api/ai/action` 🔑 Bearer
+### `POST /api/ai/action` 🔑 Bearer (`ai:use`)
 Runs one AI transformation against arbitrary text, using the caller's configured provider. `400 AI not configured` if `ai_settings` has no row for the user yet.
 
 **Body**
@@ -868,7 +872,7 @@ Batch lookup of tracking state by subject (not message id — works around Outlo
 
 Three routes so an agent can clean a mailbox in three calls: **list** what it is subscribed to, **unsubscribe** from the chosen lists, then **file the messages away** with the existing `PATCH`/`DELETE /api/messages/bulk` — there is no cleaning route here. A fourth, `GET /api/subscriptions/unsubscribed`, is the history, and it outlives the cleaning. All accept a Bearer key or a session. The older `POST /api/unsubscribe` (below) stays: the reading pane's banner uses it.
 
-### `GET /api/subscriptions?account=<id>[&folder=INBOX]` — Bearer or session
+### `GET /api/subscriptions?account=<id>[&folder=INBOX]` — Bearer or session (`subscriptions:read`)
 Lists the newsletters of a mailbox, grouped per list. Same access rule as `GET /api/messages` (ownership or an active share). **Reads headers only** — `From`, `List-Id`, `List-Unsubscribe`, `List-Unsubscribe-Post`, `Date`, `Subject` — of the 400 most recent messages of the folder; a message body is never read and never logged. A message with no `List-Unsubscribe` is not a subscription and is absent from the list.
 
 Grouping key: `List-Id` when the sender declares one (stable across the address rotations a large sender uses), else the `From` address. Folded headers are unfolded (RFC 5322 §2.2.3), and every URI between angle brackets is read (RFC 2369) — not just the first line.
@@ -897,7 +901,7 @@ interface Subscription {
 
 A sender's name and a subject are content written by a third party, so a Bearer response carries the same `aiSafety` wrapper as the message routes when the mailbox's guard is on (see [Prompt-injection guard](#prompt-injection-guard)).
 
-### `POST /api/subscriptions/unsubscribe` — Bearer or session
+### `POST /api/subscriptions/unsubscribe` — Bearer or session (`subscriptions:write`)
 Leaves the named lists. Same access rule as sending a message (`send` permission), since it either posts to the sender's endpoint or sends mail from this mailbox.
 
 **Body** `{ account: string; ids: string[]; folder?: string /* default 'INBOX' */ }` — at most **50** ids per call. The client **never** sends a URL or an address: it names ids and nothing else. The server re-reads the headers of each group's most recent message and decides from them alone, so an id cannot be used to make the server call an arbitrary address.
@@ -924,7 +928,7 @@ Each `done` is recorded (per mailbox and grouping key, with the sender) and come
 
 A call is bounded so one command gives one answer: at most 8 lists are left at a time with a 3 s deadline each, so even a full batch of 50 that all time out answers in about 21 s — inside the 60 s a proxy usually allows. The report follows the order of the request.
 
-### `GET /api/subscriptions/unsubscribed[?account=<id>]` — Bearer or session
+### `GET /api/subscriptions/unsubscribed[?account=<id>]` — Bearer or session (`subscriptions:read`)
 The lists already left, newest first. With `account`, that one mailbox (same access rule as `GET /api/subscriptions`); without it, **every mailbox the caller may read** and nothing else.
 
 It is read from the database, not from the folder, so it **survives the cleaning**: once the messages are filed away the group disappears from `GET /api/subscriptions`, but its entry stays here.
