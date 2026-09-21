@@ -1,12 +1,10 @@
 import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
-import { ImapFlow } from 'imapflow'
-import nodemailer from 'nodemailer'
 import { getAccountById } from '@/lib/accounts'
 import { decrypt } from '@/lib/encrypt'
 import {
   TEST_DECISION,
-  classifyTestFailure,
+  probeConnection,
   resolveTestPassword,
 } from '@/lib/accountTest'
 
@@ -74,47 +72,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: TEST_DECISION.PASSWORD_REQUIRED }, { status: 400 })
     }
 
-    // Test IMAP
-    let imapOk = false
-    let imapError = ''
-    try {
-      const client = new ImapFlow({
-        host: connection.imapHost,
-        port: connection.imapPort,
-        secure: connection.imapSecure,
-        auth: { user: connection.username, pass },
-        logger: false,
-        tls: { rejectUnauthorized: false },
-      })
-      await client.connect()
-      await client.logout()
-      imapOk = true
-    } catch (e) {
-      imapError = classifyTestFailure(String(e instanceof Error ? e.message : e))
-    }
+    // Une seule implémentation de l'essai, partagée avec l'ajout d'une boîte.
+    const { imap, smtp } = await probeConnection(connection, pass)
 
-    // Test SMTP
-    let smtpOk = false
-    let smtpError = ''
-    try {
-      const transport = nodemailer.createTransport({
-        host: connection.smtpHost,
-        port: connection.smtpPort,
-        secure: connection.smtpSecure,
-        auth: { user: connection.username, pass },
-        tls: { rejectUnauthorized: false },
-      })
-      await transport.verify()
-      smtpOk = true
-    } catch (e) {
-      smtpError = classifyTestFailure(String(e instanceof Error ? e.message : e))
-    }
-
-    return NextResponse.json({
-      tested: decision,
-      imap: { ok: imapOk, error: imapError },
-      smtp: { ok: smtpOk, error: smtpError },
-    })
+    return NextResponse.json({ tested: decision, imap, smtp })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

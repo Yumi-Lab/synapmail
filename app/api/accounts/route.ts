@@ -3,6 +3,7 @@ import { authenticate, authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { ACCESSIBLE_ORDER_BY_ALIASED, ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
 import { encrypt } from '@/lib/encrypt'
+import { DEFAULT_IMAP_PORT, DEFAULT_SMTP_PORT, probeConnection } from '@/lib/accountTest'
 
 export const dynamic = 'force-dynamic'
 
@@ -96,6 +97,29 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
+    // On ESSAIE la boîte avant de l'enregistrer. Sans cela, un appelant — un agent en
+    // particulier — pouvait déposer des identifiants faux et obtenir un 201 : la boîte
+    // apparaissait dans la barre latérale et ne chargeait jamais le moindre message, sans
+    // que personne n'ait été prévenu. Un IMAP qui refuse la connexion rend la boîte
+    // inutilisable, donc on ne l'enregistre pas ; un SMTP qui refuse n'empêche que l'envoi,
+    // on l'enregistre et on le SIGNALE. `verify: false` reste possible pour qui enregistre
+    // une boîte volontairement hors ligne.
+    const connection = {
+      imapHost, imapPort: imapPort ?? DEFAULT_IMAP_PORT, imapSecure: imapSecure ?? true,
+      smtpHost, smtpPort: smtpPort ?? DEFAULT_SMTP_PORT, smtpSecure: smtpSecure ?? true,
+      username,
+    }
+    let verified: Awaited<ReturnType<typeof probeConnection>> | null = null
+    if (body.verify !== false) {
+      verified = await probeConnection(connection, password)
+      if (!verified.imap.ok) {
+        return NextResponse.json(
+          { error: 'imap_unreachable', imap: verified.imap, smtp: verified.smtp },
+          { status: 422 }
+        )
+      }
+    }
+
     const passwordEncrypted = encrypt(password)
 
     if (isDefault) {
@@ -114,13 +138,15 @@ export async function POST(req: Request) {
                  smtp_host, smtp_port, smtp_secure, username, is_default, created_at`,
       [
         userId, name, email,
-        imapHost, imapPort ?? 993, imapSecure ?? true,
-        smtpHost, smtpPort ?? 587, smtpSecure ?? false,
+        imapHost, connection.imapPort, connection.imapSecure,
+        smtpHost, connection.smtpPort, connection.smtpSecure,
         username, passwordEncrypted, isDefault,
       ]
     )
 
-    return NextResponse.json({ data: result[0] }, { status: 201 })
+    // L'appelant repart avec le verdict : une boîte qui reçoit mais n'envoie pas est
+    // utilisable, encore faut-il le savoir avant d'essayer d'écrire à quelqu'un.
+    return NextResponse.json({ data: result[0], verified }, { status: 201 })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
