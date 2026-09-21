@@ -21,6 +21,7 @@
  */
 import { readFileSync } from 'node:fs'
 import puppeteer from 'puppeteer-core'
+import { installVisible, waitVisible, visibleBox, VISIBLE } from './bench-visible.mjs'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
@@ -42,16 +43,19 @@ for (const [k, v] of Object.entries({ SYNAPMAIL_TEST_URL: BASE, SYNAPMAIL_TEST_E
   if (!v) { console.error(`HARNESS: ${k} n'est pas renseigné`); process.exit(2) }
 }
 
-/** Les deux marches, dans la seule barre VISIBLE (à 390 px celle de bureau est encore au DOM). */
-const MEASURE = fallback => {
-  const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-  const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
-  if (!bar) return { error: 'aucune barre visible' }
-  const field = bar.querySelector('[data-account-filter]')
-  if (!field || !vis(field)) return { error: 'champ de filtre absent (moins de boîtes que le seuil ?)' }
+/**
+ * Les deux marches, dans la seule instance REELLEMENT DESSINEE (helper partage). Avant le
+ * lot H4h-bis ce banc choisissait la barre avec son propre `find(vis)` : un test de taille
+ * qui ne voit PAS un champ retenu a 0 px par l'accordeon replie. Le helper, lui, intersecte
+ * la boite avec ses cages et ECHOUE plutot que de rendre un element que personne ne regarde.
+ */
+const MEASURE = (fallback, name) => {
+  const V = window[name]
+  const bar = V.one('[data-sidebar]')
+  const field = V.one('[data-account-filter]', bar)
 
   field.focus()
-  if (document.activeElement !== field) return { error: 'le champ refuse le focus' }
+  if (document.activeElement !== field) throw new Error('VISIBLE: le champ refuse le focus')
 
   const cs = getComputedStyle(field)
   const declared = parseFloat(cs.getPropertyValue('--tw-ring-width'))
@@ -74,7 +78,13 @@ const MEASURE = fallback => {
     return null
   }
 
-  return { ring, overflowDuChamp: cs.overflowX + '/' + cs.overflowY, depuisLeChamp: walk(field), depuisLeParent: walk(field.parentElement) }
+  return {
+    ring,
+    surface: bar.closest('[data-sidebar-drawer]') ? 'TIROIR' : 'BUREAU',
+    overflowDuChamp: cs.overflowX + '/' + cs.overflowY,
+    depuisLeChamp: walk(field),
+    depuisLeParent: walk(field.parentElement),
+  }
 }
 
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'], protocolTimeout: 240000 })
@@ -87,6 +97,7 @@ const check = (label, ok, detail = '') => {
 
 try {
   const page = await browser.newPage()
+  await installVisible(page)
   await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' })
   const loggedIn = await page.evaluate(async ({ base, email, password }) => {
     const { csrfToken } = await (await fetch(`${base}/api/auth/csrf`)).json()
@@ -118,50 +129,54 @@ try {
         { timeout: 30000 },
       ).catch(() => {})
 
-      // Sous `lg`, la barre vit dans un tiroir : il faut l'ouvrir avant de mesurer.
+      // Sous `lg`, la barre vit dans un TIROIR superposé au contenu, tandis que l'instance de
+      // bureau reste au DOM à 0 px : c'est elle qu'un `querySelector` nu attrape (Nicolas,
+      // 21/09). On ouvre donc le tiroir, puis TOUT passe par le helper d'instance visible.
       if (width < 1024) {
-        const menu = await page.$('[data-omnibar-menu]')
+        const menu = await visibleBox(page, '[data-omnibar-menu]').catch(() => null)
         if (menu) {
-          const m = await menu.evaluate(el => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })
-          await page.mouse.click(m.x, m.y)
-          await new Promise(r => setTimeout(r, 600))
+          await page.mouse.click(menu.x, menu.y)
+          await waitVisible(page, '[data-sidebar-drawer]').catch(() => {})
         }
       }
 
       // La barre arrive avec ses comptes (SWR) : on l'ATTEND, sinon on lit le squelette.
-      await page.waitForFunction(() => {
-        const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-        const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
-        const el = bar && bar.querySelector('[data-sidebar-row="account"]')
-        return !!el && vis(el) && Object.keys(el).some(k => k.startsWith('__reactProps$'))
-      }, { timeout: 30000 }).catch(() => {})
+      await page.waitForFunction((name) => {
+        try {
+          const el = window[name].one('[data-sidebar-row="account"]', window[name].one('[data-sidebar]'))
+          return Object.keys(el).some(k => k.startsWith('__reactProps$'))
+        } catch { return false }
+      }, { timeout: 30000, polling: 120 }, VISIBLE).catch(() => {})
 
-      const row = await page.evaluate(() => {
-        const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-        const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
-        const el = bar && bar.querySelector('[data-sidebar-row="account"]')
-        if (!el || !vis(el)) return null
-        const r = el.getBoundingClientRect()
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
-      })
-      if (!row) { console.error(`HARNESS: ${where} — aucune rangée de compte visible`); process.exit(2) }
+      let row
+      try {
+        row = await page.evaluate((name) => {
+          const V = window[name]
+          const d = V.drawnRect(V.one('[data-sidebar-row="account"]', V.one('[data-sidebar]')))
+          return { x: d.left + d.width / 2, y: d.top + d.height / 2, surface: d.width }
+        }, VISIBLE)
+      } catch (e) {
+        console.error(`HARNESS: ${where} — ${e.message.split('\n')[0]}`); process.exit(2)
+      }
       await page.mouse.click(row.x, row.y)
 
-      // L'accordéon anime sa hauteur : on lit quand la mesure est STABLE, pas après un délai fixe.
-      await page.waitForFunction(() => {
-        const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-        const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
-        const f = bar && bar.querySelector('[data-account-filter]')
-        if (!f || !vis(f)) return false
+      // L'accordéon anime sa hauteur : on lit quand la mesure est STABLE, pas après un délai
+      // fixe — et « stable » exige d'abord que le champ soit RÉELLEMENT dessiné (replié, sa
+      // boîte propre reste haute de 28 px alors que rien n'est peint).
+      await page.waitForFunction((name) => {
+        let f
+        try { f = window[name].one('[data-account-filter]', window[name].one('[data-sidebar]')) } catch { return false }
         const now = f.getBoundingClientRect().top.toFixed(1)
         const prev = window.__synapPrevTop
         window.__synapPrevTop = now
         return prev === now
-      }, { polling: 120, timeout: 30000 }).catch(() => {})
+      }, { polling: 120, timeout: 30000 }, VISIBLE).catch(() => {})
 
-      const m = await page.evaluate(MEASURE, RING_FALLBACK_PX)
-      if (m.error) { console.error(`HARNESS: ${where} — ${m.error}`); process.exit(2) }
+      let m
+      try { m = await page.evaluate(MEASURE, RING_FALLBACK_PX, VISIBLE) }
+      catch (e) { console.error(`HARNESS: ${where} — ${e.message.split('\n').slice(0, 4).join('\n         ')}`); process.exit(2) }
       measured++
+      console.log(`  --   ${where} : instance mesurée = ${m.surface}`)
 
       const parent = m.depuisLeParent
       check(`${where} : cage réelle « ${parent ? parent.cage : 'aucune'} » — marge haut ${parent ? parent.haut : 'n/a'} px, bas ${parent ? parent.bas : 'n/a'} px ≥ ${MIN_MARGIN_PX} (anneau ${m.ring} px)`,
@@ -171,6 +186,24 @@ try {
       // L'invariant à retenir : partir du champ le retient LUI-MÊME (`overflow: clip` par
       // défaut du navigateur) et rend -épaisseur des deux côtés. Si un jour ce n'est plus
       // vrai, c'est cette explication du -2/-2 tiers qui tombe, et il faut la réécrire.
+      // Contrôle NÉGATIF sur le PRODUIT, à la largeur où les deux instances coexistent : la
+      // méthode naive (premier `querySelector`, mesuré tel quel) doit tomber sur l'instance
+      // de BUREAU, cachée, et rendre une boîte nulle. C'est le défaut que ce lot ferme ; le
+      // jour où il ne se reproduit plus, la garde ci-dessus ne protège plus de rien et ce
+      // banc doit le dire au lieu de rester vert par habitude.
+      if (width < 1024) {
+        const naif = await page.evaluate(() => {
+          const el = document.querySelector('[data-account-filter]')
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          const drawer = !!el.closest('[data-sidebar-drawer]')
+          return { w: +r.width.toFixed(1), h: +r.height.toFixed(1), surface: drawer ? 'TIROIR' : 'BUREAU' }
+        })
+        check(`${where} : contrôle négatif — la méthode naive prend « ${naif ? naif.surface : 'rien'} » en ${naif ? `${naif.w} x ${naif.h}` : 'n/a'} px (donc mesurable à tort)`,
+          !!naif && naif.surface === 'BUREAU' && naif.w * naif.h < 1,
+          'les deux instances ne se distinguent plus : le piège a disparu OU le sélecteur a changé — relire ce banc avant de le croire')
+      }
+
       const self = m.depuisLeChamp
       check(`${where} : marche depuis le champ = artefact connu (champ ${m.overflowDuChamp}, rend ${self ? `${self.haut}/${self.bas}` : 'rien'} pour un anneau de ${m.ring} px)`,
         !!self && self.estLeChamp && self.haut === -m.ring && self.bas === -m.ring,
