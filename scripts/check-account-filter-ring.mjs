@@ -20,6 +20,7 @@
  */
 import { readFileSync } from 'node:fs'
 import puppeteer from 'puppeteer-core'
+import { installVisible, openAccountList, visibleBox, VISIBLE } from './bench-visible.mjs'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
@@ -54,11 +55,18 @@ for (const [k, v] of Object.entries({ SYNAPMAIL_TEST_URL: BASE, SYNAPMAIL_TEST_E
  * champ au focus et rend, pour le champ et pour les rangées extrêmes, la plus petite
  * marge entre leur boîte dilatée de l'anneau et chaque ancêtre qui coupe.
  */
-const MEASURE = fallback => {
+/**
+ * Instance VISIBLE, via le helper partage (lot H4h-bis) : sous `lg` la barre vit dans un
+ * TIROIR et l'instance de bureau reste au DOM a 0 px — un `querySelector` nu attrape celle
+ * que personne ne regarde. `vis` reste local pour les rangees DEJA prises dans la barre
+ * choisie : une fois la bonne instance tenue, un test de taille suffit.
+ */
+const MEASURE = (fallback, name) => {
   const R = el => { const r = el.getBoundingClientRect(); return { t: +r.top.toFixed(1), l: +r.left.toFixed(1), b: +r.bottom.toFixed(1), r: +r.right.toFixed(1) } }
-  const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-  const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
-  if (!bar) return { error: 'aucune barre visible' }
+  const V = window[name]
+  const vis = el => V.drawnRect(el).area >= 1
+  let bar
+  try { bar = V.one('[data-sidebar]') } catch (e) { return { error: e.message.split('\n')[0] } }
   const list = bar.querySelector('[data-account-list]')
   if (!list || list.getAttribute('data-account-list-open') !== 'true' || !vis(list)) return { error: 'liste des boîtes fermée' }
   const field = bar.querySelector('[data-account-filter]')
@@ -131,6 +139,7 @@ const check = (label, ok, detail = '') => {
 
 try {
   const page = await browser.newPage()
+  await installVisible(page)
   await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' })
   const loggedIn = await page.evaluate(async ({ base, email, password }) => {
     const { csrfToken } = await (await fetch(`${base}/api/auth/csrf`)).json()
@@ -189,48 +198,12 @@ try {
         { timeout: 30000 },
       ).catch(() => {})
 
-      // Sous `lg`, la barre vit dans un tiroir : il faut l'ouvrir avant de mesurer.
-      if (width < 1024) {
-        const menu = await page.$('[data-omnibar-menu]')
-        if (menu) {
-          const m = await menu.evaluate(el => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })
-          await page.mouse.click(m.x, m.y)
-          await new Promise(r => setTimeout(r, 500))
-        }
-      }
+      // Instance VISIBLE + depliage, une seule fois pour les trois bancs (lot H4h-bis) :
+      // sous `lg` la barre vit dans un TIROIR et l'instance de bureau reste au DOM a 0 px.
+      const { surface } = await openAccountList(page, { width })
 
-      // La barre arrive avec ses comptes (SWR) : on l'ATTEND, sinon on lit le squelette.
-      await page.waitForFunction(() => {
-        const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-        const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
-        const el = bar && bar.querySelector('[data-sidebar-row="account"]')
-        return !!el && vis(el) && Object.keys(el).some(k => k.startsWith('__reactProps$'))
-      }, { timeout: 30000 }).catch(() => {})
-
-      const row = await page.evaluate(() => {
-        const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-        const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
-        const el = bar && bar.querySelector('[data-sidebar-row="account"]')
-        if (!el || !vis(el)) return null
-        const r = el.getBoundingClientRect()
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
-      })
-      if (!row) { console.error(`HARNESS: aucune rangée de compte visible à ${width} px / ${theme}`); process.exit(2) }
-      await page.mouse.click(row.x, row.y)
-      // L'accordéon anime sa hauteur : on lit quand la mesure est STABLE, pas après un délai fixe.
-      await page.waitForFunction(() => {
-        const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-        const bar = [...document.querySelectorAll('[data-sidebar]')].find(vis)
-        const f = bar && bar.querySelector('[data-account-filter]')
-        if (!f || !vis(f)) return false
-        const now = f.getBoundingClientRect().top.toFixed(1)
-        const prev = window.__synapPrevTop
-        window.__synapPrevTop = now
-        return prev === now
-      }, { polling: 120, timeout: 30000 }).catch(() => {})
-
-      const m = await page.evaluate(MEASURE, RING_FALLBACK_PX)
-      const where = `${width} px / ${theme}`
+      const m = await page.evaluate(MEASURE, RING_FALLBACK_PX, VISIBLE)
+      const where = `${width} px / ${theme} / ${surface}`
       if (m.error) { console.error(`HARNESS: ${where} — ${m.error}`); process.exit(2) }
       measured++
       check(`${where} : anneau du champ (${m.ring} px) entièrement dedans, marge ${m.field.clip ? m.field.clip.min : 'n/a'} px ≥ ${MIN_MARGIN_PX}`,

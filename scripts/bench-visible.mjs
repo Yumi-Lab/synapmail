@@ -128,3 +128,60 @@ export async function waitVisible(page, selector, { timeout = 30000 } = {}) {
     { timeout, polling: 120 }, selector, VISIBLE,
   )
 }
+
+/**
+ * Deplie la liste de boites dans l'instance VISIBLE, a la vraie souris, et rend la main
+ * quand la geometrie est STABLE (l'accordeon anime `0fr → 1fr`). Les trois bancs du filtre
+ * de comptes repetaient ce meme preambule mot pour mot, chacun avec sa copie d'un test de
+ * taille qui ne distingue pas le tiroir de l'instance de bureau a 0 px.
+ *
+ * Rend `{ surface }` — « TIROIR » ou « BUREAU » — pour que le banc PUISSE DIRE ce qu'il a
+ * mesure. Leve (donc HARNESS cote banc) si aucune rangee de compte n'est dessinee.
+ */
+export async function openAccountList(page, { width, timeout = 30000 } = {}) {
+  // Rien ne se clique avant l'hydratation : sinon le clic part dans le vide et le tiroir
+  // ne s'ouvre jamais (mesure a 390 px).
+  await page.waitForFunction(
+    () => { const e = document.querySelector('[data-sidebar-row="account"], [data-omnibar-menu]'); return !!e && Object.keys(e).some(k => k.startsWith('__reactProps$')) },
+    { timeout },
+  ).catch(() => {})
+
+  // Sous `lg`, la barre vit dans un TIROIR superpose au contenu tandis que l'instance de
+  // bureau reste au DOM a 0 px : il faut l'ouvrir AVANT de chercher quoi que ce soit.
+  if (typeof width === 'number' && width < 1024) {
+    const menu = await visibleBox(page, '[data-omnibar-menu]').catch(() => null)
+    if (menu) {
+      await page.mouse.click(menu.x, menu.y)
+      await waitVisible(page, '[data-sidebar-drawer]', { timeout }).catch(() => {})
+    }
+  }
+
+  // La barre arrive avec ses comptes (SWR) : on l'ATTEND, sinon on lit le squelette.
+  await page.waitForFunction((name) => {
+    try {
+      const V = window[name]
+      return Object.keys(V.one('[data-sidebar-row="account"]', V.one('[data-sidebar]'))).some(k => k.startsWith('__reactProps$'))
+    } catch { return false }
+  }, { timeout, polling: 120 }, VISIBLE).catch(() => {})
+
+  const row = await page.evaluate((name) => {
+    const V = window[name]
+    const bar = V.one('[data-sidebar]')
+    const d = V.drawnRect(V.one('[data-sidebar-row="account"]', bar))
+    return { x: d.left + d.width / 2, y: d.top + d.height / 2, surface: bar.closest('[data-sidebar-drawer]') ? 'TIROIR' : 'BUREAU' }
+  }, VISIBLE)
+  await page.mouse.click(row.x, row.y)
+
+  // « Stable » exige d'abord que le champ soit REELLEMENT dessine : replie, sa boite propre
+  // reste haute de 28 px alors que rien n'est peint.
+  await page.waitForFunction((name) => {
+    let f
+    try { f = window[name].one('[data-account-filter]', window[name].one('[data-sidebar]')) } catch { return false }
+    const now = f.getBoundingClientRect().top.toFixed(1)
+    const prev = window.__synapPrevTop
+    window.__synapPrevTop = now
+    return prev === now
+  }, { polling: 120, timeout }, VISIBLE).catch(() => {})
+
+  return { surface: row.surface }
+}
