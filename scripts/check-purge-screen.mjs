@@ -31,9 +31,13 @@
  */
 import puppeteer from 'puppeteer-core'
 import { openTestMailbox, harness as benchHarness } from './bench-imap.mjs'
+import { installVisible, visibleBox, waitVisible } from './bench-visible.mjs'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const VIEWPORT = { width: 1440, height: 900 }
+/** Les quatre etats que la DoD demande : deux largeurs, deux themes. */
+const WIDTHS = [1440, 390]
+const THEMES = ['light', 'dark']
 /** Temps laisse a React pour reposer la carte apres un clic. */
 const SETTLE_MS = 400
 /**
@@ -164,6 +168,9 @@ try {
   page.setDefaultTimeout(NAV_TIMEOUT_MS)
   const pageErrors = []
   page.on('pageerror', e => pageErrors.push(String(e)))
+  // Le garde-fou du lot H4h-bis : toute mesure passe par l'instance qu'un humain
+  // REGARDE, et echoue bruyamment plutot que de mesurer une boite a 0 px.
+  await installVisible(page)
 
   /**
    * On ne DEVIE que la PORTEE des deux lectures de la carte, du dossier par
@@ -306,6 +313,67 @@ try {
     check(`les ${SEEDED} messages sont RECUPERABLES dans la corbeille`,
       trash.count === SEEDED, `trouves ${trash.count} dans ${trash.folder ?? '(aucune corbeille)'}`)
   }
+
+  console.log('== 8. le panneau des deux temps est ENTIEREMENT dessine, 4 etats ==')
+  // Le denombrement est relance pour chaque etat, sur la ligne TEMOIN : apres le
+  // temps 7 la cible n'a plus de message dans le dossier de test. La ligne est
+  // visee par SON id, pas par `[data-subs-row]` : le selecteur generique
+  // designe plusieurs lignes, et le helper de visibilite REFUSE (a juste titre)
+  // de choisir a la place du banc.
+  const WITNESS_ROW = `[data-subs-row="${witnessRows[0].id}"]`
+  for (const width of WIDTHS) {
+    for (const theme of THEMES) {
+      const where = `${String(width).padEnd(4)} px / ${theme.padEnd(5)}`
+      await page.setViewport({ width, height: VIEWPORT.height })
+      await page.evaluate(t => document.documentElement.classList.toggle('dark', t === 'dark'), theme)
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await page.evaluate(t => document.documentElement.classList.toggle('dark', t === 'dark'), theme)
+      await page.waitForFunction(
+        sel => document.querySelectorAll(sel).length > 0,
+        { timeout: NAV_TIMEOUT_MS }, WITNESS_ROW,
+      ).catch(() => harness(`${where} : la ligne temoin n'est pas rendue`))
+
+      // La carte vit bas dans une colonne qui defile : sans l'amener a l'ecran,
+      // sa boite dessinee est nulle et le helper de visibilite REFUSE de la
+      // mesurer — a juste titre, un element hors du cadre n'est pas regarde.
+      const bring = async sel => {
+        await page.$eval(sel, el => el.scrollIntoView({ block: 'center' }))
+        await new Promise(r => setTimeout(r, SETTLE_MS))
+      }
+      await bring(WITNESS_ROW)
+
+      // Clic a la VRAIE souris, au centre de l'instance VISIBLE : a 390 px le
+      // tableau de bord n'a pas la meme mise en page, et un `elem.click()` de
+      // Puppeteer passerait outre un element recouvert.
+      const rowBox = await visibleBox(page, WITNESS_ROW).catch(e => harness(`${where} : ${e.message}`))
+      await page.mouse.click(rowBox.x, rowBox.y)
+      await new Promise(r => setTimeout(r, SETTLE_MS))
+      await bring(PURGE)
+      const btn = await visibleBox(page, PURGE).catch(e => harness(`${where} : ${e.message}`))
+      await page.mouse.click(btn.x, btn.y)
+      await waitVisible(page, COUNT, { timeout: COUNT_TIMEOUT_MS })
+        .catch(() => harness(`${where} : le denombrement ne s'affiche jamais`))
+
+      // Une boite DESSINEE non nulle = le panneau n'est ni rogne par une cage
+      // `overflow-hidden` ni replie : c'est exactement le piege du lot H4h-bis.
+      await bring(PANEL)
+      const panel = await visibleBox(page, PANEL).catch(e => harness(`${where} : ${e.message}`))
+      const confirm = await visibleBox(page, CONFIRM).catch(e => harness(`${where} : ${e.message}`))
+      check(`${where} — le panneau est dessine en entier`,
+        panel.width > 0 && panel.height > 0, JSON.stringify(panel))
+      check(`${where} — le bouton de confirmation est atteignable a la souris`,
+        confirm.width > 0 && confirm.height > 0 && confirm.left >= panel.left - 1
+          && confirm.right <= panel.right + 1,
+        `bouton ${JSON.stringify(confirm)} dans ${JSON.stringify(panel)}`)
+
+      // On ANNULE : aucun de ces quatre passages ne doit deplacer un message.
+      const cancelBox = await visibleBox(page, CANCEL).catch(e => harness(`${where} : ${e.message}`))
+      await page.mouse.click(cancelBox.x, cancelBox.y)
+      await new Promise(r => setTimeout(r, SETTLE_MS))
+    }
+  }
+  check(`les 4 etats n'ont envoye aucune purge de plus`,
+    purgeCalls === (CANCEL_ONLY ? 0 : 1), `purges observees : ${purgeCalls}`)
 
   check('aucune erreur levee par la page', pageErrors.length === 0, pageErrors.join(' | '))
 } finally {
