@@ -103,6 +103,16 @@ for (const route of OPENED) {
  * l'administration et la gestion des clés. Décision assumée, mesurée ici plutôt que
  * simplement écrite — une clé qui fabriquerait des clés annulerait tout le modèle.
  */
+/**
+ * Les routes d'ÉCRITURE que ce lot ouvre, avec de quoi créer une ressource jetable.
+ * Aucune ne nomme de boîte : la portée est alors la seule barrière mesurée, ce qui
+ * est exactement l'objet du bras G.
+ */
+const WRITTEN = [
+  { path: '/api/signatures', body: { name: 'bench-signature', contentHtml: '<p>bench</p>' } },
+  { path: '/api/templates', body: { name: 'bench-modele', subject: 'bench', bodyHtml: '<p>bench</p>' } },
+]
+
 const EXCLUDED = [
   { path: '/api/admin/users', method: 'GET' },
   { path: '/api/api-keys', method: 'GET' },
@@ -170,6 +180,40 @@ try {
     check(`B ${path} NOMME la portée qui manque`,
       refused.json?.missingScope === scope,
       `missingScope = ${JSON.stringify(refused.json?.missingScope ?? null)}, attendu ${scope}`)
+  }
+
+  // ---- G. l'ÉCRITURE aussi distingue la clé qui porte de celle qui ne porte pas ----
+  // Les bras A/B ne mesurent que la lecture. Une portée d'écriture accordée à tort ne
+  // se verrait nulle part ailleurs : la ressource est CRÉÉE, puis SUPPRIMÉE par le même
+  // chemin — ce qui mesure du même coup la route `[id]`, jamais atteinte autrement.
+  for (const { path, body } of WRITTEN) {
+    const scope = ROUTE_SCOPES[`POST ${path}`]
+    if (!scope) harness(`POST ${path} n'a pas de portée dans lib/apiScopes.ts`)
+
+    const refused = await call(path, { method: 'POST', key: narrowKey.raw, body })
+    check(`G POST ${path} refuse 403 une clé sans ${scope}`,
+      refused.status === 403 && refused.json?.missingScope === scope,
+      `HTTP ${refused.status} — ${refused.text.slice(0, 160)}`)
+
+    const written = await call(path, { method: 'POST', key: fullKey.raw, body })
+    check(`G POST ${path} crée pour une clé portant ${scope}`,
+      written.status >= 200 && written.status < 300,
+      `HTTP ${written.status} — ${written.text.slice(0, 160)}`)
+
+    const id = written.json?.data?.id
+    if (!id) { check(`G POST ${path} rend l'identifiant du créé`, false, written.text.slice(0, 160)); continue }
+
+    const removeScope = ROUTE_SCOPES[`DELETE ${path}/[id]`]
+    if (!removeScope) harness(`DELETE ${path}/[id] n'a pas de portée dans lib/apiScopes.ts`)
+    const removeRefused = await call(`${path}/${id}`, { method: 'DELETE', key: narrowKey.raw })
+    check(`G DELETE ${path}/[id] refuse 403 une clé sans ${removeScope}`,
+      removeRefused.status === 403 && removeRefused.json?.missingScope === removeScope,
+      `HTTP ${removeRefused.status} — ${removeRefused.text.slice(0, 160)}`)
+
+    const removed = await call(`${path}/${id}`, { method: 'DELETE', key: fullKey.raw })
+    check(`G DELETE ${path}/[id] supprime pour une clé portant ${removeScope}`,
+      removed.status >= 200 && removed.status < 300,
+      `HTTP ${removed.status} — ${removed.text.slice(0, 160)}`)
   }
 
   // ---- D. l'administration et les clés restent fermées à une clé toute-portées ----
