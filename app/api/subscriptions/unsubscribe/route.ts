@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { imapConfigOf, smtpConfigOf, unsubscribeGroups } from '@/lib/subscriptions'
 import { MAX_UNSUBSCRIBE_BATCH } from '@/lib/subscriptionsContract'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,9 +14,10 @@ export const dynamic = 'force-dynamic'
 //
 // The client NEVER sends a URL or an address: the server re-reads the headers of
 // each group's most recent message and decides from them alone.
-export async function POST(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function postHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const body = (await req.json().catch(() => null)) as
     | { account?: string; ids?: unknown; folder?: string }
@@ -52,3 +54,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const POST = withApiLog(postHandler)

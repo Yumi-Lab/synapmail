@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { markReadBulk, deleteMessagesBulk, moveMessagesBulk, setFlagBulk } from '@/lib/imap'
 import { flagByKey } from '@/lib/flags'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,9 +30,10 @@ function accountConfig(a: AccountRow) {
 }
 
 // PATCH — mark read/unread or move
-export async function PATCH(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function patchHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const body = await req.json()
   const { uids, action, accountId, folder, destination, flag } = body as {
@@ -76,9 +78,10 @@ export async function PATCH(req: Request) {
 }
 
 // DELETE — delete multiple messages
-export async function DELETE(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function deleteHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const body = await req.json()
   const { uids, accountId, folder } = body as {
@@ -101,3 +104,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const DELETE = withApiLog(deleteHandler)
+export const PATCH = withApiLog(patchHandler)

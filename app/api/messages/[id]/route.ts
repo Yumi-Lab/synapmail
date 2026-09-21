@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { getMessage, deleteMessage, markRead, setFlagBulk } from '@/lib/imap'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,12 +30,13 @@ function accountConfig(account: AccountRow) {
   }
 }
 
-export async function GET(
+async function getHandler(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -57,12 +59,13 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function patchHandler(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -100,12 +103,13 @@ export async function PATCH(
   }
 }
 
-export async function DELETE(
+async function deleteHandler(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -123,3 +127,8 @@ export async function DELETE(
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const DELETE = withApiLog(deleteHandler)
+export const GET = withApiLog(getHandler)
+export const PATCH = withApiLog(patchHandler)

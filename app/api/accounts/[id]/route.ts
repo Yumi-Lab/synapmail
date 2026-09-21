@@ -3,10 +3,11 @@ import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { encrypt } from '@/lib/encrypt'
 import { isBadgeColor } from '@/lib/accountColor'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
-export async function PATCH(
+async function patchHandler(
   req: Request,
   { params }: { params: { id: string } }
 ) {
@@ -84,7 +85,7 @@ export async function PATCH(
   }
 }
 
-export async function DELETE(
+async function deleteHandler(
   req: Request,
   { params }: { params: { id: string } }
 ) {
@@ -103,3 +104,7 @@ export async function DELETE(
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const DELETE = withApiLog(deleteHandler)
+export const PATCH = withApiLog(patchHandler)

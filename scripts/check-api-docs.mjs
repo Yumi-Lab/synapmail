@@ -121,7 +121,10 @@ function functionBody(source, pattern) {
 function exportedMethods(source) {
   const found = new Set()
   for (const method of HTTP_METHODS) {
+    // `export async function GET(` — and `export const GET = withApiLog(getHandler)`,
+    // the form every Bearer route takes since the request journal (lib/apiLog.ts).
     if (new RegExp(`export\\s+(?:async\\s+)?function\\s+${method}\\s*\\(`).test(source)) found.add(method)
+    else if (new RegExp(`export\\s+const\\s+${method}\\s*=`).test(source)) found.add(method)
   }
   for (const [, names] of source.matchAll(/export\s+const\s*\{([^}]*)\}\s*=/g)) {
     for (const name of names.split(',')) {
@@ -266,10 +269,9 @@ check(
  * se vide quand ces sections reviennent — voir les deux contrôles ci-dessous, qui
  * empêchent aussi bien d'y ajouter une route neuve que de l'y laisser pourrir.
  */
-const SCOPE_PENDING = new Set(Object.keys(ROUTE_SCOPES).filter(key => !key.includes('/api/accounts')))
 
 const wrongScope = bearerKeys
-  .filter(key => doc[key] && !SCOPE_PENDING.has(key) && doc[key].scope !== ROUTE_SCOPES[key])
+  .filter(key => doc[key] && doc[key].scope !== ROUTE_SCOPES[key])
   .map(key => `${key}: the document says ${doc[key].scope ?? 'no scope'}, the code requires ${ROUTE_SCOPES[key]}`)
   .sort()
 check(
@@ -278,13 +280,14 @@ check(
   wrongScope.join('\n      '),
 )
 
-// Une portée déjà annoncée ne doit plus figurer dans la liste d'attente : sans ce
-// contrôle, la liste survivrait au travail qu'elle décrit et couvrirait une dérive.
-const staleePending = [...SCOPE_PENDING].filter(key => doc[key]?.scope).sort()
+// Plus de liste d'attente : au lot P12, TOUTE route Bearer annonce sa portée. Une
+// nouvelle en-tête sans portée tombe désormais sur l'assertion ci-dessus, qui la lit
+// comme « le document ne dit rien, le code exige X » — c'était l'objet de la liste.
+const unannounced = bearerKeys.filter(key => doc[key] && !doc[key].scope).sort()
 check(
-  staleePending.length === 0,
-  'the pending list holds no heading that already announces its scope',
-  staleePending.join('\n      '),
+  unannounced.length === 0,
+  'every Bearer heading announces the scope it requires, none pending',
+  unannounced.join('\n      '),
 )
 
 // Le libellé de `API_SCOPES` est celui de l'ÉCRAN, en français ; le document est en
@@ -300,13 +303,20 @@ check(
 
 // The mode reader must look inside the method, not across the file: a route file
 // holding one Bearer method and one session method must report both truthfully.
-const mixed = Object.entries(code).reduce((seen, [key, { file, mode }]) => {
-  const modes = seen.get(file) ?? new Set()
-  return seen.set(file, modes.add(mode)) && seen
-}, new Map())
+// Mesuré sur une SOURCE FICTIVE, et non sur un fichier du dépôt qui se trouverait
+// mélanger les deux : cette propriété du lecteur doit rester vérifiée même quand
+// plus aucune route n'est mixte — ce fut le cas de `app/api/contacts/route.ts`
+// jusqu'à ce que ses écritures s'ouvrent aux clés (lot P12), et l'assertion serait
+// alors devenue verte par disparition de son sujet.
+const MIXED_FIXTURE = `
+async function getHandler(req) { const gate = await authorize(req); return gate }
+export async function POST(req) { const session = await auth(); return session }
+export const GET = withApiLog(getHandler)
+`
 check(
-  [...mixed.values()].some(modes => modes.size > 1),
-  'at least one route file mixes two access modes, so the per-method read is exercised',
+  modeOf(MIXED_FIXTURE, 'GET') === 'bearer' && modeOf(MIXED_FIXTURE, 'POST') === 'session',
+  'the mode is read inside each method, so two modes in one file are told apart',
+  `GET read as ${modeOf(MIXED_FIXTURE, 'GET')}, POST read as ${modeOf(MIXED_FIXTURE, 'POST')}`,
 )
 
 // ---- The document is SERVED, and packaged so it can be ----------------------

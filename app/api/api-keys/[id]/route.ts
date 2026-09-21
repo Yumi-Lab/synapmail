@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { sanitizeScopes } from '@/lib/apiScopes'
+import { grantAccounts } from '@/lib/apiKeyAccounts'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,7 +14,7 @@ export async function PATCH(
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
-    const { scopes } = (await req.json()) as { scopes?: unknown }
+    const { scopes, accountIds } = (await req.json()) as { scopes?: unknown; accountIds?: unknown }
     const granted = sanitizeScopes(scopes)
     if (!granted.length) return NextResponse.json({ error: 'at least one scope is required' }, { status: 400 })
 
@@ -25,7 +26,11 @@ export async function PATCH(
     )
     if (!rows.length) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-    return NextResponse.json({ data: { id: rows[0].id, scopes: sanitizeScopes(rows[0].scopes) } })
+    // `undefined` = l'appelant ne parle pas des boîtes, on n'y touche pas ; une liste,
+    // même vide, REMPLACE — c'est ainsi qu'on retire la dernière boîte d'une clé.
+    const accounts = await grantAccounts(params.id, session.user.id, accountIds)
+
+    return NextResponse.json({ data: { id: rows[0].id, scopes: sanitizeScopes(rows[0].scopes), accountIds: accounts } })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

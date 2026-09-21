@@ -33,7 +33,7 @@
 import crypto from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import pg from 'pg'
-import { ALL_SCOPES, API_SCOPES, LEGACY_SCOPES } from '../lib/apiScopes.ts'
+import { ALL_SCOPES, API_SCOPES, LEGACY_SCOPES, scopeForRequest } from '../lib/apiScopes.ts'
 
 for (const file of ['../.env', '../.env.local']) {
   const path = new URL(file, import.meta.url)
@@ -97,6 +97,11 @@ const mailbox = () => {
     smtpHost: 'smtp.bench.invalid', smtpPort: 587, smtpSecure: false,
     username: `bench-${tag}@bench.invalid`,
     password: 'not-a-real-password',
+    // Depuis « tester une boîte avant de l'enregistrer », POST /api/accounts SONDE la
+    // boîte et rend 422 si elle ne répond pas. Une boîte `.invalid` ne répond JAMAIS,
+    // par construction : le banc mesure des PORTÉES, pas une connexion, donc il
+    // enregistre sans sonder — comme le fait déjà check-api-account-grants.mjs.
+    verify: false,
   }
 }
 
@@ -199,8 +204,14 @@ try {
   }
 
   // ---- E. aucune clé n'échappe à la table des portées ----
-  const unknownScoped = await call('/api/settings', { key: creatorKey })
-  check('E1 une route hors table reste fermée aux clés (401)',
+  // Le chemin est CHOISI parmi ceux que la table ignore, jamais nommé en dur : une
+  // route citée ici finirait par être ouverte (c'est arrivé à `/api/settings`, ouvert
+  // au lot P12), et le banc mesurerait alors l'inverse de ce qu'il annonce.
+  const outsideTable = ['/api/profile', '/api/drafts', '/api/dashboard', '/api/focus']
+    .find(path => scopeForRequest('GET', path) === null)
+  if (!outsideTable) harness('toutes les routes candidates sont désormais dans ROUTE_SCOPES')
+  const unknownScoped = await call(outsideTable, { key: creatorKey })
+  check(`E1 une route hors table (${outsideTable}) reste fermée aux clés (401)`,
     unknownScoped.status === 401, `reçu ${unknownScoped.status} — ${unknownScoped.text.slice(0, 160)}`)
 } finally {
   // La base est rendue comme elle a été trouvée, même après un échec.

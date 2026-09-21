@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authorize } from '@/lib/apiAuth'
+import { withApiLog } from '@/lib/apiLog'
 import { query } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
@@ -40,14 +41,15 @@ const DEFAULTS: UserSettings = {
 
 const SETTINGS_COLUMNS = `theme, language, messages_per_page, thread_view, reading_pane, notifications, undo_send_delay, start_view, active_account_id, sidebar_collapsed, mail_density, list_width, dashboard_account_id, update_dismissed_version`
 
-export async function GET() {
-  const session = await auth()
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function getHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   try {
     const rows = await query<UserSettings>(
       `SELECT ${SETTINGS_COLUMNS} FROM user_settings WHERE user_id = $1`,
-      [session.user.id]
+      [userId]
     )
     return NextResponse.json({ data: rows[0] ?? DEFAULTS })
   } catch (err) {
@@ -55,9 +57,10 @@ export async function GET() {
   }
 }
 
-export async function PATCH(req: Request) {
-  const session = await auth()
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function patchHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   try {
     const body = await req.json() as Partial<UserSettings>
@@ -86,15 +89,19 @@ export async function PATCH(req: Request) {
       `INSERT INTO user_settings (user_id, ${cols.join(', ')}, updated_at)
        VALUES ($1, ${cols.map((_, i) => `$${i + 2}`).join(', ')}, NOW())
        ON CONFLICT (user_id) DO UPDATE SET ${setClauses}, updated_at = NOW()`,
-      [session.user.id, ...vals]
+      [userId, ...vals]
     )
 
     const rows = await query<UserSettings>(
       `SELECT ${SETTINGS_COLUMNS} FROM user_settings WHERE user_id = $1`,
-      [session.user.id]
+      [userId]
     )
     return NextResponse.json({ data: rows[0] ?? DEFAULTS })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)
+export const PATCH = withApiLog(patchHandler)

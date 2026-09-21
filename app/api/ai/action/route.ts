@@ -1,4 +1,4 @@
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import {
   callAI, buildMessages, isLoopbackUrl,
@@ -6,10 +6,12 @@ import {
 } from '@/lib/ai'
 import { NextRequest, NextResponse } from 'next/server'
 import { promptGuardApplies } from '@/lib/accounts'
+import { withApiLog } from '@/lib/apiLog'
 
-export async function POST(req: NextRequest) {
-  const user = await authenticate(req)
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function postHandler(req: NextRequest) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const user = gate.ctx
 
   const body = await req.json() as {
     action: AIAction
@@ -81,3 +83,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const POST = withApiLog(postHandler)

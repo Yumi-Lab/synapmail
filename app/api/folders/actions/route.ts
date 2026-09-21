@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { markFolderRead, emptyFolder, folderMessageCount } from '@/lib/imap'
 import { resolveFolder } from '@/lib/folderResolve'
 import { refuse } from '@/lib/folderActions'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,9 +20,10 @@ type Action = (typeof ACTIONS)[number]
 /** La permission qu'exige chaque action — même vocabulaire que `lib/accountAccess.ts`. */
 const REQUIRED = { markRead: 'organize', empty: 'delete', count: undefined } as const
 
-export async function POST(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return refuse('unauthorized')
+async function postHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   let body: Record<string, unknown> = {}
   try {
@@ -61,3 +63,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const POST = withApiLog(postHandler)

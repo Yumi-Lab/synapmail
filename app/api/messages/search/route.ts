@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount, listAccessibleAccounts } from '@/lib/accountAccess'
 import type { DbEmailAccount } from '@/lib/accounts'
@@ -10,6 +10,7 @@ import {
   SEARCH_PARAM, SEARCH_RESULT_LIMIT, STREAM_PARAM, mergeGenerators, orderAccountsForSearch,
   parseQuery, readScope,
 } from '@/lib/search'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,9 +43,10 @@ function streamedMessages<T extends { date: string }>(messages: T[], accountId: 
     .map(m => ({ ...m, accountId }))
 }
 
-export async function GET(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function getHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const q = searchParams.get(SEARCH_PARAM)?.trim()
@@ -250,3 +252,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: String(err), messages: [], total: 0, fields: SEARCH_FIELDS }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)

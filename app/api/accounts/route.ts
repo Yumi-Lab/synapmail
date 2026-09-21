@@ -1,16 +1,19 @@
 import { NextResponse } from 'next/server'
-import { authenticate, authorize } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { ACCESSIBLE_ORDER_BY_ALIASED, ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
 import { encrypt } from '@/lib/encrypt'
 import { DEFAULT_IMAP_PORT, DEFAULT_SMTP_PORT } from '@/lib/accountTest'
 import { probeConnection } from '@/lib/accountProbe'
+import { keyAccountIds } from '@/lib/apiKeyAccounts'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function getHandler(req: Request) {
+  const access = await authorize(req)
+  if ('denied' in access) return access.denied
+  const authCtx = access.ctx
 
   try {
     const accounts = await query(
@@ -68,7 +71,16 @@ export async function GET(req: Request) {
       [authCtx.id]
     )
 
-    const data = accounts.map((a: Record<string, unknown>) => {
+    // Cette liste ne désigne AUCUNE boîte : la barrière de `lib/apiAuth.ts` la laisse
+    // donc passer, à raison. Mais une clé qui lirait les huit boîtes de Nicolas saurait
+    // ce qu'elle n'a pas le droit de toucher — le filtre est ici, sur l'ENSEMBLE, avec
+    // la même règle. Une session humaine (`apiKeyId` nul) voit tout.
+    const reachable = access.ctx.apiKeyId ? await keyAccountIds(access.ctx.apiKeyId) : null
+    const visible = reachable
+      ? accounts.filter((a: Record<string, unknown>) => reachable.has(String(a.id)))
+      : accounts
+
+    const data = visible.map((a: Record<string, unknown>) => {
       const { canSend, canDelete, canOrganize, canManageRules, canManageSignatures, ...rest } = a
       return {
         ...rest,
@@ -81,7 +93,7 @@ export async function GET(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
+async function postHandler(req: Request) {
   const access = await authorize(req)
   if ('denied' in access) return access.denied
   const userId = access.ctx.id
@@ -130,11 +142,16 @@ export async function POST(req: Request) {
       )
     }
 
+    // La boîte connectée PAR une clé lui APPARTIENT : elle pourra la lire, l'écrire,
+    // la modifier et la supprimer sans qu'on ait rien à cocher — c'est l'intérêt du
+    // modèle, un agent gère ses propres boîtes sans toucher à celles de Nicolas. Une
+    // boîte créée en session humaine n'appartient à aucune clé (`null`).
     const result = await query(
       `INSERT INTO email_accounts
         (user_id, name, email, imap_host, imap_port, imap_secure,
-         smtp_host, smtp_port, smtp_secure, username, password_encrypted, is_default)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         smtp_host, smtp_port, smtp_secure, username, password_encrypted, is_default,
+         created_by_api_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        RETURNING id, name, email, imap_host, imap_port, imap_secure,
                  smtp_host, smtp_port, smtp_secure, username, is_default, created_at`,
       [
@@ -142,6 +159,7 @@ export async function POST(req: Request) {
         imapHost, connection.imapPort, connection.imapSecure,
         smtpHost, connection.smtpPort, connection.smtpSecure,
         username, passwordEncrypted, isDefault,
+        access.ctx.apiKeyId,
       ]
     )
 
@@ -152,3 +170,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)
+export const POST = withApiLog(postHandler)

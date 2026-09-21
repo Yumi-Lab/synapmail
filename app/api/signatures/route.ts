@@ -1,20 +1,22 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authorize } from '@/lib/apiAuth'
+import { withApiLog } from '@/lib/apiLog'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function getHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   try {
     const signatures = await query(
       `SELECT id, user_id AS "userId", account_id AS "accountId", name,
               content_html AS "contentHtml", is_default AS "isDefault"
        FROM signatures WHERE user_id = $1 ORDER BY is_default DESC, name ASC`,
-      [session.user?.id]
+      [userId]
     )
     return NextResponse.json({ data: signatures })
   } catch (err) {
@@ -22,9 +24,10 @@ export async function GET() {
   }
 }
 
-export async function POST(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function postHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   try {
     const body = await req.json()
@@ -33,14 +36,14 @@ export async function POST(req: Request) {
     if (!name) return NextResponse.json({ error: 'Name is required' }, { status: 400 })
 
     if (accountId) {
-      const account = await getAccessibleAccount(accountId, session.user!.id!, ['manageSignatures'])
+      const account = await getAccessibleAccount(accountId, userId, ['manageSignatures'])
       if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
     }
 
     if (isDefault) {
       await query(
         'UPDATE signatures SET is_default = false WHERE user_id = $1',
-        [session.user?.id]
+        [userId]
       )
     }
 
@@ -49,7 +52,7 @@ export async function POST(req: Request) {
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, user_id AS "userId", account_id AS "accountId", name,
                  content_html AS "contentHtml", is_default AS "isDefault"`,
-      [session.user?.id, accountId, name, contentHtml ?? '', isDefault]
+      [userId, accountId, name, contentHtml ?? '', isDefault]
     )
 
     return NextResponse.json({ data: result[0] }, { status: 201 })
@@ -57,3 +60,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)
+export const POST = withApiLog(postHandler)
