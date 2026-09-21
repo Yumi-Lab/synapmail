@@ -121,7 +121,10 @@ function functionBody(source, pattern) {
 function exportedMethods(source) {
   const found = new Set()
   for (const method of HTTP_METHODS) {
+    // `export async function GET(` — and `export const GET = withApiLog(getHandler)`,
+    // the form every Bearer route takes since the request journal (lib/apiLog.ts).
     if (new RegExp(`export\\s+(?:async\\s+)?function\\s+${method}\\s*\\(`).test(source)) found.add(method)
+    else if (new RegExp(`export\\s+const\\s+${method}\\s*=`).test(source)) found.add(method)
   }
   for (const [, names] of source.matchAll(/export\s+const\s*\{([^}]*)\}\s*=/g)) {
     for (const name of names.split(',')) {

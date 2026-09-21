@@ -97,6 +97,11 @@ const mailbox = () => {
     smtpHost: 'smtp.bench.invalid', smtpPort: 587, smtpSecure: false,
     username: `bench-${tag}@bench.invalid`,
     password: 'not-a-real-password',
+    // Depuis « tester une boîte avant de l'enregistrer », POST /api/accounts SONDE la
+    // boîte et rend 422 si elle ne répond pas. Une boîte `.invalid` ne répond JAMAIS,
+    // par construction : le banc mesure des PORTÉES, pas une connexion, donc il
+    // enregistre sans sonder — comme le fait déjà check-api-account-grants.mjs.
+    verify: false,
   }
 }
 

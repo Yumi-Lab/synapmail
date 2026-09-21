@@ -120,18 +120,33 @@ const pool = new pg.Pool({ connectionString: DB_URL })
 const created = { keys: [], accounts: [] }
 
 /**
- * La DERNIÈRE ligne écrite pour cette clé sur ce chemin. En contrôle négatif les
- * colonnes du lot sont effacées à la lecture : le journal redevient celui d'avant.
+ * La DERNIÈRE ligne écrite pour cette clé sur ce chemin.
+ *
+ * La ligne se COMPLÈTE après que la réponse est partie : lire aussitôt le `fetch`
+ * revenu attrape la ligne encore ouverte, et ferait conclure à tort que le produit
+ * n'écrit rien. On attend donc qu'elle porte son statut, avec un plafond — au-delà,
+ * c'est le produit qui ne complète pas, et la ligne inachevée est rendue telle quelle
+ * pour que l'assertion la montre. Plafond généreux : il borne une attente, il ne
+ * mesure rien (aucune assertion ne porte sur ce délai).
  */
+const LOG_SETTLE_MS = 3000
+const LOG_POLL_MS = 50
 const lastLog = async (keyId, path) => {
-  const { rows } = await pool.query(
-    `SELECT method, path, status, duration_ms, account_id, denial_reason, denial_detail
-       FROM api_key_requests WHERE api_key_id = $1 AND path = $2
-      ORDER BY created_at DESC LIMIT 1`,
-    [keyId, path]
-  )
-  if (!rows.length) return null
-  const row = rows[0]
+  const read = async () => {
+    const { rows } = await pool.query(
+      `SELECT method, path, status, duration_ms, account_id, denial_reason, denial_detail
+         FROM api_key_requests WHERE api_key_id = $1 AND path = $2
+        ORDER BY created_at DESC LIMIT 1`,
+      [keyId, path]
+    )
+    return rows[0] ?? null
+  }
+  let row = await read()
+  for (let waited = 0; waited < LOG_SETTLE_MS && row?.status == null; waited += LOG_POLL_MS) {
+    await new Promise(r => setTimeout(r, LOG_POLL_MS))
+    row = await read()
+  }
+  if (!row) return null
   if (NEGATIVE) return { ...row, status: null, duration_ms: null, account_id: null, denial_reason: null, denial_detail: null }
   return row
 }
