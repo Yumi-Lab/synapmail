@@ -2,6 +2,7 @@
 
 import { mutate } from 'swr'
 import { IDLE_FOLDER } from './stream'
+import { originKey, type MessageOrigin } from './mailOrigin'
 
 /**
  * Le compteur de non-lus, côté navigateur : ce qui le fait bouger TOUT DE SUITE.
@@ -29,18 +30,39 @@ export const ACCOUNTS_KEY = '/api/accounts'
 type AccountLike = { id: string; unreadCount?: number }
 
 /**
- * Décale le compteur d'un compte dans le cache, sans requête. `delta` vaut -1
- * par message passé en lu, +1 en non lu. Le résultat ne descend pas sous zéro :
- * le compteur couvre toute la boîte, la liste seulement ce qu'elle a chargé.
- * Ne vise que la boîte de réception — c'est ce que le badge compte.
+ * L'état « ce message est-il déjà compté comme lu » par origine.
+ *
+ * Un même message est passé en lu par DEUX chemins qui s'ignorent : le clic de
+ * la liste (qui grise la ligne tout de suite) et le volet de lecture (qui écrit
+ * vraiment, une fois le message chargé). Sans mémoire, ouvrir un message ferait
+ * descendre le compteur DEUX fois. Avec elle, seul le premier des deux agit, et
+ * le repasser en non lu refait bien remonter le compteur.
  */
-export function unreadShift(accountId: string, folder: string, delta: number) {
-  if (!delta || folder.toUpperCase() !== IDLE_FOLDER) return
+const counted = new Map<string, boolean>()
+
+/**
+ * Décale le compteur des comptes concernés dans le cache, sans requête.
+ * `read` vrai = ces messages viennent d'être lus (-1 chacun), faux = non lus
+ * (+1). Le résultat ne descend pas sous zéro : le compteur couvre toute la
+ * boîte, la liste seulement ce qu'elle a chargé. Ne vise que la boîte de
+ * réception — c'est ce que le badge compte.
+ */
+export function unreadShift(origins: readonly MessageOrigin[], read: boolean) {
+  const deltas = new Map<string, number>()
+  for (const origin of origins) {
+    if (!origin.accountId || !origin.folder || !origin.uid) continue
+    if (origin.folder.toUpperCase() !== IDLE_FOLDER) continue
+    const key = originKey(origin)
+    if (counted.get(key) === read) continue
+    counted.set(key, read)
+    deltas.set(origin.accountId, (deltas.get(origin.accountId) ?? 0) + (read ? -1 : 1))
+  }
+  if (!deltas.size) return
   mutate(
     ACCOUNTS_KEY,
     (current?: { data?: AccountLike[] }) => current?.data
-      ? { ...current, data: current.data.map(a => a.id === accountId
-          ? { ...a, unreadCount: Math.max(0, (a.unreadCount ?? 0) + delta) }
+      ? { ...current, data: current.data.map(a => deltas.has(a.id)
+          ? { ...a, unreadCount: Math.max(0, (a.unreadCount ?? 0) + deltas.get(a.id)!) }
           : a) }
       : current,
     false,

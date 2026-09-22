@@ -596,13 +596,10 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     // compris — sinon remarquer « lu » un message déjà lu ferait baisser le
     // compteur une seconde fois. Voir lib/unreadSignal.ts.
     const shown = new Map(accumulated.map(m => [originKey(originOf(m)), m]))
-    const flipping = origins.filter(o => {
+    unreadShift(origins.filter(o => {
       const msg = shown.get(originKey(o))
       return msg ? (msg.isRead || readUids.has(msg.uid)) === !read : false
-    })
-    for (const group of groupByOrigin(flipping)) {
-      unreadShift(group.accountId, group.folder, group.uids.length * (read ? -1 : 1))
-    }
+    }), read)
     await bulkByOrigin(origins, g => ({ ...g, action: read ? 'read' : 'unread' }))
     setAccumulated(prev => prev.map(m => uids.has(m.uid) ? { ...m, isRead: read } : m))
     setReadUids(prev => {
@@ -875,6 +872,12 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     thread.messages.forEach(msg => {
       if (!msg.isRead && !readUids.has(msg.uid)) {
         setReadUids(prev => new Set(prev).add(msg.uid))
+        // La ligne se grise ICI, sur le clic : le compteur descend au même
+        // instant. L'écriture, elle, part du volet de lecture quand le message
+        // est chargé — attendre cet aller-retour IMAP pour bouger le badge le
+        // faisait arriver une seconde trop tard (mesuré : 1029 ms pour 1000).
+        // Le volet décale la même origine ; `unreadShift` ne compte qu'une fois.
+        unreadShift([originOf(msg)], true)
       }
     })
     if (thread.count === 1) {

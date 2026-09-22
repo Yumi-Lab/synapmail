@@ -842,9 +842,11 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
       // qui est juste, même si la liste a changé de dossier entre-temps.
       if (!message.isRead && perms.canOrganize) {
         const origin = originOfMessage(message)
-        // Le badge descend à l'ouverture, pas à la relecture suivante des
-        // comptes : même règle que la liste. Voir lib/unreadSignal.ts.
-        unreadShift(origin.accountId, origin.folder, -1)
+        // La LISTE a déjà décalé le compteur sur le clic ; `unreadShift` ne
+        // compte qu'une fois par message, donc ce second appel ne double rien.
+        // Il couvre les ouvertures qui ne passent PAS par la liste : clic sur
+        // une notification, « à traiter » du volet vide. Voir lib/unreadSignal.ts.
+        unreadShift([origin], true)
         fetch(messageHref(origin), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
