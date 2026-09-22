@@ -113,6 +113,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   défaut, charger /mail à 900 px ouvrait donc le volet « À traiter » avec un bouton « Retour » et
   aucune ligne à cliquer. L'initialisation est retirée ; ouvrir un message donne toujours l'écran au
   volet sous `lg`, et « Retour » ramène la liste. Le réglage « volet de lecture » n'est pas touché.
+- **« Toutes les boîtes » sans flux ne ment plus** (`app/api/messages/search/route.ts`, `lib/search.ts`,
+  `docs/API.md`) : `GET /api/messages/search?scope=accounts` SANS `stream=1` ne balayait qu'une seule
+  boîte — le balayage multi-boîtes n'existait que dans la branche en flux, et l'exécution retombait
+  silencieusement sur la réception de la boîte courante. Mesuré en production le 21/09/2026 : **HTTP 200,
+  0 résultat, 26,7 s**, alors que la même adresse était trouvée en 3,2 s dans la boîte qui la porte. Un
+  appelant machine demandait « toutes les boîtes » et s'entendait répondre « rien trouvé » sans jamais
+  apprendre que sa portée avait été ignorée. La portée est maintenant HONORÉE sans flux : même balayage,
+  même découpage en deux passes, même concurrence que la branche en flux, agrégés par la fonction pure
+  `accumulateSearchStream` déjà livrée. La réponse DÉCLARE sa couverture (`searched`, `folders`,
+  `accounts`, `sweptAccounts`, `unreachable`, `complete`, `stoppedBecause`) : un balayage tronqué est un
+  `200` qui le dit, jamais un `200` vide. Mesuré sur le staging le 22/09/2026 : 2 résultats, 8 boîtes,
+  185 dossiers, 46,4 s, `complete: false` / `stoppedBecause: ["budget"]`.
+  ponytail: le plafond de 45 s reste, parce qu'une réponse d'un seul tenant ne montre rien avant sa fin ;
+  46 s pour un appel HTTP est long et `complete: false` veut dire qu'il reste des dossiers non vus — la
+  doc dit désormais qu'un appelant machine DOIT lire ce champ, et que `stream=1` reste la voie rapide.
+  Gardes : `scripts/check-search-accounts.mjs` (auto-contrôles purs du balayage et de la complétude) et
+  un banc live avec son contrôle négatif rejouant l'ancien comportement.
 - **Deux boîtes qui partagent un uid ne s'effacent plus l'une l'autre** (`lib/search.ts`) : en portée
   « Toutes les boîtes », l'accumulation des résultats dédoublonnait sur dossier + uid. Deux messages
   sans rapport portant l'uid 3231 dans l'« INBOX » de deux boîtes se confondaient, et l'un des deux
