@@ -88,17 +88,50 @@ async function dragCard(page, moved, target) {
   await page.$eval(`[data-dashboard-card="${target}"]`, el => el.scrollIntoView({ block: 'center' }))
   const dest = await visibleBox(page, `[data-dashboard-card="${target}"]`)
   await page.mouse.move(dest.x, dest.y, { steps: 12 })
-  await page.evaluate((from, to) => {
+  // Ce que le navigateur exige AVANT d'emettre le moindre evenement : la carte
+  // doit etre `draggable` A CET INSTANT, souris deja enfoncee et deplacee. Une
+  // version qui n'arme qu'au `mousedown` puis se desarme en route passait les
+  // sept sections sans qu'aucune ne sache dire pourquoi.
+  const armed = await page.$eval(`[data-dashboard-card="${moved}"]`, el => el.getAttribute('draggable'))
+  // Le depot lui-meme : puppeteer ne synthetise pas les evenements HTML5 de
+  // glisser-deposer derriere une souris reelle, on les emet donc sur les memes
+  // elements — mais avec le MEME `DataTransfer` d'un bout a l'autre, sinon la
+  // charge utile deposee n'est pas celle qui a ete prise.
+  const prevented = await page.evaluate((from, to) => {
     const src = document.querySelector(`[data-dashboard-card="${from}"]`)
     const dst = document.querySelector(`[data-dashboard-card="${to}"]`)
     const dt = new DataTransfer()
     src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }))
-    dst.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }))
+    const over = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt })
+    dst.dispatchEvent(over)
     dst.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt }))
     src.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }))
+    return over.defaultPrevented
   }, moved, target)
   await page.mouse.up()
   await sleep(SETTLE_MS)
+  return { armed: armed === '' || armed === 'true', prevented }
+}
+
+/** L'ordre tel que le SERVEUR le garde, lu par la route. */
+const storedOrder = page => page.evaluate(() =>
+  fetch('/api/settings').then(r => r.json()).then(j => j.data?.dashboard_card_order))
+
+/**
+ * Attend que l'ordre affiche ait REELLEMENT atteint le serveur, au lieu de
+ * dormir un delai devine. L'enregistrement part sans qu'on l'attende : un
+ * rechargement declenche 500 ms apres le depot annulait la requete en vol et
+ * faisait accuser le produit de ne rien enregistrer, alors qu'il enregistrait.
+ * Ce que le banc doit mesurer, c'est QUE l'ordre arrive — pas en combien de ms.
+ */
+async function waitStored(page, expected, timeout = 15000) {
+  const deadline = Date.now() + timeout
+  for (;;) {
+    const stored = await storedOrder(page)
+    if (Array.isArray(stored) && stored.join() === expected.join()) return stored
+    if (Date.now() > deadline) return stored
+    await sleep(250)
+  }
 }
 
 /** Remet l'ordre d'origine par la route, sans passer par l'ecran. */
@@ -152,7 +185,10 @@ try {
   console.log('\n== 3. un glisser a la VRAIE souris change le rang ==')
   const moved = origin[origin.length - 1]   // la derniere carte…
   const target = origin[0]                   // …deposee sur la premiere
-  await dragCard(page, moved, target)
+  const gesture = await dragCard(page, moved, target)
+  check('la carte est encore saisissable une fois la souris partie', gesture.armed,
+    `draggable=${gesture.armed}`)
+  check('la cible ACCEPTE le depot (dragover annule)', gesture.prevented)
   const afterDrag = await readOrder(page)
   check('la carte deplacee a change de rang',
     afterDrag.indexOf(moved) !== origin.indexOf(moved),
@@ -163,16 +199,15 @@ try {
     [...afterDrag].sort().join() === [...origin].sort().join(), `${afterDrag.length} carte(s)`)
 
   console.log('\n== 4. l ordre SURVIT a un rechargement (donc il est cote serveur) ==')
+  const stored = await waitStored(page, afterDrag)
+  check("l ordre est bien enregistre cote serveur (pas dans le navigateur)",
+    Array.isArray(stored) && stored.join() === afterDrag.join(),
+    Array.isArray(stored) ? stored.join(' > ') : String(stored))
   await page.reload({ waitUntil: 'domcontentloaded' })
   await waitCards(page)
   const afterReload = await readOrder(page)
   check('le meme ordre revient apres F5',
     afterReload.join() === afterDrag.join(), afterReload.join(' > '))
-  const stored = await page.evaluate(() =>
-    fetch('/api/settings').then(r => r.json()).then(j => j.data?.dashboard_card_order))
-  check("l ordre est bien enregistre cote serveur (pas dans le navigateur)",
-    Array.isArray(stored) && stored.join() === afterReload.join(),
-    Array.isArray(stored) ? `${stored.length} identite(s) en base` : String(stored))
 
   console.log('\n== 5. remettre l ordre d origine ==')
   const resetShown = await page.$(RESET)
@@ -185,6 +220,10 @@ try {
   const afterReset = await readOrder(page)
   check("l ordre d origine est rendu exactement", afterReset.join() === origin.join(), afterReset.join(' > '))
   check("et le bouton disparait, l ordre etant redevenu celui d origine", !await page.$(RESET))
+  // La remise a zero doit EFFACER cote serveur, pas seulement redessiner : sans
+  // cela l'ordre d'origine reviendrait enregistre comme une permutation de plus.
+  const clearedStored = await waitStored(page, [])
+  check("et le serveur ne garde plus d ordre", clearedStored == null, String(clearedStored))
 
   console.log('\n== 6. au CLAVIER, une fleche deplace la carte ==')
   const kbCard = origin[0]
