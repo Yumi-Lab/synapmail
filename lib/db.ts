@@ -1,5 +1,6 @@
 import { Pool } from 'pg'
 import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
+import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -131,6 +132,10 @@ export async function initDb(): Promise<void> {
   // Couleur de badge choisie par l'utilisateur. NULL = couleur automatique par rang :
   // aucune boîte existante ne change d'apparence à la mise à jour.
   await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS badge_color VARCHAR(7)`)
+  // Moteur derrière le bouton « Traduire » (lib/quickTranslate.ts en porte les valeurs).
+  // Défaut « quick » : la traduction depuis le navigateur ne demande ni modèle ni réglage,
+  // donc le bouton marche dès l'installation. Se change, ou s'éteint, dans Réglages → IA.
+  await query(`ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS translate_mode VARCHAR(20) NOT NULL DEFAULT '${TRANSLATE_MODE_DEFAULT}'`)
 
   await query(`
     CREATE TABLE IF NOT EXISTS contacts (
@@ -274,6 +279,7 @@ export async function initDb(): Promise<void> {
       feature_reply_draft BOOLEAN NOT NULL DEFAULT true,
       feature_improve BOOLEAN NOT NULL DEFAULT true,
       feature_translate BOOLEAN NOT NULL DEFAULT true,
+      translate_mode VARCHAR(20) NOT NULL DEFAULT '${TRANSLATE_MODE_DEFAULT}',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)

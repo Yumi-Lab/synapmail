@@ -2,6 +2,8 @@ import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { encrypt } from '@/lib/encrypt'
 import { isLoopbackUrl, LOCAL_PROVIDER } from '@/lib/ai'
+import { asTranslateMode, TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
+import type { TranslateMode } from '@/lib/quickTranslate'
 import { NextRequest, NextResponse } from 'next/server'
 
 interface AISettingsRow {
@@ -14,6 +16,7 @@ interface AISettingsRow {
   feature_reply_draft: boolean
   feature_improve: boolean
   feature_translate: boolean
+  translate_mode: string
 }
 
 export async function GET() {
@@ -22,7 +25,8 @@ export async function GET() {
 
   const rows = await query<AISettingsRow>(
     `SELECT provider, api_key_encrypted, base_url, model, system_prompt,
-            feature_summarize, feature_reply_draft, feature_improve, feature_translate
+            feature_summarize, feature_reply_draft, feature_improve, feature_translate,
+            translate_mode
      FROM ai_settings WHERE user_id = $1`,
     [session.user.id]
   )
@@ -40,6 +44,9 @@ export async function GET() {
       featureReplyDraft: row?.feature_reply_draft ?? true,
       featureImprove: row?.feature_improve ?? true,
       featureTranslate: row?.feature_translate ?? true,
+      // The engine behind the Translate button. An unknown value (a row written by a
+      // newer build, a hand edit) reads as the default rather than breaking the screen.
+      translateMode: asTranslateMode(row?.translate_mode),
       configured: !!row,
     },
   })
@@ -59,6 +66,7 @@ export async function PATCH(req: NextRequest) {
     featureReplyDraft?: boolean
     featureImprove?: boolean
     featureTranslate?: boolean
+    translateMode?: TranslateMode
   }
 
   const {
@@ -71,6 +79,7 @@ export async function PATCH(req: NextRequest) {
     featureReplyDraft = true,
     featureImprove = true,
     featureTranslate = true,
+    translateMode = TRANSLATE_MODE_DEFAULT,
   } = body
 
   // Same rule as the settings screen, enforced here too: a remote address would
@@ -84,8 +93,9 @@ export async function PATCH(req: NextRequest) {
   await query(
     `INSERT INTO ai_settings
        (user_id, provider, api_key_encrypted, base_url, model, system_prompt,
-        feature_summarize, feature_reply_draft, feature_improve, feature_translate, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+        feature_summarize, feature_reply_draft, feature_improve, feature_translate,
+        translate_mode, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
      ON CONFLICT (user_id) DO UPDATE SET
        provider            = EXCLUDED.provider,
        api_key_encrypted   = COALESCE(EXCLUDED.api_key_encrypted, ai_settings.api_key_encrypted),
@@ -96,10 +106,12 @@ export async function PATCH(req: NextRequest) {
        feature_reply_draft = EXCLUDED.feature_reply_draft,
        feature_improve     = EXCLUDED.feature_improve,
        feature_translate   = EXCLUDED.feature_translate,
+       translate_mode      = EXCLUDED.translate_mode,
        updated_at          = NOW()`,
     [
       session.user.id, provider, apiKeyEncrypted, baseUrl ?? null, model,
       systemPrompt ?? null, featureSummarize, featureReplyDraft, featureImprove, featureTranslate,
+      asTranslateMode(translateMode),
     ]
   )
 

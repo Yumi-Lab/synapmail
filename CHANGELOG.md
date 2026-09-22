@@ -113,6 +113,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   défaut, charger /mail à 900 px ouvrait donc le volet « À traiter » avec un bouton « Retour » et
   aucune ligne à cliquer. L'initialisation est retirée ; ouvrir un message donne toujours l'écran au
   volet sous `lg`, et « Retour » ramène la liste. Le réglage « volet de lecture » n'est pas touché.
+- **Traduire un message SANS modèle d'IA, depuis le navigateur** (`lib/quickTranslate.ts`,
+  `components/ai/AIToolbar.tsx`, Réglages → IA, `scripts/check-quick-translate.mjs`) : le bouton
+  « Traduire » demandait jusqu'ici un modèle installé et configuré. Un troisième réglage, « Moteur de
+  traduction », offre trois valeurs — **Traduction rapide (depuis votre navigateur)**, le DÉFAUT,
+  **Traduction par le modèle IA**, et **Désactivée** (le bouton disparaît alors). En mode rapide, c'est
+  le navigateur du LECTEUR qui appelle le service : rien ne transite par le serveur, donc la requête
+  porte SON adresse et l'instance n'a aucun quota à épuiser. Le texte est découpé aux frontières de
+  paragraphe, de phrase, puis d'espace — jamais au milieu d'un mot — parce que le service tronque
+  silencieusement au-delà d'environ 5 000 caractères ; les morceaux se recollent à l'octet près, sauts
+  de ligne compris. Une réponse illisible (page de blocage, quota, changement de forme) lève une erreur
+  au lieu de rendre une demi-traduction, et le message d'échec propose de basculer sur le modèle. Le
+  texte des messages n'est JAMAIS journalisé.
+  ⚠ **DÉROGATION ASSUMÉE et usage PRIVÉ** : ce moteur appelle un point d'entrée NON OFFICIEL de Google
+  Traduction, seule exception à la règle « aucune dépendance Google » du dépôt, levée explicitement et
+  en connaissance de cause. Il ne doit pas rester activé sur un hébergement MULTI-UTILISATEUR ou public
+  (service non officiel, conditions du fournisseur, quotas et blocages d'adresse IP, et le contenu des
+  messages qui part chez un tiers) ; y choisir « modèle IA » ou « Désactivée ». Il est inaccessible
+  depuis la Chine. L'avertissement est repris dans le `README.md` et sous le réglage lui-même, en
+  en/fr/zh. Il n'existe pas d'`install.sh` dans ce dépôt (vérifié) : rien à mettre à jour de ce côté.
+  Garde : `scripts/check-quick-translate.mjs` (découpage, URL, lecture de réponse, réglage) avec son
+  contrôle négatif `--negative`, qui rejoue le découpage naïf et EXIGE qu'il passe au rouge.
 - **« Toutes les boîtes » sans flux ne ment plus** (`app/api/messages/search/route.ts`, `lib/search.ts`,
   `docs/API.md`) : `GET /api/messages/search?scope=accounts` SANS `stream=1` ne balayait qu'une seule
   boîte — le balayage multi-boîtes n'existait que dans la branche en flux, et l'exécution retombait

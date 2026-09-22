@@ -203,7 +203,13 @@
       "soonTitle": "即将推出",
       "resultSummary": "摘要",
       "resultTranslation": "译文",
-      "resultReply": "AI 草稿，已在撰写窗口打开"
+      "resultReply": "AI 草稿，已在撰写窗口打开",
+      "translateModeQuick": "快速翻译（在您的浏览器中进行）",
+      "translateModeModel": "由 AI 模型翻译",
+      "translateModeOff": "已停用",
+      "translateModeTitle": "翻译引擎",
+      "translateModeNotice": "快速翻译会把邮件正文从您的浏览器发送到第三方服务（谷歌翻译的非官方接口）。该服务并非官方接口，随时可能停止响应，在中国境内无法访问，且仅适用于私人使用。在共享或公开部署的实例上，请改用 AI 模型或将其停用。",
+      "translateQuickFailed": "快速翻译服务没有响应。请在设置中改用 AI 模型，或稍后重试。"
     },
     "back": "返回"
   },

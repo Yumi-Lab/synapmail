@@ -9,16 +9,31 @@ import {
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import { AIClientError, runAIAction, aiFailureKey, localAccessState } from '@/lib/aiClient'
+import { quickTranslate, TRANSLATE_QUICK, TRANSLATE_OFF } from '@/lib/quickTranslate'
+import type { TranslateMode } from '@/lib/quickTranslate'
 import { LocalAccessNotice } from '@/components/ai/LocalAccessNotice'
 import type { Message } from '@/types/email'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
+
+/**
+ * The browser's own call to the quick-translation service. Kept beside the
+ * component (not in `lib/quickTranslate.ts`) so that file stays pure and its
+ * self-check needs no network. A non-200 raises, so a block page or a quota
+ * refusal surfaces as a failure instead of a half translation.
+ */
+const fetchTranslation = async (url: string): Promise<unknown> => {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`quick-translate: HTTP ${res.status}`)
+  return res.json()
+}
 
 interface AISettingsData {
   configured: boolean
   featureSummarize: boolean
   featureReplyDraft: boolean
   featureTranslate: boolean
+  translateMode: TranslateMode
 }
 
 interface Props {
@@ -71,6 +86,22 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
     if (action === 'translate_fr') { apiAction = 'translate'; extra = { targetLang: 'fr' } }
     else if (action === 'translate_en') { apiAction = 'translate'; extra = { targetLang: 'en' } }
     else { apiAction = action }
+
+    // Quick translation never touches the server or a model: the reader's own
+    // browser calls the service, so the text does not transit this instance and
+    // no model needs to be installed. Its failures get their own message, which
+    // names the way out (the model) instead of the local-model help.
+    if (apiAction === 'translate' && settings.translateMode === TRANSLATE_QUICK) {
+      try {
+        setResult({ action, text: await quickTranslate(content, extra.targetLang, fetchTranslation) })
+      } catch {
+        setError(t('translateQuickFailed'))
+      } finally {
+        setAccessPrompt(false)
+        setLoading(null)
+      }
+      return
+    }
 
     try {
       // The mailbox decides whether the guard applies — see lib/accounts.ts.
@@ -135,7 +166,7 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
         )}
 
         {/* Translate */}
-        {settings.featureTranslate && (
+        {settings.featureTranslate && settings.translateMode !== TRANSLATE_OFF && (
           <div className="relative">
             <button
               type="button"
