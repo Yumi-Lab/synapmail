@@ -97,6 +97,19 @@ const moved = moveCard(DEF, 'quickCompose', 'focus')
 ok('un ordre deplace n est plus l ordre d origine', isDefaultCardOrder(moved), false)
 ok('et la remise a zero le redonne exactement', defaultCardOrder(), DEF)
 
+console.log('\n== la frontiere du serveur (lecture de la SOURCE) ==')
+const { readFileSync } = await import('node:fs')
+const ROUTE = readFileSync(new URL('../app/api/settings/route.ts', import.meta.url), 'utf8')
+const DB = readFileSync(new URL('../lib/db.ts', import.meta.url), 'utf8')
+ok('la colonne est creee sans toucher aux tableaux de bord existants',
+  /ADD COLUMN IF NOT EXISTS dashboard_card_order JSONB/.test(DB), true)
+ok('elle est relue par GET', /SETTINGS_COLUMNS = `[^`]*dashboard_card_order/.test(ROUTE), true)
+ok('elle est acceptee par PATCH', /'dashboard_card_order',/.test(ROUTE), true)
+ok('ce qui entre passe par la regle partagee', /normalizeCardOrder\(order\)/.test(ROUTE), true)
+ok('et part en JSON, jamais en tableau Postgres',
+  /JSON\.stringify\(normalizeCardOrder\(order\)\)/.test(ROUTE), true)
+ok('remettre l ordre d origine s ecrit NULL', /order === null \? null/.test(ROUTE), true)
+
 console.log(`\nordre du tableau de bord : ${failed === 0 ? 'toutes les verifications passent' : `${failed} echec(s)`}`)
 if (BREAK) {
   if (failed === 0) { console.log('CONTROLE NEGATIF : la faute injectee n a PAS ete vue — le banc ne mesure rien'); process.exit(1) }
