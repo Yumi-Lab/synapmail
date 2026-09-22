@@ -429,10 +429,37 @@ Hides a message from `GET /api/messages` and the focus list until `until`.
 ### `DELETE /api/messages/[id]/snooze?account=&folder=` — session only
 Un-snoozes (moves the message back to the visible list immediately). `{ success: true }`.
 
-### `GET /api/messages/search?q=&folder=&account=` 🔑 Bearer (`messages:read`)
-Full-text IMAP search (subject/from/body, server-side `SEARCH`) in one folder. `folder` defaults to `INBOX`. Requires `q.length >= 2`, else returns `{ messages: [] }` immediately (not an error).
+### `GET /api/messages/search?q=&folder=&account=&scope=&stream=` 🔑 Bearer (`messages:read`)
+Server-side IMAP `SEARCH` over `from`, `to`, `cc` and `subject` — **not** the body (measured on IONOS: `BODY` and `TEXT` return 0 results, and adding either to the `OR` collapses the whole `OR` to 0). `q` is split into terms, all required, order-insensitive; `"quoted words"` stay one exact substring. Requires `q.length >= 2` with at least one term of that length, else returns `{ messages: [] }` immediately (not an error). Capped at 200 results **per folder searched**; `total` counts the real matches, so `total > messages.length` means the cap was hit.
 
-**Response** ⚠ non-standard envelope — `{ messages: Message[] }` (`accountId` added to each), or `{ messages: [], error }` on IMAP failure.
+**`scope`** — what gets searched. Defaults to `folder`; an unknown value falls back to it.
+
+| `scope` | Searches | `stream=1` |
+|---|---|---|
+| `folder` (default) | the one `folder` (defaults to `INBOX`) of the one account | ignored — a single folder has nothing to stagger |
+| `all` | **every folder** of the one account, most-useful first (inbox, sent, then freshest) | optional |
+| `accounts` | **every folder of every accessible mailbox** (owned + shared), active mailbox first, two passes per mailbox (inbox+sent of each, then the rest), at most 3 mailboxes swept at once | optional |
+
+`account` names the mailbox to search under `folder`/`all`; under `accounts` it only decides which mailbox is swept **first** — the set swept is always the caller's accessible mailboxes.
+
+**`stream=1`** (scopes `all` and `accounts`) — the response becomes `application/x-ndjson`: one JSON object per folder covered, as it completes, plus a final `{ unreachable: string[] }` line if a mailbox could not be opened. Each line carries `messages`, `total`, `folder`, `searched`/`folders` (and, under `accounts`, `accountId`, `accountEmail`, `accounts`). Use it for a progressive UI; the caller aggregates and de-duplicates by `accountId`+`folder`+`uid`.
+
+**Response** ⚠ non-standard envelope — `{ messages: Message[], total, fields }` (`accountId` added to each message), or `{ messages: [], total: 0, fields, error }` on IMAP failure (HTTP 500).
+
+Under `scope=accounts` **without** `stream=1` the scope is honoured all the same — the same multi-mailbox sweep runs and the result is aggregated into that one JSON — and the response additionally reports its **coverage**, because "0 results" is meaningless without it:
+
+```ts
+{
+  searched: number          // folders covered
+  folders: number           // folders known, across the mailboxes that opened
+  accounts: number          // accessible mailboxes to sweep
+  sweptAccounts: number     // mailboxes that reported at least one folder
+  unreachable: string[]     // mailbox addresses that could not be opened
+  complete: boolean         // true only when nothing stopped the sweep early
+  stoppedBecause?: ('budget' | 'unreachable')[]   // present only when `complete` is false
+}
+```
+`budget` = the sweep hit its 45 s ceiling (a single JSON shows nothing before it ends, so it cannot wait indefinitely) and returned what it had; `unreachable` = at least one mailbox could not be opened and its share was not searched. Both may appear together. A truncated sweep is never silent: it is a `200` that says so, never an empty `200` that pretends the scope was searched.
 
 ### `GET /api/messages/thread?subject=&folder=&account=` 🔑 Bearer (`messages:read`)
 Groups messages by normalized subject (strips `Re:`/`Fwd:`/`Rép:`/`TR:`/`AW:`/`SV:`/`VS:` prefixes recursively, case-insensitively), sorted oldest→newest. Used to render a conversation thread. Requires `subject`, ≥2 chars after normalization.

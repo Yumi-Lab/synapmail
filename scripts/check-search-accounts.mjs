@@ -21,8 +21,9 @@ registerHooks({
 })
 const {
   SEARCH_SCOPES, SCOPE_FOLDER, SCOPE_ALL, SCOPE_ACCOUNTS, ACCOUNT_CONCURRENCY,
+  ACCOUNTS_SWEEP_BUDGET_MS, SWEEP_STOP_BUDGET, SWEEP_STOP_REASONS, SWEEP_STOP_UNREACHABLE,
   readScope, isWideScope, buildSearchHref,
-  splitFolderPasses, orderAccountsForSearch, mergeGenerators,
+  splitFolderPasses, orderAccountsForSearch, mergeGenerators, sweepCompleteness,
 } = await import(new URL('../lib/search.ts', import.meta.url).href)
 
 let failed = 0
@@ -185,6 +186,57 @@ check('abandoning the merge closes every open source',
     await delayed(null, 20)
     return closed.sort()
   })(), ['a', 'b'])
+
+
+// ── Lot S11 : un balayage dit jusqu'où il est allé, et pourquoi il s'est arrêté ──
+// Le défaut corrigé : `scope=accounts` SANS flux rendait 200 avec 0 résultat sans
+// jamais dire qu'il n'avait cherché que dans un dossier. `sweepCompleteness` est la
+// fonction PURE qui répond à cette question ; ce sont ses cas limites.
+
+console.log('\nsweep completeness')
+
+/** Un balayage COMPLET : la référence de tous les cas d'arrêt ci-dessous. */
+const fullSweep = { searched: 12, folders: 12, sweptAccounts: 3, accounts: 3, unreachable: [], budgetExhausted: false }
+
+check('a sweep that covered every folder of every mailbox is complete',
+  sweepCompleteness(fullSweep), { complete: true, reasons: [] })
+
+check('the time budget running out is named, not hidden',
+  sweepCompleteness({ ...fullSweep, budgetExhausted: true }),
+  { complete: false, reasons: [SWEEP_STOP_BUDGET] })
+
+check('folders left uncovered say so even without the budget flag',
+  sweepCompleteness({ ...fullSweep, searched: 4 }),
+  { complete: false, reasons: [SWEEP_STOP_BUDGET] })
+
+check('an unreachable mailbox is named even when every known folder was covered',
+  sweepCompleteness({ ...fullSweep, sweptAccounts: 2, unreachable: ['b@x.test'] }),
+  { complete: false, reasons: [SWEEP_STOP_UNREACHABLE] })
+
+// Les raisons CUMULENT : inventer une précédence cacherait l'une des deux.
+check('both reasons are reported together, neither shadows the other',
+  sweepCompleteness({ ...fullSweep, searched: 4, budgetExhausted: true, unreachable: ['b@x.test'] }),
+  { complete: false, reasons: [SWEEP_STOP_BUDGET, SWEEP_STOP_UNREACHABLE] })
+
+// Contrôle négatif du piège : une boîte dont TOUS les dossiers sont vides ne
+// rapporte aucun morceau, donc n'apparaît pas dans `sweptAccounts` — et elle est
+// pourtant ENTIÈREMENT couverte. La lire comme injoignable serait un faux arrêt.
+check('a mailbox that reported nothing because it holds nothing is not an incident',
+  sweepCompleteness({ ...fullSweep, sweptAccounts: 1 }), { complete: true, reasons: [] })
+
+// Aucune boîte accessible : rien à balayer, et c'est complet — pas un arrêt.
+check('no mailbox to sweep is a complete sweep, not a stop',
+  sweepCompleteness({ searched: 0, folders: 0, sweptAccounts: 0, accounts: 0, unreachable: [], budgetExhausted: false }),
+  { complete: true, reasons: [] })
+
+check('the stop reasons live in one list, so the route and the doc cannot drift',
+  SWEEP_STOP_REASONS, [SWEEP_STOP_BUDGET, SWEEP_STOP_UNREACHABLE])
+
+// Le plafond de temps est une valeur MESURÉE, pas un réglage libre : il doit rester
+// au-dessus du constat de production du lot S11 (26,7 s pour une seule boîte) et
+// sous le délai d'un mandataire inverse (60 s), sinon il ne protège plus personne.
+check('the sweep budget stays between the measured worst mailbox and a proxy timeout',
+  ACCOUNTS_SWEEP_BUDGET_MS > 26700 && ACCOUNTS_SWEEP_BUDGET_MS < 60000, true)
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1) }
 console.log('\ncheck-search-accounts: OK')
