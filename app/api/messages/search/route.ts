@@ -3,13 +3,16 @@ import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount, listAccessibleAccounts } from '@/lib/accountAccess'
 import type { DbEmailAccount } from '@/lib/accounts'
+import type { Message } from '@/types/email'
 import { listFolderPasses, listFolders, listFoldersRanked, searchMessagesByFolder, searchMessagesIn } from '@/lib/imap'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import {
-  ACCOUNT_CONCURRENCY, MIN_QUERY_LENGTH, SCOPE_ACCOUNTS, SCOPE_ALL, SCOPE_PARAM, SEARCH_FIELDS,
-  SEARCH_PARAM, SEARCH_RESULT_LIMIT, STREAM_PARAM, mergeGenerators, orderAccountsForSearch,
-  parseQuery, readScope,
+  ACCOUNT_CONCURRENCY, ACCOUNTS_SWEEP_BUDGET_MS, EMPTY_SEARCH_STREAM, MIN_QUERY_LENGTH,
+  SCOPE_ACCOUNTS, SCOPE_ALL, SCOPE_PARAM, SEARCH_FIELDS, SEARCH_PARAM, SEARCH_RESULT_LIMIT,
+  STREAM_PARAM, accumulateSearchStream, mergeGenerators, orderAccountsForSearch, parseQuery,
+  readScope, sweepCompleteness,
 } from '@/lib/search'
+import type { SearchStreamState, SweepProgress } from '@/lib/search'
 import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
@@ -42,6 +45,144 @@ function streamedMessages<T extends { date: string }>(messages: T[], accountId: 
     .slice(0, SEARCH_RESULT_LIMIT)
     .map(m => ({ ...m, accountId }))
 }
+
+/**
+ * Ce qu'un balayage multi-boîtes apprend sur lui-même au fil de l'eau. La route le
+ * lit APRÈS le balayage pour dire, dans les deux portées « toutes les boîtes »,
+ * jusqu'où la couverture est allée — voir `sweepCompleteness`.
+ */
+type SweepState = {
+  searched: number
+  folders: number
+  sweptIds: Set<string>
+  unreachable: string[]
+  /** Vrai dès qu'UNE boîte balayée demande la garde d'invite (`bool_or`). */
+  guarded: boolean
+}
+
+const newSweepState = (): SweepState =>
+  ({ searched: 0, folders: 0, sweptIds: new Set(), unreachable: [], guarded: false })
+
+/**
+ * Un morceau de balayage : les messages d'UN dossier, et la boîte d'où ils viennent.
+ * `accountId` est porté par CHAQUE message, pas seulement par le morceau : c'est ce
+ * qui fait l'identité d'un résultat quand la liste mêle plusieurs boîtes, et ce que
+ * l'accumulation (`accumulateSearchStream`) dédoublonne.
+ */
+type SweptMessage = Message & { accountId: string }
+type SweepChunk = {
+  messages: SweptMessage[]
+  total: number
+  fields: typeof SEARCH_FIELDS
+  folder: string
+  accountId: string
+  accountEmail: string
+  searched: number
+  folders: number
+  accounts: number
+}
+
+/**
+ * Le balayage de TOUTES les boîtes accessibles, en deux passes et au plus
+ * ACCOUNT_CONCURRENCY boîtes de front — le cœur de la portée « toutes les boîtes ».
+ *
+ * Il est ici, et non dans une des deux branches de la route, parce que les DEUX
+ * portées « toutes les boîtes » s'en servent : celle qui diffuse (NDJSON, un
+ * morceau par dossier) et celle d'un seul tenant (lot S11 — elle rendait 200 avec
+ * 0 résultat en ne cherchant que dans la réception de la boîte courante, faute de
+ * ce balayage). Un seul exemplaire, donc une seule chose à mesurer et à corriger.
+ *
+ * PREMIÈRE PASSE : réception + envoyés de CHAQUE boîte. Sans elle, la dernière
+ * boîte attend derrière les 97 dossiers d'une autre (mesuré le 20/09/2026 : son
+ * premier résultat arrivait à 21,2 s).
+ * DEUXIÈME PASSE : tout le reste, dans le même ordre de boîtes, en réutilisant la
+ * liste de dossiers de la première — pas de second LIST-STATUS.
+ *
+ * Une boîte injoignable n'arrête pas les autres : elle est inscrite dans
+ * `state.unreachable` et son balayage est sauté.
+ */
+async function* sweepAccounts(
+  accounts: DbEmailAccount[],
+  terms: string[],
+  signal: AbortSignal,
+  state: SweepState,
+): AsyncGenerator<SweepChunk> {
+  const passes = new Map<string, { first: string[]; rest: string[] }>()
+  const sweepFolders = (row: DbEmailAccount, list: string[]) => async function* (): AsyncGenerator<SweepChunk> {
+    if (!list.length) return
+    for await (const chunk of searchMessagesByFolder(imapConfig(row), list, terms, signal)) {
+      if (signal.aborted) return
+      state.searched += 1
+      state.sweptIds.add(row.id)
+      // La garde d'invite s'applique PAR BOÎTE : `prompt_guard` diffère d'une boîte
+      // à l'autre, donc chaque morceau porte celle de la sienne, et la réponse d'un
+      // seul tenant la porte dès qu'UNE boîte la demande.
+      state.guarded = state.guarded || row.prompt_guard
+      yield {
+        messages: streamedMessages(chunk.messages, row.id),
+        total: chunk.total,
+        fields: SEARCH_FIELDS,
+        folder: chunk.folder,
+        accountId: row.id,
+        accountEmail: row.email,
+        searched: state.searched,
+        folders: state.folders,
+        // Le nombre de boîtes est connu dès le départ (celles qui sont accessibles) :
+        // le bandeau annonce « sur 8 » au premier morceau, sans attendre la fin.
+        accounts: accounts.length,
+      }
+    }
+  }
+
+  const firstPass = accounts.map(row => async function* (): AsyncGenerator<SweepChunk> {
+    let split: { first: string[]; rest: string[] }
+    try {
+      split = await listFolderPasses(imapConfig(row))
+    } catch {
+      state.unreachable.push(row.email)
+      return
+    }
+    passes.set(row.id, split)
+    state.folders += split.first.length + split.rest.length
+    yield* sweepFolders(row, split.first)()
+  })
+  for await (const chunk of mergeGenerators(firstPass, ACCOUNT_CONCURRENCY)) {
+    if (signal.aborted) return
+    yield chunk
+  }
+
+  if (signal.aborted) return
+  const secondPass = accounts
+    .filter(row => passes.get(row.id)?.rest.length)
+    .map(row => sweepFolders(row, passes.get(row.id)!.rest))
+  for await (const chunk of mergeGenerators(secondPass, ACCOUNT_CONCURRENCY)) {
+    if (signal.aborted) return
+    yield chunk
+  }
+}
+
+/**
+ * Les boîtes à balayer, dans l'ordre d'utilité : la boîte active d'abord. La
+ * boîte nommée par le client ne sert QU'À ordonner — elle n'ouvre rien par
+ * elle-même, seules celles de `listAccessibleAccounts` sont balayées.
+ */
+async function accountsToSweep(userId: string, activeId: string): Promise<DbEmailAccount[]> {
+  const accessible = await listAccessibleAccounts(userId)
+  const byId = new Map(accessible.map(a => [a.id, a]))
+  return orderAccountsForSearch(accessible, activeId)
+    .map(id => byId.get(id))
+    .filter((a): a is DbEmailAccount => !!a)
+}
+
+/** L'état d'avancement d'un balayage, sous la forme que `sweepCompleteness` lit. */
+const sweepProgress = (state: SweepState, accounts: number, budgetExhausted: boolean): SweepProgress => ({
+  searched: state.searched,
+  folders: state.folders,
+  sweptAccounts: state.sweptIds.size,
+  accounts,
+  unreachable: state.unreachable,
+  budgetExhausted,
+})
 
 async function getHandler(req: Request) {
   const gate = await authorize(req)
@@ -83,103 +224,85 @@ async function getHandler(req: Request) {
     // ouvertes de front, pour que les résultats utiles arrivent en quelques
     // secondes même avec beaucoup de boîtes (mesuré le 20/09/2026 sur le compte de
     // test : 7 boîtes, 185 dossiers, 50,7 s boîte par boîte en série).
-    if (scope === SCOPE_ACCOUNTS && searchParams.get(STREAM_PARAM)) {
-      const accessible = await listAccessibleAccounts(authCtx.id)
-      // L'identifiant reçu du client ne sert QU'À ordonner : il n'ouvre aucune
-      // boîte par lui-même, seules celles de `listAccessibleAccounts` sont balayées.
-      const order = orderAccountsForSearch(accessible, account.id)
-      const byId = new Map(accessible.map(a => [a.id, a]))
-      const accounts = order.map(id => byId.get(id)).filter((a): a is DbEmailAccount => !!a)
+    // Portée « toutes les boîtes » : le MÊME balayage dans les deux cas, seule la
+    // façon de rendre change. En flux, un morceau par dossier part au fur et à
+    // mesure ; d'un seul tenant, les morceaux sont accumulés par la fonction pure
+    // `accumulateSearchStream` — celle que le client utilise déjà pour le flux, donc
+    // le même dédoublonnage, le même tri et le même plafond.
+    if (scope === SCOPE_ACCOUNTS) {
+      const accounts = await accountsToSweep(authCtx.id, account.id)
       const machine = isMachineRequest(req)
-      const encoder = new TextEncoder()
+      const state = newSweepState()
       const sweep = new AbortController()
       req.signal.addEventListener('abort', () => sweep.abort(), { once: true })
+      // La garde d'invite d'un morceau est celle de SA boîte, jamais celle de la
+      // boîte courante : le balayage en traverse plusieurs, aux réglages différents.
+      const guardOf = (row: { prompt_guard: boolean }) => ({ enabled: machine && row.prompt_guard })
 
-      const stream = new ReadableStream<Uint8Array>({
-        async start(controller) {
-          const send = (payload: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`))
-          // La progression est comptée pour l'ENSEMBLE des boîtes : une seule barre
-          // pour l'utilisateur, alors que chaque boîte compte ses dossiers à part.
-          let searched = 0
-          let folders = 0
-          const unreachable: string[] = []
-          try {
-            // Les passes d'une boîte sont calculées UNE fois : la deuxième réutilise
-            // la liste de dossiers de la première, sans second LIST-STATUS.
-            const passes = new Map<string, { first: string[]; rest: string[] }>()
-            const sweepFolders = (row: DbEmailAccount, list: string[]) => async function* () {
-              if (!list.length) return
-              const guard = { enabled: machine && row.prompt_guard }
-              for await (const chunk of searchMessagesByFolder(imapConfig(row), list, terms, sweep.signal)) {
-                if (sweep.signal.aborted) return
-                searched += 1
-                // La garde d'invite s'applique PAR BOÎTE : `prompt_guard` diffère
-                // d'une boîte à l'autre, donc chaque morceau porte celle de la sienne.
-                yield guardApiPayload({
-                  messages: streamedMessages(chunk.messages, row.id),
-                  total: chunk.total,
-                  fields: SEARCH_FIELDS,
-                  folder: chunk.folder,
-                  accountId: row.id,
-                  accountEmail: row.email,
-                  searched,
-                  folders,
-                  // Le nombre de boîtes est connu dès le départ (celles qui sont
-                  // accessibles) : le bandeau annonce « sur 8 » au premier morceau,
-                  // sans attendre la fin du balayage.
-                  accounts: accounts.length,
-                }, guard)
-              }
-            }
-
-            // PREMIÈRE PASSE : réception + envoyés de CHAQUE boîte. Sans elle, la
-            // dernière boîte attend derrière les 97 dossiers d'une autre (mesuré le
-            // 20/09/2026 : son premier résultat arrivait à 21,2 s).
-            const firstPass = accounts.map(row => async function* () {
-              let split: { first: string[]; rest: string[] }
-              try {
-                split = await listFolderPasses(imapConfig(row))
-              } catch {
-                // Une boîte injoignable n'arrête pas les autres : elle est signalée
-                // en fin de flux, et son balayage est simplement sauté.
-                unreachable.push(row.email)
-                return
-              }
-              passes.set(row.id, split)
-              folders += split.first.length + split.rest.length
-              yield* sweepFolders(row, split.first)()
-            })
-            for await (const payload of mergeGenerators(firstPass, ACCOUNT_CONCURRENCY)) {
-              if (sweep.signal.aborted) break
-              send(payload)
-            }
-
-            // DEUXIÈME PASSE : tout le reste, dans le même ordre de boîtes.
-            if (!sweep.signal.aborted) {
-              const secondPass = accounts
-                .filter(row => passes.get(row.id)?.rest.length)
-                .map(row => sweepFolders(row, passes.get(row.id)!.rest))
-              for await (const payload of mergeGenerators(secondPass, ACCOUNT_CONCURRENCY)) {
+      if (searchParams.get(STREAM_PARAM)) {
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            const send = (payload: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`))
+            try {
+              for await (const chunk of sweepAccounts(accounts, terms, sweep.signal, state)) {
                 if (sweep.signal.aborted) break
-                send(payload)
+                send(guardApiPayload(chunk, guardOf({ prompt_guard: state.guarded })))
               }
+              // Les boîtes injoignables sont signalées en FIN de flux : le client les
+              // affiche quand il sait qu'il n'en viendra plus.
+              if (!sweep.signal.aborted && state.unreachable.length) send({ unreachable: state.unreachable })
+            } catch (err) {
+              if (!sweep.signal.aborted) send({ error: String(err) })
+            } finally {
+              controller.close()
             }
-            if (!sweep.signal.aborted && unreachable.length) send({ unreachable })
-          } catch (err) {
-            if (!sweep.signal.aborted) send({ error: String(err) })
-          } finally {
-            controller.close()
-          }
-        },
-        cancel() { sweep.abort() },
-      })
-      return new Response(stream, {
-        headers: {
-          'Content-Type': 'application/x-ndjson; charset=utf-8',
-          'Cache-Control': 'no-store, no-transform',
-        },
-      })
+          },
+          cancel() { sweep.abort() },
+        })
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'application/x-ndjson; charset=utf-8',
+            'Cache-Control': 'no-store, no-transform',
+          },
+        })
+      }
+
+      // SANS flux (lot S11) : la portée est HONORÉE, pas ignorée. Une réponse d'un
+      // seul tenant ne montre rien avant la fin, donc le balayage a un temps imparti
+      // (`ACCOUNTS_SWEEP_BUDGET_MS`) — dépassé, il rend ce qu'il a ET le dit.
+      const deadline = setTimeout(() => sweep.abort(), ACCOUNTS_SWEEP_BUDGET_MS)
+      let accumulated: SearchStreamState<SweptMessage> = EMPTY_SEARCH_STREAM
+      try {
+        for await (const chunk of sweepAccounts(accounts, terms, sweep.signal, state)) {
+          accumulated = accumulateSearchStream(accumulated, [chunk])
+        }
+      } finally {
+        clearTimeout(deadline)
+      }
+      // `sweep.signal.aborted` couvre les DEUX abandons : le temps imparti et la
+      // requête coupée par l'appelant. Seul le premier est un arrêt à signaler —
+      // l'autre n'a plus de destinataire.
+      const coverage = sweepCompleteness(
+        sweepProgress(state, accounts.length, sweep.signal.aborted && !req.signal.aborted)
+      )
+      return NextResponse.json(guardApiPayload({
+        messages: accumulated.messages,
+        total: accumulated.total,
+        fields: SEARCH_FIELDS,
+        // La COUVERTURE, sans laquelle « 0 résultat » ne veut rien dire : combien de
+        // dossiers et de boîtes ont été cherchés, lesquelles n'ont pas répondu, et
+        // si le balayage s'est arrêté avant la fin — avec la raison.
+        searched: state.searched,
+        folders: state.folders,
+        accounts: accounts.length,
+        sweptAccounts: state.sweptIds.size,
+        unreachable: state.unreachable,
+        complete: coverage.complete,
+        ...(coverage.complete ? {} : { stoppedBecause: coverage.reasons }),
+      }, guardOf({ prompt_guard: state.guarded })))
     }
+
 
     // `scope=all` + `stream=1` : la réponse part dossier par dossier (NDJSON), dans
     // l'ordre d'utilité rendu par listFoldersRanked — les premiers résultats
