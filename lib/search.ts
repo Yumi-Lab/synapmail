@@ -45,6 +45,76 @@ export const SCOPE_LABEL: Record<SearchScope, 'searchThisFolder' | 'searchAllFol
  */
 export const ACCOUNT_CONCURRENCY = 3
 
+/**
+ * Temps qu'une recherche « toutes les boîtes » SANS flux s'accorde avant de rendre
+ * ce qu'elle a. Le flux n'en a pas besoin : il montre ses résultats au fur et à
+ * mesure et l'appelant coupe quand il veut. Une réponse d'un seul tenant, elle,
+ * ne montre rien avant la fin — sans plafond, un appelant machine attendrait des
+ * minutes sur une boîte de 1 226 dossiers.
+ *
+ * Le plafond ne fait pas MENTIR la réponse : ce qui est trouvé est rendu, et
+ * `sweepCompleteness` dit qu'on s'est arrêté avant la fin et pourquoi.
+ *
+ * ponytail: 45 s. Calibré sur les mesures du lot S4b (compte de test, 7 boîtes,
+ * 185 dossiers : premier résultat 1,8-3,6 s, balayage complet 50,7 s EN SÉRIE,
+ * boîte la plus lente 22,0 s) et sur le constat de production du lot S11 (26,7 s
+ * pour la seule réception d'une boîte de 163 000 messages) : assez pour couvrir
+ * les deux dossiers utiles de chaque boîte et bien au-delà, moins que le délai
+ * d'un mandataire inverse. Le faire varier demande de re-mesurer la COUVERTURE
+ * atteinte (`searched` sur `folders`), pas seulement le temps rendu.
+ */
+export const ACCOUNTS_SWEEP_BUDGET_MS = 45000
+
+/** Le balayage s'est arrêté au bout de son temps imparti. */
+export const SWEEP_STOP_BUDGET = 'budget'
+/** Au moins une boîte n'a pas pu être ouverte : sa part n'a pas été cherchée. */
+export const SWEEP_STOP_UNREACHABLE = 'unreachable'
+/**
+ * Les raisons pour lesquelles un balayage peut s'arrêter avant d'avoir tout
+ * couvert. Source unique : la route les rend, la doc de l'API les nomme, le banc
+ * les relit — aucune des trois n'invente sa propre chaîne.
+ */
+export const SWEEP_STOP_REASONS = [SWEEP_STOP_BUDGET, SWEEP_STOP_UNREACHABLE] as const
+export type SweepStopReason = typeof SWEEP_STOP_REASONS[number]
+
+/** Ce qu'un balayage multi-boîtes sait de lui-même quand il rend la main. */
+export type SweepProgress = {
+  /** Dossiers couverts / dossiers connus des boîtes qui ont pu être ouvertes. */
+  searched: number
+  folders: number
+  /** Boîtes ayant rapporté / boîtes accessibles à balayer. */
+  sweptAccounts: number
+  accounts: number
+  /** Boîtes injoignables, par adresse — jamais une panne silencieuse. */
+  unreachable: readonly string[]
+  /** Le temps imparti a expiré avant la fin du balayage. */
+  budgetExhausted: boolean
+}
+
+/**
+ * Dit si un balayage a TOUT couvert, et sinon POURQUOI il s'est arrêté. C'est la
+ * réponse au défaut du lot S11 : une portée « toutes les boîtes » rendait 200 avec
+ * 0 résultat sans jamais dire qu'elle n'avait cherché que dans un dossier.
+ *
+ * Les raisons sont CUMULABLES (temps imparti ET boîte injoignable) : aucune
+ * précédence n'est inventée, les deux sont rendues. Les chiffres qui les détaillent
+ * (`searched`, `folders`, `accounts`, `unreachable`) voyagent déjà dans la réponse :
+ * ils ne sont pas recopiés ici.
+ *
+ * Fonction PURE : auto-contrôle `scripts/check-search-accounts.mjs`.
+ */
+export function sweepCompleteness(progress: SweepProgress): { complete: boolean; reasons: SweepStopReason[] } {
+  const reasons: SweepStopReason[] = []
+  if (progress.budgetExhausted || progress.searched < progress.folders) reasons.push(SWEEP_STOP_BUDGET)
+  // Une boîte injoignable n'a AUCUN dossier dans `folders` : sauter une boîte
+  // entière se lirait sinon comme une couverture complète. C'est sa seule preuve —
+  // `sweptAccounts < accounts` ne vaut pas : une boîte dont tous les dossiers sont
+  // vides ne rapporte rien tout en étant entièrement couverte, et une boîte que le
+  // temps imparti n'a pas atteinte est déjà dite par la raison ci-dessus.
+  if (progress.unreachable.length > 0) reasons.push(SWEEP_STOP_UNREACHABLE)
+  return { complete: reasons.length === 0, reasons }
+}
+
 /** En deçà, IMAP renverrait la boîte entière : la recherche reste inactive. */
 export const MIN_QUERY_LENGTH = 2
 /** Frappe → requête : même délai que celui de l'ancien champ de la liste. */

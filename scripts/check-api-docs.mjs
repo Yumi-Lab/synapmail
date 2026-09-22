@@ -28,16 +28,33 @@
  *   node scripts/check-api-docs.mjs --break=session   (a session-only route inside the contract)
  *   node scripts/check-api-docs.mjs --break=ref       (a $ref that resolves to nothing)
  *   node scripts/check-api-docs.mjs --break=servers  (the contract served with its disk servers)
+ *   node scripts/check-api-docs.mjs --break=searchscope (a search scope the doc never names)
  * The `--break` forms damage a COPY of one input and EXPECT the run to fail: a
  * battery that cannot fail proves nothing.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { registerHooks } from 'node:module'
 import { join, relative, sep } from 'node:path'
 import { API_DOC_PATH, LLMS_TXT_PATH, OPENAPI_FILE, OPENAPI_PATH, withServedOrigin } from '../lib/apiDocs.ts'
 import { isPublicPath, PUBLIC_PATHS } from '../lib/publicPaths.ts'
 import { ROUTE_SCOPES } from '../lib/apiScopes.ts'
 import { appOrigin } from '../lib/appOrigin.ts'
 import { fileURLToPath } from 'node:url'
+
+// `lib/search.ts` importe ses voisins SANS extension (comme tout le code de
+// l'application, que le empaqueteur résout) : un import statique depuis un script
+// échouerait avant d'arriver ici. Même crochet de résolution que
+// `scripts/check-search-accounts.mjs`, donc un import dynamique après son pose.
+registerHooks({
+  resolve(spec, ctx, next) {
+    if (spec.startsWith('.') && !/\.[a-z]+$/.test(spec)) {
+      const url = new URL(`${spec}.ts`, ctx.parentURL)
+      if (existsSync(url)) return next(url.href, ctx)
+    }
+    return next(spec, ctx)
+  },
+})
+const { SEARCH_SCOPES, SWEEP_STOP_REASONS } = await import(new URL('../lib/search.ts', import.meta.url).href)
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 const APP_DIR = join(ROOT, 'app')
@@ -217,6 +234,10 @@ if (BREAK === 'missing') {
   // Annonce une portée que le code n'exige pas, dans une COPIE du document.
   const victim = Object.entries(readDoc(docText)).find(([key, e]) => e.scope && ROUTE_SCOPES[key])[1]
   docText = docText.replace(victim.line, victim.line.replace(`\`${victim.scope}\``, '`messages:send`'))
+} else if (BREAK === 'searchscope') {
+  // Efface d'une COPIE du document la ligne de tableau de la portée la plus large.
+  const widest = SEARCH_SCOPES[SEARCH_SCOPES.length - 1]
+  docText = docText.replace(new RegExp(`^\\|[^\\n]*\`${widest}\`[^\\n]*$`, 'm'), '')
 } else if (BREAK === 'mode') {
   // Announce a session-only route as Bearer-eligible, in a COPY of the document.
   const victim = Object.entries(readDoc(docText)).find(([key]) => code[key]?.mode === 'session')[1].line
@@ -299,6 +320,42 @@ check(
   undescribedScopes.length === 0,
   'the document gives every scope a row of its own, name and meaning',
   undescribedScopes.join('\n      '),
+)
+
+// ---- Every SEARCH scope says what it searches (lot S11) ----------------------
+// Le défaut corrigé au lot S11 : `scope=accounts` sans flux ignorait silencieusement
+// la portée demandée. Un document qui ne dit pas ce que fait chaque portée laisse
+// l'appelant le deviner — c'est ainsi qu'un agent a conclu « la recherche plante ».
+const searchHeading = /^###\s+`GET \/api\/messages\/search[^`]*`.*$/m.exec(docText)
+check(!!searchHeading, 'the search route has its heading')
+// La section de la recherche, du titre au titre suivant : une portée nommée trois
+// sections plus loin ne documente pas cette route.
+const searchSection = searchHeading
+  ? docText.slice(searchHeading.index).split(/\n### /)[0]
+  : ''
+const scopeUndocumented = SEARCH_SCOPES.filter(scope => !new RegExp(`\`${scope}\``).test(searchSection))
+check(
+  scopeUndocumented.length === 0,
+  'the search section names every scope lib/search.ts serves',
+  scopeUndocumented.join(', '),
+)
+// Chaque portée a une LIGNE DE TABLEAU qui dit ce qu'elle cherche : la nommer en
+// passant dans une phrase ne suffit pas.
+const scopeTableRow = scope =>
+  new RegExp(`^\\|[^|\\n]*\`${scope}\`[^|\\n]*\\|[^|\\n]*\\S[^|\\n]*\\|`, 'm').test(searchSection)
+const scopeWithoutRow = SEARCH_SCOPES.filter(scope => !scopeTableRow(scope))
+check(
+  scopeWithoutRow.length === 0,
+  'every search scope has a table row saying what it searches',
+  scopeWithoutRow.join(', '),
+)
+// Un balayage tronqué se DIT : les raisons d'arrêt du module sont dans le document,
+// sinon l'appelant lit `complete: false` sans savoir ce que ça lui coûte.
+const reasonsUndocumented = SWEEP_STOP_REASONS.filter(r => !new RegExp(`\`${r}\``).test(searchSection))
+check(
+  reasonsUndocumented.length === 0,
+  'the search section names every reason a sweep may stop early',
+  reasonsUndocumented.join(', '),
 )
 
 // The mode reader must look inside the method, not across the file: a route file
