@@ -137,3 +137,11 @@ export function isDefaultCardOrder(order: readonly DashboardCardId[]): boolean {
 export function cardSpan(id: DashboardCardId): string {
   return DASHBOARD_CARDS.find(c => c.id === id)?.span ?? 'col-span-12'
 }
+
+/**
+ * Le type MIME que porte une carte pendant son déplacement. Le navigateur ne
+ * laisse LIRE la charge utile qu'au dépôt : la présence de ce type dans
+ * `dataTransfer.types` est le seul moyen, au survol, de distinguer une carte
+ * du tableau de bord de tout autre glisser (un fichier, un message de la liste).
+ */
+export const DASHBOARD_CARD_MIME = 'application/synapmail-dashboard-card'

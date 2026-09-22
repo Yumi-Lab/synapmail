@@ -20,7 +20,7 @@ import { ContextMenuSurface, type ContextMenuAnchor } from '@/components/ui/Cont
 import { accountColor } from '@/lib/accountColor'
 import {
   cardSpan, isDefaultCardOrder, moveCard, normalizeCardOrder, shiftCard,
-  type DashboardCardId,
+  DASHBOARD_CARD_MIME, type DashboardCardId,
 } from '@/lib/dashboardOrder'
 import type { DashboardData, DashboardAccount, FocusReason, ActivityPoint } from '@/types/dashboard'
 
@@ -93,12 +93,10 @@ function Skeleton() {
  * avec les flèches, parce qu'un déplacement réservé à la souris n'en est pas un.
  */
 function CardHandle({
-  label, hint, onArm, onDisarm, onShift,
+  label, hint, onShift,
 }: {
   label: string
   hint: string
-  onArm: () => void
-  onDisarm: () => void
   onShift: (delta: number) => void
 }) {
   return (
@@ -106,9 +104,6 @@ function CardHandle({
       type="button"
       aria-label={label}
       title={`${label} — ${hint}`}
-      onMouseDown={onArm}
-      onMouseUp={onDisarm}
-      onBlur={onDisarm}
       onKeyDown={e => {
         const delta = e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1
           : e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : 0
