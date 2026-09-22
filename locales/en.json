@@ -742,7 +742,19 @@
     "subsPurgeChanged": "The mailbox changed while counting: it now holds {total}. Count again before clearing.",
     "subsPurgeRefused_not_found": "This newsletter is no longer in this mailbox.",
     "subsPurgeRefused_no_trash": "This mailbox exposes no trash folder: nothing was moved.",
-    "subsPurgeError": "Failed: {reason}"
+    "subsPurgeError": "Failed: {reason}",
+    "cardOrderReset": "Reset to the original order",
+    "cardOrderHandle": "Move the “{card}” card",
+    "cardOrderHint": "Drag to move · arrow keys to move from the keyboard",
+    "cardFocus": "Needs attention",
+    "cardActivity": "Activity",
+    "cardAccounts": "Accounts",
+    "cardReceipts": "Read receipts",
+    "cardScheduled": "Scheduled",
+    "cardRules": "Rules",
+    "cardFollowUps": "Follow-ups",
+    "cardSubscriptions": "Newsletters",
+    "cardQuickCompose": "Quick compose"
   },
   "pgp": {
     "title": "PGP Encryption",

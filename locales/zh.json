@@ -742,7 +742,19 @@
     "subsPurgeChanged": "统计期间邮箱发生了变化：现在共有 {total} 封。请重新统计后再清空。",
     "subsPurgeRefused_not_found": "此订阅已不在该邮箱中。",
     "subsPurgeRefused_no_trash": "该邮箱没有回收站文件夹：未移动任何邮件。",
-    "subsPurgeError": "失败：{reason}"
+    "subsPurgeError": "失败：{reason}",
+    "cardOrderReset": "恢复原始顺序",
+    "cardOrderHandle": "移动“{card}”卡片",
+    "cardOrderHint": "拖动以移动 · 方向键可用键盘移动",
+    "cardFocus": "待处理",
+    "cardActivity": "活动",
+    "cardAccounts": "邮箱",
+    "cardReceipts": "已读回执",
+    "cardScheduled": "定时发送",
+    "cardRules": "规则",
+    "cardFollowUps": "跟进",
+    "cardSubscriptions": "订阅邮件",
+    "cardQuickCompose": "快速撰写"
   },
   "pgp": {
     "title": "PGP 加密",
