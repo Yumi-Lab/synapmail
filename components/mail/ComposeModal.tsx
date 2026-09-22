@@ -17,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { useAccountAccent } from '@/components/layout/AccountAvatar'
 import { FORWARD_ERROR, type ForwardedMessages } from '@/lib/forward'
 import useSWR from 'swr'
 import type { Signature, EmailAccount } from '@/types/account'
@@ -142,7 +143,12 @@ export function ComposeModal({ mode, replyTo, forwardedMessages, accountEmail, a
   const [error, setError] = useState<string | null>(null)
   const [undoCountdown, setUndoCountdown] = useState(0)
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Même source de couleur que la barre latérale : le bandeau d'envoi porte la couleur du
+  // compte actif, pas un violet écrit en dur.
+  const { vars: accentStyle } = useAccountAccent()
   const undoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  /** Phase « parti » : la barre est pleine, on le DIT une seconde avant de disparaître. */
+  const [justSent, setJustSent] = useState(false)
   const undoDelayRef = useRef(0)
   const [scheduledAt, setScheduledAt] = useState('')
   const [showSchedulePicker, setShowSchedulePicker] = useState(false)
@@ -558,6 +564,10 @@ export function ComposeModal({ mode, replyTo, forwardedMessages, accountEmail, a
 
       undoTimerRef.current = setTimeout(() => {
         if (undoIntervalRef.current) clearInterval(undoIntervalRef.current)
+        // On annonce le départ AVANT de refermer : sans cela, le bandeau s'évapore et
+        // on ne sait pas si le message est parti ou si on a réussi à l'annuler.
+        setJustSent(true)
+        setTimeout(() => setJustSent(false), 1600)
         doActualSend(payload, false)
       }, undoSendDelay * 1000)
 
@@ -601,28 +611,46 @@ export function ComposeModal({ mode, replyTo, forwardedMessages, accountEmail, a
   }
 
   // ── Undo Send toast (modal invisible, app utilisable) ────────────────
-  if (undoCountdown > 0) {
-    const progress = (undoCountdown / undoDelayRef.current) * 100
+  if (undoCountdown > 0 || justSent) {
+    // La barre se REMPLIT (temps écoulé), elle ne se vide pas : on voit le message
+    // s'approcher du départ, pas une réserve qui s'épuise. Demande de Nicolas, 21/09/2026.
+    const ecoule = justSent ? 100 : ((undoDelayRef.current - undoCountdown) / undoDelayRef.current) * 100
     return (
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] bg-card border border-border ring-1 ring-inset ring-white/25 dark:ring-white/[0.06] rounded-[20px] shadow-[0_28px_80px_-16px_rgba(0,0,0,0.55)] px-5 py-4 flex items-center gap-4 min-w-[320px] max-w-sm motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:duration-300">
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/50 dark:bg-white/10 border border-white/60 dark:border-white/15 text-violet-600 dark:text-violet-200">
-          <SendHorizonal className="w-3.5 h-3.5" />
-        </span>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-foreground">Envoi dans <span className="font-mono tabular-nums">{undoCountdown}s</span>…</p>
-          <div className="mt-1.5 h-1 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-violet-400 to-blue-400 rounded-full transition-all duration-1000 ease-linear"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-        </div>
+      <div
+        style={accentStyle}
+        className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] bg-card border border-border ring-1 ring-inset ring-white/25 dark:ring-white/[0.06] rounded-[20px] shadow-[0_28px_80px_-16px_rgba(0,0,0,0.55)] px-5 py-4 flex items-center gap-4 min-w-[320px] max-w-sm motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:duration-300"
+      >
+        {/* Annuler à GAUCHE : c'est l'action, et elle se lit avant le décompte. */}
         <button
           onClick={handleCancelUndo}
-          className="shrink-0 text-sm font-medium text-violet-600 dark:text-violet-300 hover:text-violet-500 transition-colors px-1"
+          disabled={justSent}
+          className="shrink-0 text-sm font-medium text-[color:var(--synap-account)] hover:opacity-80 disabled:opacity-40 transition-opacity px-1"
         >
           Annuler
         </button>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-foreground">
+            {justSent ? 'Message envoyé' : <>Envoi dans <span className="font-mono tabular-nums">{undoCountdown}s</span>…</>}
+          </p>
+          <div className="mt-1.5 h-1 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full bg-[color:var(--synap-account)] transition-all duration-1000 ease-linear"
+              style={{ width: `${ecoule}%` }}
+            />
+          </div>
+        </div>
+        {/* La confirmation de départ est à DROITE, au bout de la barre : l'avion
+            part vers la droite, comme la barre. Une seule fois, jamais en boucle. */}
+        <span
+          className={cn(
+            'grid h-8 w-8 shrink-0 place-items-center rounded-xl border transition-colors',
+            justSent
+              ? 'bg-[color:var(--synap-account)] border-transparent text-[color:var(--synap-account-ink)] motion-safe:animate-in motion-safe:zoom-in-50 motion-safe:slide-in-from-left-2 motion-safe:duration-300'
+              : 'bg-white/50 dark:bg-white/10 border-white/60 dark:border-white/15 text-[color:var(--synap-account)]'
+          )}
+        >
+          <SendHorizonal className="w-3.5 h-3.5" />
+        </span>
       </div>
     )
   }
