@@ -19,7 +19,7 @@
 
 import { useMemo, useState } from 'react'
 import useSWR from 'swr'
-import { MailX, Loader2 } from 'lucide-react'
+import { MailX, Loader2, Eraser } from 'lucide-react'
 import { useTranslations, useLocale } from 'next-intl'
 import { AccountAvatar, BUBBLE_BOX } from '@/components/layout/AccountAvatar'
 import { SelectableBubble } from '@/components/ui/SelectableBubble'
@@ -31,7 +31,9 @@ import { MAX_UNSUBSCRIBE_BATCH } from '@/lib/subscriptionsContract'
 import type { DashboardAccount } from '@/types/dashboard'
 // Types seulement : effacés à la compilation, ils n'entraînent AUCUN module
 // serveur dans le paquet du navigateur.
-import type { Subscription, UnsubscribeReport } from '@/lib/subscriptions'
+import type {
+  Subscription, UnsubscribeReport, SubscriptionHistory, PurgeReport, PurgeRefused,
+} from '@/lib/subscriptions'
 import { cn } from '@/lib/utils'
 
 /** Une ligne affichée : le groupe, et la boîte d'où il vient. */
@@ -60,6 +62,24 @@ async function loadRows(accountIds: string[]): Promise<Row[]> {
   }))
   return perAccount.flat().sort((a, b) => b.count - a.count)
 }
+
+/**
+ * Vider l'historique d'une newsletter se fait en DEUX temps, jamais en un clic :
+ * on DÉNOMBRE d'abord (`GET /api/subscriptions/history`, lent — il balaie toute
+ * la boîte), on MONTRE ce nombre, et seule la confirmation appelle
+ * `POST /api/subscriptions/purge`. Annuler n'envoie rien du tout.
+ *
+ * Chaque état porte la ligne concernée : la carte reste utilisable pendant le
+ * dénombrement, donc l'écran doit savoir de QUELLE newsletter il parle quand la
+ * réponse arrive.
+ */
+type PurgeStep =
+  | { phase: 'counting'; row: Row }
+  | { phase: 'confirm'; row: Row; history: SubscriptionHistory }
+  | { phase: 'purging'; row: Row; history: SubscriptionHistory }
+  | { phase: 'done'; row: Row; report: PurgeReport }
+  | { phase: 'refused'; row: Row; refused: PurgeRefused }
+  | { phase: 'error'; row: Row; message: string }
 
 export function SubscriptionsCard({
   accounts, filterAccount, renderCard,
@@ -92,6 +112,7 @@ export function SubscriptionsCard({
   const [selection, setSelection] = useState<ExplorerSelection>({ selected: new Set(), anchor: null })
   const [reports, setReports] = useState<Record<string, UnsubscribeReport>>({})
   const [sending, setSending] = useState(false)
+  const [purge, setPurge] = useState<PurgeStep | null>(null)
 
   const selected = useMemo(
     () => items.filter(r => selection.selected.has(rowKey(r))),
@@ -147,6 +168,66 @@ export function SubscriptionsCard({
     }
   }
 
+  /**
+   * Premier temps : le DÉNOMBREMENT. Il balaie toute la boîte et prend des
+   * dizaines de secondes sur une vraie boîte, donc l'écran affiche l'attente et
+   * le reste de la carte reste vivant — rien n'est bloqué, rien n'est déplacé.
+   */
+  const countHistory = async (r: Row) => {
+    setPurge({ phase: 'counting', row: r })
+    try {
+      const res = await fetch(
+        `/api/subscriptions/history?account=${encodeURIComponent(r.accountId)}`
+        + `&id=${encodeURIComponent(r.id)}&folder=${encodeURIComponent(r.folder)}`,
+      )
+      const body = (await res.json().catch(() => null)) as
+        | { data?: SubscriptionHistory; error?: string } | null
+      if (!res.ok || !body?.data) {
+        setPurge({ phase: 'error', row: r, message: body?.error ?? String(res.status) })
+        return
+      }
+      setPurge({ phase: 'confirm', row: r, history: body.data })
+    } catch (err) {
+      setPurge({ phase: 'error', row: r, message: String(err) })
+    }
+  }
+
+  /**
+   * Second temps : la purge. `expected` est EXACTEMENT le total qui vient d'être
+   * affiché — c'est le seul nombre auquel l'utilisateur a consenti. Si la boîte
+   * a bougé entre-temps, le serveur répond 409 et ce refus est MONTRÉ, avec le
+   * nouveau total, au lieu d'être avalé.
+   */
+  const runPurge = async (r: Row, history: SubscriptionHistory) => {
+    setPurge({ phase: 'purging', row: r, history })
+    try {
+      const res = await fetch('/api/subscriptions/purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          account: r.accountId, id: r.id, folder: r.folder, expected: history.total,
+        }),
+      })
+      const body = (await res.json().catch(() => null)) as
+        | { data?: PurgeReport | PurgeRefused; error?: string } | null
+      const data = body?.data
+      if (res.status === 409 && data && 'refused' in data) {
+        setPurge({ phase: 'refused', row: r, refused: data })
+        return
+      }
+      if (!res.ok || !data || !('moved' in data)) {
+        setPurge({ phase: 'error', row: r, message: body?.error ?? String(res.status) })
+        return
+      }
+      setPurge({ phase: 'done', row: r, report: data })
+      // Les messages ont quitté le dossier : la liste que la carte affiche n'est
+      // plus la bonne. On la relit, sans toucher à la sélection en cours.
+      mutate()
+    } catch (err) {
+      setPurge({ phase: 'error', row: r, message: String(err) })
+    }
+  }
+
   const body = (() => {
     if (isLoading) return <p className="py-6 text-center text-sm text-muted-foreground">{t('subsLoading')}</p>
     if (!items.length) return <p className="py-6 text-center text-sm text-muted-foreground">{t('subsEmpty')}</p>
@@ -162,6 +243,7 @@ export function SubscriptionsCard({
               <li
                 key={r.id}
                 data-subs-row={r.id}
+                data-subs-count={r.count}
                 data-subs-selected={picked ? 'true' : 'false'}
                 onClick={e => click(r, e)}
                 className={cn(
@@ -239,12 +321,41 @@ export function SubscriptionsCard({
             {t('subsUnsubscribe')}
             {selected.length > 0 && <span className="font-mono tabular-nums">({selected.length})</span>}
           </button>
+          {/*
+            Pas de poubelle sur chaque ligne : la vue par defaut reste epuree.
+            L'action agit sur la SELECTION, a cote de « Se desabonner ». L'API
+            vide UNE newsletter par appel, donc le bouton n'accepte qu'une seule
+            ligne selectionnee et le dit plutot que de se desactiver en silence.
+          */}
+          <button
+            data-subs-purge
+            onClick={() => selected.length === 1 && countHistory(selected[0])}
+            disabled={selected.length !== 1 || purge?.phase === 'counting' || purge?.phase === 'purging'}
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-card/60 px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+          >
+            {purge?.phase === 'counting' || purge?.phase === 'purging'
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <Eraser className="h-3.5 w-3.5" />}
+            {t('subsPurge')}
+          </button>
+          {selected.length > 1 && (
+            <span data-subs-purge-one className="text-xs text-muted-foreground">
+              {t('subsPurgeOnlyOne')}
+            </span>
+          )}
           {tooMany && (
             <span data-subs-too-many className="text-xs text-muted-foreground">
               {t('subsTooMany', { max: MAX_UNSUBSCRIBE_BATCH, count: selected.length })}
             </span>
           )}
         </div>
+
+        {purge && <PurgePanel
+          step={purge}
+          onCancel={() => setPurge(null)}
+          onConfirm={runPurge}
+          fmtDate={fmtDate}
+        />}
       </>
     )
   })()
@@ -253,4 +364,113 @@ export function SubscriptionsCard({
     title: <span>{t('subsTitle')} <span className="font-normal text-muted-foreground">— {t('subsCount', { count: items.length })}</span></span>,
     children: body,
   })}</>
+}
+
+/**
+ * Le panneau des deux temps de la purge, sous la liste — pas une modale : la
+ * carte reste utilisable pendant le denombrement, qui est LENT (une vingtaine de
+ * secondes mesurees sur une boite reelle, et cela grandit avec le nombre de
+ * messages).
+ *
+ * La confirmation REPREND le nombre affiche et dit noir sur blanc que les
+ * messages partent dans la CORBEILLE, donc restent recuperables. « Annuler »
+ * n'envoie rien : il ferme le panneau, point.
+ */
+function PurgePanel({ step, onCancel, onConfirm, fmtDate }: {
+  step: PurgeStep
+  onCancel: () => void
+  onConfirm: (row: Row, history: SubscriptionHistory) => void
+  fmtDate: (iso: string) => string
+}) {
+  const t = useTranslations('dashboard')
+  const name = step.row.sender.name || step.row.sender.address
+
+  const close = (
+    <button
+      data-subs-purge-cancel
+      onClick={onCancel}
+      className="rounded-lg border border-border bg-card/60 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+    >
+      {t('subsPurgeCancel')}
+    </button>
+  )
+
+  return (
+    <div
+      data-subs-purge-panel={step.phase}
+      className="mt-3 rounded-xl border border-border bg-card/60 p-3"
+    >
+      <p className="truncate text-sm font-semibold">{name}</p>
+
+      {step.phase === 'counting' && (
+        <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          {t('subsPurgeCounting')}
+        </p>
+      )}
+
+      {(step.phase === 'confirm' || step.phase === 'purging') && (
+        <>
+          {/* Le DENOMBREMENT, affiche AVANT toute confirmation : combien de
+              messages, du plus ancien au plus recent, dans combien de dossiers. */}
+          <p data-subs-purge-count className="mt-1 text-xs text-muted-foreground">
+            {t('subsPurgeCount', {
+              count: step.history.total,
+              folders: step.history.folders.length,
+            })}
+            {step.history.oldest && step.history.newest && <>
+              {' · '}
+              {t('subsPurgeRange', {
+                oldest: fmtDate(step.history.oldest),
+                newest: fmtDate(step.history.newest),
+              })}
+            </>}
+          </p>
+          {/* La confirmation reprend CE nombre et nomme la corbeille. */}
+          <p className="mt-2 text-xs text-foreground">
+            {t('subsPurgeConfirm', { count: step.history.total })}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              data-subs-purge-confirm
+              onClick={() => onConfirm(step.row, step.history)}
+              disabled={step.phase === 'purging' || step.history.total === 0}
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-500/20 disabled:opacity-50 dark:text-violet-400"
+            >
+              {step.phase === 'purging' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {t('subsPurgeGo', { count: step.history.total })}
+            </button>
+            {close}
+          </div>
+        </>
+      )}
+
+      {step.phase === 'done' && (
+        <p data-subs-purge-moved={step.report.moved} className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
+          {t('subsPurgeDone', { count: step.report.moved, trash: step.report.trash })}
+        </p>
+      )}
+
+      {/* Un 409 est une REPONSE, pas une panne : on la montre, avec le nouveau
+          total quand le serveur le donne, pour que l'utilisateur relance. */}
+      {step.phase === 'refused' && (
+        <p data-subs-purge-refused={step.refused.refused} className="mt-1 text-xs text-red-600 dark:text-red-400">
+          {step.refused.refused === 'count_changed'
+            ? t('subsPurgeChanged', { total: step.refused.total ?? 0 })
+            : t(`subsPurgeRefused_${step.refused.refused}`)}
+        </p>
+      )}
+
+      {step.phase === 'error' && (
+        <p data-subs-purge-error className="mt-1 text-xs text-red-600 dark:text-red-400">
+          {t('subsPurgeError', { reason: step.message })}
+        </p>
+      )}
+
+      {(step.phase === 'done' || step.phase === 'refused' || step.phase === 'error'
+        || step.phase === 'counting') && (
+        <div className="mt-2">{close}</div>
+      )}
+    </div>
+  )
 }

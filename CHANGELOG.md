@@ -5,6 +5,30 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — fork Yumi-Lab (branche `yumi`) — purge d'historique dans l'interface — 2026-09-22
+
+### Added
+- **Vider l'historique d'une newsletter depuis l'écran** (`app/(app)/dashboard/SubscriptionsCard.tsx`) —
+  le bouton « Vider l'historique » rejoint « Se désabonner » **sous** la liste : aucune poubelle
+  n'apparaît sur une ligne, la vue par défaut reste épurée, et l'action agit sur la sélection déjà en
+  place. Le geste se joue en **deux temps** : le dénombrement (`GET /api/subscriptions/history`) est
+  AFFICHÉ d'abord — combien de messages, dans combien de dossiers, du plus ancien au plus récent — et la
+  confirmation seulement ensuite, qui reprend ce nombre et dit que les messages partent dans la
+  **corbeille**, où ils restent récupérables. Annuler n'envoie rien. Le dénombrement balaie toute la
+  boîte et prend du temps : le panneau est posé sous la liste, pas en modale, donc la carte reste
+  utilisable pendant l'attente. Le nombre affiché est exactement le `expected` envoyé à la purge ; le 409
+  du serveur est montré avec le nouveau total, jamais avalé. Aucune route n'a été réécrite. 13 clés en
+  anglais, français et chinois.
+
+### Testing
+- `scripts/check-purge-screen.mjs` — le banc **sème ses propres messages** par APPEND dans un dossier de
+  test (5 d'une newsletter cible, 2 témoins d'une autre), pilote l'écran à la vraie souris, puis nettoie
+  le dossier et la corbeille : il ne touche jamais un vrai message. La purge mesurée est la VRAIE, pas
+  une interception. 27 assertions vertes : `moved` = 5 = semé, les 2 témoins intacts, les 5 messages
+  retrouvés dans la corbeille, une seule requête de purge sur toute l'exécution, et le panneau dessiné
+  en entier à 1440 et 390 px, en clair et en sombre — mesuré via le helper anti-fantôme partagé
+  (`scripts/bench-visible.mjs`), qui a refusé deux fois de mesurer une instance hors cadre ou ambiguë.
+
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — portées des clés API — 2026-09-20
 
 ### Added
