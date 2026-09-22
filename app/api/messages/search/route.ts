@@ -218,12 +218,6 @@ async function getHandler(req: Request) {
     }
     const config = imapConfig(account)
 
-    // `scope=accounts` + `stream=1` : le même flux NDJSON, étendu à TOUTES les
-    // boîtes accessibles. Une boîte est balayée en DEUX passes (réception + envoyés
-    // d'abord, le reste ensuite) et au plus ACCOUNT_CONCURRENCY boîtes sont
-    // ouvertes de front, pour que les résultats utiles arrivent en quelques
-    // secondes même avec beaucoup de boîtes (mesuré le 20/09/2026 sur le compte de
-    // test : 7 boîtes, 185 dossiers, 50,7 s boîte par boîte en série).
     // Portée « toutes les boîtes » : le MÊME balayage dans les deux cas, seule la
     // façon de rendre change. En flux, un morceau par dossier part au fur et à
     // mesure ; d'un seul tenant, les morceaux sont accumulés par la fonction pure
@@ -235,9 +229,12 @@ async function getHandler(req: Request) {
       const state = newSweepState()
       const sweep = new AbortController()
       req.signal.addEventListener('abort', () => sweep.abort(), { once: true })
-      // La garde d'invite d'un morceau est celle de SA boîte, jamais celle de la
-      // boîte courante : le balayage en traverse plusieurs, aux réglages différents.
-      const guardOf = (row: { prompt_guard: boolean }) => ({ enabled: machine && row.prompt_guard })
+      // La garde d'invite est celle des boîtes BALAYÉES, jamais celle de la boîte
+      // courante : le balayage en traverse plusieurs, aux réglages différents, et
+      // `state.guarded` est vrai dès que l'UNE d'elles la demande (`bool_or`, comme
+      // `promptGuardApplies` sans boîte nommée). Lu à chaque appel, donc après que le
+      // morceau l'a mis à jour.
+      const guard = () => ({ enabled: machine && state.guarded })
 
       if (searchParams.get(STREAM_PARAM)) {
         const encoder = new TextEncoder()
@@ -247,7 +244,7 @@ async function getHandler(req: Request) {
             try {
               for await (const chunk of sweepAccounts(accounts, terms, sweep.signal, state)) {
                 if (sweep.signal.aborted) break
-                send(guardApiPayload(chunk, guardOf({ prompt_guard: state.guarded })))
+                send(guardApiPayload(chunk, guard()))
               }
               // Les boîtes injoignables sont signalées en FIN de flux : le client les
               // affiche quand il sait qu'il n'en viendra plus.
@@ -300,7 +297,7 @@ async function getHandler(req: Request) {
         unreachable: state.unreachable,
         complete: coverage.complete,
         ...(coverage.complete ? {} : { stoppedBecause: coverage.reasons }),
-      }, guardOf({ prompt_guard: state.guarded })))
+      }, guard()))
     }
 
 
