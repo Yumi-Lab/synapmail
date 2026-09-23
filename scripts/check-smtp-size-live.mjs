@@ -34,6 +34,8 @@ import { readFileSync, existsSync } from 'node:fs'
 import tls from 'node:tls'
 import { Agent, setGlobalDispatcher } from 'undici'
 import { Client } from 'pg'
+import { ImapFlow } from 'imapflow'
+import { decrypt } from '../lib/encrypt.ts'
 
 // Un envoi de 21 Mio prend DES MINUTES sur le fil : `fetch` abandonne par défaut
 // après 300 s d'attente d'en-têtes, et l'abandon du CLIENT ressemble alors à un
@@ -70,7 +72,7 @@ const readConst = (file, name) => {
 const M9_FALLBACK_BYTES = readConst('attachments.ts', 'MESSAGE_MAX_TOTAL_BYTES')
 const WARNING_BYTES = readConst('smtpSize.ts', 'SEND_WARNING_BYTES')
 const RESERVE_BYTES = readConst('smtpSize.ts', 'MESSAGE_ENVELOPE_RESERVE_BYTES')
-const { resolveSendCeiling } = await import(new URL('../lib/smtpSize.ts', import.meta.url).href)
+const { resolveSendCeiling, wireBytes } = await import(new URL('../lib/smtpSize.ts', import.meta.url).href)
 
 // La charge utile tient dans la fenêtre que le lot ouvre : AU-DESSUS du plafond
 // prudent de M9 (donc refusée avant M10), AU-DESSUS du seuil d'avertissement
@@ -82,6 +84,9 @@ if (PAYLOAD_BYTES <= WARNING_BYTES) harness('payload must exceed the recipient w
 // Annonce posée pour le BRAS B. Basse, mais au-dessus du plancher du module
 // (une annonce sous la réserve d'enveloppe ne veut rien dire) et sous la charge.
 const SMALL_ANNOUNCED = 8 * 1024 * 1024
+
+/** Un seul sujet : il sert à envoyer, à retrouver, et à nettoyer. */
+const SUBJECT = `M10 bench ${PAYLOAD_BYTES}`
 if (SMALL_ANNOUNCED <= RESERVE_BYTES) harness('the small announcement must stay above the envelope reserve')
 
 const failures = []
@@ -131,7 +136,8 @@ const setAnnounced = (id, value) =>
   db.query('UPDATE email_accounts SET smtp_max_size = $1 WHERE id = $2', [value, id])
 
 const rows = (await db.query(
-  `SELECT a.id, a.email, a.smtp_host, a.smtp_port, a.smtp_secure, a.smtp_max_size
+  `SELECT a.id, a.email, a.username, a.smtp_host, a.smtp_port, a.smtp_secure,
+          a.imap_host, a.imap_port, a.imap_secure, a.smtp_max_size
      FROM email_accounts a JOIN users u ON u.id = a.user_id
     WHERE u.email = $1 ORDER BY a.created_at`, [EMAIL])).rows
 const subject = rows.find(r => r.smtp_max_size !== null)
@@ -141,7 +147,6 @@ if (!spare) harness('the test user needs a second mailbox to hold the reference 
 
 // La valeur d'origine de CHAQUE boîte touchée, pour la remettre quoi qu'il arrive.
 const original = new Map([[subject.id, subject.smtp_max_size], [spare.id, spare.smtp_max_size]])
-let sentUid = null
 
 try {
   // ── BRAS 0 — la valeur enregistrée = ce que le serveur dit MAINTENANT ──
@@ -175,7 +180,7 @@ try {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      accountId, to, subject: `M10 bench ${PAYLOAD_BYTES}`,
+      accountId, to, subject: SUBJECT,
       text: 'banc M10 — message de mesure, supprimé après', html: '<p>banc M10</p>',
       attachments: [{ filename: 'm10.bin', content: payload, contentType: 'application/octet-stream' }],
       ...extra,
@@ -215,36 +220,71 @@ try {
     bodyA.warning === 'recipient_may_refuse_size' && bodyA.bytes === PAYLOAD_BYTES,
     `warning=${bodyA.warning} bytes=${bodyA.bytes} seuil=${WARNING_BYTES}`)
 
-  // ── Relecture IMAP par le produit lui-même, puis nettoyage ──
+  // ── Relecture IMAP, puis nettoyage ──
+  // La relecture passe par IMAP et non par la liste paginée de l'API : un
+  // message de 30 Mo n'apparaît pas forcément en page 1 dans la minute, et
+  // « absent de la page 1 » dirait « perdu » alors qu'il est bien arrivé
+  // (mesuré : trois messages introuvables par la liste, retrouvés par
+  // `search({subject})` dans la MÊME boîte).
   if (armA.status === 200) {
-    // 21 Mio ne se posent pas dans la boîte en cinq secondes : la fenêtre doit
-    // être large, sinon « introuvable » dirait « perdu » alors qu'il arrive.
-    let found = null
-    for (let attempt = 0; attempt < 40 && !found; attempt++) {
-      await new Promise(r => setTimeout(r, 5000))
-      const listRes = await api(`/api/messages?accountId=${subject.id}&folder=INBOX&page=1&perPage=20`)
-      if (!listRes.ok) continue
-      const list = (await listRes.json()).data ?? []
-      found = list.find(m => m.subject === `M10 bench ${PAYLOAD_BYTES}`) ?? null
-    }
-    check('le message est bien ARRIVÉ dans la boîte, relu par IMAP', Boolean(found),
-      found ? `uid=${found.uid} sujet="${found.subject}" pièces=${found.hasAttachments}` : 'introuvable après 200 s')
-    if (found) {
-      sentUid = found.uid
-      const fullRes = await api(`/api/messages/${found.uid}?accountId=${subject.id}&folder=INBOX`)
-      const full = fullRes.ok ? (await fullRes.json()).data : null
-      const att = full?.attachments?.find(a => a.filename === 'm10.bin')
-      check('la pièce de 21 Mio est arrivée ENTIÈRE, au bon nom',
-        Boolean(att) && Math.abs(att.size - PAYLOAD_BYTES) <= PAYLOAD_BYTES * 0.01,
-        att ? `nom="${att.filename}" taille reçue=${att.size} envoyée=${PAYLOAD_BYTES}` : `pièces=${JSON.stringify(full?.attachments?.map(a => a.filename) ?? [])}`)
-    }
+    const creds = (await db.query('SELECT username, password_encrypted, imap_host, imap_port, imap_secure FROM email_accounts WHERE id = $1', [subject.id])).rows[0]
+    const imap = new ImapFlow({
+      host: creds.imap_host, port: creds.imap_port, secure: creds.imap_secure,
+      auth: { user: creds.username, pass: decrypt(creds.password_encrypted) },
+      logger: false, tls: { rejectUnauthorized: false },
+    })
+    await imap.connect()
+    try {
+      let seen = null
+      for (let attempt = 0; attempt < 40 && !seen; attempt++) {
+        await new Promise(r => setTimeout(r, 5000))
+        const lock = await imap.getMailboxLock('INBOX')
+        try {
+          const uids = await imap.search({ subject: SUBJECT }, { uid: true })
+          if (uids?.length) {
+            const uid = uids[uids.length - 1]
+            const msg = await imap.fetchOne(String(uid), { envelope: true, bodyStructure: true, size: true }, { uid: true })
+            const parts = []
+            ;(function walk(node) {
+              if (!node) return
+              const name = node.dispositionParameters?.filename ?? node.parameters?.name
+              if (name) parts.push({ name, size: node.size })
+              ;(node.childNodes ?? []).forEach(walk)
+            })(msg.bodyStructure)
+            seen = { uid, subject: msg.envelope.subject, parts }
+          }
+        } finally { lock.release() }
+      }
+      check('le message est bien ARRIVÉ dans la boîte, relu par IMAP', Boolean(seen),
+        seen ? `uid=${seen.uid} sujet="${seen.subject}"` : 'introuvable après 200 s')
+      if (seen) {
+        const att = seen.parts.find(a => a.name === 'm10.bin')
+        // La taille lue est celle du base64 SUR LE FIL : elle doit valoir ce que
+        // `wireBytes` prédit pour la charge envoyée, à la tolérance des en-têtes
+        // de partie près. C'est la vérification que rien n'a été tronqué.
+        const expectedWire = wireBytes(PAYLOAD_BYTES)
+        check('la pièce est arrivée ENTIÈRE, au bon nom, à la taille attendue sur le fil',
+          Boolean(att) && Math.abs(att.size - expectedWire) <= expectedWire * 0.01,
+          att ? `nom="${att.name}" taille sur le fil=${att.size} attendue=${expectedWire} (décodé=${PAYLOAD_BYTES})`
+              : `pièces=${JSON.stringify(seen.parts.map(a => a.name))}`)
+      }
+    } finally { await imap.logout() }
   }
 
   // ── BRAS D — une valeur fausse se CORRIGE au prochain essai de connexion ──
   await setAnnounced(subject.id, SMALL_ANNOUNCED)
+  // La route de test exige la fiche de connexion, pas seulement l'identifiant :
+  // `accountId` seul rend 400 « Missing fields » (mesuré). Le mot de passe n'est
+  // PAS envoyé — c'est justement la décision `STORED` qu'on veut emprunter, celle
+  // qui déchiffre le mot de passe enregistré vers les hôtes ENREGISTRÉS.
   const testRes = await api('/api/accounts/test', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ accountId: subject.id }),
+    body: JSON.stringify({
+      accountId: subject.id,
+      imapHost: subject.imap_host, imapPort: subject.imap_port, imapSecure: subject.imap_secure,
+      smtpHost: subject.smtp_host, smtpPort: subject.smtp_port, smtpSecure: subject.smtp_secure,
+      username: subject.username,
+    }),
   })
   const afterTest = Number(await announcedOf(subject.id))
   check('un essai de connexion RELIT l’annonce et corrige la valeur enregistrée',
@@ -252,10 +292,33 @@ try {
     `test=${testRes.status} valeur posée=${SMALL_ANNOUNCED} → relue=${afterTest} (annonce vivante=${live})`)
 } finally {
   for (const [id, value] of original) await setAnnounced(id, value)
-  if (sentUid !== null) {
-    const del = await api(`/api/messages/${sentUid}?accountId=${subject.id}&folder=INBOX`, { method: 'DELETE' })
-    console.log(`  cleanup: message de mesure uid=${sentUid} supprimé (status ${del.status})`)
+  // Nettoyage par SUJET, pas par uid : si le banc est mort avant d'avoir relu
+  // son message, l'uid est inconnu mais le message, lui, est bien là — un
+  // nettoyage indexé sur l'uid laisserait des messages de mesure de 30 Mo dans
+  // une VRAIE boîte (mesuré : trois, laissés par trois passages interrompus).
+  const creds = (await db.query('SELECT username, password_encrypted, imap_host, imap_port, imap_secure FROM email_accounts WHERE id = $1', [subject.id])).rows[0]
+  const imap = new ImapFlow({
+    host: creds.imap_host, port: creds.imap_port, secure: creds.imap_secure,
+    auth: { user: creds.username, pass: decrypt(creds.password_encrypted) },
+    logger: false, tls: { rejectUnauthorized: false },
+  })
+  try {
+    await imap.connect()
+    for (const box of await imap.list()) {
+      const lock = await imap.getMailboxLock(box.path)
+      try {
+        const uids = await imap.search({ subject: SUBJECT }, { uid: true })
+        if (uids?.length) {
+          await imap.messageDelete(uids.map(String).join(','), { uid: true })
+          console.log(`  cleanup: ${uids.length} message(s) de mesure supprimé(s) dans ${box.path}`)
+        }
+      } catch {} finally { lock.release() }
+    }
+    await imap.logout()
+  } catch (e) {
+    console.log(`  cleanup: échec du nettoyage IMAP — ${e.message} (À SUPPRIMER À LA MAIN : sujet "${SUBJECT}")`)
   }
+  await db.query('DELETE FROM messages_cache WHERE subject = $1', [SUBJECT])
   await db.end()
 }
 
