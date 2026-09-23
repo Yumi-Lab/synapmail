@@ -135,6 +135,12 @@ export async function initDb(): Promise<void> {
   // Couleur de badge choisie par l'utilisateur. NULL = couleur automatique par rang :
   // aucune boîte existante ne change d'apparence à la mise à jour.
   await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS badge_color VARCHAR(7)`)
+  // Taille maximale d'un message ANNONCÉE par le serveur SMTP dans sa réponse EHLO
+  // (`250 SIZE <octets>`), lue par lib/accountProbe.ts au moment où la connexion est
+  // essayée. NULL = le serveur n'a rien annoncé, ou n'a pas encore été essayé : l'envoi
+  // retombe alors sur le plafond prudent de lib/attachments.ts. BIGINT car la valeur est
+  // un nombre d'octets (IONOS annonce 141557760).
+  await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS smtp_max_size BIGINT`)
 
   await query(`
     CREATE TABLE IF NOT EXISTS contacts (
