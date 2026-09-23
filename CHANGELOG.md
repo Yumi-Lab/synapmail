@@ -38,6 +38,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - L'administration et la gestion des clés restent fermées au Bearer : une clé ne peut ni se donner des
   droits, ni en fabriquer d'autres.
 
+### Fixed
+- **L'écran d'acceptation d'une invitation** (`app/(auth)/invite/[token]/InviteAcceptClient.tsx`) montrait
+  deux champs mot de passe BRUTS, sans l'œil afficher/masquer des onze autres formulaires. Ce n'était pas
+  un oubli : le fichier est arrivé par une reprise amont APRÈS la livraison du composant partagé, et
+  personne ne rejoue un critère déjà coché. C'est le critère MÉCANIQUE de cette livraison
+  (`grep -rn 'type="password"' app components` ne doit rien renvoyer) qui l'a rattrapé — un critère
+  exécutable attrape ce qu'une case cochée laisse passer. Les deux champs utilisent désormais
+  `components/ui/PasswordInput.tsx`, sans changement de comportement par ailleurs.
+- **Réserve non corrigée, dite plutôt que tue** : rien dans `verify.sh` n'exécute ce grep aujourd'hui. Une
+  prochaine reprise amont peut refaire exactement la même régression, et seul un contrôle de dérive dans
+  le harnais l'empêcherait.
+
 ---
 
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — pièces jointes par l'API — 2026-09-23
