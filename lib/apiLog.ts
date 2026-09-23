@@ -23,7 +23,7 @@
 import { query } from './db'
 
 /** Pourquoi une requête a été refusée, dans le vocabulaire de la barrière elle-même. */
-export type DenialReason = 'unauthenticated' | 'scope' | 'account' | 'ip'
+export type DenialReason = 'unauthenticated' | 'scope' | 'account' | 'share' | 'ip'
 
 /** L'état d'une ligne en cours, le temps que la requête se déroule. */
 type PendingLog = {

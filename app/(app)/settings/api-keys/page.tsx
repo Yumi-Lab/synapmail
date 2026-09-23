@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import useSWR from 'swr'
 import { useTranslations } from 'next-intl'
-import { Plus, Trash2, Terminal, Copy, Check, TriangleAlert, ChevronDown, Activity, BookOpen, KeyRound, Eye, Globe } from 'lucide-react'
+import { Plus, Trash2, Terminal, Copy, Check, TriangleAlert, ChevronDown, Activity, BookOpen, KeyRound, Eye, Globe, Share2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/PasswordInput'
@@ -138,6 +138,13 @@ function RevealPanel({ apiKey, onRevealed }: { apiKey: ScopedApiKey; onRevealed:
  * `/api/accounts`, donc une boîte garde ici la couleur qu'elle a partout ailleurs.
  * Une boîte connectée PAR la clé lui appartient : cochée, verrouillée, et dite
  * telle — la décocher n'aurait aucun effet, mieux vaut ne pas le laisser croire.
+ *
+ * La liste est celle des boîtes ACCESSIBLES (`/api/accounts` : les siennes ET
+ * celles reçues en partage), pas seulement les possédées : quelqu'un qui n'a que
+ * des partages doit pouvoir accorder une boîte à sa clé. Chaque ligne DIT donc
+ * d'où elle vient, avec la MÊME marque que le sélecteur de comptes
+ * (`data-account-shared-mark`), et rappelle que sur une boîte partagée la clé ne
+ * dépasse pas ce que le partage autorise.
  */
 function AccountPicker({
   accounts, value, owned = [], onChange,
@@ -157,6 +164,7 @@ function AccountPicker({
     <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
       {accounts.map((account, rank) => {
         const isOwned = owned.includes(account.id)
+        const shared = !isOwned && account.isShared
         return (
           <label
             key={account.id}
@@ -174,9 +182,18 @@ function AccountPicker({
             />
             <AccountAvatar account={account} colorIndex={rank} size="sm" />
             <span className="min-w-0">
-              <span className="block truncate text-sm leading-tight">{account.name || account.email}</span>
+              <span className="flex items-center gap-1.5">
+                <span className="truncate text-sm leading-tight">{account.name || account.email}</span>
+                {shared && (
+                  <Share2 data-account-shared-mark className="w-3 h-3 shrink-0 text-muted-foreground" />
+                )}
+              </span>
               <span className="block truncate text-[11px] text-muted-foreground">
-                {isOwned ? 'Connectée par cette clé' : account.email}
+                {isOwned
+                  ? 'Connectée par cette clé'
+                  : shared
+                    ? `${account.email} — partagée par ${account.ownerName || 'un autre compte'}, la clé n'y dépasse pas le partage`
+                    : account.email}
               </span>
             </span>
           </label>
@@ -237,6 +254,9 @@ function denialLabel(log: ApiKeyRequestLog): string | null {
     return scope && scope in API_SCOPES ? `Autorisation manquante : ${API_SCOPES[scope]}` : 'Autorisation manquante'
   }
   if (log.denialReason === 'account') return 'Boîte non autorisée'
+  // Le partage donne bien accès à la boîte, mais pas à ce geste-là : dire « boîte non
+  // autorisée » enverrait le propriétaire cocher une boîte déjà cochée.
+  if (log.denialReason === 'share') return 'Partage insuffisant pour cette action'
   return 'Clé non reconnue'
 }
 
@@ -275,7 +295,9 @@ function ActivityRow({ log, accounts }: { log: ApiKeyRequestLog; accounts: Email
       {denial && (
         <span className="w-full text-[11px] text-red-700 dark:text-red-400">
           {denial}
-          {log.denialReason === 'account' && account ? ` — ${account.name || account.email}` : ''}
+          {(log.denialReason === 'account' || log.denialReason === 'share') && account
+            ? ` — ${account.name || account.email}`
+            : ''}
         </span>
       )}
     </div>

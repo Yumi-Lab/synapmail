@@ -18,6 +18,7 @@
  */
 
 import { query } from './db'
+import { ACCESSIBLE_ACCOUNT_IDS } from './accountAccess'
 
 /**
  * Les noms sous lesquels une requête peut désigner une boîte. C'est l'inventaire
@@ -151,9 +152,17 @@ export async function keyAccountIds(apiKeyId: string): Promise<Set<string>> {
  * `undefined` = l'appelant ne parle pas des boîtes : on ne touche à rien. Une liste,
  * même VIDE, remplace — c'est ainsi qu'on retire la dernière boîte d'une clé.
  *
- * Seules les boîtes de `userId` sont retenues : une liste d'identifiants venue du
- * client ne peut pas cocher la boîte de quelqu'un d'autre. Les boîtes que la clé a
- * CONNECTÉES ne passent pas par ici — elles lui appartiennent déjà.
+ * Seules les boîtes ACCESSIBLES à `userId` sont retenues : une liste d'identifiants
+ * venue du client ne peut pas cocher la boîte de quelqu'un d'autre. « Accessible »,
+ * c'est `ACCESSIBLE_ACCOUNT_IDS` — les siennes ET celles reçues en partage actif,
+ * la règle déjà consolidée au lot S6. Filtrer sur la seule PROPRIÉTÉ, comme ici
+ * avant le lot P16, laissait quelqu'un qui n'a QUE des partages sans aucune boîte à
+ * cocher : sa clé naissait inutilisable.
+ *
+ * Cocher n'accorde pas pour autant un pouvoir que le partage n'a pas : ce qu'une clé
+ * peut FAIRE d'une boîte partagée reste borné, à chaque appel, par les permissions du
+ * partage (`lib/apiAuth.ts`). Cette liste dit QUELLES boîtes, jamais QUOI en faire.
+ * Les boîtes que la clé a CONNECTÉES ne passent pas par ici — elles lui appartiennent déjà.
  */
 export async function grantAccounts(
   apiKeyId: string,
@@ -163,11 +172,12 @@ export async function grantAccounts(
   if (accountIds === undefined) return undefined
   const wanted = Array.isArray(accountIds) ? accountIds.filter((v): v is string => typeof v === 'string') : []
 
-  const owned = await query<{ id: string }>(
-    'SELECT id FROM email_accounts WHERE user_id = $1 AND id = ANY($2::uuid[])',
+  const reachable = await query<{ id: string }>(
+    `SELECT a.id FROM email_accounts a
+      WHERE a.id IN ${ACCESSIBLE_ACCOUNT_IDS} AND a.id = ANY($2::uuid[])`,
     [userId, wanted]
   )
-  const granted = owned.map(r => r.id)
+  const granted = reachable.map(r => r.id)
 
   await query('DELETE FROM api_key_accounts WHERE api_key_id = $1 AND NOT (account_id = ANY($2::uuid[]))', [apiKeyId, granted])
   if (granted.length) {
