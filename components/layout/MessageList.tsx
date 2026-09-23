@@ -6,6 +6,7 @@ import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
 import { MAIL_ORIGIN_ATTR, groupByOrigin, groupsToMove, originKey, type MessageOrigin } from '@/lib/mailOrigin'
 import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } from '@/lib/flags'
+import { unreadRefresh, unreadShift } from '@/lib/unreadSignal'
 import {
   explorerSelect, gestureOf, isAllSelected, selectAll,
   type ExplorerGesture, type ExplorerSelection,
@@ -384,6 +385,14 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     if (!data?.messages) return
     if (page === 1) {
       setAccumulated(data.messages)
+      // Le compteur monte APRÈS ce listage, pas en même temps. C'est lui qui
+      // réécrit le nombre autoritatif (SEARCH UNSEEN, `mailbox_stats`), et il
+      // dure le temps d'un aller-retour IMAP : demander les comptes en parallèle
+      // — ce que faisait l'annonce du flux — relisait donc l'ANCIENNE valeur,
+      // `/api/accounts` étant une simple lecture SQL, bien plus rapide. Aucun
+      // sondage de plus : on se branche sur la relecture que la liste fait déjà,
+      // que ce soit l'annonce IMAP IDLE ou son intervalle.
+      unreadRefresh()
     } else {
       setAccumulated(prev => {
         const existingUids = new Set(prev.map(m => m.uid))
@@ -582,6 +591,15 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const markReadUids = async (origins: MessageOrigin[], read: boolean) => {
     if (!origins.length) return
     const uids = uidsOf(origins)
+    // Le badge descend sur le clic, pas à la relecture suivante. On ne décale
+    // que les lignes qui CHANGENT d'état — l'état LU À L'ÉCRAN, `readUids`
+    // compris — sinon remarquer « lu » un message déjà lu ferait baisser le
+    // compteur une seconde fois. Voir lib/unreadSignal.ts.
+    const shown = new Map(accumulated.map(m => [originKey(originOf(m)), m]))
+    unreadShift(origins.filter(o => {
+      const msg = shown.get(originKey(o))
+      return msg ? (msg.isRead || readUids.has(msg.uid)) === !read : false
+    }), read)
     await bulkByOrigin(origins, g => ({ ...g, action: read ? 'read' : 'unread' }))
     setAccumulated(prev => prev.map(m => uids.has(m.uid) ? { ...m, isRead: read } : m))
     setReadUids(prev => {
@@ -854,6 +872,12 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     thread.messages.forEach(msg => {
       if (!msg.isRead && !readUids.has(msg.uid)) {
         setReadUids(prev => new Set(prev).add(msg.uid))
+        // La ligne se grise ICI, sur le clic : le compteur descend au même
+        // instant. L'écriture, elle, part du volet de lecture quand le message
+        // est chargé — attendre cet aller-retour IMAP pour bouger le badge le
+        // faisait arriver une seconde trop tard (mesuré : 1029 ms pour 1000).
+        // Le volet décale la même origine ; `unreadShift` ne compte qu'une fois.
+        unreadShift([originOf(msg)], true)
       }
     })
     if (thread.count === 1) {

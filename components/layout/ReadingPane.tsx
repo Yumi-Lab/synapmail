@@ -15,6 +15,7 @@ import { PgpDecryptPrompt } from '@/components/mail/PgpDecryptPrompt'
 import type { EmailAccount } from '@/types/account'
 import { useMailSelection } from '@/lib/mailSelection'
 import { messageHref, originOfMessage } from '@/lib/mailOrigin'
+import { unreadRefresh, unreadShift } from '@/lib/unreadSignal'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { FlagPicker } from '@/components/mail/FlagPicker'
 import { ThinScroll } from './ThinScroll'
@@ -840,11 +841,17 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
       // Marquer « lu » vise le message CHARGÉ, par son origine : c'est celle-là
       // qui est juste, même si la liste a changé de dossier entre-temps.
       if (!message.isRead && perms.canOrganize) {
-        fetch(messageHref(originOfMessage(message)), {
+        const origin = originOfMessage(message)
+        // La LISTE a déjà décalé le compteur sur le clic ; `unreadShift` ne
+        // compte qu'une fois par message, donc ce second appel ne double rien.
+        // Il couvre les ouvertures qui ne passent PAS par la liste : clic sur
+        // une notification, « à traiter » du volet vide. Voir lib/unreadSignal.ts.
+        unreadShift([origin], true)
+        fetch(messageHref(origin), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ isRead: true }),
-        })
+        }).then(res => { if (!res.ok) unreadRefresh() })
       }
     }
   }, [message?.uid]) // eslint-disable-line react-hooks/exhaustive-deps

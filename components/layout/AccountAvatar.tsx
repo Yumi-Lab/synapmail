@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { accountColor, readableInk } from '@/lib/accountColor'
 import type { ColorableAccount } from '@/lib/accountColor'
 import type { EmailAccount } from '@/types/account'
+import { ACCOUNTS_KEY } from '@/lib/unreadSignal'
 
 export { accountColor, readableInk } from '@/lib/accountColor'
 
@@ -82,7 +83,7 @@ const fetchJson = (url: string) => fetch(url).then(r => r.json())
 export function useAccountAccent() {
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null)
   const { data: accountsData } = useSWR<{ data: EmailAccount[] }>(
-    '/api/accounts', fetchJson, { revalidateOnFocus: true, refreshInterval: 60000 },
+    ACCOUNTS_KEY, fetchJson, { revalidateOnFocus: true, refreshInterval: 60000 },
   )
   const { data: settingsData } = useSWR<{ data: { active_account_id: string | null } }>('/api/settings', fetchJson)
 

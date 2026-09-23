@@ -20,7 +20,7 @@ import { ContextMenuSurface, type ContextMenuAnchor } from '@/components/ui/Cont
 import { accountColor } from '@/lib/accountColor'
 import {
   cardSpan, isDefaultCardOrder, moveCard, normalizeCardOrder, shiftCard,
-  type DashboardCardId,
+  DASHBOARD_CARD_MIME, type DashboardCardId,
 } from '@/lib/dashboardOrder'
 import type { DashboardData, DashboardAccount, FocusReason, ActivityPoint } from '@/types/dashboard'
 
@@ -93,12 +93,10 @@ function Skeleton() {
  * avec les flèches, parce qu'un déplacement réservé à la souris n'en est pas un.
  */
 function CardHandle({
-  label, hint, onArm, onDisarm, onShift,
+  label, hint, onShift,
 }: {
   label: string
   hint: string
-  onArm: () => void
-  onDisarm: () => void
   onShift: (delta: number) => void
 }) {
   return (
@@ -106,9 +104,6 @@ function CardHandle({
       type="button"
       aria-label={label}
       title={`${label} — ${hint}`}
-      onMouseDown={onArm}
-      onMouseUp={onDisarm}
-      onBlur={onDisarm}
       onKeyDown={e => {
         const delta = e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1
           : e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : 0
@@ -139,9 +134,9 @@ function Card({
   draggable?: boolean
   dragging?: boolean
   dropTarget?: boolean
-  onDragStart?: () => void
+  onDragStart?: (e: React.DragEvent) => void
   onDragOver?: (e: React.DragEvent) => void
-  onDrop?: () => void
+  onDrop?: (e: React.DragEvent) => void
   onDragEnd?: () => void
 }) {
   return (
@@ -451,26 +446,34 @@ export function DashboardClient() {
     cardId: id,
     index: cardOrder.indexOf(id),
     className: cardSpan(id),
-    draggable: draggedCard === id,
+    draggable: true,
     dragging: draggedCard === id,
     dropTarget: dropCard === id && draggedCard !== id,
     handle: (
       <CardHandle
         label={t('cardOrderHandle', { card: t(CARD_LABEL_KEY[id]) })}
         hint={t('cardOrderHint')}
-        onArm={() => setDraggedCard(id)}
-        onDisarm={() => setDraggedCard(c => (c === id ? null : c))}
         onShift={delta => saveCardOrder(shiftCard(cardOrder, id, delta))}
       />
     ),
-    onDragStart: () => setDraggedCard(id),
+    onDragStart: (e: React.DragEvent) => {
+      // L'identité voyage DANS le geste : au survol le navigateur ne laisse lire
+      // que les types, et l'état React n'est pas encore à jour quand le premier
+      // `dragover` arrive.
+      e.dataTransfer.setData(DASHBOARD_CARD_MIME, id)
+      e.dataTransfer.effectAllowed = 'move'
+      setDraggedCard(id)
+    },
     onDragOver: (e: React.DragEvent) => {
-      if (!draggedCard || draggedCard === id) return
+      if (!e.dataTransfer.types.includes(DASHBOARD_CARD_MIME)) return
       e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
       setDropCard(id)
     },
-    onDrop: () => {
-      if (draggedCard && draggedCard !== id) saveCardOrder(moveCard(cardOrder, draggedCard, id))
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault()
+      const from = e.dataTransfer.getData(DASHBOARD_CARD_MIME) as DashboardCardId
+      if (from && from !== id) saveCardOrder(moveCard(cardOrder, from, id))
       setDraggedCard(null)
       setDropCard(null)
     },

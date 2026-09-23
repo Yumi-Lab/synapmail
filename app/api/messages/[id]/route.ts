@@ -3,6 +3,7 @@ import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { getMessage, deleteMessage, markRead, setFlagBulk } from '@/lib/imap'
+import { applyReadChange } from '@/lib/unreadCount'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import { withApiLog } from '@/lib/apiLog'
 
@@ -87,6 +88,9 @@ async function patchHandler(
 
     if (isRead !== undefined) {
       await markRead(config, folder, params.id, isRead)
+      // Le compteur suit l'action, sinon il reste faux jusqu'au balayage du
+      // planificateur — trois minutes plus tard. Voir lib/unreadCount.ts.
+      await applyReadChange(account.id, folder, [params.id], isRead)
     }
     if (flag !== undefined) {
       if (flag !== null && !flagByKey(flag)) {

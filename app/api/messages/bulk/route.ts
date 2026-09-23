@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { markReadBulk, deleteMessagesBulk, moveMessagesBulk, setFlagBulk } from '@/lib/imap'
+import { applyReadChange } from '@/lib/unreadCount'
 import { flagByKey } from '@/lib/flags'
 import { withApiLog } from '@/lib/apiLog'
 
@@ -56,10 +57,11 @@ async function patchHandler(req: Request) {
 
     const config = accountConfig(account)
 
-    if (action === 'read') {
-      await markReadBulk(config, folder, uids, true)
-    } else if (action === 'unread') {
-      await markReadBulk(config, folder, uids, false)
+    if (action === 'read' || action === 'unread') {
+      const read = action === 'read'
+      await markReadBulk(config, folder, uids, read)
+      // Même règle que pour un message seul : le compteur bouge avec l'action.
+      await applyReadChange(account.id, folder, uids, read)
     } else if (action === 'flag') {
       if (flag === undefined) return NextResponse.json({ error: 'flag required for flag' }, { status: 400 })
       if (flag !== null && !flagByKey(flag)) return NextResponse.json({ error: 'Unknown flag' }, { status: 400 })
