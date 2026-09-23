@@ -73,6 +73,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   plaint jamais et jette ce qu'il ne sait pas lire. Un `filename` est nettoyé et ne désigne JAMAIS un
   chemin (séparateurs, caractères de contrôle et `..` retirés, longueur bornée à 100) ; un `contentType`
   absent ou farfelu retombe sur `application/octet-stream`.
+- **Le plafond vient du SERVEUR, plus d'un chiffre écrit en dur** (`lib/smtpSize.ts`, nouveau) — la
+  poignée de main que l'essai de connexion faisait DÉJÀ lit au passage le `250 SIZE <octets>` de la
+  réponse EHLO et l'enregistre sur la boîte (`email_accounts.smtp_max_size`), à la création comme à
+  chaque essai. `smtp.ionos.fr` annonce `250 SIZE 141557760` (135 Mo) là où nous plafonnions à 17 Mio :
+  nous refusions des envois que le serveur acceptait. Le nombre annoncé se traduit en plafond utilisable
+  en retirant le coût du base64 (4 caractères pour 3 octets, plus un CRLF tous les 76) et une réserve
+  d'un Mio pour les en-têtes. Quand le serveur n'annonce RIEN, le plafond prudent reprend la main et le
+  refus le DIT (`limitSource: fallback`, `announcedSize: null`) : personne ne prend notre prudence pour
+  une limite du serveur.
+- **Un refus de taille du serveur met la valeur à jour tout seul** — un serveur qui BAISSE sa limite
+  refuserait sinon chaque envoi pour toujours, puisque nous continuerions à lui opposer le chiffre du jour
+  de la création. Un refus de TAILLE (`523`/`552`, ou nodemailer qui décline avant d'écrire sur le fil),
+  et lui seul, fait re-annoncer sa taille au serveur et l'enregistre ; un mot de passe faux ou un serveur
+  injoignable ne réécrit RIEN, et une relecture infructueuse n'efface pas un plafond valable. La réponse
+  `413 server_refused_size` porte la phrase du serveur telle quelle, jamais une reformulation. Aucun
+  réessai automatique : le message n'a pas maigri, et le serveur peut avoir refusé APRÈS avoir accepté
+  l'enveloppe — renvoyer livrerait deux fois. C'est l'envoi SUIVANT qui part avec le plafond corrigé.
+- **Avertissement, pas blocage, au-delà de 20 Mo** — la limite du serveur d'ENVOI n'est pas celle du
+  DESTINATAIRE (IONOS accepte 135 Mo, Gmail refuse au-delà de 25 Mo, Outlook autour de 20). Le message
+  part et la réponse porte `warning: recipient_may_refuse_size` : un envoi de 100 Mo partirait puis
+  reviendrait en rebond. Le seuil vit à UN seul endroit, pour se changer en une ligne.
 - `docs/API.md` et `docs/openapi.json` décrivent le corps, les trois plafonds chiffrés et les cinq codes
   de refus — le contrôle de dérive de la documentation l'exige.
 
@@ -84,6 +105,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   route ALIMENTE le tableau existant au lieu d'ouvrir un second chemin vers `sendMail`. Quatre contrôles
   NÉGATIFS (`--break=path|base64|total|wiring`) abîment une attente et EXIGENT l'échec : une batterie qui
   ne peut pas échouer ne prouve rien. Branché sur `verify.sh`.
+- `scripts/check-smtp-size.mjs` — contrôle PUR de `lib/smtpSize.ts` : le plafond déduit de l'annonce tient
+  une fois la pièce ré-encodée (sinon le message serait transmis EN ENTIER puis refusé), un groupe base64
+  de plus le dépasse, 11 annonces inexploitables retombent sur le plafond prudent, une pièce refusée sous
+  l'ancien plafond passe sous celui du serveur, trois formes réelles de refus de taille sont reconnues et
+  neuf autres échecs laissés tranquilles, et la raison remontée est la phrase du serveur. Six contrôles
+  NÉGATIFS (`--break=wire|fallback|warning|wiring|refusal|reread`). Branché sur `verify.sh`.
 
 ---
 

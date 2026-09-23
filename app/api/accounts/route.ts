@@ -146,20 +146,25 @@ async function postHandler(req: Request) {
     // la modifier et la supprimer sans qu'on ait rien à cocher — c'est l'intérêt du
     // modèle, un agent gère ses propres boîtes sans toucher à celles de Nicolas. Une
     // boîte créée en session humaine n'appartient à aucune clé (`null`).
+    // La taille annoncée par le serveur est enregistrée DÈS la création : elle est
+    // sortie gratuitement de l'essai de connexion ci-dessus (lot M10). `null` si la
+    // boîte a été enregistrée sans essai, ou si le serveur n'annonce rien — l'envoi
+    // retombe alors sur le plafond prudent.
     const result = await query(
       `INSERT INTO email_accounts
         (user_id, name, email, imap_host, imap_port, imap_secure,
          smtp_host, smtp_port, smtp_secure, username, password_encrypted, is_default,
-         created_by_api_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         created_by_api_key, smtp_max_size)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING id, name, email, imap_host, imap_port, imap_secure,
-                 smtp_host, smtp_port, smtp_secure, username, is_default, created_at`,
+                 smtp_host, smtp_port, smtp_secure, username, is_default, created_at,
+                 smtp_max_size`,
       [
         userId, name, email,
         imapHost, connection.imapPort, connection.imapSecure,
         smtpHost, connection.smtpPort, connection.smtpSecure,
         username, passwordEncrypted, isDefault,
-        access.ctx.apiKeyId,
+        access.ctx.apiKeyId, verified?.smtp.maxSize ?? null,
       ]
     )
 

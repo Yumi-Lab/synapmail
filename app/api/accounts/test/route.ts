@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
 import { getAccountById } from '@/lib/accounts'
+import { query } from '@/lib/db'
 import { decrypt } from '@/lib/encrypt'
 import {
   TEST_DECISION,
@@ -75,6 +76,21 @@ async function postHandler(req: Request) {
 
     // Une seule implémentation de l'essai, partagée avec l'ajout d'une boîte.
     const { imap, smtp } = await probeConnection(connection, pass)
+
+    // Le serveur vient de réannoncer sa taille maximale (lot M10) : on la retient sur
+    // la boîte essayée. Un serveur qui CHANGE sa limite est ainsi suivi sans que
+    // personne ait à ressaisir quoi que ce soit — c'est le seul moment où nous
+    // l'entendons en dehors de la création. Seule la décision `STORED` l'écrit : elle
+    // est la seule qui garantisse que l'essai visait le serveur ENREGISTRÉ de cette
+    // boîte (`targetsSavedServer`). Un formulaire qui vise un autre hôte ne doit pas
+    // pouvoir remplacer le plafond d'une boîte par celui d'un serveur qu'il a choisi.
+    if (accountId && smtp.ok && decision === TEST_DECISION.STORED) {
+      await query('UPDATE email_accounts SET smtp_max_size = $1 WHERE id = $2 AND user_id = $3', [
+        smtp.maxSize,
+        accountId,
+        userId,
+      ])
+    }
 
     return NextResponse.json({ tested: decision, imap, smtp })
   } catch (err) {

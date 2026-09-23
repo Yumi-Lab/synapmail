@@ -11,13 +11,38 @@ import {
   parseForwardedMessages,
   resolveForwardOrigin,
 } from '@/lib/forward'
-import { checkTotalSize, parseAttachments, type OutgoingAttachment } from '@/lib/attachments'
+import {
+  MESSAGE_MAX_TOTAL_BYTES,
+  checkTotalSize,
+  parseAttachments,
+  type OutgoingAttachment,
+} from '@/lib/attachments'
+import {
+  SEND_REFUSED_BY_SERVER,
+  SEND_WARNING,
+  exceedsRecipientWarning,
+  isSizeRefusal,
+  resolveSendCeiling,
+  sizeRefusalReason,
+} from '@/lib/smtpSize'
+import { relearnAnnouncedSize } from '@/lib/accountProbe'
 import { upsertContactsFromAddresses } from '@/lib/contacts'
 import { randomUUID } from 'crypto'
 import { appOrigin } from '@/lib/appOrigin'
 import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * D'où sort le plafond qu'on vient d'opposer à l'appelant. Sans cela, « 17 Mio
+ * maximum » se lit comme une limite du serveur alors que c'est notre repli
+ * quand il n'a rien annoncé — et personne ne sait s'il faut réduire la pièce ou
+ * réessayer la connexion de la boîte.
+ */
+const ceilingOrigin = (ceiling: ReturnType<typeof resolveSendCeiling>) => ({
+  limitSource: ceiling.source,
+  announcedSize: ceiling.announced,
+})
 
 function injectTrackingPixel(html: string, pixelUrl: string): string {
   const pixel = `<img src="${pixelUrl}" width="1" height="1" style="display:none;border:0;width:1px;height:1px;" alt="" />`
@@ -130,54 +155,104 @@ async function postHandler(req: Request) {
       }))
     }
 
+    // Le plafond vient du SERVEUR (lot M10) : c'est la taille qu'il a annoncée à
+    // la dernière connexion, enregistrée sur la boîte. Rien n'est écrit en dur —
+    // quand il n'a rien annoncé, `resolveSendCeiling` rend le plafond prudent et
+    // le DIT, pour que le refus n'ait pas l'air d'une limite du serveur.
+    const ceiling = resolveSendCeiling(account.smtp_max_size, MESSAGE_MAX_TOTAL_BYTES)
+
     // Fichiers joints par l'appelant. Ils rejoignent le MÊME tableau que les
     // messages transférés — un seul chemin jusqu'à `sendMail`, donc un seul
     // plafond de taille à tenir, celui du message entier.
     if (requestedAttachments !== undefined) {
-      const parsed = parseAttachments(requestedAttachments)
+      const parsed = parseAttachments(requestedAttachments, ceiling.limit)
       if (!parsed.ok) {
         return NextResponse.json(
-          { error: parsed.code, limit: parsed.limit, filename: parsed.detail },
+          {
+            error: parsed.code,
+            limit: parsed.limit,
+            filename: parsed.detail,
+            ...(parsed.limit === undefined ? {} : ceilingOrigin(ceiling)),
+          },
           { status: parsed.status }
         )
       }
       attachments = [...(attachments ?? []), ...parsed.value]
     }
 
+    // Avertissement, PAS blocage : la limite du serveur d'ENVOI n'est pas celle du
+    // DESTINATAIRE. Le message part, et l'appelant repart en sachant qu'il peut
+    // revenir en rebond.
+    let warning: { warning: string; bytes: number } | undefined
     if (attachments?.length) {
-      const total = checkTotalSize(attachments)
+      const total = checkTotalSize(attachments, ceiling.limit)
       if (!total.ok) {
-        return NextResponse.json({ error: total.code, limit: total.limit }, { status: total.status })
+        return NextResponse.json(
+          { error: total.code, limit: total.limit, ...ceilingOrigin(ceiling) },
+          { status: total.status }
+        )
+      }
+      if (exceedsRecipientWarning(total.value)) {
+        warning = { warning: SEND_WARNING.recipientMayRefuse, bytes: total.value }
       }
     }
 
-    const { messageId, raw } = await sendMail(
-      {
-        id: account.id,
-        smtpHost: account.smtp_host,
-        smtpPort: account.smtp_port,
-        smtpSecure: account.smtp_secure,
-        username: account.username,
-        passwordEncrypted: account.password_encrypted,
-        oauthProvider: account.oauth_provider,
-        oauthAccessToken: account.oauth_access_token,
-        oauthRefreshToken: account.oauth_refresh_token,
-        oauthExpiresAt: account.oauth_expires_at,
-      },
-      {
-        from: account.email,
-        to: toArr,
-        cc: ccArr.length ? ccArr : undefined,
-        bcc: bcc ? (Array.isArray(bcc) ? bcc : [bcc]) : undefined,
-        subject,
-        html: trackedHtml,
-        text,
-        inReplyTo,
-        references,
-        dispositionNotificationTo: requestReadReceipt ? account.email : undefined,
-        attachments,
-      }
-    )
+    let sent: Awaited<ReturnType<typeof sendMail>>
+    try {
+      sent = await sendMail(
+        {
+          id: account.id,
+          smtpHost: account.smtp_host,
+          smtpPort: account.smtp_port,
+          smtpSecure: account.smtp_secure,
+          username: account.username,
+          passwordEncrypted: account.password_encrypted,
+          oauthProvider: account.oauth_provider,
+          oauthAccessToken: account.oauth_access_token,
+          oauthRefreshToken: account.oauth_refresh_token,
+          oauthExpiresAt: account.oauth_expires_at,
+        },
+        {
+          from: account.email,
+          to: toArr,
+          cc: ccArr.length ? ccArr : undefined,
+          bcc: bcc ? (Array.isArray(bcc) ? bcc : [bcc]) : undefined,
+          subject,
+          html: trackedHtml,
+          text,
+          inReplyTo,
+          references,
+          dispositionNotificationTo: requestReadReceipt ? account.email : undefined,
+          attachments,
+        }
+      )
+    } catch (err) {
+      // Un refus de TAILLE, et lui seul, vaut relecture de l'annonce (lot M10,
+      // complement de Nicolas du 23/09/2026 : « en cas d'echec, faire une
+      // actualisation pour mettre a jour si ca change »). Sans cela, un serveur
+      // qui BAISSE sa limite refuserait chaque envoi pour toujours, puisque nous
+      // continuerions a lui opposer le chiffre du jour de la creation. Un mot de
+      // passe faux ou un serveur injoignable ne reecrit RIEN.
+      if (!isSizeRefusal(err)) throw err
+      // Une seule implementation de la relecture, partagee avec la sonde : elle
+      // ne rend un nombre que s'il y a vraiment quelque chose a apprendre, et
+      // n'efface jamais un plafond valable sur un incident reseau.
+      const announced = await relearnAnnouncedSize(account)
+      // Aucun reessai automatique : le serveur peut avoir refuse APRES avoir
+      // accepte l'enveloppe, et renvoyer livrerait deux fois. L'envoi suivant
+      // part avec le plafond corrige — c'est la qu'est l'automatisme.
+      return NextResponse.json(
+        {
+          error: SEND_REFUSED_BY_SERVER,
+          // La phrase du SERVEUR, pas la notre : elle seule dit pourquoi.
+          reason: sizeRefusalReason(err),
+          announcedSize: announced,
+          refreshed: announced !== null && announced !== ceiling.announced,
+        },
+        { status: 413 }
+      )
+    }
+    const { messageId, raw } = sent
 
     // Append to IMAP Sent folder — fire-and-forget
     appendToSentFolder(
@@ -212,7 +287,7 @@ async function postHandler(req: Request) {
       upsertContactsFromAddresses(userId, [...toArr, ...ccArr], 'sent').catch(() => {})
     }
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true, ...warning })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

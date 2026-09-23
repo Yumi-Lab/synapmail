@@ -140,6 +140,12 @@ export async function initDb(): Promise<void> {
   // Défaut « quick » : la traduction depuis le navigateur ne demande ni modèle ni réglage,
   // donc le bouton marche dès l'installation. Se change, ou s'éteint, dans Réglages → IA.
   await query(`ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS translate_mode VARCHAR(20) NOT NULL DEFAULT '${TRANSLATE_MODE_DEFAULT}'`)
+  // Taille maximale d'un message ANNONCÉE par le serveur SMTP dans sa réponse EHLO
+  // (`250 SIZE <octets>`), lue par lib/accountProbe.ts au moment où la connexion est
+  // essayée. NULL = le serveur n'a rien annoncé, ou n'a pas encore été essayé : l'envoi
+  // retombe alors sur le plafond prudent de lib/attachments.ts. BIGINT car la valeur est
+  // un nombre d'octets (IONOS annonce 141557760).
+  await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS smtp_max_size BIGINT`)
 
   await query(`
     CREATE TABLE IF NOT EXISTS contacts (

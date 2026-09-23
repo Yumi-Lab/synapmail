@@ -25,6 +25,13 @@ export interface DbEmailAccount {
   badge_color: string | null
   /** Prompt-injection guard for this mailbox — see lib/promptGuard.ts. */
   prompt_guard: boolean
+  /**
+   * Taille maximale d'un message ANNONCÉE par ce serveur SMTP (`250 SIZE`), lue par
+   * `lib/accountProbe.ts`. `null` = rien annoncé, ou boîte jamais essayée : l'envoi
+   * retombe alors sur le plafond prudent (lot M10, `lib/smtpSize.ts`). Le pilote
+   * Postgres rend un BIGINT en chaîne, d'où `unknown` : `parseAnnouncedSize` le lit.
+   */
+  smtp_max_size: unknown
   created_at: string
 }
 
@@ -100,4 +107,18 @@ export function toImapConfig(a: ImapAccountRow) {
     oauthRefreshToken: a.oauth_refresh_token,
     oauthExpiresAt: a.oauth_expires_at,
   }
+}
+
+/**
+ * Retient sur la boîte la taille que son serveur SMTP vient d'annoncer (lot
+ * M10). Une seule écriture de cette colonne dans tout le dépôt : l'essai de
+ * connexion et la relecture qui suit un refus de taille passent par ici.
+ *
+ * L'APPELANT a déjà prouvé son droit sur la boîte — décision `STORED` de
+ * `lib/accountTest.ts` d'un côté, `getAccessibleAccount` de l'autre. Ce n'est
+ * pas une frontière de confiance : un identifiant de boîte arbitraire ne doit
+ * jamais arriver jusqu'ici.
+ */
+export async function saveAnnouncedSize(accountId: string, size: number | null): Promise<void> {
+  await query('UPDATE email_accounts SET smtp_max_size = $1 WHERE id = $2', [size, accountId])
 }
