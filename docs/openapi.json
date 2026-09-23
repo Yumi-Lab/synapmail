@@ -1009,6 +1009,20 @@
                   "requestReadReceipt": {
                     "type": "boolean",
                     "description": "Embeds a one-pixel tracker in `html` and asks for a disposition notification."
+                  },
+                  "attachments": {
+                    "type": "array",
+                    "description": "Files attached to the message. At most 20, 15728640 decoded bytes each, 17825792 for the whole message (forwarded messages included).",
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "required": ["filename", "content"],
+                      "properties": {
+                        "filename": { "type": "string", "description": "Sanitised server-side: never used as a path, cut to 100 characters." },
+                        "content": { "type": "string", "format": "byte", "description": "The file's bytes in base64. Invalid base64 is refused, never silently truncated." },
+                        "contentType": { "type": "string", "description": "Defaults to application/octet-stream when absent or not a valid MIME type." }
+                      }
+                    }
                   }
                 }
               }
@@ -1030,6 +1044,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "description": "An attachment ceiling was crossed. The body names it: `{ error, limit, filename? }`."
           },
           "500": {
             "$ref": "#/components/responses/ServerError"
