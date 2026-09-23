@@ -10,6 +10,7 @@ import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import { AIClientError, runAIAction, aiFailureKey, localAccessState } from '@/lib/aiClient'
 import { quickTranslate, TRANSLATE_QUICK, TRANSLATE_OFF } from '@/lib/quickTranslate'
+import { messageText } from '@/lib/html'
 import type { TranslateMode } from '@/lib/quickTranslate'
 import { LocalAccessNotice } from '@/components/ai/LocalAccessNotice'
 import type { Message } from '@/types/email'
@@ -79,7 +80,10 @@ export function AIToolbar({ message, onReplyWithAI }: Props) {
     // that knows no such permission) says nothing here.
     setAccessPrompt(await localAccessState() === 'prompt')
 
-    const content = message.bodyHtml || message.bodyPlain || message.subject || ''
+    // The readable text, never the markup: a translation service translates
+    // tag names too (`head` came back as `tête`), and the technical head of an
+    // HTML document has no business reaching a third party. See lib/html.ts.
+    const content = messageText(message)
 
     let apiAction: string
     let extra: Record<string, string> = {}

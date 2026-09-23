@@ -23,6 +23,8 @@ const {
   TRANSLATE_QUICK, TRANSLATE_MODEL, TRANSLATE_OFF,
 } = await import(new URL('../lib/quickTranslate.ts', import.meta.url).href)
 
+const { messageText } = await import(new URL('../lib/html.ts', import.meta.url).href)
+
 let failed = 0
 const check = (label, actual, expected) => {
   const a = JSON.stringify(actual)
@@ -46,6 +48,10 @@ const blindSplit = (text, limit = QUICK_TRANSLATE_CHUNK) => {
 }
 const split = NEGATIVE ? blindSplit : splitForTranslation
 
+/** The defect the staging gate caught: markup first, so tag names get translated. */
+const markupFirst = (m) => m.bodyHtml || m.bodyPlain || m.subject || ''
+const readable = NEGATIVE ? markupFirst : messageText
+
 // A long text whose cut points are sentence ends AND line breaks, with a blank
 // line every few sentences — a message, not one endless run.
 const sentence = 'The invoice for the printer is attached to this message. '
@@ -68,6 +74,30 @@ check('an unbroken run longer than the ceiling is still cut, not dropped',
   split(noBoundary).join(''), noBoundary)
 check('an unbroken run keeps every piece under the ceiling',
   split(noBoundary).every(c => c.length <= QUICK_TRANSLATE_CHUNK), true)
+
+// A real HTML message, of the shape the reading pane hands over.
+const htmlMessage = {
+  subject: 'New referral order',
+  bodyHtml: '<!doctype html><html lang="und" dir="auto"><head><title>Order</title>'
+    + '<style>.a{color:red}</style></head><body><p>You have a new order.</p>'
+    + '<p>The invoice is attached.</p></body></html>',
+}
+
+console.log(`what is sent${NEGATIVE ? ' (NEGATIVE control — these must go red)' : ''}`)
+check('an HTML message is sent as text, with no markup at all',
+  /<[a-z!/]/i.test(readable(htmlMessage)), false)
+check('no tag name reaches the service',
+  /\b(doctype|html|head|title|style|body)\b/i.test(readable(htmlMessage)), false)
+check('the readable body survives',
+  readable(htmlMessage).includes('You have a new order.'), true)
+check('the stylesheet never travels',
+  readable(htmlMessage).includes('color:red'), false)
+check('the plain part wins when the sender sent one',
+  readable({ bodyPlain: 'Plain body.', bodyHtml: '<p>HTML body.</p>', subject: 'S' }), 'Plain body.')
+check('a message with no body at all falls back to its subject',
+  readable({ subject: 'Just a subject' }), 'Just a subject')
+check('the pieces cut for the service are pieces of TEXT, never of markup',
+  splitForTranslation(readable(htmlMessage), 40).every(c => !/<[a-z!/]/i.test(c)), true)
 
 if (NEGATIVE) {
   if (failed > 0) {
