@@ -128,3 +128,31 @@ export const SEND_WARNING = {
  */
 export const exceedsRecipientWarning = (totalDecodedBytes: number): boolean =>
   totalDecodedBytes > SEND_WARNING_BYTES
+
+/**
+ * Codes de réponse SMTP qui disent « trop gros ». `552` est le refus de taille
+ * historique (RFC 5321 § 4.2.3, « exceeded storage allocation ») et `523` celui
+ * de l'extension SIZE (RFC 1870). Nodemailer, lui, refuse AVANT d'écrire quoi
+ * que ce soit sur le fil quand l'enveloppe dépasse ce qu'il a entendu
+ * (`_maxAllowedSize`) : ce refus-là ne porte aucun code, seulement le message
+ * `Message size larger than allowed <n>`.
+ */
+const SIZE_REFUSAL_CODES = [523, 552]
+const SIZE_REFUSAL_MESSAGE = /size (?:larger than allowed|exceeds)|message too (?:big|large)|exceeded storage allocation/i
+
+/**
+ * Ce refus est-il un refus de TAILLE ? La distinction compte : elle seule
+ * justifie de relire l'annonce du serveur (lot M10, complément de Nicolas du
+ * 23/09/2026 — « en cas d'échec, faire une actualisation pour mettre à jour si
+ * ça change »). Un mot de passe faux ou un serveur injoignable ne doit RIEN
+ * réécrire sur la boîte.
+ */
+export function isSizeRefusal(err: unknown): boolean {
+  if (err === null || typeof err !== 'object') return false
+  const { responseCode, message } = err as { responseCode?: unknown; message?: unknown }
+  if (typeof responseCode === 'number' && SIZE_REFUSAL_CODES.includes(responseCode)) return true
+  return typeof message === 'string' && SIZE_REFUSAL_MESSAGE.test(message)
+}
+
+/** Le refus que la route rend quand le serveur, lui, a dit non sur la taille. */
+export const SEND_REFUSED_BY_SERVER = 'server_refused_size'

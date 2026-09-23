@@ -108,3 +108,17 @@ export function toImapConfig(a: ImapAccountRow) {
     oauthExpiresAt: a.oauth_expires_at,
   }
 }
+
+/**
+ * Retient sur la boîte la taille que son serveur SMTP vient d'annoncer (lot
+ * M10). Une seule écriture de cette colonne dans tout le dépôt : l'essai de
+ * connexion et la relecture qui suit un refus de taille passent par ici.
+ *
+ * L'APPELANT a déjà prouvé son droit sur la boîte — décision `STORED` de
+ * `lib/accountTest.ts` d'un côté, `getAccessibleAccount` de l'autre. Ce n'est
+ * pas une frontière de confiance : un identifiant de boîte arbitraire ne doit
+ * jamais arriver jusqu'ici.
+ */
+export async function saveAnnouncedSize(accountId: string, size: number | null): Promise<void> {
+  await query('UPDATE email_accounts SET smtp_max_size = $1 WHERE id = $2', [size, accountId])
+}

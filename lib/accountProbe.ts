@@ -39,7 +39,7 @@ interface SmtpSession {
  * connexion n'est ouverte : la taille annoncée est un sous-produit gratuit de
  * l'essai qu'on faisait déjà.
  */
-function verifySmtp(
+export function verifySmtp(
   connection: TestConnection,
   password: string
 ): Promise<{ maxSize: number | null }> {
@@ -124,5 +124,29 @@ export async function probeConnection(
   return {
     imap: { ok: imapOk, error: imapError },
     smtp: { ok: smtpOk, error: smtpError, maxSize: smtpMaxSize },
+  }
+}
+
+/**
+ * Relit l'annonce `250 SIZE` du serveur d'une boîte déjà enregistrée, après
+ * qu'il a refusé un envoi pour cause de taille (lot M10, complément de Nicolas
+ * du 23/09/2026 : « en cas d'échec, faire une actualisation pour mettre à jour
+ * si ça change »). Sans cela, un serveur qui BAISSE sa limite refuserait chaque
+ * envoi pour toujours, puisque nous continuerions à lui opposer le chiffre
+ * qu'il annonçait le jour de la création.
+ *
+ * Même poignée de main que l'essai de connexion — aucune seconde
+ * implémentation. Rend `null` quand rien n'est exploitable (serveur muet,
+ * connexion échouée, boîte à jeton) : l'appelant garde alors ce qu'il savait,
+ * plutôt que d'effacer un plafond valable sur un incident réseau.
+ */
+export async function refreshAnnouncedSize(
+  connection: TestConnection,
+  password: string
+): Promise<number | null> {
+  try {
+    return (await verifySmtp(connection, password)).maxSize
+  } catch {
+    return null
   }
 }
