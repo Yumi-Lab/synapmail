@@ -2,7 +2,8 @@ import crypto from 'crypto'
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
-import { API_SCOPES, type ApiScope, scopeForRequest } from '@/lib/apiScopes'
+import { API_SCOPES, type ApiScope, accountPermissionForRequest, scopeForRequest } from '@/lib/apiScopes'
+import { getAccessibleAccount, type AccountPermission } from '@/lib/accountAccess'
 import { accountIdFromRequest, keyReachesAccount } from '@/lib/apiKeyAccounts'
 import { clientIp, noteAccount, noteDenial, openLog } from '@/lib/apiLog'
 import { ipAllowed, type IpRule } from '@/lib/apiKeyIpRules'
@@ -24,6 +25,7 @@ type Denial =
   | { reason: 'unauthenticated' }
   | { reason: 'scope'; scope: ApiScope }
   | { reason: 'account'; accountId: string }
+  | { reason: 'share'; accountId: string; permission: AccountPermission }
   | { reason: 'ip'; ip: string }
 type Resolution = { ctx: AuthContext } | { denied: Denial }
 
@@ -88,6 +90,21 @@ async function resolve(req: Request): Promise<Resolution> {
     return { denied: { reason: 'account', accountId } }
   }
 
+  // UNE CLÉ NE DÉPASSE PAS LE PARTAGE. Cocher une boîte PARTAGÉE dit sur quelle boîte
+  // la clé agit, jamais ce qu'elle a le droit d'y faire : cela reste borné par les
+  // permissions du partage. Sans ce test, une clé portant `messages:send` enverrait
+  // depuis une boîte que son porteur n'a pas le droit d'utiliser pour envoyer.
+  //
+  // L'accès est relu ICI, à chaque appel, jamais figé au moment où on a coché : un
+  // partage révoqué, expiré ou amputé d'une permission ferme donc la clé sans qu'on
+  // ait à y toucher. `getAccessibleAccount` est la source unique de cette règle — le
+  // propriétaire y reçoit toutes les permissions, donc une boîte à soi passe d'office.
+  const permission = accountId ? accountPermissionForRequest(req.method, path) : null
+  if (accountId && permission) {
+    const account = await getAccessibleAccount(accountId, rows[0].user_id, [permission])
+    if (!account) return { denied: { reason: 'share', accountId, permission } }
+  }
+
   return { ctx: { id: rows[0].user_id, role: rows[0].role, scopes, apiKeyId } }
 }
 
@@ -101,9 +118,22 @@ async function resolveAndNote(req: Request): Promise<Resolution> {
   const result = await resolve(req)
   if ('denied' in result) {
     const d = result.denied
-    noteDenial(req, d.reason, d.reason === 'scope' ? d.scope : d.reason === 'account' ? d.accountId : d.reason === 'ip' ? d.ip : null)
+    noteDenial(req, d.reason, d.reason === 'scope' ? d.scope : d.reason === 'account' || d.reason === 'share' ? d.accountId : d.reason === 'ip' ? d.ip : null)
   }
   return result
+}
+
+/**
+ * Ce que NOMME un refus de partage. La permission brute (`manageRules`) ne dit rien à
+ * l'agent qui lit le refus : il lui faut le geste qu'on lui interdit, comme un refus
+ * de portée nomme la capacité manquante. Une table, pas une chaîne construite.
+ */
+const ACCOUNT_PERMISSION_LABELS: Record<AccountPermission, string> = {
+  send: 'send',
+  delete: 'delete',
+  organize: 'organize',
+  manageRules: 'manage rules',
+  manageSignatures: 'manage signatures',
 }
 
 /**
@@ -150,6 +180,20 @@ export async function authorize(req: Request): Promise<{ ctx: AuthContext } | { 
           error: `API key has no access to mailbox ${accountId}`,
           missingAccount: accountId,
           missingAccountReason: 'not_granted',
+        },
+        { status: 403 }
+      ),
+    }
+  }
+  if (result.denied.reason === 'share') {
+    const { accountId, permission } = result.denied
+    return {
+      denied: NextResponse.json(
+        {
+          error: `API key cannot ${ACCOUNT_PERMISSION_LABELS[permission]} on mailbox ${accountId}: the share granting access to it does not allow it`,
+          missingAccount: accountId,
+          missingAccountReason: 'share_permission',
+          missingSharePermission: permission,
         },
         { status: 403 }
       ),

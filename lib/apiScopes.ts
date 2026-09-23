@@ -15,6 +15,8 @@
  * concernent que les clés.
  */
 
+import type { AccountPermission } from './accountAccess'
+
 export const API_SCOPES = {
   'accounts:read': 'Lire la liste des boîtes',
   'accounts:create': 'Ajouter une boîte',
@@ -130,6 +132,42 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'POST /api/ai/action': 'ai:use',
 }
 
+/**
+ * La permission de PARTAGE qu'exige chaque route ouverte au Bearer, quand elle en
+ * exige une. Même clé que `ROUTE_SCOPES` (`METHOD /chemin`), même matcher.
+ *
+ * Pourquoi une table par ROUTE et non par PORTÉE : `messages:write` couvre le
+ * marquage (`organize`) ET la suppression (`delete`). Une table par portée devrait
+ * choisir l'une des deux, et le choix serait faux dans un cas sur deux — un partage
+ * qui autorise à ranger sans autoriser à supprimer verrait ses PATCH refusés, ou
+ * bien ses DELETE passer. La route, elle, sait laquelle elle exige : c'est
+ * exactement ce que dit cette table, avec la MÊME valeur que le `required` que le
+ * handler passe déjà à `getAccessibleAccount`. `scripts/check-api-share-limits.mjs`
+ * refuse que les deux divergent.
+ *
+ * Une route absente n'exige aucune permission de partage : la lecture. Un partage
+ * actif EST l'accès en lecture — il n'y a pas de `canRead` (voir `lib/accountAccess.ts`).
+ */
+export const ROUTE_ACCOUNT_PERMISSION: Record<string, AccountPermission> = {
+  'PATCH /api/messages/[id]': 'organize',
+  'DELETE /api/messages/[id]': 'delete',
+  'PATCH /api/messages/bulk': 'organize',
+  'DELETE /api/messages/bulk': 'delete',
+  'POST /api/messages/send': 'send',
+  'POST /api/folders': 'organize',
+  'PATCH /api/folders': 'organize',
+  'DELETE /api/folders': 'delete',
+  'POST /api/folders/actions': 'organize',
+  'POST /api/signatures': 'manageSignatures',
+  'PATCH /api/signatures/[id]': 'manageSignatures',
+  'DELETE /api/signatures/[id]': 'manageSignatures',
+  'POST /api/rules': 'manageRules',
+  'PATCH /api/rules/[id]': 'manageRules',
+  'DELETE /api/rules/[id]': 'manageRules',
+  'POST /api/subscriptions/unsubscribe': 'send',
+  'POST /api/subscriptions/purge': 'delete',
+}
+
 export const isApiScope = (value: unknown): value is ApiScope =>
   typeof value === 'string' && value in API_SCOPES
 
@@ -142,14 +180,29 @@ export const sanitizeScopes = (values: unknown): ApiScope[] =>
  * ouverte aux clés. Le chemin vient de la requête : ses segments dynamiques sont
  * des valeurs (`/api/accounts/9f2…`), pas des motifs.
  */
-export function scopeForRequest(method: string, pathname: string): ApiScope | null {
+export function routeKey(method: string, pathname: string): string | null {
   const wanted = pathname.replace(/\/+$/, '').split('/')
-  for (const [key, scope] of Object.entries(ROUTE_SCOPES)) {
+  for (const key of Object.keys(ROUTE_SCOPES)) {
     const [routeMethod, routePath] = key.split(' ')
     if (routeMethod !== method.toUpperCase()) continue
     const pattern = routePath.split('/')
     if (pattern.length !== wanted.length) continue
-    if (pattern.every((seg, i) => seg.startsWith('[') || seg === wanted[i])) return scope
+    if (pattern.every((seg, i) => seg.startsWith('[') || seg === wanted[i])) return key
   }
   return null
+}
+
+export function scopeForRequest(method: string, pathname: string): ApiScope | null {
+  const key = routeKey(method, pathname)
+  return key ? ROUTE_SCOPES[key] : null
+}
+
+/**
+ * La permission de partage qu'exige cette requête concrète, ou `null` si elle n'en
+ * exige aucune. Même matcher que la portée : une route reconnue d'un côté l'est de
+ * l'autre, sans second inventaire de chemins.
+ */
+export function accountPermissionForRequest(method: string, pathname: string): AccountPermission | null {
+  const key = routeKey(method, pathname)
+  return key ? ROUTE_ACCOUNT_PERMISSION[key] ?? null : null
 }

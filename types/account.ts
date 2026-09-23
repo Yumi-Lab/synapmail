@@ -1,3 +1,5 @@
+import type { DenialReason } from '@/lib/apiLog'
+
 export interface EmailAccount {
   id: string
   userId: string
@@ -119,7 +121,11 @@ export interface ApiKeyRequestLog {
   durationMs: number | null
   /** La boîte visée, quand la requête en désignait une. */
   accountId: string | null
-  /** Le motif du refus et ce qui manquait : la portée, ou la boîte fermée. */
-  denialReason: 'unauthenticated' | 'scope' | 'account' | 'ip' | null
+  /**
+   * Le motif du refus et ce qui manquait : la portée, ou la boîte fermée. Le
+   * vocabulaire vient de la barrière elle-même (`lib/apiLog.ts`) : il s'écrivait
+   * ici en second exemplaire, et l'exemplaire oublié faisait mentir l'écran.
+   */
+  denialReason: DenialReason | null
   denialDetail: string | null
 }
