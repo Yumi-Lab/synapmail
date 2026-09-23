@@ -97,12 +97,18 @@ export async function POST(req: Request) {
     // Les boîtes cochées à la création. `accounts_migrated_at` est posé ci-dessus pour
     // qu'un redémarrage ne vienne PAS lui accorder toutes les boîtes au titre de la
     // migration : une clé neuve n'a que ce qu'on lui a coché.
-    await grantAccounts(rows[0].id, session.user.id, accountIds)
+    const accounts = await grantAccounts(rows[0].id, session.user.id, accountIds)
 
     // Le clair part ici, et n'est stocké que CHIFFRÉ (`encrypt`, clé maître hors base).
     // Le hachage reste seul consulté pour l'authentification : on ne déchiffre que pour
     // ré-afficher, après re-saisie du mot de passe — voir app/api/api-keys/[id]/reveal.
-    return NextResponse.json({ data: { ...toApi(rows[0]), key: rawKey } }, { status: 201 })
+    // La réponse porte les boîtes EFFECTIVEMENT retenues, pas celles demandées :
+    // l'écran doit pouvoir montrer ce qui a été accordé sans relire la liste, et un
+    // identifiant inaccessible tombe silencieusement côté serveur (`grantAccounts`).
+    return NextResponse.json(
+      { data: { ...toApi(rows[0]), accountIds: accounts ?? [], key: rawKey } },
+      { status: 201 }
+    )
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

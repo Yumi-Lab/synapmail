@@ -25,7 +25,7 @@ type Denial =
   | { reason: 'unauthenticated' }
   | { reason: 'scope'; scope: ApiScope }
   | { reason: 'account'; accountId: string }
-  | { reason: 'share'; accountId: string; permission: AccountPermission }
+  | { reason: 'share'; accountId: string; permission: AccountPermission | null }
   | { reason: 'ip'; ip: string }
 type Resolution = { ctx: AuthContext } | { denied: Denial }
 
@@ -99,9 +99,17 @@ async function resolve(req: Request): Promise<Resolution> {
   // partage révoqué, expiré ou amputé d'une permission ferme donc la clé sans qu'on
   // ait à y toucher. `getAccessibleAccount` est la source unique de cette règle — le
   // propriétaire y reçoit toutes les permissions, donc une boîte à soi passe d'office.
+  //
+  // Le test porte sur TOUTE requête qui désigne une boîte, pas seulement sur celles
+  // qui exigent une permission : la LECTURE est elle aussi un accès (un partage actif
+  // EST l'accès en lecture, il n'y a pas de `canRead`). Sans ce cas, une clé dont le
+  // partage venait d'être révoqué recevait de `GET /api/folders` un `200 {data:[]}`
+  // — une boîte vide, indiscernable d'une boîte sans dossier — au lieu d'un refus
+  // (mesuré au banc P16, bras E1). Le refus est prononcé ICI, une fois, plutôt que
+  // dans chacune des routes qui, elles, servent aussi une session humaine.
   const permission = accountId ? accountPermissionForRequest(req.method, path) : null
-  if (accountId && permission) {
-    const account = await getAccessibleAccount(accountId, rows[0].user_id, [permission])
+  if (accountId) {
+    const account = await getAccessibleAccount(accountId, rows[0].user_id, permission ? [permission] : [])
     if (!account) return { denied: { reason: 'share', accountId, permission } }
   }
 
@@ -190,7 +198,9 @@ export async function authorize(req: Request): Promise<{ ctx: AuthContext } | { 
     return {
       denied: NextResponse.json(
         {
-          error: `API key cannot ${ACCOUNT_PERMISSION_LABELS[permission]} on mailbox ${accountId}: the share granting access to it does not allow it`,
+          error: permission
+            ? `API key cannot ${ACCOUNT_PERMISSION_LABELS[permission]} on mailbox ${accountId}: the share granting access to it does not allow it`
+            : `API key no longer has access to mailbox ${accountId}: the share granting it is gone`,
           missingAccount: accountId,
           missingAccountReason: 'share_permission',
           missingSharePermission: permission,
