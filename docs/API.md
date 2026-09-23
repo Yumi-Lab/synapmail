@@ -461,6 +461,8 @@ Under `scope=accounts` **without** `stream=1` the scope is honoured all the same
 ```
 `budget` = the sweep hit its 45 s ceiling (a single JSON shows nothing before it ends, so it cannot wait indefinitely) and returned what it had; `unreachable` = at least one mailbox could not be opened and its share was not searched. Both may appear together. A truncated sweep is never silent: it is a `200` that says so, never an empty `200` that pretends the scope was searched.
 
+⚠ **This call is slow, and a machine caller MUST read `complete`.** Measured on staging (2026-09-22, 8 mailboxes, 185 folders): **46,4 s** for one HTTP request, ending on `complete: false` with `stoppedBecause: ["budget"]` — folders were left unseen. The same address searched in the single mailbox that holds it answers in 4,0 s. So: `complete: false` means **"not found *yet*, in the part I covered"**, never "does not exist" — treating it as "nothing found" is the exact mistake this coverage block exists to prevent. Narrow the scope (name the mailbox) or use `stream=1`, which stays the fast path: it yields each folder as it completes instead of making the caller wait for the whole sweep.
+
 ### `GET /api/messages/thread?subject=&folder=&account=` 🔑 Bearer (`messages:read`)
 Groups messages by normalized subject (strips `Re:`/`Fwd:`/`Rép:`/`TR:`/`AW:`/`SV:`/`VS:` prefixes recursively, case-insensitively), sorted oldest→newest. Used to render a conversation thread. Requires `subject`, ≥2 chars after normalization.
 

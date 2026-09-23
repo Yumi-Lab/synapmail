@@ -203,7 +203,13 @@
       "soonTitle": "Coming soon",
       "resultSummary": "Summary",
       "resultTranslation": "Translation",
-      "resultReply": "AI draft, opened in the composer"
+      "resultReply": "AI draft, opened in the composer",
+      "translateModeQuick": "Quick translation (from your browser)",
+      "translateModeModel": "Translation by the AI model",
+      "translateModeOff": "Disabled",
+      "translateModeTitle": "Translation engine",
+      "translateModeNotice": "Quick translation sends the message text from YOUR browser to a third-party service (an unofficial Google Translate endpoint). That service is not official and may stop answering at any time, it is unreachable from China, and it is meant for PRIVATE use. On a shared or public instance, pick the AI model or disable it.",
+      "translateQuickFailed": "The quick translation service did not answer. Switch to the AI model in Settings, or try again later."
     },
     "back": "Back"
   },
