@@ -31,7 +31,6 @@ import {
   ATTACHMENT_DEFAULT_CONTENT_TYPE,
   ATTACHMENT_ERROR,
   ATTACHMENT_FALLBACK_NAME,
-  ATTACHMENT_MAX_BYTES,
   ATTACHMENT_MAX_COUNT,
   ATTACHMENT_MAX_NAME_LENGTH,
   MESSAGE_MAX_TOTAL_BYTES,
@@ -42,6 +41,13 @@ import {
 } from '../lib/attachments.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+/**
+ * The ceiling in force during this battery. Since lot M10 it is a PARAMETER —
+ * the size the SMTP server announced — and no longer a constant of the module.
+ * The prudent fallback is used here, which is what a server announcing nothing
+ * yields; `scripts/check-smtp-size.mjs` covers the announced-size arithmetic.
+ */
+const CEILING = MESSAGE_MAX_TOTAL_BYTES
 const BREAK = (process.argv.find(a => a.startsWith('--break=')) ?? '').slice('--break='.length)
 const ok = label => console.log(`  ok  ${label}`)
 const b64 = s => Buffer.from(s).toString('base64')
@@ -79,7 +85,7 @@ ok('an ordinary name goes through untouched')
 console.log('parseAttachments — what the boundary refuses')
 
 const one = { filename: 'note.txt', contentType: 'text/plain', content: b64('hello') }
-const good = parseAttachments([one])
+const good = parseAttachments([one], CEILING)
 assert.equal(good.ok, true)
 assert.equal(good.value.length, 1)
 assert.equal(good.value[0].filename, 'note.txt')
@@ -99,7 +105,7 @@ for (const [label, body] of [
   ['a non-string content', [{ filename: 'a.txt', content: 123 }]],
   ['a nested list', [['a.txt', b64('x')]]],
 ]) {
-  const r = parseAttachments(body)
+  const r = parseAttachments(body, CEILING)
   assert.equal(r.ok, false, label)
   assert.equal(r.status, 400)
   assert.equal(r.code, ATTACHMENT_ERROR.invalid)
@@ -115,7 +121,7 @@ for (const [label, content] of [
   ['padding in the middle', 'aGV=sbG8='],
   ['a data: URL pasted whole', 'data:text/plain;base64,aGVsbG8='],
 ]) {
-  const r = parseAttachments([{ filename: 'a.txt', content }])
+  const r = parseAttachments([{ filename: 'a.txt', content }], CEILING)
   const expected = BREAK === 'base64' ? ATTACHMENT_ERROR.invalid : ATTACHMENT_ERROR.badBase64
   assert.equal(r.ok, false, label)
   assert.equal(r.code, expected, `${label}: got ${r.code}`)
@@ -151,15 +157,15 @@ ok(`exactly ${ATTACHMENT_MAX_COUNT} attachments still pass (the ceiling is inclu
 
 // The size is judged on the base64 BEFORE decoding: an oversized attachment
 // must be refused without ever being allocated.
-const oversizedB64 = 'A'.repeat(Math.ceil(((ATTACHMENT_MAX_BYTES + 1024) / 3) * 4 / 4) * 4)
-assert.ok(base64DecodedSize(oversizedB64) > ATTACHMENT_MAX_BYTES)
-const tooLarge = parseAttachments([{ filename: 'huge.bin', content: oversizedB64 }])
+const oversizedB64 = 'A'.repeat(Math.ceil(((CEILING + 1024) / 3) * 4 / 4) * 4)
+assert.ok(base64DecodedSize(oversizedB64) > CEILING)
+const tooLarge = parseAttachments([{ filename: 'huge.bin', content: oversizedB64 }], CEILING)
 assert.equal(tooLarge.ok, false)
 assert.equal(tooLarge.code, ATTACHMENT_ERROR.tooLarge)
 assert.equal(tooLarge.status, 413)
-assert.equal(tooLarge.limit, ATTACHMENT_MAX_BYTES, 'the per-file ceiling travels with the refusal')
+assert.equal(tooLarge.limit, CEILING, 'the ceiling in force travels with the refusal')
 assert.equal(tooLarge.detail, 'huge.bin')
-ok(`413 past ${ATTACHMENT_MAX_BYTES} bytes for one file, naming "${tooLarge.detail}" and its ceiling`)
+ok(`413 past ${CEILING} bytes for one file, naming "${tooLarge.detail}" and its ceiling`)
 
 assert.equal(base64DecodedSize(b64('hello')), 5, 'the announced size matches the real one (1 pad)')
 assert.equal(base64DecodedSize(b64('hell')), 4, 'the announced size matches the real one (2 pads)')
@@ -169,14 +175,14 @@ ok('the announced size equals the decoded size, with 0, 1 and 2 padding characte
 console.log('checkTotalSize — the ceiling of the MESSAGE, forwarded messages included')
 
 const big = n => ({ filename: 'x.bin', content: Buffer.alloc(n), contentType: 'application/octet-stream' })
-const under = checkTotalSize([big(1024), big(2048)])
+const under = checkTotalSize([big(1024), big(2048)], CEILING)
 assert.equal(under.ok, true)
 assert.equal(under.value, 3072, 'the total is the sum of the decoded sizes')
 ok('a small message passes, and the total is the sum of the decoded sizes')
 
 const overTotal = BREAK === 'total'
-  ? checkTotalSize([big(1)])
-  : checkTotalSize([big(MESSAGE_MAX_TOTAL_BYTES - 10), big(1024)])
+  ? checkTotalSize([big(1)], CEILING)
+  : checkTotalSize([big(MESSAGE_MAX_TOTAL_BYTES - 10), big(1024)], CEILING)
 assert.equal(overTotal.ok, false, 'past the total ceiling the message must be refused')
 assert.equal(overTotal.code, ATTACHMENT_ERROR.messageTooLarge)
 assert.equal(overTotal.status, 413)
@@ -190,7 +196,6 @@ assert.ok(
   MESSAGE_MAX_TOTAL_BYTES * (4 / 3) < IONOS_LIMIT,
   `${MESSAGE_MAX_TOTAL_BYTES} decoded bytes become ${Math.round(MESSAGE_MAX_TOTAL_BYTES * 4 / 3)} on the wire, above IONOS's ${IONOS_LIMIT}`,
 )
-assert.ok(ATTACHMENT_MAX_BYTES <= MESSAGE_MAX_TOTAL_BYTES, 'one file can never exceed the whole message')
 ok(`${MESSAGE_MAX_TOTAL_BYTES} decoded → ${Math.round(MESSAGE_MAX_TOTAL_BYTES * 4 / 3)} on the wire, under IONOS's ${IONOS_LIMIT}`)
 
 console.log('contentType — a default that is never a guess')
@@ -202,14 +207,14 @@ for (const [label, contentType] of [
   ['a header injection', 'text/plain\r\nBcc: victim@example.com'],
   ['an empty string', ''],
 ]) {
-  const r = parseAttachments([{ filename: 'a.bin', content: b64('x'), contentType }])
+  const r = parseAttachments([{ filename: 'a.bin', content: b64('x'), contentType }], CEILING)
   assert.equal(r.ok, true, label)
   assert.equal(r.value[0].contentType, ATTACHMENT_DEFAULT_CONTENT_TYPE, `${label} must fall back`)
   ok(`${label} → ${ATTACHMENT_DEFAULT_CONTENT_TYPE}`)
 }
 
 for (const valid of ['application/pdf', 'image/png', 'text/csv; charset=utf-8']) {
-  const r = parseAttachments([{ filename: 'a', content: b64('x'), contentType: valid }])
+  const r = parseAttachments([{ filename: 'a', content: b64('x'), contentType: valid }], CEILING)
   assert.equal(r.value[0].contentType, valid, `${valid} must be kept`)
   ok(`"${valid}" is kept as announced`)
 }
@@ -232,7 +237,7 @@ assert.ok(
 ok('one array, one sendMail call: both kinds of attachment share the same ceiling')
 
 const docs = readFileSync(join(ROOT, 'docs/API.md'), 'utf8')
-for (const named of [String(ATTACHMENT_MAX_COUNT), String(ATTACHMENT_MAX_BYTES), String(MESSAGE_MAX_TOTAL_BYTES)]) {
+for (const named of [String(ATTACHMENT_MAX_COUNT), String(MESSAGE_MAX_TOTAL_BYTES)]) {
   assert.ok(docs.includes(named), `docs/API.md must name the ceiling ${named}`)
 }
 for (const code of Object.values(ATTACHMENT_ERROR)) {

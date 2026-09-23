@@ -28,9 +28,15 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MESSAGE_MAX_TOTAL_BYTES } from '../lib/attachments.ts'
+import {
+  ATTACHMENT_ERROR,
+  MESSAGE_MAX_TOTAL_BYTES,
+  checkTotalSize,
+  parseAttachments,
+} from '../lib/attachments.ts'
 import {
   ANNOUNCED_SIZE_MAX_BYTES,
+  SEND_WARNING,
   ANNOUNCED_SIZE_MIN_BYTES,
   CEILING_SOURCE,
   MESSAGE_ENVELOPE_RESERVE_BYTES,
@@ -116,6 +122,34 @@ function BASE64_STEP() {
   ok('une annonce minuscule donne un plafond plancher, jamais négatif')
 }
 
+// 3bis. Le plafond du serveur est celui que l'ENVOI applique vraiment, pièce
+// par pièce comme au total : une annonce de 135 Mo doit faire PASSER une pièce
+// que le plafond de M9 refusait.
+{
+  const ceiling = resolveSendCeiling(IONOS_ANNOUNCED, MESSAGE_MAX_TOTAL_BYTES).limit
+  const between = MESSAGE_MAX_TOTAL_BYTES + 1024 * 1024
+  assert.ok(between < ceiling, 'la mesure exigée suppose un intervalle entre l’ancien plafond et le nouveau')
+
+  const b64 = n => {
+    const groups = Math.ceil(n / 3)
+    return 'A'.repeat(groups * 4)
+  }
+  const wasRefused = parseAttachments([{ filename: 'entre.bin', content: b64(between) }], MESSAGE_MAX_TOTAL_BYTES)
+  assert.equal(wasRefused.ok, false, 'cette pièce DEVAIT être refusée avant M10')
+  assert.equal(wasRefused.code, ATTACHMENT_ERROR.tooLarge)
+
+  const nowPasses = parseAttachments([{ filename: 'entre.bin', content: b64(between) }], ceiling)
+  assert.equal(nowPasses.ok, BREAK === 'fallback' ? false : true, 'la même pièce doit PASSER sous le plafond annoncé')
+  ok(`une pièce de ${between} octets, refusée sous ${MESSAGE_MAX_TOTAL_BYTES} (M9), passe sous ${ceiling} (annoncé)`)
+
+  // Au-delà du plafond annoncé, le refus cite CE chiffre — pas celui de M9.
+  const over = parseAttachments([{ filename: 'trop.bin', content: b64(ceiling + 3) }], ceiling)
+  assert.equal(over.ok, false)
+  assert.equal(over.limit, ceiling, 'le refus doit citer le plafond du SERVEUR')
+  assert.equal(checkTotalSize([{ filename: 'x', contentType: 'application/octet-stream', content: Buffer.alloc(1) }], 0).limit, 0)
+  ok('au-delà du plafond annoncé, le refus cite ce chiffre-là')
+}
+
 // 3. L'avertissement destinataire avertit, il ne bloque pas.
 {
   assert.equal(exceedsRecipientWarning(SEND_WARNING_BYTES), false, 'le seuil lui-même n’avertit pas')
@@ -138,6 +172,21 @@ function BASE64_STEP() {
   const source = BREAK === 'wiring' ? route.replace(/resolveSendCeiling/g, 'autreChose') : route
 
   assert.ok(source.includes('resolveSendCeiling'), 'la route doit déduire son plafond du serveur')
+  // L'avertissement part avec un envoi RÉUSSI, pas avec un refus.
+  const warned = BREAK === 'warning' ? route.replace(/exceedsRecipientWarning/g, 'autreChose') : route
+  assert.ok(warned.includes('exceedsRecipientWarning'), 'la route doit AVERTIR au-delà du seuil')
+  assert.ok(
+    /success: true, \.\.\.warning/.test(warned),
+    'l’avertissement voyage avec la réussite : il ne bloque pas',
+  )
+  assert.ok(warned.includes('SEND_WARNING.recipientMayRefuse'), 'la route lit le code d’avertissement du module')
+  assert.ok(
+    !warned.includes(`'${SEND_WARNING.recipientMayRefuse}'`),
+    'la route ne recopie pas la valeur du code d’avertissement',
+  )
+  // Le refus DIT d'où sort son plafond, sinon « 17 Mio » se lit comme une
+  // limite du serveur alors que c'est notre repli.
+  assert.ok(source.includes('limitSource'), 'un refus de taille doit dire d’où vient son plafond')
   assert.ok(
     /maxAllowedSize|smtp_max_size|announcedSize/.test(probe),
     'la sonde doit lire la taille annoncée par le serveur',

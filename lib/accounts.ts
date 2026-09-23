@@ -25,6 +25,13 @@ export interface DbEmailAccount {
   badge_color: string | null
   /** Prompt-injection guard for this mailbox — see lib/promptGuard.ts. */
   prompt_guard: boolean
+  /**
+   * Taille maximale d'un message ANNONCÉE par ce serveur SMTP (`250 SIZE`), lue par
+   * `lib/accountProbe.ts`. `null` = rien annoncé, ou boîte jamais essayée : l'envoi
+   * retombe alors sur le plafond prudent (lot M10, `lib/smtpSize.ts`). Le pilote
+   * Postgres rend un BIGINT en chaîne, d'où `unknown` : `parseAnnouncedSize` le lit.
+   */
+  smtp_max_size: unknown
   created_at: string
 }
 

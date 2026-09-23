@@ -1012,7 +1012,7 @@
                   },
                   "attachments": {
                     "type": "array",
-                    "description": "Files attached to the message. At most 20, 15728640 decoded bytes each, 17825792 for the whole message (forwarded messages included).",
+                    "description": "Files attached to the message. At most 20. The size ceiling is the one the account's SMTP server announced (250 SIZE, stored at account creation and at every connection test); when it announced nothing, 17825792 decoded bytes apply for the whole message, forwarded messages included. Every size refusal carries limitSource (server|fallback) and announcedSize. Past 20971520 decoded bytes the message is still sent and the response carries warning: recipient_may_refuse_size.",
                     "maxItems": 20,
                     "items": {
                       "type": "object",

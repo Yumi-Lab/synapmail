@@ -113,6 +113,16 @@ export function resolveSendCeiling(announced: unknown, fallback: number): SendCe
 }
 
 /**
+ * Avertissements rendus avec un envoi RÉUSSI — l'appelant les lit, rien n'est
+ * bloqué. Ils vivent ici et non dans la route : Next.js refuse tout export
+ * autre qu'un gestionnaire dans un fichier de route.
+ */
+export const SEND_WARNING = {
+  /** Au-delà de `SEND_WARNING_BYTES` : le destinataire, lui, peut refuser. */
+  recipientMayRefuse: 'recipient_may_refuse_size',
+} as const
+
+/**
  * Faut-il AVERTIR sur ce total ? Jamais refuser : c'est le destinataire qui
  * pourrait refuser, et lui n'a rien annoncé.
  */

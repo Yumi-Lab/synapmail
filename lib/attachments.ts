@@ -19,21 +19,15 @@
 export const ATTACHMENT_MAX_COUNT = 20
 
 /**
- * Plafond d'UNE pièce, en octets DÉCODÉS. Mesuré sur la taille annoncée par le
- * base64 AVANT de décoder : une pièce refusée ne doit jamais être allouée.
- * 15 Mio décodés ≈ 20 Mio une fois ré-encodés en base64 dans le message.
- */
-export const ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024
-
-/**
- * Plafond de la SOMME des pièces d'un message, en octets décodés. IONOS — le
- * fournisseur des boîtes de ce dépôt — refuse un message de plus de 25 Mo, et
- * un message porte ses pièces en base64, soit un TIERS de plus que leur taille
- * décodée. Le chiffre se calibre donc à l'envers depuis cette limite-là :
- * 17 Mio décodés pèsent 23,8 Mo sur le fil, en-têtes et corps compris. Écrire
- * 18 Mio ici ferait 25,2 Mo, soit un message refusé par le serveur APRÈS
- * l'avoir tout entier chargé et transmis — `scripts/check-send-attachments.mjs`
- * refait le calcul et casse si le rapport n'est plus tenu.
+ * Plafond PRUDENT, en octets décodés, appliqué au message entier quand le
+ * serveur SMTP n'annonce AUCUNE taille (lot M10 — sinon c'est la sienne qui
+ * vaut, cf. `lib/smtpSize.ts`). Il se calibre à l'envers depuis la limite la
+ * plus courante, 25 Mo : un message porte ses pièces en base64, soit un TIERS
+ * de plus que leur taille décodée, donc 17 Mio décodés pèsent 23,8 Mo sur le
+ * fil, en-têtes et corps compris. Écrire 18 Mio ici ferait 25,2 Mo, soit un
+ * message refusé APRÈS avoir été tout entier chargé et transmis —
+ * `scripts/check-send-attachments.mjs` refait le calcul et casse si le rapport
+ * n'est plus tenu.
  */
 export const MESSAGE_MAX_TOTAL_BYTES = 17 * 1024 * 1024
 
@@ -111,8 +105,16 @@ export function base64DecodedSize(value: string): number {
  * Valide les pièces telles qu'elles arrivent du réseau, dans l'ordre reçu.
  * La taille est contrôlée sur le base64 AVANT tout décodage : une pièce
  * au-dessus du plafond est refusée sans jamais avoir été allouée.
+ *
+ * `ceiling` est le plafond du MESSAGE, en octets décodés — celui qu'a annoncé
+ * le serveur, ou `MESSAGE_MAX_TOTAL_BYTES` à défaut. Une pièce ne peut pas
+ * peser plus que le message qui la porte : il n'y a donc qu'un nombre, et deux
+ * refus distincts, l'un nommant le fichier, l'autre le total.
  */
-export function parseAttachments(raw: unknown): AttachmentCheck<OutgoingAttachment[]> {
+export function parseAttachments(
+  raw: unknown,
+  ceiling: number
+): AttachmentCheck<OutgoingAttachment[]> {
   const deny = (
     code: AttachmentErrorCode,
     status = 400,
@@ -142,9 +144,9 @@ export function parseAttachments(raw: unknown): AttachmentCheck<OutgoingAttachme
     }
 
     const size = base64DecodedSize(compact)
-    if (size > ATTACHMENT_MAX_BYTES) {
+    if (size > ceiling) {
       return deny(ATTACHMENT_ERROR.tooLarge, 413, {
-        limit: ATTACHMENT_MAX_BYTES,
+        limit: ceiling,
         detail: safeAttachmentName(filename),
       })
     }
@@ -167,10 +169,13 @@ export function parseAttachments(raw: unknown): AttachmentCheck<OutgoingAttachme
  * — celles de la requête ET les messages transférés, qui partent dans le même
  * envoi et pèsent sur la même limite du serveur SMTP.
  */
-export function checkTotalSize(attachments: OutgoingAttachment[]): AttachmentCheck<number> {
+export function checkTotalSize(
+  attachments: OutgoingAttachment[],
+  ceiling: number
+): AttachmentCheck<number> {
   const total = attachments.reduce((sum, a) => sum + a.content.length, 0)
-  if (total > MESSAGE_MAX_TOTAL_BYTES) {
-    return { ok: false, status: 413, code: ATTACHMENT_ERROR.messageTooLarge, limit: MESSAGE_MAX_TOTAL_BYTES }
+  if (total > ceiling) {
+    return { ok: false, status: 413, code: ATTACHMENT_ERROR.messageTooLarge, limit: ceiling }
   }
   return { ok: true, value: total }
 }

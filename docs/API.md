@@ -489,16 +489,30 @@ same array that carries forwarded `.eml` messages, so both kinds share one ceili
 | Rule | Value | Refusal |
 |---|---|---|
 | Attachments per message | 20 | `400 { error: "attachment_too_many", limit: 20 }` |
-| Bytes per attachment (decoded) | 15728640 (15 MiB) | `413 { error: "attachment_too_large", limit: 15728640, filename }` |
-| Bytes per message (decoded, forwarded messages included) | 17825792 (17 MiB) | `413 { error: "attachment_message_too_large", limit: 17825792 }` |
+| Bytes per attachment (decoded) | the ceiling in force (below) | `413 { error: "attachment_too_large", limit, filename, limitSource, announcedSize }` |
+| Bytes per message (decoded, forwarded messages included) | the ceiling in force (below) | `413 { error: "attachment_message_too_large", limit, limitSource, announcedSize }` |
 | `content` is valid base64 | — | `400 { error: "attachment_bad_base64", filename }` |
 | Shape of the list or of one entry | — | `400 { error: "attachment_invalid" }` |
 
+**The ceiling comes from the SMTP server, not from a constant.** When the account's server announced a size in
+its EHLO reply (`250 SIZE <bytes>`, read by `lib/accountProbe.ts` at account creation and at every connection
+test, stored in `email_accounts.smtp_max_size`), that number is the ceiling: `lib/smtpSize.ts` converts the
+announced on-the-wire budget into decoded bytes, deducting base64's cost (4 characters per 3 bytes, plus CRLF
+every 76 characters) and a 1 MiB reserve for headers and MIME boundaries. Example measured on `smtp.ionos.fr`:
+`250 SIZE 141557760` (135 MB announced) yields a 102679788-byte decoded ceiling. When the server announced
+nothing, the prudent fallback applies instead: 17825792 bytes (17 MiB), calibrated backwards from the common
+25 MB limit — base64 costs a third more on the wire, so 17 MiB decoded weighs ~23.8 MB sent. Every size
+refusal carries `limitSource` (`"server"` or `"fallback"`) and `announcedSize` (the raw announced number, or
+`null`), so a caller can tell "this server really refuses it" from "we never heard its limit".
+
+**Size warning — never a refusal.** The sending server's limit is not the recipient's: IONOS accepts 135 MB
+while Gmail refuses past 25 MB and Outlook around 20. Past 20971520 decoded bytes the message is still sent,
+and the response carries `{ success: true, warning: "recipient_may_refuse_size", bytes }` — a 100 MB message
+would leave and come back as a bounce.
+
 `filename` is sanitised, never used as a path: separators, control characters and `..` are stripped and the
 name is cut to 100 characters (`attachment` if nothing usable is left). `contentType` falls back to
-`application/octet-stream` when absent or not a valid MIME type. The 17 MiB message ceiling is calibrated
-backwards from IONOS's 25 MB limit: base64 costs a third more on the wire, so 17 MiB decoded weighs ~23.8 MB
-sent — an attachment refused here would otherwise be refused by the SMTP server after being fully transmitted. On send: appends a copy to the account's IMAP Sent folder (fire-and-forget), extracts `to`+`cc` as contacts (fire-and-forget, `lib/contacts.ts`), and if `requestReadReceipt` is set, records a `sent_tracking` row keyed by a fresh UUID token embedded in the pixel URL (`GET /api/track/[token]`). **Response** `{ success: true }`. Note: forwarded-attachment resolution (by IMAP descriptor) is handled by the legacy `/api/send` route, not this one — see [Legacy routes](#legacy--internal-routes).
+`application/octet-stream` when absent or not a valid MIME type. On send: appends a copy to the account's IMAP Sent folder (fire-and-forget), extracts `to`+`cc` as contacts (fire-and-forget, `lib/contacts.ts`), and if `requestReadReceipt` is set, records a `sent_tracking` row keyed by a fresh UUID token embedded in the pixel URL (`GET /api/track/[token]`). **Response** `{ success: true }`, plus `warning` + `bytes` past the warning threshold. Note: forwarded-attachment resolution (by IMAP descriptor) is handled by the legacy `/api/send` route, not this one — see [Legacy routes](#legacy--internal-routes).
 
 ---
 
