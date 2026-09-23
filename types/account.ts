@@ -98,6 +98,22 @@ export interface ApiKeyIp {
   callCount: number
   /** Vue pour la première fois depuis moins de `API_KEY_NEW_IP_DAYS` jours. */
   isNew: boolean
+  /**
+   * Où l'adresse a été vue (lot P15), ou `null` si elle n'a pas pu être située : service
+   * indisponible, adresse privée ou réservée. Un `null` s'affiche en LISTE sans point sur
+   * la carte — il ne fabrique jamais un faux lieu. Voir `lib/ipLocation.ts`.
+   */
+  location: ApiKeyIpLocation | null
+}
+
+/** La position d'une adresse telle que l'écran l'affiche — voir `lib/ipLocation.ts`. */
+export interface ApiKeyIpLocation {
+  city: string | null
+  region: string | null
+  country: string | null
+  countryCode: string | null
+  latitude: number
+  longitude: number
 }
 
 /**
