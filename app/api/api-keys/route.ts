@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { sanitizeScopes } from '@/lib/apiScopes'
 import { grantAccounts } from '@/lib/apiKeyAccounts'
+import { encrypt } from '@/lib/encrypt'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,6 +18,7 @@ type ApiKeyRow = {
   request_count_24h?: string
   account_ids?: string[] | null
   owned_account_ids?: string[] | null
+  key_encrypted?: string | null
 }
 
 function toApi(r: ApiKeyRow) {
@@ -29,6 +31,9 @@ function toApi(r: ApiKeyRow) {
     scopes: sanitizeScopes(r.scopes),
     requestCount24h: r.request_count_24h ? parseInt(r.request_count_24h) : 0,
     accountIds: (r.account_ids ?? []).filter(Boolean),
+    // Une clé créée AVANT le lot P14 n'a aucun clair stocké : il n'existe nulle part.
+    // L'écran le DIT au lieu d'offrir un bouton mort — jamais le chiffré lui-même.
+    revealable: Boolean(r.key_encrypted),
     // Les boîtes que la clé a CONNECTÉES : elles lui appartiennent, donc l'écran les
     // montre cochées et verrouillées plutôt que de laisser croire qu'on peut les retirer.
     ownedAccountIds: (r.owned_account_ids ?? []).filter(Boolean),
@@ -42,6 +47,7 @@ export async function GET() {
   try {
     const rows = await query<ApiKeyRow>(
       `SELECT ak.id, ak.name, ak.key_prefix, ak.last_used_at, ak.created_at, ak.scopes,
+              ak.key_encrypted,
               COUNT(r.id) FILTER (WHERE r.created_at >= NOW() - INTERVAL '24 hours')::text AS request_count_24h,
               ARRAY(SELECT g.account_id::text FROM api_key_accounts g WHERE g.api_key_id = ak.id) AS account_ids,
               ARRAY(SELECT a.id::text FROM email_accounts a WHERE a.created_by_api_key = ak.id) AS owned_account_ids
@@ -77,10 +83,10 @@ export async function POST(req: Request) {
     const keyPrefix = rawKey.slice(0, 12)
 
     const rows = await query<ApiKeyRow>(
-      `INSERT INTO api_keys (user_id, name, key_prefix, key_hash, scopes, scopes_migrated_at, accounts_migrated_at)
-       VALUES ($1, $2, $3, $4, $5::text[], NOW(), NOW())
-       RETURNING id, name, key_prefix, last_used_at, created_at, scopes`,
-      [session.user.id, name.trim(), keyPrefix, keyHash, granted]
+      `INSERT INTO api_keys (user_id, name, key_prefix, key_hash, key_encrypted, scopes, scopes_migrated_at, accounts_migrated_at)
+       VALUES ($1, $2, $3, $4, $5, $6::text[], NOW(), NOW())
+       RETURNING id, name, key_prefix, last_used_at, created_at, scopes, key_encrypted`,
+      [session.user.id, name.trim(), keyPrefix, keyHash, encrypt(rawKey), granted]
     )
 
     // Les boîtes cochées à la création. `accounts_migrated_at` est posé ci-dessus pour
@@ -88,7 +94,9 @@ export async function POST(req: Request) {
     // migration : une clé neuve n'a que ce qu'on lui a coché.
     await grantAccounts(rows[0].id, session.user.id, accountIds)
 
-    // rawKey is returned once, here, and never stored or logged in cleartext.
+    // Le clair part ici, et n'est stocké que CHIFFRÉ (`encrypt`, clé maître hors base).
+    // Le hachage reste seul consulté pour l'authentification : on ne déchiffre que pour
+    // ré-afficher, après re-saisie du mot de passe — voir app/api/api-keys/[id]/reveal.
     return NextResponse.json({ data: { ...toApi(rows[0]), key: rawKey } }, { status: 201 })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

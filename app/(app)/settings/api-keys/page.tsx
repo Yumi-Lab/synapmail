@@ -3,9 +3,10 @@
 import { useState } from 'react'
 import useSWR from 'swr'
 import { useTranslations } from 'next-intl'
-import { Plus, Trash2, Terminal, Copy, Check, TriangleAlert, ChevronDown, Activity, BookOpen, KeyRound } from 'lucide-react'
+import { Plus, Trash2, Terminal, Copy, Check, TriangleAlert, ChevronDown, Activity, BookOpen, KeyRound, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/ui/PasswordInput'
 import type { ApiKey, ApiKeyRequestLog } from '@/types/account'
 import { SettingsPage, SettingsHeader, SettingsSection } from '@/components/settings/primitives'
 import { API_DOC_PATH } from '@/lib/apiDocs'
@@ -27,6 +28,73 @@ type ScopedApiKey = ApiKey & {
   accountIds: string[]
   /** Les boîtes que la clé a CONNECTÉES : à elle, sans qu'on ait rien coché. */
   ownedAccountIds: string[]
+  /** Faux pour une clé créée avant le lot P14 : son clair n'existe nulle part. */
+  revealable: boolean
+}
+
+/**
+ * Ré-afficher le clair d'une clé. Le mot de passe du compte est re-saisi ici, comme
+ * pour toute opération sensible : il part vers `POST /api/api-keys/[id]/reveal`, qui
+ * déchiffre et inscrit la révélation au journal de la clé.
+ *
+ * Une clé d'AVANT ce lot ne propose aucun bouton — son clair n'existe pas — mais dit
+ * pourquoi, plutôt que de laisser un bouton mort.
+ */
+function RevealPanel({ apiKey, onRevealed }: { apiKey: ScopedApiKey; onRevealed: (key: string) => void }) {
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
+
+  if (!apiKey.revealable) {
+    return (
+      <p className="mt-3 rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+        Clé créée avant la fonction de ré-affichage : son contenu n&apos;est stocké nulle part,
+        elle n&apos;est pas récupérable. Créez-en une nouvelle si vous l&apos;avez perdue.
+      </p>
+    )
+  }
+
+  const reveal = async () => {
+    setBusy(true)
+    setFailure(null)
+    try {
+      const res = await fetch(`/api/api-keys/${apiKey.id}/reveal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      })
+      const d = await res.json()
+      if (!res.ok) { setFailure(res.status === 403 ? 'Mot de passe incorrect.' : (d.error ?? 'Erreur')); return }
+      setPassword('')
+      onRevealed(d.data.key)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3">
+      <p className="mb-2 text-xs text-muted-foreground">
+        Saisissez le mot de passe de votre compte pour réafficher cette clé. La révélation
+        est inscrite au journal de la clé.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <PasswordInput
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && password && !busy) reveal() }}
+          placeholder="Mot de passe du compte"
+          autoComplete="current-password"
+          containerClassName="min-w-[14rem] flex-1"
+          className="h-8 text-sm"
+        />
+        <Button size="sm" onClick={reveal} disabled={busy || !password}>
+          {busy ? 'Vérification…' : 'Afficher la clé'}
+        </Button>
+      </div>
+      {failure && <p className="mt-2 text-xs text-destructive">{failure}</p>}
+    </div>
+  )
 }
 
 /**
@@ -260,6 +328,7 @@ export default function ApiKeysPage() {
   const [revealedKey, setRevealedKey] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [expandedKeyId, setExpandedKeyId] = useState<string | null>(null)
+  const [revealingKeyId, setRevealingKeyId] = useState<string | null>(null)
 
   const createKey = async () => {
     if (!newName.trim()) { setError('Nom requis'); return }
@@ -343,7 +412,8 @@ export default function ApiKeysPage() {
         <div className="mb-6 rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5 shadow-sm">
           <div className="flex items-start gap-2 text-sm font-medium text-violet-700 dark:text-violet-300">
             <TriangleAlert className="w-4 h-4 shrink-0 mt-0.5" />
-            Cette clé ne sera plus jamais affichée. Copiez-la maintenant.
+            Traitez cette clé comme un mot de passe : elle donne à qui la détient tout ce
+            qui lui est coché.
           </div>
           <div className="mt-3 flex items-center gap-2">
             <code className="flex-1 rounded-lg bg-background border border-border px-3 py-2 text-xs break-all">
@@ -413,6 +483,7 @@ export default function ApiKeysPage() {
         {keys.map(key => {
           const expanded = expandedKeyId === key.id
           const editingScopes = editingScopesFor === key.id
+          const revealing = revealingKeyId === key.id
           return (
             <div key={key.id} className="border border-border rounded-xl bg-card shadow-sm p-4">
               <div className="flex items-center justify-between gap-3">
@@ -442,6 +513,16 @@ export default function ApiKeysPage() {
                 </button>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
+                    onClick={() => setRevealingKeyId(revealing ? null : key.id)}
+                    className="h-8 px-2.5 flex items-center gap-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    title="Réafficher la clé"
+                    aria-expanded={revealing}
+                    data-api-key-reveal={key.id}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    Afficher
+                  </button>
+                  <button
                     onClick={() => setExpandedKeyId(expanded ? null : key.id)}
                     className="h-8 px-2.5 flex items-center gap-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                     title="Voir l'activité récente"
@@ -464,6 +545,12 @@ export default function ApiKeysPage() {
                 <ScopeEditor
                   apiKey={key} accounts={accounts}
                   onSave={(scopes, accountIds) => saveScopes(key, scopes, accountIds)}
+                />
+              )}
+              {revealing && (
+                <RevealPanel
+                  apiKey={key}
+                  onRevealed={k => { setRevealingKeyId(null); setRevealedKey(k) }}
                 />
               )}
               {expanded && <ActivityPanel keyId={key.id} accounts={accounts} />}
