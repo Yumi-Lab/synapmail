@@ -409,6 +409,25 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE api_key_requests ADD COLUMN IF NOT EXISTS denial_reason VARCHAR(20)`)
   await query(`ALTER TABLE api_key_requests ADD COLUMN IF NOT EXISTS denial_detail TEXT`)
 
+  // OÙ une adresse a été vue (lot P15) — le résultat d'ip-api.com, écrit à la PREMIÈRE
+  // apparition de l'adresse et relu ensuite. C'est cette table qui fait la différence entre
+  // « une interrogation par adresse » et « une interrogation par ouverture d'écran ».
+  // Un verdict d'échec du service ('unlocatable') s'y écrit aussi : sans lui, une adresse
+  // privée repartirait chez le service à chaque fois. Voir lib/ipLocation.ts.
+  await query(`
+    CREATE TABLE IF NOT EXISTS ip_locations (
+      ip_address VARCHAR(45) PRIMARY KEY,
+      status VARCHAR(20) NOT NULL,
+      city TEXT,
+      region TEXT,
+      country TEXT,
+      country_code VARCHAR(4),
+      latitude DOUBLE PRECISION,
+      longitude DOUBLE PRECISION,
+      located_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+
   // Boîtes autorisées PAR CLÉ (lot P10) : les portées disent quelle capacité, cette table
   // dit sur quelle boîte. Les deux sont exigées — voir lib/apiKeyAccounts.ts, qui est la
   // SEULE barrière, appelée depuis lib/apiAuth.ts. Une boîte connectée PAR une clé lui
