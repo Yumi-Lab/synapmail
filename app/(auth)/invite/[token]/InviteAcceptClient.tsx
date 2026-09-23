@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PasswordInput } from '@/components/ui/PasswordInput'
 import Link from 'next/link'
 import { useAppName } from '@/components/providers'
 
@@ -103,11 +104,11 @@ export default function InviteAcceptClient({ token }: { token: string }) {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="password">{t('passwordLabel')}</Label>
-              <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+              <PasswordInput id="password" value={password} onChange={e => setPassword(e.target.value)} required />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="confirm">{t('confirmLabel')}</Label>
-              <Input id="confirm" type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required />
+              <PasswordInput id="confirm" value={confirm} onChange={e => setConfirm(e.target.value)} required />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? '...' : t('submit')}
