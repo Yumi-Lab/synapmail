@@ -156,3 +156,17 @@ export function isSizeRefusal(err: unknown): boolean {
 
 /** Le refus que la route rend quand le serveur, lui, a dit non sur la taille. */
 export const SEND_REFUSED_BY_SERVER = 'server_refused_size'
+
+/**
+ * Ce que le serveur a RÉPONDU, pour le remonter tel quel plutôt qu'un échec
+ * générique (lot M10, point 5 de la DoD). Nodemailer range la ligne du serveur
+ * dans `response` quand elle vient du fil, et dans `message` quand c'est lui
+ * qui a refusé avant d'écrire (`Message size larger than allowed <n>`). Rien
+ * n'est reformulé : c'est la phrase du serveur qui renseigne, pas la nôtre.
+ */
+export function sizeRefusalReason(err: unknown): string {
+  if (err === null || typeof err !== 'object') return ''
+  const { response, message } = err as { response?: unknown; message?: unknown }
+  if (typeof response === 'string' && response.trim()) return response.trim()
+  return typeof message === 'string' ? message.trim() : ''
+}

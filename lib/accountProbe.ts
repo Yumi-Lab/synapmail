@@ -7,6 +7,7 @@
  */
 import { ImapFlow } from 'imapflow'
 import { classifyTestFailure, type TestConnection } from './accountTest'
+import { decryptPassword, saveAnnouncedSize, type DbEmailAccount } from './accounts'
 import { parseAnnouncedSize } from './smtpSize'
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -149,4 +150,58 @@ export async function refreshAnnouncedSize(
   } catch {
     return null
   }
+}
+
+/**
+ * Ce qu'il faut d'une ligne `email_accounts` pour rejoindre son serveur SMTP.
+ * Même intention que `ImapAccountRow` : la conversion vit à UN endroit, une
+ * colonne renommée casse à la compilation plutôt qu'en silence.
+ */
+export type SmtpAccountRow = Pick<
+  DbEmailAccount,
+  'id' | 'smtp_host' | 'smtp_port' | 'smtp_secure' | 'username' | 'password_encrypted'
+  | 'imap_host' | 'imap_port' | 'imap_secure' | 'oauth_provider'
+>
+
+/**
+ * Le serveur vient de refuser un envoi POUR SA TAILLE : on relit ce qu'il
+ * annonce maintenant et on le retient sur la boîte (lot M10, complément de
+ * Nicolas du 23/09/2026 — « en cas d'échec, faire une actualisation pour mettre
+ * à jour si ça change… comme ça c'est automatique »). Sans cela, un serveur qui
+ * BAISSE sa limite refuserait chaque envoi pour toujours : nous continuerions à
+ * lui opposer le chiffre du jour de la création, donc à laisser passer des
+ * messages qu'il rejette, sans jamais apprendre.
+ *
+ * Aucun RÉESSAI : le message refusé n'a pas maigri entre-temps, le renvoyer
+ * serait refusé à l'identique. Ce qui change, c'est le plafond opposé à
+ * l'appelant MAINTENANT, et celui des envois suivants.
+ *
+ * Rend `null` sans rien écrire quand il n'y a rien à apprendre (boîte à jeton,
+ * serveur muet, connexion échouée) : un incident réseau n'efface pas un plafond
+ * valable.
+ */
+export async function relearnAnnouncedSize(account: SmtpAccountRow): Promise<number | null> {
+  // Une boîte à jeton n'a pas de mot de passe à déchiffrer : `refreshAnnouncedSize`
+  // ne saurait pas s'authentifier, et `decrypt` d'une chaîne vide lèverait.
+  if (account.oauth_provider || !account.password_encrypted) return null
+  let password: string
+  try {
+    password = decryptPassword(account.password_encrypted)
+  } catch {
+    return null
+  }
+  const size = await refreshAnnouncedSize(
+    {
+      imapHost: account.imap_host,
+      imapPort: account.imap_port,
+      imapSecure: account.imap_secure,
+      smtpHost: account.smtp_host,
+      smtpPort: account.smtp_port,
+      smtpSecure: account.smtp_secure,
+      username: account.username,
+    },
+    password
+  )
+  if (size !== null) await saveAnnouncedSize(account.id, size)
+  return size
 }

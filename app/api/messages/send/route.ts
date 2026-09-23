@@ -17,7 +17,15 @@ import {
   parseAttachments,
   type OutgoingAttachment,
 } from '@/lib/attachments'
-import { SEND_WARNING, exceedsRecipientWarning, resolveSendCeiling } from '@/lib/smtpSize'
+import {
+  SEND_REFUSED_BY_SERVER,
+  SEND_WARNING,
+  exceedsRecipientWarning,
+  isSizeRefusal,
+  resolveSendCeiling,
+  sizeRefusalReason,
+} from '@/lib/smtpSize'
+import { relearnAnnouncedSize } from '@/lib/accountProbe'
 import { upsertContactsFromAddresses } from '@/lib/contacts'
 import { randomUUID } from 'crypto'
 import { appOrigin } from '@/lib/appOrigin'
@@ -189,33 +197,62 @@ async function postHandler(req: Request) {
       }
     }
 
-    const { messageId, raw } = await sendMail(
-      {
-        id: account.id,
-        smtpHost: account.smtp_host,
-        smtpPort: account.smtp_port,
-        smtpSecure: account.smtp_secure,
-        username: account.username,
-        passwordEncrypted: account.password_encrypted,
-        oauthProvider: account.oauth_provider,
-        oauthAccessToken: account.oauth_access_token,
-        oauthRefreshToken: account.oauth_refresh_token,
-        oauthExpiresAt: account.oauth_expires_at,
-      },
-      {
-        from: account.email,
-        to: toArr,
-        cc: ccArr.length ? ccArr : undefined,
-        bcc: bcc ? (Array.isArray(bcc) ? bcc : [bcc]) : undefined,
-        subject,
-        html: trackedHtml,
-        text,
-        inReplyTo,
-        references,
-        dispositionNotificationTo: requestReadReceipt ? account.email : undefined,
-        attachments,
-      }
-    )
+    let sent: Awaited<ReturnType<typeof sendMail>>
+    try {
+      sent = await sendMail(
+        {
+          id: account.id,
+          smtpHost: account.smtp_host,
+          smtpPort: account.smtp_port,
+          smtpSecure: account.smtp_secure,
+          username: account.username,
+          passwordEncrypted: account.password_encrypted,
+          oauthProvider: account.oauth_provider,
+          oauthAccessToken: account.oauth_access_token,
+          oauthRefreshToken: account.oauth_refresh_token,
+          oauthExpiresAt: account.oauth_expires_at,
+        },
+        {
+          from: account.email,
+          to: toArr,
+          cc: ccArr.length ? ccArr : undefined,
+          bcc: bcc ? (Array.isArray(bcc) ? bcc : [bcc]) : undefined,
+          subject,
+          html: trackedHtml,
+          text,
+          inReplyTo,
+          references,
+          dispositionNotificationTo: requestReadReceipt ? account.email : undefined,
+          attachments,
+        }
+      )
+    } catch (err) {
+      // Un refus de TAILLE, et lui seul, vaut relecture de l'annonce (lot M10,
+      // complement de Nicolas du 23/09/2026 : « en cas d'echec, faire une
+      // actualisation pour mettre a jour si ca change »). Sans cela, un serveur
+      // qui BAISSE sa limite refuserait chaque envoi pour toujours, puisque nous
+      // continuerions a lui opposer le chiffre du jour de la creation. Un mot de
+      // passe faux ou un serveur injoignable ne reecrit RIEN.
+      if (!isSizeRefusal(err)) throw err
+      // Une seule implementation de la relecture, partagee avec la sonde : elle
+      // ne rend un nombre que s'il y a vraiment quelque chose a apprendre, et
+      // n'efface jamais un plafond valable sur un incident reseau.
+      const announced = await relearnAnnouncedSize(account)
+      // Aucun reessai automatique : le serveur peut avoir refuse APRES avoir
+      // accepte l'enveloppe, et renvoyer livrerait deux fois. L'envoi suivant
+      // part avec le plafond corrige — c'est la qu'est l'automatisme.
+      return NextResponse.json(
+        {
+          error: SEND_REFUSED_BY_SERVER,
+          // La phrase du SERVEUR, pas la notre : elle seule dit pourquoi.
+          reason: sizeRefusalReason(err),
+          announcedSize: announced,
+          refreshed: announced !== null && announced !== ceiling.announced,
+        },
+        { status: 413 }
+      )
+    }
+    const { messageId, raw } = sent
 
     // Append to IMAP Sent folder — fire-and-forget
     appendToSentFolder(

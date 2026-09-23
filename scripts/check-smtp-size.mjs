@@ -21,6 +21,8 @@
  *   node --experimental-strip-types scripts/check-smtp-size.mjs --break=fallback
  *   node --experimental-strip-types scripts/check-smtp-size.mjs --break=warning
  *   node --experimental-strip-types scripts/check-smtp-size.mjs --break=wiring
+ *   node --experimental-strip-types scripts/check-smtp-size.mjs --break=refusal
+ *   node --experimental-strip-types scripts/check-smtp-size.mjs --break=reread
  * Les formes `--break` abîment UNE attente et EXIGENT que le passage échoue :
  * un banc incapable d'échouer ne prouve rien.
  */
@@ -41,8 +43,11 @@ import {
   CEILING_SOURCE,
   MESSAGE_ENVELOPE_RESERVE_BYTES,
   SEND_WARNING_BYTES,
+  SEND_REFUSED_BY_SERVER,
   exceedsRecipientWarning,
+  isSizeRefusal,
   parseAnnouncedSize,
+  sizeRefusalReason,
   resolveSendCeiling,
   wireBytes,
 } from '../lib/smtpSize.ts'
@@ -200,6 +205,71 @@ function BASE64_STEP() {
     assert.ok(!attachments.includes(String(value)), `lib/attachments.ts ne recopie pas ${name}`)
   }
   ok('le plafond et le seuil ne sont écrits qu’une fois, dans lib/smtpSize.ts')
+}
+
+// 5. Un refus de TAILLE, et lui seul, relit l'annonce (complément de Nicolas du
+// 23/09/2026). La distinction est tout l'intérêt : un mot de passe faux ne doit
+// RIEN réécrire sur la boîte.
+{
+  // Les trois formes réelles d'un refus de taille : le code de l'extension SIZE
+  // (RFC 1870), celui de la RFC 5321, et le refus que nodemailer prononce seul
+  // avant d'écrire sur le fil (aucun code, seulement sa phrase).
+  const refusals = [
+    { responseCode: 523, response: '523 5.3.4 Message too big for system' },
+    { responseCode: 552, response: '552 5.3.4 Message size exceeds fixed maximum' },
+    { message: 'Message size larger than allowed 141557760' },
+  ]
+  for (const err of refusals) {
+    assert.equal(isSizeRefusal(err), BREAK === 'refusal' ? false : true, `${JSON.stringify(err)} est un refus de taille`)
+  }
+  // Tout le reste ne l'est PAS : ni une authentification refusée, ni un serveur
+  // injoignable, ni une valeur qui n'est pas un objet.
+  const others = [
+    { responseCode: 535, response: '535 Authentication credentials invalid' },
+    { responseCode: 550, response: '550 5.1.1 Recipient unknown' },
+    { message: 'connect ETIMEDOUT 1.2.3.4:465' },
+    { message: 'self signed certificate in certificate chain' },
+    null, undefined, 'trop gros', 552, {},
+  ]
+  for (const err of others) {
+    assert.equal(isSizeRefusal(err), false, `${JSON.stringify(err) ?? String(err)} n'est PAS un refus de taille`)
+  }
+  ok(`${refusals.length} refus de taille reconnus, ${others.length} autres échecs laissés tranquilles`)
+
+  // La raison REMONTÉE est celle du serveur, pas une phrase de notre cru.
+  assert.equal(sizeRefusalReason(refusals[0]), '523 5.3.4 Message too big for system')
+  assert.equal(sizeRefusalReason(refusals[2]), 'Message size larger than allowed 141557760')
+  assert.equal(sizeRefusalReason({}), '')
+  assert.equal(sizeRefusalReason(null), '')
+  ok('la raison remontée est la phrase du serveur, jamais une reformulation')
+}
+
+// 6. Câblage du complément : la route relit et ENREGISTRE, et seulement sur un
+// refus de taille.
+{
+  const route = readFileSync(join(ROOT, 'app/api/messages/send/route.ts'), 'utf8')
+  const probe = readFileSync(join(ROOT, 'lib/accountProbe.ts'), 'utf8')
+  const wired = BREAK === 'reread' ? route.replace(/relearnAnnouncedSize/g, 'autreChose') : route
+
+  assert.ok(wired.includes('relearnAnnouncedSize'), 'la route doit RELIRE l’annonce après un refus de taille')
+  assert.ok(
+    /if \(!isSizeRefusal\(err\)\) throw err/.test(route),
+    'tout échec qui n’est PAS un refus de taille doit repartir intact',
+  )
+  // La relecture et son enregistrement vivent dans la sonde, à UN endroit,
+  // partagés avec l'essai de connexion : la route ne les réécrit pas.
+  assert.ok(probe.includes('saveAnnouncedSize'), 'la sonde doit ENREGISTRER ce qu’elle vient de relire')
+  assert.ok(
+    /if \(size !== null\) await saveAnnouncedSize/.test(probe),
+    'une relecture infructueuse ne doit pas EFFACER le plafond connu',
+  )
+  assert.ok(route.includes('SEND_REFUSED_BY_SERVER'), 'le refus du serveur a son propre code')
+  assert.ok(
+    !route.includes(`'${SEND_REFUSED_BY_SERVER}'`),
+    'la route ne recopie pas la valeur du code de refus',
+  )
+  assert.ok(route.includes('sizeRefusalReason(err)'), 'le refus remonte la raison du serveur')
+  ok('la route relit l’annonce, l’enregistre, et ne touche à rien sur un autre échec')
 }
 
 if (BREAK) {
