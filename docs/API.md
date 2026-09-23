@@ -75,6 +75,21 @@ Every other mailbox is closed. A refusal is a `403` naming the mailbox, the same
   "missingAccountReason": "not_granted" }
 ```
 
+#### A shared mailbox, and what a key may do with it
+
+The list you can tick is the list of mailboxes you can **reach**, not the ones you **own**: a mailbox shared with you appears there, so someone whose mailboxes are all shared can still give a key something to work on. The screen says where each one comes from.
+
+Ticking says WHICH mailbox, never WHAT may be done with it. On a **shared** mailbox a key stays bounded by the share's own permissions (`canSend`, `canDelete`, `canOrganize`, `canManageRules`, `canManageSignatures`): if the share does not allow sending, the key cannot send from that mailbox — holding `messages:send` changes nothing. The refusal names the gesture, not just the mailbox:
+
+```json
+{ "error": "API key cannot send on mailbox 9f2c…: the share granting access to it does not allow it",
+  "missingAccount": "9f2c…",
+  "missingAccountReason": "share_permission",
+  "missingSharePermission": "send" }
+```
+
+Access is read **at call time**, never frozen when the box was ticked. So a share that is revoked, expires, or loses a permission closes the key immediately, with no need to touch the key itself — the mailbox stays ticked, and the access is simply no longer there.
+
 `GET /api/accounts` lists only the mailboxes the calling key can reach — reading the list is itself knowing what exists. A **human session is limited neither by a scope nor by this list**. Keys created before this existed keep every mailbox they already reached; mailboxes added afterwards are granted to nobody.
 
 **Bearer-eligible routes** (the complete list — nothing else accepts a key):
