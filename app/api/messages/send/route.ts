@@ -11,6 +11,7 @@ import {
   parseForwardedMessages,
   resolveForwardOrigin,
 } from '@/lib/forward'
+import { checkTotalSize, parseAttachments, type OutgoingAttachment } from '@/lib/attachments'
 import { upsertContactsFromAddresses } from '@/lib/contacts'
 import { randomUUID } from 'crypto'
 import { appOrigin } from '@/lib/appOrigin'
@@ -34,7 +35,10 @@ async function postHandler(req: Request) {
 
   try {
     const body = await req.json()
-    const { accountId, to, cc, bcc, subject, html, text, inReplyTo, references, requestReadReceipt, forwardedMessages } = body as {
+    const {
+      accountId, to, cc, bcc, subject, html, text, inReplyTo, references, requestReadReceipt,
+      forwardedMessages, attachments: requestedAttachments,
+    } = body as {
       accountId?: string
       to?: string | string[]
       cc?: string | string[]
@@ -47,6 +51,8 @@ async function postHandler(req: Request) {
       requestReadReceipt?: boolean
       /** Messages transférés ENTIERS, joints en `.eml` (lot M5). Validé par `parseForwardedMessages`. */
       forwardedMessages?: unknown
+      /** Fichiers joints par l'appelant, `content` en base64 (lot M9). Validé par `parseAttachments`. */
+      attachments?: unknown
     }
 
     if (!accountId || !to || !subject) {
@@ -73,7 +79,7 @@ async function postHandler(req: Request) {
     // coché ses messages. Relire dans la boîte de l'expéditeur joindrait les
     // messages portant les MÊMES uid dans une AUTRE boîte. L'origine est donc
     // contrôlée à part, en lecture (propriétaire ou partage actif).
-    let attachments: Array<{ filename: string; content: Buffer; contentType: string }> | undefined
+    let attachments: OutgoingAttachment[] | undefined
     if (forwardedMessages !== undefined) {
       const parsed = parseForwardedMessages(forwardedMessages)
       if (!parsed.ok) {
@@ -122,6 +128,27 @@ async function postHandler(req: Request) {
         content: m.source,
         contentType: EML_CONTENT_TYPE,
       }))
+    }
+
+    // Fichiers joints par l'appelant. Ils rejoignent le MÊME tableau que les
+    // messages transférés — un seul chemin jusqu'à `sendMail`, donc un seul
+    // plafond de taille à tenir, celui du message entier.
+    if (requestedAttachments !== undefined) {
+      const parsed = parseAttachments(requestedAttachments)
+      if (!parsed.ok) {
+        return NextResponse.json(
+          { error: parsed.code, limit: parsed.limit, filename: parsed.detail },
+          { status: parsed.status }
+        )
+      }
+      attachments = [...(attachments ?? []), ...parsed.value]
+    }
+
+    if (attachments?.length) {
+      const total = checkTotalSize(attachments)
+      if (!total.ok) {
+        return NextResponse.json({ error: total.code, limit: total.limit }, { status: total.status })
+      }
     }
 
     const { messageId, raw } = await sendMail(

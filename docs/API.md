@@ -477,9 +477,28 @@ Send (or reply/forward) immediately.
   html?: string; text?: string
   inReplyTo?: string; references?: string
   requestReadReceipt?: boolean  // injects a 1×1 tracking pixel into `html` + Disposition-Notification-To
+  attachments?: { filename: string; content: string; contentType?: string }[]  // `content` is base64
 }
 ```
-`accountId`, `to`, `subject` required. On send: appends a copy to the account's IMAP Sent folder (fire-and-forget), extracts `to`+`cc` as contacts (fire-and-forget, `lib/contacts.ts`), and if `requestReadReceipt` is set, records a `sent_tracking` row keyed by a fresh UUID token embedded in the pixel URL (`GET /api/track/[token]`). **Response** `{ success: true }`. Note: forwarded-attachment resolution (by IMAP descriptor) is handled by the legacy `/api/send` route, not this one — see [Legacy routes](#legacy--internal-routes).
+`accountId`, `to`, `subject` required.
+
+**Attachments.** `content` is the file's bytes in base64 (line breaks at 76 columns are accepted). They join the
+same array that carries forwarded `.eml` messages, so both kinds share one ceiling. The boundary is
+`lib/attachments.ts`; every refusal names its ceiling in the response body.
+
+| Rule | Value | Refusal |
+|---|---|---|
+| Attachments per message | 20 | `400 { error: "attachment_too_many", limit: 20 }` |
+| Bytes per attachment (decoded) | 15728640 (15 MiB) | `413 { error: "attachment_too_large", limit: 15728640, filename }` |
+| Bytes per message (decoded, forwarded messages included) | 17825792 (17 MiB) | `413 { error: "attachment_message_too_large", limit: 17825792 }` |
+| `content` is valid base64 | — | `400 { error: "attachment_bad_base64", filename }` |
+| Shape of the list or of one entry | — | `400 { error: "attachment_invalid" }` |
+
+`filename` is sanitised, never used as a path: separators, control characters and `..` are stripped and the
+name is cut to 100 characters (`attachment` if nothing usable is left). `contentType` falls back to
+`application/octet-stream` when absent or not a valid MIME type. The 17 MiB message ceiling is calibrated
+backwards from IONOS's 25 MB limit: base64 costs a third more on the wire, so 17 MiB decoded weighs ~23.8 MB
+sent — an attachment refused here would otherwise be refused by the SMTP server after being fully transmitted. On send: appends a copy to the account's IMAP Sent folder (fire-and-forget), extracts `to`+`cc` as contacts (fire-and-forget, `lib/contacts.ts`), and if `requestReadReceipt` is set, records a `sent_tracking` row keyed by a fresh UUID token embedded in the pixel URL (`GET /api/track/[token]`). **Response** `{ success: true }`. Note: forwarded-attachment resolution (by IMAP descriptor) is handled by the legacy `/api/send` route, not this one — see [Legacy routes](#legacy--internal-routes).
 
 ---
 
