@@ -23,7 +23,7 @@
 import { query } from './db'
 
 /** Pourquoi une requête a été refusée, dans le vocabulaire de la barrière elle-même. */
-export type DenialReason = 'unauthenticated' | 'scope' | 'account'
+export type DenialReason = 'unauthenticated' | 'scope' | 'account' | 'ip'
 
 /** L'état d'une ligne en cours, le temps que la requête se déroule. */
 type PendingLog = {
@@ -37,6 +37,28 @@ type PendingLog = {
 
 const pending = new WeakMap<Request, PendingLog>()
 
+/** Une adresse tient dans `api_key_requests.ip_address` (VARCHAR(45), un IPv6 complet). */
+const IP_MAX_LEN = 45
+
+/**
+ * D'OÙ la requête vient, telle que l'application peut la voir — LA source unique.
+ *
+ * Le journal, la liste des IP d'une clé et la restriction par IP lisent toutes CECI :
+ * comparer une restriction à une adresse obtenue autrement laisserait passer ce que le
+ * journal montre refusé, et l'inverse.
+ *
+ * CE QUE CETTE SOURCE VAUT : `x-forwarded-for` est un en-tête, donc FORGEABLE par
+ * quiconque atteint l'application directement. Elle n'est digne de confiance que si le
+ * reverse proxy est le SEUL chemin vers l'application (il réécrit l'en-tête) et que le
+ * port de l'application n'est pas joignable autrement. Sans cette garantie, la
+ * restriction par IP est un garde-fou d'exploitation, pas une barrière de sécurité.
+ */
+export function clientIp(req: Request): string | null {
+  const forwarded = req.headers.get('x-forwarded-for')?.split(',')[0].trim()
+  const ip = forwarded || req.headers.get('x-real-ip')?.trim() || null
+  return ip ? ip.slice(0, IP_MAX_LEN) : null
+}
+
 /**
  * Ouvre la ligne à l'entrée de la requête. Rien n'est attendu : l'INSERT part et
  * la promesse de son identifiant est gardée pour l'UPDATE, qui l'attendra une fois,
@@ -45,15 +67,11 @@ const pending = new WeakMap<Request, PendingLog>()
  */
 export function openLog(req: Request, apiKeyId: string): void {
   const url = new URL(req.url)
-  const ip =
-    req.headers.get('x-forwarded-for')?.split(',')[0].trim() ??
-    req.headers.get('x-real-ip') ??
-    null
 
   const id = query<{ id: string }>(
     `INSERT INTO api_key_requests (api_key_id, method, path, ip_address)
      VALUES ($1, $2, $3, $4) RETURNING id`,
-    [apiKeyId, req.method, url.pathname, ip?.slice(0, 45) ?? null]
+    [apiKeyId, req.method, url.pathname, clientIp(req)]
   )
     .then(rows => rows[0]?.id ?? null)
     .catch(() => null)

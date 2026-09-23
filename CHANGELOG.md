@@ -5,6 +5,41 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — fork Yumi-Lab (branche `lane/password`) — revoir une clé API, et savoir d'où elle sert — 2026-09-23
+
+### Added
+- **Une clé API peut être revue après coup** (`app/api/api-keys/[id]/reveal`) — elle n'était visible qu'une
+  fois, à sa création. Elle est désormais aussi conservée **chiffrée** avec la clé maître de l'instance
+  (`ENCRYPTION_KEY`, la même mécanique que les mots de passe IMAP), et son propriétaire peut la relire en
+  **retapant le mot de passe de son compte**, comme pour toute opération sensible. Le SHA-256 reste la
+  seule chose consultée pour AUTHENTIFIER : le chiffré ne sert qu'à afficher. Chaque révélation est
+  inscrite au journal de la clé (qui, quand, depuis quelle adresse). Les clés créées avant n'ont aucun
+  clair stocké nulle part et restent irrécupérables — l'écran le DIT au lieu d'offrir un bouton mort.
+- **La liste des adresses d'où une clé a servi** (`GET /api/api-keys/[id]/ips`) — agrégée sur les lignes de
+  journal déjà enregistrées, rien de plus n'est collecté : première fois, dernière fois, nombre d'appels.
+  Une adresse vue pour la **première fois depuis 7 jours** est marquée nettement : c'est CE signal qui
+  attrape une clé volée, pas une carte. Le bouton de révocation est dans le même panneau.
+- **Une clé peut être restreinte à des adresses** (`lib/apiKeyIpRules.ts`, colonne `api_keys.allowed_ips`)
+  — adresses exactes ou plages CIDR, IPv4. Vide = aucune restriction, ce qui est l'état de toute clé
+  existante : la migration ne restreint personne. Le contrôle est posé dans `authorize()` à côté des
+  portées et des boîtes, et lit la **même** source d'adresse que le journal — ce que l'écran montre est
+  donc bien ce qui est comparé. Un refus rend un `403` qui NOMME l'adresse refusée et laisse une ligne au
+  journal avec le motif `ip`. Il passe AVANT le contrôle de portée : une clé qui parle d'un endroit
+  interdit n'apprend rien de ce qui lui manque par ailleurs. Une session humaine n'est jamais concernée.
+
+### Notes
+- **Ce que vaut la restriction par adresse, mesuré et non supposé** : l'adresse comparée est celle que
+  l'application peut voir (`X-Forwarded-For`, puis `X-Real-IP`), c'est-à-dire un en-tête. Sur le nginx du
+  staging tel qu'il est configuré, un appelant extérieur peut le FORGER : une requête déclarant
+  `203.0.113.250` a bien été journalisée sous cette adresse. La restriction est donc un **garde-fou
+  d'exploitation** (« cette clé ne doit servir que depuis ce serveur »), pas une barrière contre un voleur
+  de clé, tant que le proxy ne réécrit pas l'en-tête (`proxy_set_header X-Forwarded-For $remote_addr`) et
+  n'est pas le seul chemin vers l'application. La même réserve vaut pour la liste des adresses ci-dessus.
+- L'administration et la gestion des clés restent fermées au Bearer : une clé ne peut ni se donner des
+  droits, ni en fabriquer d'autres.
+
+---
+
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — pièces jointes par l'API — 2026-09-23
 
 ### Added

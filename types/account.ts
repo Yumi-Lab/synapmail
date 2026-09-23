@@ -82,6 +82,31 @@ export interface ApiKey {
   requestCount24h: number
 }
 
+/**
+ * Depuis combien de jours une adresse compte comme vue pour la PREMIÈRE fois.
+ * C'est ce marquage, pas la liste elle-même, qui attrape une clé volée.
+ */
+export const API_KEY_NEW_IP_DAYS = 7
+
+/** Une adresse d'où une clé a servi — agrégée depuis `api_key_requests`. */
+export interface ApiKeyIp {
+  ipAddress: string
+  firstSeen: string
+  lastSeen: string
+  callCount: number
+  /** Vue pour la première fois depuis moins de `API_KEY_NEW_IP_DAYS` jours. */
+  isNew: boolean
+}
+
+/**
+ * La « méthode » sous laquelle une RÉVÉLATION du clair d'une clé s'inscrit au journal.
+ * Ce n'est pas une requête Bearer : c'est une opération sensible du propriétaire, qui
+ * se lit dans le même journal que le reste de la vie de la clé. Elle vit ici, avec le
+ * contrat de la ligne qu'elle qualifie, et non dans `lib/apiLog.ts` : ce module tire
+ * la base de données, qu'un banc ne peut pas charger.
+ */
+export const API_KEY_REVEAL_METHOD = 'REVEAL'
+
 /** One row from GET /api/api-keys/[id]/logs — a single logged Bearer request. */
 export interface ApiKeyRequestLog {
   id: string
@@ -95,6 +120,6 @@ export interface ApiKeyRequestLog {
   /** La boîte visée, quand la requête en désignait une. */
   accountId: string | null
   /** Le motif du refus et ce qui manquait : la portée, ou la boîte fermée. */
-  denialReason: 'unauthenticated' | 'scope' | 'account' | null
+  denialReason: 'unauthenticated' | 'scope' | 'account' | 'ip' | null
   denialDetail: string | null
 }
