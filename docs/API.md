@@ -505,6 +505,16 @@ nothing, the prudent fallback applies instead: 17825792 bytes (17 MiB), calibrat
 refusal carries `limitSource` (`"server"` or `"fallback"`) and `announcedSize` (the raw announced number, or
 `null`), so a caller can tell "this server really refuses it" from "we never heard its limit".
 
+**When the server itself refuses on size.** The ceiling above is what the server announced *last time we
+heard it*; a server that lowers its limit would otherwise refuse every send forever. So a size refusal from
+the server (SMTP `523`/`552`, or nodemailer declining before it writes) — and only a size refusal — makes
+the account's SMTP server re-announce its size, which is stored back on the account. The response is
+`413 { error: "server_refused_size", reason, announcedSize, refreshed }`: `reason` is the server's own
+sentence, never a reformulation; `announcedSize` is what it announces now (`null` when nothing usable was
+heard — a network incident never erases a valid ceiling); `refreshed` says whether that differs from what
+we held. The message is **not** re-sent automatically: it has not shrunk, and the server may have refused
+after accepting the envelope, so a retry could deliver twice. The *next* send uses the corrected ceiling.
+
 **Size warning — never a refusal.** The sending server's limit is not the recipient's: IONOS accepts 135 MB
 while Gmail refuses past 25 MB and Outlook around 20. Past 20971520 decoded bytes the message is still sent,
 and the response carries `{ success: true, warning: "recipient_may_refuse_size", bytes }` — a 100 MB message

@@ -1012,7 +1012,7 @@
                   },
                   "attachments": {
                     "type": "array",
-                    "description": "Files attached to the message. At most 20. The size ceiling is the one the account's SMTP server announced (250 SIZE, stored at account creation and at every connection test); when it announced nothing, 17825792 decoded bytes apply for the whole message, forwarded messages included. Every size refusal carries limitSource (server|fallback) and announcedSize. Past 20971520 decoded bytes the message is still sent and the response carries warning: recipient_may_refuse_size.",
+                    "description": "Files attached to the message. At most 20. The size ceiling is the one the account's SMTP server announced (250 SIZE, stored at account creation and at every connection test); when it announced nothing, 17825792 decoded bytes apply for the whole message, forwarded messages included. Every size refusal carries limitSource (server|fallback) and announcedSize. Past 20971520 decoded bytes the message is still sent and the response carries warning: recipient_may_refuse_size. If the server itself refuses on size (523/552), it is asked to re-announce its size, the account is updated, and the response is 413 server_refused_size with the server's own reason, announcedSize and refreshed; the message is not re-sent automatically.",
                     "maxItems": 20,
                     "items": {
                       "type": "object",
