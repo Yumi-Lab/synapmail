@@ -5,6 +5,41 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — fork Yumi-Lab (branche `yumi`) — pièces jointes par l'API — 2026-09-23
+
+### Added
+- **`POST /api/messages/send` accepte des pièces jointes** (`lib/attachments.ts`, nouveau) — un agent qui
+  tient une clé pouvait écrire un message mais rien y joindre : le tableau `attachments` de `sendMail`
+  n'était alimenté que par les messages TRANSFÉRÉS. Le corps accepte désormais
+  `attachments: [{ filename, content, contentType? }]`, `content` en base64 (les retours à la ligne à 76
+  colonnes sont admis). Les fichiers rejoignent le **même** tableau que les messages transférés — un seul
+  chemin jusqu'à `sendMail`, donc un seul plafond de taille pour le message entier, pas deux mécanismes
+  qui s'ignorent. La route reste derrière la portée `messages:send` et la barrière par boîte : rien n'a
+  été touché de ce côté.
+- **La frontière de confiance dit NON en nommant son plafond** — au plus **20** pièces par message,
+  **15 Mio** décodés par pièce, **17 Mio** décodés pour le message entier (messages transférés compris).
+  Ce dernier chiffre se calibre à l'envers depuis la limite de 25 Mo d'IONOS : le base64 coûte un tiers de
+  plus sur le fil, donc 17 Mio décodés pèsent ~23,8 Mo envoyés. Chaque refus porte son plafond dans la
+  réponse (`attachment_too_many` / `attachment_too_large` / `attachment_message_too_large`), et le refus
+  d'une pièce nomme le fichier en cause. Un `content` qui n'est pas du base64 canonique rend
+  `attachment_bad_base64` plutôt que d'arriver silencieusement tronqué — `Buffer.from(x, 'base64')` ne se
+  plaint jamais et jette ce qu'il ne sait pas lire. Un `filename` est nettoyé et ne désigne JAMAIS un
+  chemin (séparateurs, caractères de contrôle et `..` retirés, longueur bornée à 100) ; un `contentType`
+  absent ou farfelu retombe sur `application/octet-stream`.
+- `docs/API.md` et `docs/openapi.json` décrivent le corps, les trois plafonds chiffrés et les cinq codes
+  de refus — le contrôle de dérive de la documentation l'exige.
+
+### Testing
+- `scripts/check-send-attachments.mjs` — contrôle PUR (ni base, ni boîte, ni réseau, ni navigateur) de
+  `lib/attachments.ts` : un nom de fichier ne devient jamais un chemin (`../../etc/passwd` et quatre
+  variantes), cinq formes de base64 invalide sont refusées plutôt que tronquées, chaque plafond est
+  atteint puis franchi et voyage avec son refus, le type MIME retombe sur sa valeur par défaut, et la
+  route ALIMENTE le tableau existant au lieu d'ouvrir un second chemin vers `sendMail`. Quatre contrôles
+  NÉGATIFS (`--break=path|base64|total|wiring`) abîment une attente et EXIGENT l'échec : une batterie qui
+  ne peut pas échouer ne prouve rien. Branché sur `verify.sh`.
+
+---
+
 ## [Unreleased] — fork Yumi-Lab (branche `yumi`) — purge d'historique dans l'interface — 2026-09-22
 
 ### Added
