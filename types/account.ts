@@ -83,6 +83,22 @@ export interface ApiKey {
 }
 
 /**
+ * Depuis combien de jours une adresse compte comme vue pour la PREMIÈRE fois.
+ * C'est ce marquage, pas la liste elle-même, qui attrape une clé volée.
+ */
+export const API_KEY_NEW_IP_DAYS = 7
+
+/** Une adresse d'où une clé a servi — agrégée depuis `api_key_requests`. */
+export interface ApiKeyIp {
+  ipAddress: string
+  firstSeen: string
+  lastSeen: string
+  callCount: number
+  /** Vue pour la première fois depuis moins de `API_KEY_NEW_IP_DAYS` jours. */
+  isNew: boolean
+}
+
+/**
  * La « méthode » sous laquelle une RÉVÉLATION du clair d'une clé s'inscrit au journal.
  * Ce n'est pas une requête Bearer : c'est une opération sensible du propriétaire, qui
  * se lit dans le même journal que le reste de la vie de la clé. Elle vit ici, avec le

@@ -3,11 +3,12 @@
 import { useState } from 'react'
 import useSWR from 'swr'
 import { useTranslations } from 'next-intl'
-import { Plus, Trash2, Terminal, Copy, Check, TriangleAlert, ChevronDown, Activity, BookOpen, KeyRound, Eye } from 'lucide-react'
+import { Plus, Trash2, Terminal, Copy, Check, TriangleAlert, ChevronDown, Activity, BookOpen, KeyRound, Eye, Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/PasswordInput'
-import type { ApiKey, ApiKeyRequestLog } from '@/types/account'
+import type { ApiKey, ApiKeyIp, ApiKeyRequestLog } from '@/types/account'
+import { API_KEY_NEW_IP_DAYS } from '@/types/account'
 import { SettingsPage, SettingsHeader, SettingsSection } from '@/components/settings/primitives'
 import { API_DOC_PATH } from '@/lib/apiDocs'
 import { ALL_SCOPES, API_SCOPES, type ApiScope } from '@/lib/apiScopes'
@@ -250,6 +251,54 @@ function ActivityRow({ log, accounts }: { log: ApiKeyRequestLog; accounts: Email
   )
 }
 
+/**
+ * D'OÙ la clé a servi. Une adresse vue pour la PREMIÈRE fois est marquée : c'est ce
+ * signal-là qui attrape une clé volée, pas la liste. Le bouton de révocation est posé
+ * ici, à portée de main, pour que le doute et le geste soient au même endroit.
+ */
+function IpPanel({ keyId, onRevoke }: { keyId: string; onRevoke: () => void }) {
+  const { data, isLoading } = useSWR<{ data: ApiKeyIp[] }>(`/api/api-keys/${keyId}/ips`, fetcher)
+  const ips = data?.data ?? []
+
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          Adresses d&apos;où cette clé a été utilisée. Une adresse vue pour la première fois
+          depuis moins de {API_KEY_NEW_IP_DAYS} jours est marquée.
+        </p>
+        <Button size="sm" variant="ghost" className="shrink-0 text-destructive" onClick={onRevoke}>
+          Révoquer
+        </Button>
+      </div>
+      {isLoading && <p className="text-xs text-muted-foreground">Chargement…</p>}
+      {!isLoading && ips.length === 0 && (
+        <p className="text-xs text-muted-foreground">Aucune adresse enregistrée pour cette clé.</p>
+      )}
+      {ips.length > 0 && (
+        <div className="max-h-64 space-y-2 overflow-y-auto">
+          {ips.map(ip => (
+            <div key={ip.ipAddress} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+              <span className="min-w-0 flex-1 truncate font-mono">{ip.ipAddress}</span>
+              {ip.isNew && (
+                <span className="shrink-0 rounded px-1.5 py-0.5 font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400">
+                  Nouvelle
+                </span>
+              )}
+              <span className="shrink-0 tabular-nums text-muted-foreground">
+                {ip.callCount} appel{ip.callCount > 1 ? 's' : ''}
+              </span>
+              <span className="shrink-0 text-muted-foreground">
+                {formatDateTime(ip.firstSeen)} → {formatDateTime(ip.lastSeen)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ActivityPanel({ keyId, accounts }: { keyId: string; accounts: EmailAccount[] }) {
   const { data, isLoading } = useSWR<{ data: ApiKeyRequestLog[] }>(`/api/api-keys/${keyId}/logs`, fetcher)
   const logs = data?.data ?? []
@@ -329,6 +378,7 @@ export default function ApiKeysPage() {
   const [copied, setCopied] = useState(false)
   const [expandedKeyId, setExpandedKeyId] = useState<string | null>(null)
   const [revealingKeyId, setRevealingKeyId] = useState<string | null>(null)
+  const [ipsKeyId, setIpsKeyId] = useState<string | null>(null)
 
   const createKey = async () => {
     if (!newName.trim()) { setError('Nom requis'); return }
@@ -484,6 +534,7 @@ export default function ApiKeysPage() {
           const expanded = expandedKeyId === key.id
           const editingScopes = editingScopesFor === key.id
           const revealing = revealingKeyId === key.id
+          const showingIps = ipsKeyId === key.id
           return (
             <div key={key.id} className="border border-border rounded-xl bg-card shadow-sm p-4">
               <div className="flex items-center justify-between gap-3">
@@ -512,6 +563,16 @@ export default function ApiKeysPage() {
                   </div>
                 </button>
                 <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => setIpsKeyId(showingIps ? null : key.id)}
+                    className="h-8 px-2.5 flex items-center gap-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    title="Voir d'où la clé est utilisée"
+                    aria-expanded={showingIps}
+                    data-api-key-ips={key.id}
+                  >
+                    <Globe className="w-3.5 h-3.5" />
+                    Origines
+                  </button>
                   <button
                     onClick={() => setRevealingKeyId(revealing ? null : key.id)}
                     className="h-8 px-2.5 flex items-center gap-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -553,6 +614,7 @@ export default function ApiKeysPage() {
                   onRevealed={k => { setRevealingKeyId(null); setRevealedKey(k) }}
                 />
               )}
+              {showingIps && <IpPanel keyId={key.id} onRevoke={() => revokeKey(key)} />}
               {expanded && <ActivityPanel keyId={key.id} accounts={accounts} />}
             </div>
           )
