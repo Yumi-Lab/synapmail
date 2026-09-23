@@ -82,6 +82,15 @@ export interface ApiKey {
   requestCount24h: number
 }
 
+/**
+ * La « méthode » sous laquelle une RÉVÉLATION du clair d'une clé s'inscrit au journal.
+ * Ce n'est pas une requête Bearer : c'est une opération sensible du propriétaire, qui
+ * se lit dans le même journal que le reste de la vie de la clé. Elle vit ici, avec le
+ * contrat de la ligne qu'elle qualifie, et non dans `lib/apiLog.ts` : ce module tire
+ * la base de données, qu'un banc ne peut pas charger.
+ */
+export const API_KEY_REVEAL_METHOD = 'REVEAL'
+
 /** One row from GET /api/api-keys/[id]/logs — a single logged Bearer request. */
 export interface ApiKeyRequestLog {
   id: string

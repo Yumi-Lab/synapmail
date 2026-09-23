@@ -26,7 +26,7 @@
 import crypto from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import pg from 'pg'
-import { REVEAL_LOG_METHOD } from '../lib/apiLog.ts'
+import { API_KEY_REVEAL_METHOD } from '../types/account.ts'
 
 for (const file of ['../.env', '../.env.local']) {
   const path = new URL(file, import.meta.url)
@@ -138,10 +138,10 @@ try {
   const logged = await pool.query(
     `SELECT method, ip_address, status FROM api_key_requests
       WHERE api_key_id = $1 AND method = $2 ORDER BY created_at DESC LIMIT 1`,
-    [fresh.id, REVEAL_LOG_METHOD]
+    [fresh.id, API_KEY_REVEAL_METHOD]
   )
   check('C1 la révélation a laissé une ligne au journal de la clé',
-    logged.rows.length === 1, `${logged.rows.length} ligne(s) ${REVEAL_LOG_METHOD}`)
+    logged.rows.length === 1, `${logged.rows.length} ligne(s) ${API_KEY_REVEAL_METHOD}`)
   check('C2 la ligne porte l\'IP vue par l\'application',
     logged.rows[0]?.ip_address != null,
     `ip_address ${logged.rows[0]?.ip_address ?? 'null'} — l'appelant doit poser x-forwarded-for`)

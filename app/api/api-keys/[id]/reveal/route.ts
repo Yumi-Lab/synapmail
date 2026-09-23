@@ -3,7 +3,8 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { decrypt } from '@/lib/encrypt'
-import { clientIp, REVEAL_LOG_METHOD } from '@/lib/apiLog'
+import { clientIp } from '@/lib/apiLog'
+import { API_KEY_REVEAL_METHOD } from '@/types/account'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,7 +48,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     await query(
       `INSERT INTO api_key_requests (api_key_id, method, path, ip_address, status)
        VALUES ($1, $2, $3, $4, 200)`,
-      [params.id, REVEAL_LOG_METHOD, new URL(req.url).pathname, clientIp(req)]
+      [params.id, API_KEY_REVEAL_METHOD, new URL(req.url).pathname, clientIp(req)]
     )
 
     return NextResponse.json({ data: { key: decrypt(rows[0].key_encrypted) } })

@@ -22,13 +22,6 @@
 
 import { query } from './db'
 
-/**
- * La « méthode » sous laquelle une RÉVÉLATION du clair d'une clé s'inscrit au journal.
- * Ce n'est pas une requête Bearer : c'est une opération sensible du propriétaire, qui
- * doit se lire dans le même journal que le reste de la vie de la clé.
- */
-export const REVEAL_LOG_METHOD = 'REVEAL'
-
 /** Pourquoi une requête a été refusée, dans le vocabulaire de la barrière elle-même. */
 export type DenialReason = 'unauthenticated' | 'scope' | 'account'
 
