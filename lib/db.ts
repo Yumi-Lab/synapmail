@@ -373,6 +373,11 @@ export async function initDb(): Promise<void> {
   // n'ont pas de clair à stocker, il n'existe nulle part, et elles restent irrécupérables.
   await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_encrypted TEXT`)
 
+  // Restreindre une clé à des adresses (lot P14) : liste vide = aucune restriction,
+  // ce qui est le cas de toute clé existante — la migration ne restreint personne.
+  // Le verrou est appliqué dans lib/apiAuth.ts, à côté des portées et des boîtes.
+  await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_ips TEXT[] NOT NULL DEFAULT '{}'`)
+
   // Journal des requêtes Bearer par clé — un log léger (méthode + chemin + IP), pas les
   // requêtes de session. Alimenté fire-and-forget par lib/apiAuth.ts à chaque auth réussie ;
   // purgé par le scheduler au-delà de 30 jours (voir lib/scheduler.ts processApiKeyLogCleanup).

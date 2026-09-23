@@ -31,6 +31,37 @@ type ScopedApiKey = ApiKey & {
   ownedAccountIds: string[]
   /** Faux pour une clé créée avant le lot P14 : son clair n'existe nulle part. */
   revealable: boolean
+  /** Adresses d'où la clé a le droit de parler. Vide = aucune restriction. */
+  allowedIps: string[]
+}
+
+/**
+ * Restreindre une clé à des adresses. Vide = aucune restriction, comme aujourd'hui.
+ * La saisie est une ligne par entrée : une adresse (`198.51.100.4`) ou une plage
+ * (`198.51.100.0/24`). Les entrées illisibles sont écartées à l'enregistrement plutôt
+ * que de bloquer silencieusement toute la clé — c'est `sanitizeIpRules` qui tranche,
+ * côté serveur, et rien n'est retapé ici.
+ */
+function IpRuleEditor({ value, onChange }: { value: string[]; onChange: (next: string[]) => void }) {
+  return (
+    <div>
+      <textarea
+        value={value.join('\n')}
+        onChange={e => onChange(e.target.value.split('\n').map(v => v.trim()).filter(Boolean))}
+        rows={3}
+        spellCheck={false}
+        placeholder={'198.51.100.4\n203.0.113.0/24'}
+        className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs
+                   ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none
+                   focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      />
+      <p className="mt-1 text-xs text-muted-foreground">
+        {value.length
+          ? 'Une requête venue d’une autre adresse est refusée, en la nommant.'
+          : 'Aucune restriction : la clé peut servir depuis n’importe où.'}
+      </p>
+    </div>
+  )
 }
 
 /**
@@ -322,13 +353,14 @@ function ActivityPanel({ keyId, accounts }: { keyId: string; accounts: EmailAcco
 function ScopeEditor({ apiKey, accounts, onSave }: {
   apiKey: ScopedApiKey
   accounts: EmailAccount[]
-  onSave: (scopes: ApiScope[], accountIds: string[]) => Promise<void>
+  onSave: (scopes: ApiScope[], accountIds: string[], allowedIps: string[]) => Promise<void>
 }) {
   const [draft, setDraft] = useState<ApiScope[]>(apiKey.scopes)
   const [accountDraft, setAccountDraft] = useState<string[]>(apiKey.accountIds)
+  const [ipDraft, setIpDraft] = useState<string[]>(apiKey.allowedIps)
   const same = (a: string[], b: string[]) => a.length === b.length && a.every(v => b.includes(v))
   const [saving, setSaving] = useState(false)
-  const dirty = !same(draft, apiKey.scopes) || !same(accountDraft, apiKey.accountIds)
+  const dirty = !same(draft, apiKey.scopes) || !same(accountDraft, apiKey.accountIds) || !same(ipDraft, apiKey.allowedIps)
 
   return (
     <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3">
@@ -339,11 +371,17 @@ function ScopeEditor({ apiKey, accounts, onSave }: {
         </p>
         <AccountPicker accounts={accounts} value={accountDraft} owned={apiKey.ownedAccountIds} onChange={setAccountDraft} />
       </div>
+      <div className="mt-3 border-t border-border pt-3">
+        <p className="mb-2 text-xs text-muted-foreground">
+          Adresses autorisées, une par ligne. Laisser vide pour n&apos;imposer aucune restriction.
+        </p>
+        <IpRuleEditor value={ipDraft} onChange={setIpDraft} />
+      </div>
       <div className="mt-3 flex items-center gap-2">
         <Button
           size="sm"
           disabled={!dirty || !draft.length || saving}
-          onClick={async () => { setSaving(true); try { await onSave(draft, accountDraft) } finally { setSaving(false) } }}
+          onClick={async () => { setSaving(true); try { await onSave(draft, accountDraft, ipDraft) } finally { setSaving(false) } }}
         >
           {saving ? 'Enregistrement…' : 'Enregistrer'}
         </Button>
@@ -406,11 +444,11 @@ export default function ApiKeysPage() {
     }
   }
 
-  const saveScopes = async (key: ScopedApiKey, scopes: ApiScope[], accountIds: string[]) => {
+  const saveScopes = async (key: ScopedApiKey, scopes: ApiScope[], accountIds: string[], allowedIps: string[]) => {
     const res = await fetch(`/api/api-keys/${key.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scopes, accountIds }),
+      body: JSON.stringify({ scopes, accountIds, allowedIps }),
     })
     if (!res.ok) { setError((await res.json()).error ?? 'Erreur'); return }
     setError(null)
@@ -605,7 +643,7 @@ export default function ApiKeysPage() {
               {editingScopes && (
                 <ScopeEditor
                   apiKey={key} accounts={accounts}
-                  onSave={(scopes, accountIds) => saveScopes(key, scopes, accountIds)}
+                  onSave={(scopes, accountIds, allowedIps) => saveScopes(key, scopes, accountIds, allowedIps)}
                 />
               )}
               {revealing && (

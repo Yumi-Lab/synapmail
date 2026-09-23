@@ -120,6 +120,6 @@ export interface ApiKeyRequestLog {
   /** La boîte visée, quand la requête en désignait une. */
   accountId: string | null
   /** Le motif du refus et ce qui manquait : la portée, ou la boîte fermée. */
-  denialReason: 'unauthenticated' | 'scope' | 'account' | null
+  denialReason: 'unauthenticated' | 'scope' | 'account' | 'ip' | null
   denialDetail: string | null
 }

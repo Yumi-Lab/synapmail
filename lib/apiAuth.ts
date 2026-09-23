@@ -4,7 +4,8 @@ import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { API_SCOPES, type ApiScope, scopeForRequest } from '@/lib/apiScopes'
 import { accountIdFromRequest, keyReachesAccount } from '@/lib/apiKeyAccounts'
-import { noteAccount, noteDenial, openLog } from '@/lib/apiLog'
+import { clientIp, noteAccount, noteDenial, openLog } from '@/lib/apiLog'
+import { ipAllowed, type IpRule } from '@/lib/apiKeyIpRules'
 
 export interface AuthContext {
   id: string
@@ -23,6 +24,7 @@ type Denial =
   | { reason: 'unauthenticated' }
   | { reason: 'scope'; scope: ApiScope }
   | { reason: 'account'; accountId: string }
+  | { reason: 'ip'; ip: string }
 type Resolution = { ctx: AuthContext } | { denied: Denial }
 
 /**
@@ -45,8 +47,8 @@ async function resolve(req: Request): Promise<Resolution> {
   if (!rawKey) return { denied: { reason: 'unauthenticated' } }
 
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex')
-  const rows = await query<{ id: string; user_id: string; role: string; scopes: string[] | null }>(
-    `SELECT ak.id, ak.user_id, u.role, ak.scopes FROM api_keys ak
+  const rows = await query<{ id: string; user_id: string; role: string; scopes: string[] | null; allowed_ips: string[] | null }>(
+    `SELECT ak.id, ak.user_id, u.role, ak.scopes, ak.allowed_ips FROM api_keys ak
      JOIN users u ON u.id = ak.user_id
      WHERE ak.key_hash = $1 AND ak.revoked_at IS NULL`,
     [keyHash]
@@ -60,6 +62,16 @@ async function resolve(req: Request): Promise<Resolution> {
   // statut, la durée et le motif du refus n'existent pas encore. Voir lib/apiLog.ts.
   openLog(req, apiKeyId)
   const path = new URL(req.url).pathname
+
+  // La TROISIÈME moitié de la barrière, au même endroit que les deux autres : d'où la
+  // clé a le droit de parler. Liste vide = aucune restriction, comme avant ce lot.
+  // L'adresse est celle du journal (`clientIp`) — ce que l'écran montre est donc bien
+  // ce qui est comparé. Vérifiée AVANT la portée : une clé qui parle d'un endroit
+  // interdit n'a rien à savoir de ce qui lui manque par ailleurs.
+  const ip = clientIp(req)
+  if (!ipAllowed(rows[0].allowed_ips as IpRule[] | null, ip)) {
+    return { denied: { reason: 'ip', ip: ip ?? '' } }
+  }
 
   const required = scopeForRequest(req.method, path)
   if (!required) return { denied: { reason: 'unauthenticated' } }
@@ -89,7 +101,7 @@ async function resolveAndNote(req: Request): Promise<Resolution> {
   const result = await resolve(req)
   if ('denied' in result) {
     const d = result.denied
-    noteDenial(req, d.reason, d.reason === 'scope' ? d.scope : d.reason === 'account' ? d.accountId : null)
+    noteDenial(req, d.reason, d.reason === 'scope' ? d.scope : d.reason === 'account' ? d.accountId : d.reason === 'ip' ? d.ip : null)
   }
   return result
 }
@@ -115,6 +127,20 @@ export async function authorize(req: Request): Promise<{ ctx: AuthContext } | { 
   if ('ctx' in result) return result
   if (result.denied.reason === 'unauthenticated') {
     return { denied: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  }
+  if (result.denied.reason === 'ip') {
+    const ip = result.denied.ip
+    return {
+      denied: NextResponse.json(
+        {
+          error: ip
+            ? `API key is not allowed from address ${ip}`
+            : 'API key is restricted to known addresses, and this request carries none',
+          deniedIp: ip || null,
+        },
+        { status: 403 }
+      ),
+    }
   }
   if (result.denied.reason === 'account') {
     const accountId = result.denied.accountId
