@@ -219,6 +219,44 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   défaut, charger /mail à 900 px ouvrait donc le volet « À traiter » avec un bouton « Retour » et
   aucune ligne à cliquer. L'initialisation est retirée ; ouvrir un message donne toujours l'écran au
   volet sous `lg`, et « Retour » ramène la liste. Le réglage « volet de lecture » n'est pas touché.
+- **Traduire un message SANS modèle d'IA, depuis le navigateur** (`lib/quickTranslate.ts`,
+  `components/ai/AIToolbar.tsx`, Réglages → IA, `scripts/check-quick-translate.mjs`) : le bouton
+  « Traduire » demandait jusqu'ici un modèle installé et configuré. Un troisième réglage, « Moteur de
+  traduction », offre trois valeurs — **Traduction rapide (depuis votre navigateur)**, le DÉFAUT,
+  **Traduction par le modèle IA**, et **Désactivée** (le bouton disparaît alors). En mode rapide, c'est
+  le navigateur du LECTEUR qui appelle le service : rien ne transite par le serveur, donc la requête
+  porte SON adresse et l'instance n'a aucun quota à épuiser. Le texte est découpé aux frontières de
+  paragraphe, de phrase, puis d'espace — jamais au milieu d'un mot — parce que le service tronque
+  silencieusement au-delà d'environ 5 000 caractères ; les morceaux se recollent à l'octet près, sauts
+  de ligne compris. Une réponse illisible (page de blocage, quota, changement de forme) lève une erreur
+  au lieu de rendre une demi-traduction, et le message d'échec propose de basculer sur le modèle. Le
+  texte des messages n'est JAMAIS journalisé.
+  ⚠ **DÉROGATION ASSUMÉE et usage PRIVÉ** : ce moteur appelle un point d'entrée NON OFFICIEL de Google
+  Traduction, seule exception à la règle « aucune dépendance Google » du dépôt, levée explicitement et
+  en connaissance de cause. Il ne doit pas rester activé sur un hébergement MULTI-UTILISATEUR ou public
+  (service non officiel, conditions du fournisseur, quotas et blocages d'adresse IP, et le contenu des
+  messages qui part chez un tiers) ; y choisir « modèle IA » ou « Désactivée ». Il est inaccessible
+  depuis la Chine. L'avertissement est repris dans le `README.md` et sous le réglage lui-même, en
+  en/fr/zh. Il n'existe pas d'`install.sh` dans ce dépôt (vérifié) : rien à mettre à jour de ce côté.
+  Garde : `scripts/check-quick-translate.mjs` (découpage, URL, lecture de réponse, réglage) avec son
+  contrôle négatif `--negative`, qui rejoue le découpage naïf et EXIGE qu'il passe au rouge.
+- **« Toutes les boîtes » sans flux ne ment plus** (`app/api/messages/search/route.ts`, `lib/search.ts`,
+  `docs/API.md`) : `GET /api/messages/search?scope=accounts` SANS `stream=1` ne balayait qu'une seule
+  boîte — le balayage multi-boîtes n'existait que dans la branche en flux, et l'exécution retombait
+  silencieusement sur la réception de la boîte courante. Mesuré en production le 21/09/2026 : **HTTP 200,
+  0 résultat, 26,7 s**, alors que la même adresse était trouvée en 3,2 s dans la boîte qui la porte. Un
+  appelant machine demandait « toutes les boîtes » et s'entendait répondre « rien trouvé » sans jamais
+  apprendre que sa portée avait été ignorée. La portée est maintenant HONORÉE sans flux : même balayage,
+  même découpage en deux passes, même concurrence que la branche en flux, agrégés par la fonction pure
+  `accumulateSearchStream` déjà livrée. La réponse DÉCLARE sa couverture (`searched`, `folders`,
+  `accounts`, `sweptAccounts`, `unreachable`, `complete`, `stoppedBecause`) : un balayage tronqué est un
+  `200` qui le dit, jamais un `200` vide. Mesuré sur le staging le 22/09/2026 : 2 résultats, 8 boîtes,
+  185 dossiers, 46,4 s, `complete: false` / `stoppedBecause: ["budget"]`.
+  ponytail: le plafond de 45 s reste, parce qu'une réponse d'un seul tenant ne montre rien avant sa fin ;
+  46 s pour un appel HTTP est long et `complete: false` veut dire qu'il reste des dossiers non vus — la
+  doc dit désormais qu'un appelant machine DOIT lire ce champ, et que `stream=1` reste la voie rapide.
+  Gardes : `scripts/check-search-accounts.mjs` (auto-contrôles purs du balayage et de la complétude) et
+  un banc live avec son contrôle négatif rejouant l'ancien comportement.
 - **Deux boîtes qui partagent un uid ne s'effacent plus l'une l'autre** (`lib/search.ts`) : en portée
   « Toutes les boîtes », l'accumulation des résultats dédoublonnait sur dossier + uid. Deux messages
   sans rapport portant l'uid 3231 dans l'« INBOX » de deux boîtes se confondaient, et l'un des deux

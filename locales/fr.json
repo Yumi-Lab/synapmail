@@ -203,7 +203,13 @@
       "soonTitle": "Bientôt disponible",
       "resultSummary": "Résumé",
       "resultTranslation": "Traduction",
-      "resultReply": "Brouillon IA, ouvert dans la composition"
+      "resultReply": "Brouillon IA, ouvert dans la composition",
+      "translateModeQuick": "Traduction rapide (depuis votre navigateur)",
+      "translateModeModel": "Traduction par le modèle IA",
+      "translateModeOff": "Désactivée",
+      "translateModeTitle": "Moteur de traduction",
+      "translateModeNotice": "La traduction rapide envoie le texte du message depuis VOTRE navigateur vers un service tiers (un point d'entrée non officiel de Google Traduction). Ce service n'est pas officiel et peut cesser de répondre à tout moment, il est inaccessible depuis la Chine, et il est prévu pour un usage PRIVÉ. Sur une instance partagée ou publique, choisissez le modèle IA ou désactivez-la.",
+      "translateQuickFailed": "Le service de traduction rapide n'a pas répondu. Passez au modèle IA dans les réglages, ou réessayez plus tard."
     },
     "back": "Retour"
   },

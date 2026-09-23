@@ -67,6 +67,15 @@
 - **Urgency keyword detection** — Highlights subjects containing words like "URGENT", "suspended account", "immediate refund"
 - **Encrypted credentials** — Email passwords AES-256-GCM encrypted at rest
 
+> **⚠ Quick translation is for a PRIVATE instance only.** Settings → AI offers three engines behind the
+> "Translate" button: **Quick translation (from your browser)** — the default —, **Translation by the AI
+> model**, and **Disabled**. The quick engine calls an **unofficial** Google Translate endpoint **from the
+> reader's own browser**, never from the server, so the request carries their address and not the
+> instance's. It still means **the message text leaves for a third party**. Do not leave it on for a
+> **multi-user or public** deployment: the endpoint is unofficial (no support, no stability guarantee, and
+> the provider's terms are yours to respect), it is subject to **quotas and IP blocks**, and it is
+> **unreachable from China**. On such a deployment, pick "Translation by the AI model" or "Disabled".
+
 ### Productivity & automation
 - **Email rules engine** — Full Gmail/Outlook-style filter system: multi-condition rules (from, to, subject, body, size, date, List-Unsubscribe, X-Priority), actions (move, mark_read, star, delete, forward), AND/OR logic, drag-and-drop priority, auto-run every 5 min, "create from message" shortcut, JSON import/export, Sieve export, per-rule execution stats
 - **Scheduled emails view** — Clock icon with badge in toolbar; popover lists pending scheduled emails with per-item cancel
