@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/PasswordInput'
 import type { ApiKey, ApiKeyIp, ApiKeyRequestLog } from '@/types/account'
 import { API_KEY_NEW_IP_DAYS } from '@/types/account'
+import { WORLD_VIEWBOX, WORLD_LAND_PATH, lonToX, latToY } from '@/lib/worldMap'
 import { SettingsPage, SettingsHeader, SettingsSection } from '@/components/settings/primitives'
 import { API_DOC_PATH } from '@/lib/apiDocs'
 import { ALL_SCOPES, API_SCOPES, type ApiScope } from '@/lib/apiScopes'
@@ -305,6 +306,75 @@ function ActivityRow({ log, accounts }: { log: ApiKeyRequestLog; accounts: Email
 }
 
 /**
+ * Le rayon d'un point, en unités du viewBox (donc en degrés) : un plancher pour qu'une
+ * adresse vue une seule fois reste visible, un plafond pour qu'une adresse vue cent fois
+ * n'avale pas un continent.
+ */
+const MAP_DOT_MIN_R = 1.8
+const MAP_DOT_MAX_R = 5
+const MAP_DOT_STROKE = 0.6
+
+/**
+ * La carte des adresses d'où une clé a servi. Le fond vient de `lib/worldMap.ts` et
+ * est dessiné DANS la page : aucune tuile, aucun CDN, aucune requête réseau au rendu —
+ * c'est ce qui permet à cet écran de s'afficher aussi depuis la Chine.
+ *
+ * Une adresse sans position (service indisponible, adresse privée) n'a PAS de point :
+ * elle reste dans la liste sous la carte. Fabriquer un point au hasard serait pire que
+ * de n'en pas mettre.
+ */
+function IpMap({ ips }: { ips: ApiKeyIp[] }) {
+  const placed = ips.filter(ip => ip.location)
+  if (!placed.length) return null
+
+  // Le rayon suit le nombre d'appels : racine du compte, pour qu'une adresse vue cent
+  // fois se distingue d'une vue une fois sans écraser la carte.
+  const maxCalls = Math.max(...placed.map(ip => ip.callCount))
+  const radius = (calls: number) =>
+    MAP_DOT_MIN_R + (MAP_DOT_MAX_R - MAP_DOT_MIN_R) * Math.sqrt(calls / maxCalls)
+
+  return (
+    <div className="mb-3">
+      <svg
+        viewBox={WORLD_VIEWBOX}
+        className="h-auto w-full rounded-lg border border-border bg-muted/30"
+        role="img"
+        aria-label="Carte des adresses d'où cette clé a été utilisée"
+        data-api-key-map
+      >
+        <path d={WORLD_LAND_PATH} className="fill-muted-foreground/25" />
+        {placed.map(ip => {
+          const loc = ip.location!
+          const where = [loc.city, loc.country].filter(Boolean).join(', ') || ip.ipAddress
+          return (
+            <circle
+              key={ip.ipAddress}
+              cx={lonToX(loc.longitude)}
+              cy={latToY(loc.latitude)}
+              r={radius(ip.callCount)}
+              className={cn(
+                'stroke-background',
+                ip.isNew ? 'fill-amber-500/80' : 'fill-violet-500/70'
+              )}
+              strokeWidth={MAP_DOT_STROKE}
+              data-api-key-map-dot={ip.ipAddress}
+            >
+              <title>
+                {`${where} — ${ip.ipAddress}\n${ip.callCount} appel${ip.callCount > 1 ? 's' : ''}\n${formatDateTime(ip.firstSeen)} → ${formatDateTime(ip.lastSeen)}${ip.isNew ? '\nVue pour la première fois récemment' : ''}`}
+              </title>
+            </circle>
+          )
+        })}
+      </svg>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">
+        Une adresse ne dit pas où est la personne : un VPN, un relais mobile ou un hébergeur
+        la déplacent de plusieurs milliers de kilomètres.
+      </p>
+    </div>
+  )
+}
+
+/**
  * D'OÙ la clé a servi. Une adresse vue pour la PREMIÈRE fois est marquée : c'est ce
  * signal-là qui attrape une clé volée, pas la liste. Le bouton de révocation est posé
  * ici, à portée de main, pour que le doute et le geste soient au même endroit.
@@ -328,11 +398,17 @@ function IpPanel({ keyId, onRevoke }: { keyId: string; onRevoke: () => void }) {
       {!isLoading && ips.length === 0 && (
         <p className="text-xs text-muted-foreground">Aucune adresse enregistrée pour cette clé.</p>
       )}
+      {ips.length > 0 && <IpMap ips={ips} />}
       {ips.length > 0 && (
         <div className="max-h-64 space-y-2 overflow-y-auto">
           {ips.map(ip => (
             <div key={ip.ipAddress} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-              <span className="min-w-0 flex-1 truncate font-mono">{ip.ipAddress}</span>
+              <span className="shrink-0 font-mono">{ip.ipAddress}</span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground" data-api-key-ip-place={ip.ipAddress}>
+                {ip.location
+                  ? [ip.location.city, ip.location.region, ip.location.country].filter(Boolean).join(', ')
+                  : 'Lieu inconnu'}
+              </span>
               {ip.isNew && (
                 <span className="shrink-0 rounded px-1.5 py-0.5 font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400">
                   Nouvelle
