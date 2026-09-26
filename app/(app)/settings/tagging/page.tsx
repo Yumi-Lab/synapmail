@@ -36,7 +36,10 @@ export default function TaggingSettingsPage() {
   const tCommon = useTranslations('settings.common')
 
   const { data: accountsData } = useSWR<{ data: EmailAccount[] }>('/api/accounts', fetcher)
-  const accounts = useMemo(() => accountsData?.data ?? [], [accountsData])
+  // Les boîtes PARTAGÉES sont écartées, comme dans l'écran Comptes : ces réglages désignent un
+  // moteur, donc une clé, et `/api/tagging/settings` est propriétaire seul (décision 9). Les
+  // lister ici ne donnerait qu'un 404 muet au premier clic.
+  const accounts = useMemo(() => (accountsData?.data ?? []).filter(a => !a.isShared), [accountsData])
   const [accountId, setAccountId] = useState<string | null>(null)
 
   // La première boîte sert de défaut, une fois : sans cela, l'écran s'ouvre vide alors qu'il a
