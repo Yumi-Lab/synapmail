@@ -49,8 +49,8 @@ const parseAnyValue = (q, a) => {
 
 
 const {
-  ENGINE_PRESETS, EngineError, STATE_BODY_CHARS, askEngine, buildState, costUsd,
-  failureOf, parseAnswer, parseResponse, trainingAllowed, TRAINING_SOURCES,
+  ENGINES, ENGINE_PRESETS, EngineError, STATE_BODY_CHARS, askEngine, buildState, costUsd,
+  failureOf, isEngineKind, parseAnswer, parseResponse, trainingAllowed, TAG_SOURCES, TRAINING_SOURCES,
 } = await import('../lib/tagging/engine.ts')
 const { ENGINE_QUESTIONS, QUESTIONS, questionById, valuesOf } = await import('../lib/tagging/questions.ts')
 
@@ -265,8 +265,56 @@ ok('seuls `humain` et `dossier` sont entraînables',
   TRAINING_SOURCES.join('|') === 'humain|dossier' && !trainingAllowed('jev') && !trainingAllowed('one')
     && trainingAllowed('humain') && trainingAllowed('dossier'))
 ok('le prix de JEV : 42 $ par milliard de jetons d’entrée',
-  Math.abs(costUsd('jev', 1e9) - 42) < 1e-9, String(costUsd('jev', 1e9)))
-ok('Yumi One ne coûte rien à plafonner', costUsd('one', 1e9) === 0)
+  Math.abs(costUsd(ENGINE_PRESETS.jev.usdPerBillionInput, 1e9) - 42) < 1e-9,
+  String(costUsd(ENGINE_PRESETS.jev.usdPerBillionInput, 1e9)))
+ok('Yumi One ne coûte rien à plafonner', costUsd(ENGINE_PRESETS.one.usdPerBillionInput, 1e9) === 0)
+// Décision 13 : la dépense se lit sur LE MOTEUR, donc deux moteurs du même type peuvent
+// coûter deux prix différents — un tarif renseigné à la main doit être celui qui compte.
+ok('la dépense se calcule sur le prix DU MOTEUR, pas sur le préréglage de son type',
+  Math.abs(costUsd(7, 2e9) - 14) < 1e-9, String(costUsd(7, 2e9)))
+ok('un moteur `autre` est un type reconnu et préréglé sans tarif',
+  isEngineKind('autre') && ENGINES.join('|') === 'jev|one|autre' && ENGINE_PRESETS.autre.usdPerBillionInput === 0,
+  ENGINES.join('|'))
+ok('`autre` est une source d’étiquette, et n’est PAS entraînable',
+  TAG_SOURCES.includes('autre') && !trainingAllowed('autre'))
+
+// ─── H. poser un SOUS-ENSEMBLE de questions ───────────────────────────────────
+// Le lot T8 comparera le fan-out complet à un tronc commun sur les mêmes mails : le client
+// doit déjà savoir n'en poser que quelques-unes. Une question NON POSÉE n'est ni rejetée ni
+// stockée — sinon un tronc commun produirait 38 « rejets » qui ne sont pas des échecs.
+console.log('\nH. un sous-ensemble de questions')
+const TROIS = ['categorie', 'urgence', 'reponse_requise']
+const subsetAnswers = { model: 'jev-1.13.0', usage: { input_tokens: 457 }, answers: Object.fromEntries(
+  TROIS.map(id => {
+    const q = questionById(id)
+    if (q.type === 'noul') return [id, { noul: 0.9 }]
+    if (q.type === 'score') return [id, { score: 0, confidence: 0.8, probabilities: { 0: 0.9, 1: 0.1 } }]
+    return [id, { choice: valuesOf(q)[0], confidence: 0.8 }]
+  })) }
+calls.length = 0
+serve(200, subsetAnswers)
+const subset = await askEngine(CFG, state, TROIS)
+const subsetSent = calls[0]?.body ?? {}
+ok('la requête ne porte QUE les 3 questions demandées',
+  Object.keys(subsetSent.questions ?? {}).join('|') === TROIS.join('|'),
+  Object.keys(subsetSent.questions ?? {}).join('|'))
+ok('les questions non posées ne sont NI rejetées NI stockées',
+  subset.tags.length === 3 && subset.rejected.length === 0,
+  `${subset.tags.length} étiquette(s), ${subset.rejected.length} rejet(s)`)
+ok('les 3 étiquettes sont bien celles demandées',
+  subset.tags.map(t => t.question).sort().join('|') === [...TROIS].sort().join('|'),
+  subset.tags.map(t => t.question).join('|'))
+// Une réponse peut contenir des questions qu'on n'a pas posées : elles ne deviennent pas
+// des étiquettes, parce qu'on ne relit que ce qu'on a demandé.
+const bavard = parseResponse({ ...fullAnswers(), usage: { input_tokens: 9 } }, TROIS)
+ok('une réponse bavarde ne rend que les étiquettes des questions posées',
+  bavard.tags.length === 3 && bavard.rejected.length === 0,
+  `${bavard.tags.length} étiquette(s)`)
+ok('sans liste, toutes les questions sont posées',
+  Object.keys(ENGINE_QUESTIONS).length === QUESTIONS.length)
+let unknownThrown = null
+try { parseResponse(fullAnswers(), ['question_qui_nexiste_pas']) } catch (e) { unknownThrown = e }
+ok('une question inconnue est une erreur, pas un silence', unknownThrown !== null, String(unknownThrown))
 
 // ─── verdict ──────────────────────────────────────────────────────────────────
 if (NEGATIVE) {

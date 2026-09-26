@@ -495,10 +495,30 @@ function criterionOf(o: TagOption): string | Record<string, unknown> {
  * refusé en 422) ; `noul` : sans critères. AUCUN contenu de mail n'entre ici — ni ici, ni
  * dans aucune constante de ce fichier : le mail ne va que dans `state`.
  */
-export const ENGINE_QUESTIONS: Record<string, unknown> = Object.fromEntries(
-  QUESTIONS.map(q => {
-    if (q.type === 'noul') return [q.id, { type: q.type, instructions: q.instructions }]
-    if (q.type === 'score') return [q.id, { type: q.type, instructions: q.instructions, criteria: q.options!.map(o => o.definition) }]
-    return [q.id, { type: q.type, instructions: q.instructions, criteria: Object.fromEntries(q.options!.map(o => [o.value, criterionOf(o)])) }]
+function engineBodyOf(q: TagQuestion): Record<string, unknown> {
+  if (q.type === 'noul') return { type: q.type, instructions: q.instructions }
+  if (q.type === 'score') return { type: q.type, instructions: q.instructions, criteria: q.options!.map(o => o.definition) }
+  return { type: q.type, instructions: q.instructions, criteria: Object.fromEntries(q.options!.map(o => [o.value, criterionOf(o)])) }
+}
+
+export const ENGINE_QUESTIONS: Record<string, unknown> = Object.fromEntries(QUESTIONS.map(q => [q.id, engineBodyOf(q)]))
+
+/**
+ * Les questions POSÉES par une requête : toutes par défaut, ou le sous-ensemble demandé.
+ * UN SEUL endroit résout cette liste, pour que le corps `questions` envoyé et les réponses
+ * relues portent exactement sur les mêmes questions — une question non posée n'est ni rejetée
+ * ni stockée. Un identifiant inconnu est une erreur de programmation, pas un cas à ignorer en
+ * silence : il ferait poser moins de questions que le code croit.
+ */
+export function posedQuestions(ids?: readonly string[]): TagQuestion[] {
+  if (!ids) return QUESTIONS
+  return ids.map(id => {
+    const q = questionById(id)
+    if (!q) throw new Error(`question inconnue: ${id}`)
+    return q
   })
-)
+}
+
+/** Le corps `questions` de la requête, pour les questions posées. */
+export const engineQuestionsFor = (ids?: readonly string[]): Record<string, unknown> =>
+  ids ? Object.fromEntries(posedQuestions(ids).map(q => [q.id, engineBodyOf(q)])) : ENGINE_QUESTIONS

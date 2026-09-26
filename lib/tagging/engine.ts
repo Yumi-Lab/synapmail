@@ -22,10 +22,14 @@
  * fermeture — pas un filtre sur le texte — qui rend l'injection inoffensive.
  */
 import { messageText } from '../html'
-import { ENGINE_QUESTIONS, NOUL_NO, NOUL_YES, QUESTIONS, isValidTag, valuesOf, type TagQuestion } from './questions'
+import { NOUL_NO, NOUL_YES, engineQuestionsFor, isValidTag, posedQuestions, valuesOf, type TagQuestion } from './questions'
 
-/** Les sources d'une étiquette. Seules `humain` et `dossier` peuvent entraîner un modèle. */
-export const TAG_SOURCES = ['jev', 'one', 'humain', 'dossier'] as const
+/**
+ * Les sources d'une étiquette : le TYPE du moteur qui l'a produite (décision 13, donc `autre`
+ * comprise), ou la main qui l'a écrite. Seules `humain` et `dossier` peuvent entraîner un
+ * modèle — liste BLANCHE, donc tout moteur ajouté demain est non entraînable par construction.
+ */
+export const TAG_SOURCES = ['jev', 'one', 'autre', 'humain', 'dossier'] as const
 export type TagSource = (typeof TAG_SOURCES)[number]
 
 /**
@@ -37,24 +41,37 @@ export type TagSource = (typeof TAG_SOURCES)[number]
 export const TRAINING_SOURCES: readonly TagSource[] = ['humain', 'dossier']
 export const trainingAllowed = (source: TagSource): boolean => TRAINING_SOURCES.includes(source)
 
-export const ENGINES = ['jev', 'one'] as const
+/**
+ * Les TYPES de moteur. `autre` (décision 13) couvre tout service qui parle le même protocole
+ * `/v1/systemone` sans être ni JEV ni Yumi One : un moteur s'AJOUTE (table `decision_engines`),
+ * il ne se choisit plus entre deux valeurs figées.
+ */
+export const ENGINES = ['jev', 'one', 'autre'] as const
 export type EngineKind = (typeof ENGINES)[number]
 
 /**
- * Les valeurs par défaut d'un moteur, et son prix. Le prix sert au plafond de dépense :
- * 42 $ par milliard de jetons d'ENTRÉE pour JEV (tarif publié, sortie gratuite). Yumi One
- * tourne sur nos serveurs : aucune dépense à plafonner, et son adresse n'est pas connue
- * d'avance. C'est LA table des prix : aucun autre fichier n'écrit un tarif.
+ * Ce qui PRÉREMPLIT le formulaire d'ajout d'un moteur — plus la configuration elle-même
+ * (décision 13) : l'URL, le modèle et le prix réels vivent sur la ligne `decision_engines`,
+ * que l'utilisateur peut modifier. 42 $ par milliard de jetons d'ENTRÉE pour JEV (tarif
+ * publié, sortie gratuite) ; Yumi One tourne sur nos serveurs, donc rien à plafonner, et son
+ * adresse n'est pas connue d'avance. C'est LA table des préréglages : aucun autre fichier
+ * n'écrit un tarif ni une URL de moteur.
  */
 export const ENGINE_PRESETS: Record<EngineKind, { url: string; model: string; usdPerBillionInput: number }> = {
   jev: { url: 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest', usdPerBillionInput: 42 },
   one: { url: '', model: 'one-latest', usdPerBillionInput: 0 },
+  autre: { url: '', model: '', usdPerBillionInput: 0 },
 }
 
 export const isEngineKind = (v: unknown): v is EngineKind => typeof v === 'string' && (ENGINES as readonly string[]).includes(v)
 
-export const costUsd = (engine: EngineKind, inputTokens: number): number =>
-  (inputTokens * ENGINE_PRESETS[engine].usdPerBillionInput) / 1e9
+/**
+ * La dépense se lit sur LE MOTEUR, pas sur le préréglage de son type (décision 13) : deux
+ * moteurs `autre` peuvent avoir deux tarifs, et le tarif de JEV peut changer sans qu'on
+ * redéploie. Le préréglage ne sert qu'à remplir ce champ à la création.
+ */
+export const costUsd = (usdPerBillionInput: number, inputTokens: number): number =>
+  (inputTokens * usdPerBillionInput) / 1e9
 
 /**
  * Ce qu'on envoie du mail, et rien d'autre : « include only the context relevant », et un
@@ -214,12 +231,17 @@ export function parseAnswer(q: TagQuestion, a: RawAnswer | undefined): ParsedTag
   return { question: q.id, valeur: a.choice as string, probabilites: Object.keys(byValue).length ? byValue : null, confiance: num(a.confidence) }
 }
 
-export function parseResponse(body: unknown): EngineResult {
+/**
+ * Ce qu'on retient d'une réponse, pour les questions POSÉES seulement : une question qu'on n'a
+ * pas posée n'est ni rejetée ni stockée — la compter en rejet ferait lire un échec là où il n'y
+ * a pas eu de demande.
+ */
+export function parseResponse(body: unknown, questionIds?: readonly string[]): EngineResult {
   const b = (body ?? {}) as { model?: unknown; answers?: Record<string, RawAnswer>; usage?: { input_tokens?: unknown } }
   const answers = b.answers && typeof b.answers === 'object' ? b.answers : {}
   const tags: ParsedTag[] = []
   const rejected: string[] = []
-  for (const q of QUESTIONS) {
+  for (const q of posedQuestions(questionIds)) {
     const tag = parseAnswer(q, answers[q.id])
     if (tag) tags.push(tag)
     else rejected.push(q.id)
@@ -237,14 +259,18 @@ const retryAfterOf = (res: Response): number | null => {
   return Number.isFinite(seconds) && seconds >= 0 ? seconds : null
 }
 
-/** UNE requête, TOUTES les questions. Jette une `EngineError` typée, jamais autre chose. */
-export async function askEngine(cfg: EngineConfig, state: EngineState): Promise<EngineResult> {
+/**
+ * UNE requête, toutes les questions — ou le sous-ensemble `questionIds`. Jette une
+ * `EngineError` typée, jamais autre chose.
+ */
+export async function askEngine(cfg: EngineConfig, state: EngineState, questionIds?: readonly string[]): Promise<EngineResult> {
+  const questions = engineQuestionsFor(questionIds)
   let res: Response
   try {
     res = await fetch(cfg.url, {
       method: 'POST',
       headers: { authorization: `Bearer ${cfg.apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model: cfg.model, state, questions: ENGINE_QUESTIONS }),
+      body: JSON.stringify({ model: cfg.model, state, questions }),
       signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
     })
   } catch (err) {
@@ -260,6 +286,6 @@ export async function askEngine(cfg: EngineConfig, state: EngineState): Promise<
   } catch {
     throw new EngineError('rejected', res.status, 'unreadable engine response')
   }
-  const parsed = parseResponse(body)
+  const parsed = parseResponse(body, questionIds)
   return { ...parsed, model: parsed.model || cfg.model }
 }
