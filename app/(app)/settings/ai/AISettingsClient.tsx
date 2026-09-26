@@ -26,6 +26,7 @@ import {
   type LocalAccessState, type LocalOs,
 } from '@/lib/aiClient'
 import { LocalAccessNotice } from '@/components/ai/LocalAccessNotice'
+import { DecisionEnginesSection } from '@/components/settings/DecisionEnginesSection'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -750,6 +751,9 @@ export function AISettingsClient() {
           </div>
         )}
       </div>
+
+        {/* Les moteurs de décision, SOUS le réglage LLM et sans le toucher (décision 13). */}
+        <DecisionEnginesSection />
 
         {/* Coming soon */}
         <div>

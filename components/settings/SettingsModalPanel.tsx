@@ -15,6 +15,7 @@ import { AISettingsClient } from '@/app/(app)/settings/ai/AISettingsClient'
 import RulesClient from '@/components/settings/RulesClient'
 import PgpPage from '@/app/(app)/settings/pgp/page'
 import ApiKeysPage from '@/app/(app)/settings/api-keys/page'
+import TaggingPage from '@/app/(app)/settings/tagging/page'
 
 /**
  * Maps a settings segment (from the intercepted route path) to the same leaf
@@ -64,6 +65,8 @@ export function SettingsModalPanel({ segment }: { segment: string }) {
       return <PgpPage />
     case 'api-keys':
       return <ApiKeysPage />
+    case 'tagging':
+      return <TaggingPage />
     case 'profile':
     default:
       return <ProfilePage />
