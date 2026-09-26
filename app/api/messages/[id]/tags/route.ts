@@ -11,10 +11,13 @@ export const dynamic = 'force-dynamic'
 /**
  * Les étiquettes d'UN message. `params.id` est son **Message-ID RFC** encodé
  * (`encodeURIComponent`, chevrons compris) et non son UID IMAP : un UID change dès que le
- * mail change de dossier, le Message-ID non (décision 6). Next.js le décode déjà ; le
- * réencodage n'a pas lieu ici.
+ * mail change de dossier, le Message-ID non (décision 6).
+ *
+ * Next.js a DÉJÀ décodé le segment : le redécoder détruirait tout Message-ID portant un `%`
+ * littéral — `<a/b+c%d=e@…>` redécodé lève `URIError: URI malformed` (mesuré, lot T4), et un
+ * `%41` littéral deviendrait un `A`. On prend donc le segment tel quel.
  */
-const messageIdFrom = (params: { id: string }): string => decodeURIComponent(params.id)
+const messageIdFrom = (params: { id: string }): string => params.id
 
 /**
  * La boîte désignée par la requête, ou le refus à rendre. Elle se nomme comme la barrière par
