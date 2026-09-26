@@ -55,6 +55,7 @@ A key that is valid but too narrow gets **`403`**, naming what it lacks — neve
 | `subscriptions:read` / `subscriptions:write` | list newsletters / unsubscribe |
 | `subscriptions:purge` | move a newsletter's whole history to the trash — destructive, never granted by unsubscribing |
 | `ai:use` | the assistance actions |
+| `tags:read` / `tags:write` | read the tags a message carries / write tags and drive the automatic sorter |
 
 A **human session is never limited by a scope**: scopes apply to keys only. Keys created before scopes existed keep exactly the routes they could already call; writing to mailboxes is granted to nobody by default and has to be ticked.
 
@@ -1165,6 +1166,73 @@ Same job as `POST /api/messages/send` (SMTP send, forwarded-attachment resolutio
 
 ### `GET /api/updates` — public, no auth
 Fetches recent GitHub Releases for the "new version available" banner (`gh release create` on this repo — see the project's release memory). Server-cached 1h. **Response** `{ data: { releases: GitHubRelease[]; current: string } }` where `current` comes from `NEXT_PUBLIC_APP_VERSION`. `502` if the GitHub API is unreachable.
+
+---
+
+## Tags (automatic sorting)
+
+Tags answer the questions of `lib/tagging/questions.ts` — the one source both the engine and these routes read. A tag is one answer, by one **source**: the `kind` of the decision engine that produced it (`jev`, `one`, `autre`) or the hand that wrote it (`humain`). The engine's row and the human's row coexist, so what the engine said stays readable next to what the operator corrected; the **effective** tag is the human one when it exists, else the most recent engine one.
+
+**Who may write which source** is decided by the caller, never by the body: a session writes `humain` (and `valide_par` records who), a key writes an engine kind. A key can therefore never launder an engine answer into a trainable label — which matters because only `humain` and `dossier` may train a model, and the database enforces that same whitelist with a `CHECK` of its own.
+
+`[id]` in these routes is the message's **RFC Message-ID, URL-encoded** (angle brackets included), not its IMAP UID — a UID changes the moment the message moves folder. A message with no Message-ID gets a stable derived one (`<sha256(from|date|subject)@synapmail.local>`).
+
+```ts
+interface StoredTag {
+  question: string; valeur: string
+  probabilites: Record<string, number> | null   // the engine's distribution, when it gave one
+  confiance: number | null
+  source: 'jev' | 'one' | 'autre' | 'humain' | 'dossier'
+  modele: string | null; creeLe: string
+  validePar: string | null                      // the user who validated, for `humain`
+  entrainementAutorise: boolean                 // deduced from the source, never requested
+}
+```
+
+### `GET /api/messages/[id]/tags?account=` 🔑 Bearer (`tags:read`)
+Every row this message carries, all sources, plus the effective one per question. **Response** `{ data: { messageId: string; tags: StoredTag[]; effective: StoredTag[] } }`.
+
+### `PUT /api/messages/[id]/tags` 🔑 Bearer (`tags:write`)
+**Body** `{ accountId: string; source?: string; model?: string; tags: { question, valeur, probabilites?, confiance? }[]; folder?, uid?, fromName?, fromAddress?, subject?, date? }` — the position fields, when given, record where the message was last seen so a tag filter can show it even once it leaves the loaded page.
+
+Requires the `organize` share permission (tagging is filing). `422` names the offending `question` and `valeur` when a value is not one this question allows; `403` names the `source` when the caller may not write it (a key asking for `humain`, a session asking for anything else). **Response** `{ data: { messageId, written: number, source, tags: StoredTag[], effective: StoredTag[] } }`.
+
+### `GET /api/tags?account=&question=&valeur=&page=` 🔑 Bearer (`tags:read`)
+The messages whose **effective** tag for `question` is `valeur`, with their last known position — so a message corrected by hand no longer answers under the engine's old value. `422` names an unknown `question` or a value the question does not allow (an empty page would be indistinguishable from "nothing carries this"). **Response** `{ data: { messages: { messageId, folder, uid, fromName, fromAddress, subject, date }[]; total: number; page: number } }`.
+
+### `GET /api/tags?account=&id=<mid>&id=<mid>` 🔑 Bearer (`tags:read`)
+The effective tags of a **list** of messages — what the message list paints as chips, in one request per page and never one per row. **Response** `{ data: { effective: Record<string, StoredTag[]> } }`, keyed by Message-ID.
+
+### `GET /api/tags/export?account=&entrainement=1&after=&limit=` 🔑 Bearer (`tags:read`)
+Paginated by `id` (`after` = the last id read, `limit` default 500, capped 5000). `entrainement=1` returns only what a human validated — the filter is applied **server-side**, so the client does not choose what it may read. **Response** `{ data: { tags: (StoredTag & { id: number; messageId: string })[]; nextAfter: number | null } }`.
+
+### `GET /api/tagging/status?account=` 🔑 Bearer (`tags:read`)
+Where a mailbox's sorting stands: counters, spend, estimate, and the chosen engine — **never its key**, only `hasKey`.
+
+**Response** `{ data: TaggingStatus }`
+```ts
+interface TaggingStatus {
+  accountId: string; engineId: string | null
+  engine: { id, name, kind, model, hasKey: boolean, usdPerBillionInput: number } | null
+  budgetUsd: number; spentUsd: number; inputTokens: number
+  live: boolean                                   // sorting new mail as it arrives
+  bulkState: 'idle' | 'running' | 'done'
+  pausedReason: 'user' | 'budget' | 'credit' | 'auth' | 'no_engine' | null
+  pausedDetail: string | null
+  tagged: number; skipped: number; errors: number; total: number
+  estimateUsd: number | null                      // cost of what is LEFT, at the engine's price
+  questions: number                               // how many are asked of each message
+}
+```
+
+### `POST /api/tagging/run` 🔑 Bearer (`tags:write`)
+**Body** `{ accountId: string; action: 'start' | 'pause' | 'resume' | 'restart' }`. These are **state orders, not a synchronous sort**: the work itself stays with the scheduler, which holds the per-mailbox lock and a budget per pass. `start` resumes from the saved cursor (so re-running a finished sort costs nothing); `restart` clears it and the counters. `pause` records the reason `user`, which is what distinguishes it on screen from a budget cap or exhausted credit. Requires the `organize` share permission. **Response** `{ data: TaggingStatus }`.
+
+### `GET /api/tagging/settings?account=` — session only
+Same `TaggingStatus` body as above. **Session only, owner only**: these settings point at an engine, therefore at a key, so a delegate does not read them and no API key reaches them.
+
+### `PUT /api/tagging/settings` — session only
+**Body** `{ accountId: string; engineId?: string | null; budgetUsd?: number; live?: boolean }`. The engine must belong to the caller — `404` naming `engineId` otherwise. Enabling `live` sets no cursor here: the sorter places it on its first pass, so switching it on never back-fills history (and never opens an IMAP connection inside an HTTP request). **Response** `{ data: TaggingStatus }`.
 
 ---
 
