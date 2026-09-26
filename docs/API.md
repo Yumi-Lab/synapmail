@@ -1234,6 +1234,21 @@ Same `TaggingStatus` body as above. **Session only, owner only**: these settings
 ### `PUT /api/tagging/settings` — session only
 **Body** `{ accountId: string; engineId?: string | null; budgetUsd?: number; live?: boolean }`. The engine must belong to the caller — `404` naming `engineId` otherwise. Enabling `live` sets no cursor here: the sorter places it on its first pass, so switching it on never back-fills history (and never opens an IMAP connection inside an HTTP request). **Response** `{ data: TaggingStatus }`.
 
+### `GET /api/decision-engines` — session only
+The caller's decision engines, oldest first. A **decision engine** is a tool you add (`jev`, `one`, `autre`), not a fixed choice: each mailbox then picks one in Settings → Automatic sorting. **Session only, owner only** — an engine carries a key, like a mailbox's credentials, so no API key reads or writes these routes. The key is **never** returned, in any form: only `hasKey`. **Response** `{ data: DecisionEngine[] }` where `DecisionEngine` is `{ id, name, kind, url, model, usdPerBillionInput, hasKey, createdAt }`.
+
+### `POST /api/decision-engines` — session only
+**Body** `{ name: string; kind: 'jev' | 'one' | 'autre'; url?: string; model?: string; usdPerBillionInput?: number; apiKey?: string }`. Omitted fields take their kind's preset (`lib/tagging/engine.ts` — the one table of presets; they prefill the form, they are not the configuration). `400` names the offending `field`. **Response** `{ data: DecisionEngine }`, `201`.
+
+### `PATCH /api/decision-engines/[id]` — session only
+Same body, every field optional; an absent field is left alone. An absent `apiKey` does **not** clear the stored key — changing a model would otherwise mean retyping a key nobody can read any more; send `apiKey: ""` to remove it. `404` when the engine is not the caller's. **Response** `{ data: DecisionEngine }`.
+
+### `DELETE /api/decision-engines/[id]` — session only
+Removes the engine. Mailboxes that had chosen it keep their sorting row (`ON DELETE SET NULL`) and pause with the reason `no_engine`, said in plain words on screen, rather than failing silently. **Response** `{ data: { id } }`.
+
+### `POST /api/decision-engines/[id]/test` — session only
+Sends **one** minimal request to the engine — a dummy state and a single question, not the 41 — to check a key before relying on it. This is the only place in the app where a human click spends an engine call. A refusal is relayed as-is (`502` with `failure`: `credit` / `auth` / `rate` / `unavailable` / `rejected`), which is what tells "wrong key" from "out of credit". **Response** `{ data: { ms, inputTokens, model } }`.
+
 ---
 
 ## Example: minimal Bearer client
