@@ -18,7 +18,7 @@
  */
 import { createHash } from 'crypto'
 import { query } from '../db'
-import { TRAINING_SOURCES, type TagSource } from './engine'
+import { HUMAN_SOURCE, isEngineKind, TRAINING_SOURCES, type TagSource } from './engine'
 import { isValidTag } from './questions'
 
 /**
@@ -79,6 +79,36 @@ export class InvalidTagError extends Error {
 }
 
 const trainingAllowedFor = (source: TagSource): boolean => (TRAINING_SOURCES as readonly string[]).includes(source)
+
+/** Une source refusée à l'écrivain qui la demande : la route en fait un 403 qui la NOMME. */
+export class ForbiddenSourceError extends Error {
+  source: unknown
+  constructor(source: unknown) {
+    super(`source ${JSON.stringify(source)} interdite à cet appelant`)
+    this.name = 'ForbiddenSourceError'
+    this.source = source
+  }
+}
+
+/**
+ * QUI a le droit d'écrire QUELLE source (décision 7), en UN endroit : la route qui écrit s'en
+ * sert, elle ne redécide pas.
+ *
+ * Une session humaine écrit `humain`, toujours : c'est elle qui valide, et c'est la seule source
+ * entraînable qu'on produise. Une clé API parle POUR un moteur, donc elle écrit le `kind` d'un
+ * moteur — jamais `humain` ni `dossier`, sinon un agent blanchirait une réponse de moteur en
+ * étiquette entraînable. C'est la même liste blanche que la contrainte de la base, prise par
+ * l'autre bout : ici on refuse l'appelant, là-bas on refuse la ligne.
+ */
+export function sourceForWriter(params: { session: boolean; requested?: unknown }): TagSource {
+  const requested = params.requested
+  if (params.session) {
+    if (requested !== undefined && requested !== null && requested !== HUMAN_SOURCE) throw new ForbiddenSourceError(requested)
+    return HUMAN_SOURCE
+  }
+  if (!isEngineKind(requested)) throw new ForbiddenSourceError(requested ?? null)
+  return requested
+}
 
 /**
  * Écrit les étiquettes d'UNE source sur UN mail. UNE SEULE instruction les insère toutes

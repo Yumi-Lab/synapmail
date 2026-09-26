@@ -41,6 +41,8 @@ export const API_SCOPES = {
   'subscriptions:write': 'Se désabonner des newsletters',
   'subscriptions:purge': "Vider l'historique d'une newsletter",
   'ai:use': "Utiliser les actions d'assistance",
+  'tags:read': 'Lire les étiquettes des messages',
+  'tags:write': 'Écrire des étiquettes et piloter le tri automatique',
 } as const
 
 export type ApiScope = keyof typeof API_SCOPES
@@ -67,6 +69,8 @@ export const OPT_IN_SCOPES: ApiScope[] = [
   'rules:write',
   'settings:read',
   'settings:write',
+  'tags:read',
+  'tags:write',
 ]
 
 /**
@@ -130,6 +134,12 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   // désabonnement. Une clé autorisée à se désinscrire ne doit pas pouvoir vider un historique.
   'POST /api/subscriptions/purge': 'subscriptions:purge',
   'POST /api/ai/action': 'ai:use',
+  'GET /api/messages/[id]/tags': 'tags:read',
+  'PUT /api/messages/[id]/tags': 'tags:write',
+  'GET /api/tags': 'tags:read',
+  'GET /api/tags/export': 'tags:read',
+  'GET /api/tagging/status': 'tags:read',
+  'POST /api/tagging/run': 'tags:write',
 }
 
 /**
@@ -166,6 +176,10 @@ export const ROUTE_ACCOUNT_PERMISSION: Record<string, AccountPermission> = {
   'DELETE /api/rules/[id]': 'manageRules',
   'POST /api/subscriptions/unsubscribe': 'send',
   'POST /api/subscriptions/purge': 'delete',
+  // Étiqueter, c'est RANGER : la même permission que marquer ou déplacer (décision 8).
+  // La lecture n'en exige aucune — un partage actif EST l'accès en lecture.
+  'PUT /api/messages/[id]/tags': 'organize',
+  'POST /api/tagging/run': 'organize',
 }
 
 export const isApiScope = (value: unknown): value is ApiScope =>

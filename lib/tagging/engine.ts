@@ -32,6 +32,9 @@ import { NOUL_NO, NOUL_YES, engineQuestionsFor, isValidTag, posedQuestions, valu
 export const TAG_SOURCES = ['jev', 'one', 'autre', 'humain', 'dossier'] as const
 export type TagSource = (typeof TAG_SOURCES)[number]
 
+/** La main qui valide. Écrite par une session humaine, jamais par une clé (décision 7). */
+export const HUMAN_SOURCE: TagSource = 'humain'
+
 /**
  * LA règle contractuelle. Le Master Customer Agreement de TypeSafe (§2.3(b)) interdit
  * d'utiliser les sorties « to perform model distillation, train a model to imitate the
