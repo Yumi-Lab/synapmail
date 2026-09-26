@@ -20,7 +20,10 @@
  *   D. 402 au mail n → pause `credit`, curseur INTACT, et la reprise finit sans redemander les
  *      mails déjà faits ;
  *   E. au fil de l'eau : n'appelle QUE pour les UID arrivés APRÈS l'activation ;
- *   F. deux passages SIMULTANÉS sur la même boîte → un seul travaille (verrou).
+ *   F. deux passages SIMULTANÉS sur la même boîte → un seul travaille (verrou) ;
+ *   G. la sélection du planificateur (`mailboxesToSort`) ne retient QUE les boîtes à travailler :
+ *      une boîte en pause, sans moteur ou verrouillée n'y figure pas. Mesurée sur la VRAIE requête
+ *      SQL — celle que `processTagging` utilise — sans ouvrir aucune connexion IMAP.
  *
  * CONTRÔLE NÉGATIF (`--negative`) : entre deux passages de A, la MÉMOIRE DE LA REPRISE est effacée
  * dans la base (curseur remis à NULL, et les étiquettes déjà écrites supprimées) — le trieur ne
@@ -360,6 +363,30 @@ try {
   check('F3 le passage gagnant a bien travaillé',
     (f1.reason === 'locked' ? engineF2.calls : engineF1.calls) > 0,
     `${engineF1.calls} / ${engineF2.calls}`)
+
+  // ---- G. ce que le planificateur sélectionne ----
+  console.log('\nG. le planificateur ne réveille que les boîtes à trier')
+  const mine = async () => (await runner.mailboxesToSort()).filter(b => b.account_id === ACCOUNT)
+  await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'running' })
+  check('G1 une boîte dont le tri en masse tourne est sélectionnée', (await mine()).length === 1)
+  await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'idle', live: true })
+  check('G2 une boîte au fil de l’eau est sélectionnée', (await mine()).length === 1)
+  await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'idle', live: false })
+  check('G3 une boîte sans rien à trier n’est PAS sélectionnée', (await mine()).length === 0)
+  await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'running', paused_reason: 'user', paused_detail: 'banc' })
+  check('G4 une boîte EN PAUSE n’est jamais réveillée', (await mine()).length === 0)
+  await setMailbox(ACCOUNT, null, { bulk_state: 'running' })
+  check('G5 une boîte SANS moteur n’est pas sélectionnée (rien à quoi demander)', (await mine()).length === 0)
+  await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'running', locked_until: new Date(Date.now() + 60_000) })
+  check('G6 une boîte VERROUILLÉE (passage en cours) n’est pas reprise', (await mine()).length === 0)
+  const selected = (await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'running' }), (await mine())[0])
+  check('G7 la boîte sélectionnée porte le moteur ET ses identifiants IMAP, en une requête',
+    selected?.engine_kind === 'jev' && selected?.engine_model === 'banc-latest' && !!selected?.imap_host
+      && Number(selected?.engine_price) === 42,
+    JSON.stringify({ kind: selected?.engine_kind, model: selected?.engine_model, price: selected?.engine_price, host: !!selected?.imap_host }))
+  check('G8 la clé du moteur n’est PAS en clair dans ce que la requête rend',
+    selected?.engine_key === null || !/^sk-|^syn_/.test(String(selected?.engine_key)),
+    String(selected?.engine_key))
 } finally {
   await clean(ACCOUNT).catch(() => {})
   if (ENGINE_ID) await pool.query('DELETE FROM decision_engines WHERE id = $1', [ENGINE_ID]).catch(() => {})

@@ -20,9 +20,11 @@
  * Le verrou (`locked_until`) garantit qu'un seul passage travaille une boîte : deux tics du
  * planificateur qui se chevauchent ne peuvent pas payer deux fois le même mail.
  */
+import type { ImapAccountRow } from '../accounts'
 import { query } from '../db'
+import { decrypt } from '../encrypt'
 import {
-  ASSUMED_INPUT_TOKENS_PER_MAIL, EngineError, buildState, costUsd,
+  ASSUMED_INPUT_TOKENS_PER_MAIL, EngineError, askEngine, buildState, costUsd,
   type BulkState, type EngineResult, type EngineState, type MailForState, type PauseReason, type TagSource,
 } from './engine'
 import { alreadyTagged, messageIdOf, writeTags } from './store'
@@ -506,4 +508,67 @@ async function advanceLive(params: {
     }
   }
   return acc
+}
+
+/** Une ligne `decision_engines`, telle que le trieur a besoin de la lire. */
+export interface DecisionEngineRow {
+  id: string
+  kind: TagSource
+  url: string
+  key_encrypted: string | null
+  model: string
+  usd_per_billion_input: number
+}
+
+/**
+ * Une ligne `decision_engines` → le moteur que le trieur sait interroger. La clé est déchiffrée
+ * ICI et ne sort pas : elle ne traverse ni un état, ni un journal, ni une réponse d'API. Le tarif
+ * vient du MOTEUR (décision 13), jamais du type : deux moteurs `jev` peuvent être facturés
+ * différemment, et le préréglage ne sert qu'à préremplir le formulaire.
+ *
+ * La `source` des étiquettes est le `kind` du moteur — donc jamais `humain` ni `dossier`, que la
+ * liste blanche `TRAINING_SOURCES` réserve à ce qu'un humain a validé.
+ */
+export function engineFromRow(row: DecisionEngineRow): TaggingEngine {
+  const cfg = { url: row.url, apiKey: row.key_encrypted ? decrypt(row.key_encrypted) : '', model: row.model }
+  return {
+    source: row.kind,
+    usdPerBillionInput: row.usd_per_billion_input,
+    ask: state => askEngine(cfg, state),
+  }
+}
+
+type MailboxToSort = ImapAccountRow & {
+  account_id: string
+  engine_id: string
+  engine_kind: TagSource
+  engine_url: string
+  engine_key: string | null
+  engine_model: string
+  engine_price: number
+}
+
+/**
+ * Les boîtes qu'un passage doit travailler, en UNE requête : identifiants IMAP et moteur choisi
+ * ensemble, plutôt qu'une requête par boîte. Elle vit ICI et non dans le planificateur pour être
+ * MESURABLE — le banc l'appelle directement et vérifie qu'une boîte en pause, sans moteur ou
+ * verrouillée n'y figure pas, sans ouvrir la moindre connexion IMAP.
+ *
+ * Une boîte en pause n'est JAMAIS réveillée par cette sélection : il faut un `resume` explicite,
+ * sinon un plafond atteint ou un crédit épuisé se remettrait à cogner une porte fermée.
+ */
+export async function mailboxesToSort(): Promise<MailboxToSort[]> {
+  return query<MailboxToSort>(`
+    SELECT a.id, a.imap_host, a.imap_port, a.imap_secure, a.username, a.password_encrypted,
+           a.oauth_provider, a.oauth_access_token, a.oauth_refresh_token, a.oauth_expires_at,
+           m.account_id, e.id AS engine_id, e.kind AS engine_kind, e.url AS engine_url,
+           e.key_encrypted AS engine_key, e.model AS engine_model,
+           e.usd_per_billion_input AS engine_price
+      FROM mailbox_tagging m
+      JOIN email_accounts a ON a.id = m.account_id
+      JOIN decision_engines e ON e.id = m.engine_id
+     WHERE m.paused_reason IS NULL
+       AND (m.bulk_state = 'running' OR m.live)
+       AND (m.locked_until IS NULL OR m.locked_until < NOW())
+  `)
 }

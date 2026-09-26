@@ -4,6 +4,8 @@ import { appendToSentFolder, getAttachmentContent, listMessages, getMessage } fr
 import { schedulerEvents } from './schedulerEvents'
 import { upsertContactsFromAddresses } from './contacts'
 import { getEnabledRulesForAccount, applyRulesToMessages, logRuleExecution } from './rules'
+import { engineFromRow, mailboxesToSort, runPass } from './tagging/runner'
+import { imapMailSource } from './tagging/imapSource'
 
 type AccountRow = {
   id: string; email: string; smtp_host: string; smtp_port: number; smtp_secure: boolean;
@@ -297,6 +299,47 @@ export async function processInboxSync(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Tri automatique (lot T3) — un passage par boîte qui a quelque chose à trier.
+//
+// Le trieur lui-même ne sait ni ouvrir une connexion IMAP ni parler HTTP : cette
+// fonction lui fournit la source RÉELLE (`imapMailSource`) et le moteur choisi par
+// la boîte (`engineFromRow`). C'est le seul endroit qui les assemble, donc le seul
+// que le banc du lot T3 n'exerce pas — il mesure le trieur avec des faux, ce qui
+// est justement ce qui lui permet de ne toucher aucune boîte réelle.
+//
+// Une seule requête sélectionne les boîtes à travailler : celles qui ont un tri en
+// masse en cours OU le fil de l'eau actif, sans pause, dont le verrou est libre.
+// Une boîte en pause n'est jamais réveillée ici — il faut un `resume` explicite.
+// ---------------------------------------------------------------------------
+
+const TAGGING_INTERVAL_MS = 60_000
+
+export async function processTagging(): Promise<void> {
+  for (const box of await mailboxesToSort()) {
+    const source = imapMailSource(box)
+    try {
+      const outcome = await runPass({
+        accountId: box.account_id,
+        source,
+        engine: engineFromRow({
+          id: box.engine_id, kind: box.engine_kind, url: box.engine_url,
+          key_encrypted: box.engine_key, model: box.engine_model,
+          usd_per_billion_input: box.engine_price,
+        }),
+      })
+      if (outcome.tagged || outcome.errors || outcome.paused) {
+        console.log(`[scheduler/tagging] ${box.account_id}: ${outcome.reason} tagged=${outcome.tagged} skipped=${outcome.skipped} errors=${outcome.errors}${outcome.paused ? ` paused=${outcome.paused.reason}` : ''}`)
+      }
+    } catch (err) {
+      // Une boîte injoignable ne doit pas empêcher les autres d'être triées.
+      console.error(`[scheduler/tagging] account ${box.account_id}:`, err)
+    } finally {
+      await source.close().catch(() => {})
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // API key request log cleanup — the log is a lightweight audit trail, not
 // indefinite storage; purge anything older than 30 days so it can't grow
 // unbounded on a busy key.
@@ -368,6 +411,12 @@ export function startScheduler(): void {
   setTimeout(() => {
     processInboxSync().catch(err => console.error('[scheduler/sync]', err))
   }, 15_000)
+
+  // Tri automatique — every 60s (a pass gives itself PASS_BUDGET_MS, so it always
+  // returns before the next tick; the per-mailbox lock covers an overrun anyway)
+  setInterval(() => {
+    processTagging().catch(err => console.error('[scheduler/tagging]', err))
+  }, TAGGING_INTERVAL_MS)
 
   // API key request log cleanup — every 6 hours, plus one pass shortly after boot
   setInterval(() => {
