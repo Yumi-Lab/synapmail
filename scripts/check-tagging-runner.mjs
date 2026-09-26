@@ -146,6 +146,8 @@ const ANSWERS = Object.fromEntries(QUESTIONS.map(q => {
  * `failAt` lui fait jeter l'erreur typée du produit au n-ième appel — un 402 ne se simule pas en
  * changeant le trieur, mais en faisant refuser le moteur, comme le vrai.
  */
+const ENGINE_LATENCY_MS = 25
+
 const makeEngine = (opts = {}) => {
   const seen = []
   return {
@@ -155,7 +157,16 @@ const makeEngine = (opts = {}) => {
     get seen() { return seen },
     async ask(state) {
       seen.push(state.objet)
-      if (opts.failAt && seen.length === opts.failAt) throw new EngineError('credit', 402, 'insufficient credit balance')
+      // Le refus se décide sur le RANG de cet appel, retenu AVANT la latence : avec deux requêtes
+      // en vol, `seen.length` a déjà avancé quand la promesse se résout, et un test d'égalité sur
+      // sa valeur d'alors ne tomberait jamais.
+      const rank = seen.length
+      // Un moteur INSTANTANÉ ne laisse jamais expirer le délai d'un passage : le tri entier
+      // tiendrait dans un seul, et A ne mesurerait plus aucune coupure. Une latence de l'ordre de
+      // celle mesurée sur JEV (~1 s, réduite ici pour que le banc reste court) rend les coupures
+      // RÉELLES — c'est ce qui rend A2 sensible à l'état de reprise, cf. le contrôle négatif.
+      await new Promise(r => setTimeout(r, opts.delayMs ?? ENGINE_LATENCY_MS))
+      if (opts.failAt && rank >= opts.failAt) throw new EngineError('credit', 402, 'insufficient credit balance')
       return { model: 'faux-1.0.0', tags: QUESTIONS.map(q => {
         const a = ANSWERS[q.id]
         const valeur = q.type === 'noul' ? 'oui' : valuesOf(q)[0]
@@ -235,12 +246,13 @@ try {
   for (let n = 0; n < 40; n += 1) {
     const before = await mailboxOf(ACCOUNT)
     if (before.bulk_state === 'done' || before.paused_reason) break
-    passes.push(await runner.runPass({ accountId: ACCOUNT, source, engine: engineA, budgetMs: 900 }))
+    passes.push(await runner.runPass({ accountId: ACCOUNT, source, engine: engineA, budgetMs: 250 }))
     if (NEGATIVE) await forgetResume(ACCOUNT)
   }
   const afterA = await mailboxOf(ACCOUNT)
-  check('A1 le tri finit par se terminer, en plusieurs passages coupés',
-    afterA.bulk_state === 'done', `état=${afterA.bulk_state} passages=${passes.length} pause=${afterA.paused_reason}`)
+  check('A1 le tri finit par se terminer, et il a bien fallu PLUSIEURS passages coupés',
+    afterA.bulk_state === 'done' && passes.length >= 3,
+    `état=${afterA.bulk_state} passages=${passes.length} pause=${afterA.paused_reason}`)
   check(`A2 chaque mail DISTINCT est demandé exactement une fois (${DISTINCT} attendus)`,
     engineA.calls === DISTINCT, `${engineA.calls} appel(s) pour ${DISTINCT} mails distincts`)
   check('A3 aucun objet n’a été soumis deux fois au moteur',
