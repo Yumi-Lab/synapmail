@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
 import { getAccessibleAccount } from '@/lib/accountAccess'
-import { readTags, sourceForWriter, upsertPosition, writeTags,
+import { readTags, sourceForWriter, writeTags,
   ForbiddenSourceError, InvalidTagError,
   type TagToWrite, type TaggedMessagePosition } from '@/lib/tagging/store'
 
@@ -16,24 +16,30 @@ export const dynamic = 'force-dynamic'
  */
 const messageIdFrom = (params: { id: string }): string => decodeURIComponent(params.id)
 
-/** La boîte, lue là où la barrière par clé la cherche déjà (`account` / `accountId`). */
-async function reach(accountId: string | null, userId: string, required: 'organize' | null) {
-  if (!accountId) return { error: NextResponse.json({ error: 'account required' }, { status: 400 }) }
+/**
+ * La boîte désignée par la requête, ou le refus à rendre. Elle se nomme comme la barrière par
+ * clé la cherche déjà (`account` / `accountId`, `lib/apiKeyAccounts.ts`) : une route qui la
+ * nommerait autrement échapperait à cette barrière.
+ */
+async function denyUnreachable(accountId: string | null, userId: string, required: 'organize' | null): Promise<NextResponse | null> {
+  if (!accountId) return NextResponse.json({ error: 'account required' }, { status: 400 })
   const account = await getAccessibleAccount(accountId, userId, required ? [required] : [])
-  if (!account) return { error: NextResponse.json({ error: 'Account not found' }, { status: 404 }) }
-  return { accountId }
+  if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+  return null
 }
 
 async function getHandler(req: Request, { params }: { params: { id: string } }) {
   const gate = await authorize(req)
   if ('denied' in gate) return gate.denied
 
-  const reached = await reach(new URL(req.url).searchParams.get('account'), gate.ctx.id, null)
-  if ('error' in reached) return reached.error
+  const accountId = new URL(req.url).searchParams.get('account')
+  const denied = await denyUnreachable(accountId, gate.ctx.id, null)
+  if (denied) return denied
 
   try {
-    const { tags, effective } = await readTags(reached.accountId, messageIdFrom(params))
-    return NextResponse.json({ data: { messageId: messageIdFrom(params), tags, effective } })
+    const messageId = messageIdFrom(params)
+    const { tags, effective } = await readTags(accountId!, messageId)
+    return NextResponse.json({ data: { messageId, tags, effective } })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
@@ -55,8 +61,9 @@ async function putHandler(req: Request, { params }: { params: { id: string } }) 
       tags?: TagToWrite[]
     } & TaggedMessagePosition
 
-    const reached = await reach(body.accountId ?? null, gate.ctx.id, 'organize')
-    if ('error' in reached) return reached.error
+    const accountId = body.accountId ?? null
+    const denied = await denyUnreachable(accountId, gate.ctx.id, 'organize')
+    if (denied) return denied
     if (!Array.isArray(body.tags) || !body.tags.length) {
       return NextResponse.json({ error: 'tags required' }, { status: 400 })
     }
@@ -69,13 +76,13 @@ async function putHandler(req: Request, { params }: { params: { id: string } }) 
       fromAddress: body.fromAddress, subject: body.subject, date: body.date,
     }
     const written = await writeTags({
-      accountId: reached.accountId, messageId, source, tags: body.tags,
+      accountId: accountId!, messageId, source, tags: body.tags,
       modele: body.model ?? null,
       validePar: session ? gate.ctx.id : null,
       position: Object.values(position).some(v => v !== undefined && v !== null) ? position : null,
     })
 
-    const { tags, effective } = await readTags(reached.accountId, messageId)
+    const { tags, effective } = await readTags(accountId!, messageId)
     return NextResponse.json({ data: { messageId, written, source, tags, effective } })
   } catch (err) {
     // Une valeur hors liste et une source interdite sont des refus NOMMÉS : l'appelant doit
