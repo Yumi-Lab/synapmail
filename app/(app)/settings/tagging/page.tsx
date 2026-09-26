@@ -67,6 +67,7 @@ export default function TaggingSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [runError, setRunError] = useState<string | null>(null)
   const loadedFor = useRef<string | null>(null)
 
   // Les champs suivent la boîte affichée, et ne sont repris qu'au CHANGEMENT de boîte : un
@@ -74,6 +75,7 @@ export default function TaggingSettingsPage() {
   useEffect(() => {
     if (!status || loadedFor.current === status.accountId) return
     loadedFor.current = status.accountId
+    setRunError(null)
     setEngineId(status.engineId)
     setBudget(String(status.budgetUsd))
     setLive(status.live)
@@ -102,13 +104,17 @@ export default function TaggingSettingsPage() {
   async function run(action: 'start' | 'pause' | 'resume' | 'restart') {
     if (!accountId) return
     if (action === 'restart' && !window.confirm(t('restartConfirm'))) return
-    setBusy(true)
+    setBusy(true); setRunError(null)
     try {
-      await fetch(RUN_ENDPOINT, {
+      // Un refus du serveur se DIT : sans cela, un bouton pressé qui ne change rien se lit
+      // comme un bouton cassé, et l'utilisateur recommence au lieu de lire la cause.
+      const res = await fetch(RUN_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accountId, action }),
       })
+      const json = await res.json().catch(() => null) as { error?: string } | null
+      if (!res.ok) setRunError(json?.error ?? String(res.status))
       await refreshStatus()
     } finally {
       setBusy(false)
@@ -217,6 +223,8 @@ export default function TaggingSettingsPage() {
                     </Button>
                   </div>
                 </SettingsRow>
+
+                {runError && <p className="text-xs text-red-600 dark:text-red-400">{runError}</p>}
 
                 <SettingsDivider />
 

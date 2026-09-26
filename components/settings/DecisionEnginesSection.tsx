@@ -7,6 +7,7 @@ import { Cpu, Plus, Pencil, Trash2, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/PasswordInput'
+import { RowMenu, ContextMenuItem, ContextMenuSeparator, MENU_ICON } from '@/components/ui/ContextMenu'
 import { SettingsSection } from '@/components/settings/primitives'
 import { ENGINES, ENGINE_PRESETS, type EngineKind } from '@/lib/tagging/engine'
 import type { DecisionEngine } from '@/lib/tagging/engines'
@@ -50,6 +51,9 @@ const draftOf = (engine?: DecisionEngine): Draft => engine
  */
 export function DecisionEnginesSection() {
   const t = useTranslations('settings.engines')
+  // Le libellé du « … » est celui de toutes les lignes de réglages : une seule formulation
+  // pour une seule mécanique (cf. signatures, contacts, règles…).
+  const tRow = useTranslations('settings.rowActions')
   const { data, mutate } = useSWR<{ data: DecisionEngine[] }>(ENGINES_ENDPOINT, fetcher)
   const engines = data?.data ?? []
 
@@ -120,6 +124,55 @@ export function DecisionEnginesSection() {
     return key ? t(key) : t('testFailed')
   }
 
+  /**
+   * Le formulaire, écrit UNE fois : l'ajout le pose sous la liste, la modification le
+   * DÉPLIE sous la ligne du moteur concerné. Deux copies divergeraient au premier champ.
+   */
+  const form = (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="space-y-1 text-xs text-muted-foreground">
+          {t('name')}
+          <Input value={draft?.name ?? ''} placeholder={t('namePlaceholder')}
+            onChange={e => setDraft(d => d && { ...d, name: e.target.value })} />
+        </label>
+        <label className="space-y-1 text-xs text-muted-foreground">
+          {t('kind')}
+          <select value={draft?.kind ?? ENGINES[0]} onChange={e => pickKind(e.target.value as EngineKind)}
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+            {ENGINES.map(kind => <option key={kind} value={kind}>{t(kindLabelKey(kind))}</option>)}
+          </select>
+        </label>
+        <label className="space-y-1 text-xs text-muted-foreground">
+          {t('url')}
+          <Input value={draft?.url ?? ''} onChange={e => setDraft(d => d && { ...d, url: e.target.value })} />
+        </label>
+        <label className="space-y-1 text-xs text-muted-foreground">
+          {t('model')}
+          <Input value={draft?.model ?? ''} onChange={e => setDraft(d => d && { ...d, model: e.target.value })} />
+        </label>
+        <label className="space-y-1 text-xs text-muted-foreground">
+          {t('price')}
+          <Input type="number" min={0} step="any" value={draft?.usdPerBillionInput ?? ''}
+            onChange={e => setDraft(d => d && { ...d, usdPerBillionInput: e.target.value })} />
+        </label>
+        <label className="space-y-1 text-xs text-muted-foreground">
+          {t('key')}
+          <PasswordInput value={draft?.apiKey ?? ''} placeholder={t('keyPlaceholder')}
+            onChange={e => setDraft(d => d && { ...d, apiKey: e.target.value })} />
+          {draft?.id && <span className="block text-[11px]">{t('keyKept')}</span>}
+        </label>
+      </div>
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      <div className="flex gap-2">
+        <Button type="button" onClick={save} disabled={saving || !draft?.name.trim()}>
+          {t(draft?.id ? 'edit' : 'add')}
+        </Button>
+        <Button type="button" variant="ghost" onClick={() => { setDraft(null); setError(null) }}>{t('cancel')}</Button>
+      </div>
+    </div>
+  )
+
   return (
     <SettingsSection title={t('title')} description={t('description')}>
       {engines.length === 0 && !draft && (
@@ -143,14 +196,21 @@ export function DecisionEnginesSection() {
                 className="shrink-0 rounded-lg px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50">
                 {testing === engine.id ? t('testing') : t('test')}
               </button>
-              <button type="button" onClick={() => { setDraft(draftOf(engine)); setError(null) }} title={t('edit')}
-                className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-                <Pencil className="h-3.5 w-3.5" />
-              </button>
-              <button type="button" onClick={() => remove(engine)} title={t('remove')}
-                className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              {/* Pas de corbeille sur la ligne : la suppression est RARE, elle vit dans le
+                  menu discret, en rouge, derrière une confirmation. */}
+              <RowMenu label={tRow('menu', { name: engine.name })} itemsKey={engine.id}>
+                {close => (<>
+                  <ContextMenuItem
+                    itemKey="edit" icon={<Pencil className={MENU_ICON} />} label={t('edit')}
+                    onClick={() => { setDraft(draftOf(engine)); setError(null) }} onClose={close} enabled
+                  />
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    itemKey="delete" icon={<Trash2 className={MENU_ICON} />} label={t('remove')}
+                    onClick={() => remove(engine)} onClose={close} enabled danger
+                  />
+                </>)}
+              </RowMenu>
             </div>
             {testResult?.id === engine.id && (
               <p className={testResult.ok
@@ -160,60 +220,24 @@ export function DecisionEnginesSection() {
                 {testResult.text}
               </p>
             )}
+            {/* Modifier DÉPLIE le formulaire sous SA ligne — sous la liste, il obligerait
+                à chercher de quel moteur il parle. */}
+            {draft?.id === engine.id && (
+              <div className="mt-3 border-t border-border pt-3">{form}</div>
+            )}
           </div>
         ))}
       </div>
 
-      {draft ? (
-        <div className="space-y-3 rounded-xl border border-border bg-card p-3.5 shadow-sm">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1 text-xs text-muted-foreground">
-              {t('name')}
-              <Input value={draft.name} placeholder={t('namePlaceholder')}
-                onChange={e => setDraft({ ...draft, name: e.target.value })} />
-            </label>
-            <label className="space-y-1 text-xs text-muted-foreground">
-              {t('kind')}
-              <select value={draft.kind} onChange={e => pickKind(e.target.value as EngineKind)}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-                {ENGINES.map(kind => <option key={kind} value={kind}>{t(kindLabelKey(kind))}</option>)}
-              </select>
-            </label>
-            <label className="space-y-1 text-xs text-muted-foreground">
-              {t('url')}
-              <Input value={draft.url} onChange={e => setDraft({ ...draft, url: e.target.value })} />
-            </label>
-            <label className="space-y-1 text-xs text-muted-foreground">
-              {t('model')}
-              <Input value={draft.model} onChange={e => setDraft({ ...draft, model: e.target.value })} />
-            </label>
-            <label className="space-y-1 text-xs text-muted-foreground">
-              {t('price')}
-              <Input type="number" min={0} step="any" value={draft.usdPerBillionInput}
-                onChange={e => setDraft({ ...draft, usdPerBillionInput: e.target.value })} />
-            </label>
-            <label className="space-y-1 text-xs text-muted-foreground">
-              {t('key')}
-              <PasswordInput value={draft.apiKey} placeholder={t('keyPlaceholder')}
-                onChange={e => setDraft({ ...draft, apiKey: e.target.value })} />
-              {draft.id && <span className="block text-[11px]">{t('keyKept')}</span>}
-            </label>
-          </div>
-          {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-          <div className="flex gap-2">
-            <Button type="button" onClick={save} disabled={saving || !draft.name.trim()}>
-              {t(draft.id ? 'edit' : 'add')}
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => { setDraft(null); setError(null) }}>{t('cancel')}</Button>
-          </div>
-        </div>
-      ) : (
+      {draft && !draft.id ? (
+        <div className="rounded-xl border border-border bg-card p-3.5 shadow-sm">{form}</div>
+      ) : !draft ? (
         <button type="button" onClick={() => { setDraft(draftOf()); setError(null) }}
           className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
           <Plus className="h-4 w-4" />
           {t('add')}
         </button>
-      )}
+      ) : null}
     </SettingsSection>
   )
 }

@@ -131,6 +131,36 @@ try {
   }).then(r => r.json())
   check(cleared.data?.engine === null, 'F1 une boîte sans moteur le dit clairement')
   check(cleared.data?.estimateUsd === null, 'F2 et n’annonce aucune estimation', String(cleared.data?.estimateUsd))
+
+  // --- G. lancer SANS moteur ne laisse pas la boîte « en cours » pour rien -----------
+  // Le planificateur ne réveille QUE les boîtes qui ONT un moteur : sans cette pause posée
+  // à l'instant de l'ordre, la boîte affichait « tri en cours » à vie sans trier un mail.
+  const run = (action) => fetch(`${BASE}/api/tagging/run`, {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId, action }),
+  }).then(async r => ({ status: r.status, body: await r.json() }))
+
+  const started = await run('start')
+  const after = NEGATIVE ? { pausedReason: null, pausedDetail: null } : (started.body.data ?? {})
+  check(after.pausedReason === 'no_engine', 'G1 lancer sans moteur met la boîte en pause `no_engine`', JSON.stringify(started.body).slice(0, 200))
+  check(typeof after.pausedDetail === 'string' && after.pausedDetail.length > 0, 'G2 et la cause est dite en clair', String(after.pausedDetail))
+
+  const resumed = await run('resume')
+  const afterResume = NEGATIVE ? { pausedReason: null } : (resumed.body.data ?? {})
+  check(afterResume.pausedReason === 'no_engine', 'G3 reprendre sans moteur ne la remet pas en marche', JSON.stringify(resumed.body).slice(0, 200))
+
+  // Et AVEC un moteur, la pause tombe : la règle porte sur l'absence de moteur, pas sur le bouton.
+  await fetch(`${BASE}/api/tagging/settings`, {
+    method: 'PUT', headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId, engineId }),
+  })
+  const withEngine = await run('resume')
+  const afterEngine = withEngine.body.data ?? {}
+  check(afterEngine.pausedReason === null, 'G4 avec un moteur, la reprise lève bien la pause', JSON.stringify(withEngine.body).slice(0, 200))
+
+  // La boîte est remise en pause à la main : le banc ne laisse JAMAIS un tri qui tournerait
+  // sur une vraie boîte IONOS au prochain passage du planificateur (règle absolue de GOAL.md).
+  await run('pause')
 } finally {
   if (engineId) {
     await fetch(`${BASE}/api/decision-engines/${engineId}`, { method: 'DELETE', headers: { cookie } }).catch(() => {})

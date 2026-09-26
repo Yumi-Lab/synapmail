@@ -146,6 +146,21 @@ const release = (accountId: string): Promise<unknown> =>
   query(`UPDATE mailbox_tagging SET locked_until = NULL, updated_at = NOW() WHERE account_id = $1`, [accountId])
 
 /**
+ * La pause « sans moteur », écrite UNE fois : le trieur, le démarrage et la reprise la posent
+ * tous les trois, et trois libellés différents pour un même état se liraient comme trois états.
+ */
+export const NO_ENGINE_DETAIL = 'aucun moteur de décision choisi pour cette boîte'
+
+/**
+ * Ce que TOUTE remise en marche doit écrire : sans moteur, la boîte se met en pause `no_engine`
+ * au lieu de passer « en cours ». Le planificateur ne réveille QUE les boîtes qui ont un moteur
+ * (`mailboxesToSort`), donc une boîte lancée sans moteur resterait « en cours » pour toujours
+ * sans rien faire — la pause doit être posée ici, au moment de l'ordre, pas plus tard.
+ */
+const PAUSE_IF_NO_ENGINE = `paused_reason = CASE WHEN engine_id IS NULL THEN 'no_engine' ELSE NULL END,
+            paused_detail = CASE WHEN engine_id IS NULL THEN '${NO_ENGINE_DETAIL.replace(/'/g, "''")}' ELSE NULL END`
+
+/**
  * Met la boîte en pause en NOMMANT la raison. Le curseur n'est jamais touché ici : c'est ce
  * qui fait qu'une reprise après `credit` ou `budget` ne redemande pas les mails déjà faits.
  */
@@ -157,10 +172,13 @@ export async function pauseMailbox(accountId: string, reason: PauseReason, detai
   )
 }
 
-/** Lève la pause. Le curseur reste où il était : la reprise continue, elle ne recommence pas. */
+/**
+ * Lève la pause. Le curseur reste où il était : la reprise continue, elle ne recommence pas.
+ * Reprendre une boîte SANS moteur ne la remet pas en marche : elle retombe en pause `no_engine`.
+ */
 export async function resumeMailbox(accountId: string): Promise<void> {
   await query(
-    `UPDATE mailbox_tagging SET paused_reason = NULL, paused_detail = NULL, locked_until = NULL, updated_at = NOW()
+    `UPDATE mailbox_tagging SET ${PAUSE_IF_NO_ENGINE}, locked_until = NULL, updated_at = NOW()
       WHERE account_id = $1`,
     [accountId]
   )
@@ -174,7 +192,7 @@ export async function resumeMailbox(accountId: string): Promise<void> {
 export async function startBulk(accountId: string, opts: { restart?: boolean } = {}): Promise<void> {
   await query(
     `UPDATE mailbox_tagging
-        SET bulk_state = 'running', paused_reason = NULL, paused_detail = NULL, locked_until = NULL,
+        SET bulk_state = 'running', ${PAUSE_IF_NO_ENGINE}, locked_until = NULL,
             bulk_cursor = CASE WHEN $2 THEN NULL ELSE bulk_cursor END,
             tagged = CASE WHEN $2 THEN 0 ELSE tagged END,
             skipped = CASE WHEN $2 THEN 0 ELSE skipped END,
@@ -317,8 +335,8 @@ export async function runPass(params: {
   try {
     if (row.paused_reason) return { reason: 'paused', ...EMPTY }
     if (!row.engine_id) {
-      await pauseMailbox(accountId, 'no_engine', 'aucun moteur de décision choisi pour cette boîte')
-      return { reason: 'no_engine', ...EMPTY, paused: { reason: 'no_engine', detail: 'aucun moteur de décision choisi pour cette boîte' } }
+      await pauseMailbox(accountId, 'no_engine', NO_ENGINE_DETAIL)
+      return { reason: 'no_engine', ...EMPTY, paused: { reason: 'no_engine', detail: NO_ENGINE_DETAIL } }
     }
 
     const acc: PassOutcome = { reason: 'worked', ...EMPTY }
