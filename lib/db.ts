@@ -1,6 +1,7 @@
 import { Pool } from 'pg'
 import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
 import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
+import { BULK_STATES, ENGINES, PAUSE_REASONS, TAG_SOURCES, TRAINING_SOURCES } from '@/lib/tagging/engine'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -13,6 +14,16 @@ export async function query<T = Record<string, unknown>>(
   const { rows } = await pool.query(sql, values)
   return rows as T[]
 }
+
+/** Une liste de valeurs du code, telle qu'un CHECK SQL l'attend. Les valeurs sont des
+ * identifiants du code (pas des entrées d'utilisateur) ; le doublement des quotes garde
+ * la fonction correcte même si l'une d'elles en contenait une. */
+const sqlList = (values: readonly string[]): string =>
+  values.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
+
+/** Le plafond de dépense d'une boîte, tant que personne ne l'a relevé à l'écran : prudent
+ * par défaut, parce qu'un tri complet d'une grosse boîte coûte plus que ça. */
+export const TAGGING_BUDGET_USD_DEFAULT = 1
 
 export async function initDb(): Promise<void> {
   await query(`
@@ -520,6 +531,114 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS sender_address TEXT`)
   await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS sender_name TEXT`)
   await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS list_id TEXT`)
+
+  // ── Tagging : étiquettes d'un mail, décidées par un moteur System One ou par un humain ──
+  //
+  // Les listes de valeurs des CHECK ci-dessous sont dérivées des constantes de
+  // `lib/tagging/engine.ts` : `TAG_SOURCES`, `TRAINING_SOURCES`, `ENGINES`, `PAUSE_REASONS`,
+  // `BULK_STATES`. Aucun vocabulaire n'est recopié à la main ici — ajouter un type de moteur
+  // dans le code met la base d'accord au prochain démarrage (les CHECK sont remplacées plus bas).
+
+  // Un moteur de décision est un OUTIL que l'utilisateur AJOUTE (décision 13), pas un choix
+  // entre deux valeurs figées : N moteurs par utilisateur, chacun avec sa clé et son tarif.
+  // La clé est chiffrée comme un mot de passe IMAP et ne ressort JAMAIS d'une API (`hasKey`).
+  await query(`
+    CREATE TABLE IF NOT EXISTS decision_engines (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name VARCHAR(80) NOT NULL,
+      kind VARCHAR(20) NOT NULL CHECK (kind IN (${sqlList(ENGINES)})),
+      url TEXT NOT NULL DEFAULT '',
+      key_encrypted TEXT,
+      model VARCHAR(100) NOT NULL DEFAULT '',
+      usd_per_billion_input REAL NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS decision_engines_user_idx ON decision_engines(user_id)`)
+
+  // Une étiquette = une réponse à UNE question, par UNE source. La clé primaire porte `source` :
+  // la ligne du moteur et celle de l'humain coexistent (décision 5), et une seconde correction
+  // humaine remplace la précédente. `id` sert uniquement à paginer l'export.
+  //
+  // La contrainte d'ENTRAÎNEMENT est le second niveau de la règle contractuelle (décision 3) :
+  // même un INSERT SQL direct ne peut pas marquer entraînable une étiquette de moteur. Liste
+  // BLANCHE (`TRAINING_SOURCES`), donc tout moteur ajouté demain est refusé sans rien changer.
+  await query(`
+    CREATE TABLE IF NOT EXISTS message_tags (
+      id BIGSERIAL UNIQUE,
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      question VARCHAR(60) NOT NULL,
+      valeur VARCHAR(60) NOT NULL,
+      probabilites JSONB,
+      confiance REAL,
+      source VARCHAR(20) NOT NULL CHECK (source IN (${sqlList(TAG_SOURCES)})),
+      modele VARCHAR(100),
+      cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      valide_par UUID REFERENCES users(id) ON DELETE SET NULL,
+      entrainement_autorise BOOLEAN NOT NULL DEFAULT false,
+      PRIMARY KEY (account_id, message_id, question, source),
+      CONSTRAINT message_tags_training_sources
+        CHECK (NOT entrainement_autorise OR source IN (${sqlList(TRAINING_SOURCES)}))
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS message_tags_filter_idx ON message_tags(account_id, question, valeur)`)
+
+  // La dernière position CONNUE d'un mail tagué, pour que le filtre par étiquette montre des
+  // mails absents de la page chargée. `messages_cache` ne suffit pas : il ne garde qu'une
+  // fenêtre, et un mail tagué il y a un mois en est sorti.
+  await query(`
+    CREATE TABLE IF NOT EXISTS tagged_messages (
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      folder TEXT,
+      uid INTEGER,
+      from_name TEXT,
+      from_address TEXT,
+      subject TEXT,
+      date TIMESTAMPTZ,
+      PRIMARY KEY (account_id, message_id)
+    )
+  `)
+
+  // Le tri d'une boîte : quel moteur, quel plafond, où en est-on. Une ligne par boîte.
+  // `locked_until` est le verrou qui empêche deux passages du planificateur de travailler
+  // la même boîte (claim par `UPDATE … WHERE locked_until < NOW() RETURNING`).
+  await query(`
+    CREATE TABLE IF NOT EXISTS mailbox_tagging (
+      account_id UUID PRIMARY KEY REFERENCES email_accounts(id) ON DELETE CASCADE,
+      engine_id UUID REFERENCES decision_engines(id) ON DELETE SET NULL,
+      budget_usd REAL NOT NULL DEFAULT ${TAGGING_BUDGET_USD_DEFAULT},
+      spent_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+      input_tokens BIGINT NOT NULL DEFAULT 0,
+      live BOOLEAN NOT NULL DEFAULT false,
+      live_cursor JSONB,
+      bulk_state VARCHAR(20) NOT NULL DEFAULT 'idle' CHECK (bulk_state IN (${sqlList(BULK_STATES)})),
+      bulk_cursor JSONB,
+      tagged INTEGER NOT NULL DEFAULT 0,
+      skipped INTEGER NOT NULL DEFAULT 0,
+      errors INTEGER NOT NULL DEFAULT 0,
+      total INTEGER NOT NULL DEFAULT 0,
+      paused_reason VARCHAR(20) CHECK (paused_reason IS NULL OR paused_reason IN (${sqlList(PAUSE_REASONS)})),
+      paused_detail TEXT,
+      locked_until TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+
+  // Les CHECK ci-dessus ne sont posées qu'à la CRÉATION de la table : sur une base qui existe
+  // déjà, élargir une liste dans le code ne changerait rien. On les repose donc à chaque
+  // démarrage, pour que la base suive le code — c'est ce qui permet d'ajouter un type de moteur
+  // (décision 13) sans écrire de migration à la main.
+  for (const [table, name, expr] of [
+    ['message_tags', 'message_tags_source_check', `source IN (${sqlList(TAG_SOURCES)})`],
+    ['message_tags', 'message_tags_training_sources', `NOT entrainement_autorise OR source IN (${sqlList(TRAINING_SOURCES)})`],
+    ['decision_engines', 'decision_engines_kind_check', `kind IN (${sqlList(ENGINES)})`],
+  ] as const) {
+    await query(`ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${name}`)
+    await query(`ALTER TABLE ${table} ADD CONSTRAINT ${name} CHECK (${expr})`)
+  }
 
   // Identité de l'instance — UNE seule ligne, forcée par `id BOOLEAN PRIMARY KEY DEFAULT TRUE`
   // contraint à TRUE : une deuxième insertion viole la clé primaire. Tout à NULL = apparence

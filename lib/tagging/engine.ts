@@ -145,6 +145,20 @@ export interface EngineConfig {
  */
 export type EngineFailure = 'credit' | 'auth' | 'rate' | 'unavailable' | 'rejected'
 
+/**
+ * Pourquoi le tri d'une boîte est en pause. `credit` et `auth` sont les deux refus du moteur
+ * qui ne se réessaient pas (`EngineFailure`) ; `budget` est notre propre plafond ; `user` est
+ * un clic ; `no_engine` dit qu'aucun moteur n'est choisi (décision 13 : sans moteur, ni tri en
+ * masse ni au fil de l'eau). NULL en base = le tri est actif. La contrainte CHECK de
+ * `mailbox_tagging` est écrite à partir de cette liste : un seul endroit les nomme.
+ */
+export const PAUSE_REASONS = ['user', 'budget', 'credit', 'auth', 'no_engine'] as const
+export type PauseReason = (typeof PAUSE_REASONS)[number]
+
+/** L'avancement d'un tri en masse. */
+export const BULK_STATES = ['idle', 'running', 'done'] as const
+export type BulkState = (typeof BULK_STATES)[number]
+
 export class EngineError extends Error {
   kind: EngineFailure
   status: number | null
