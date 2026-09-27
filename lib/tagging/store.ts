@@ -188,9 +188,10 @@ const toStored = (r: TagRow): StoredTag => ({
  * fragment est la SOURCE UNIQUE de cette règle — les trois lectures ci-dessous s'en servent,
  * aucune ne réécrit un `ORDER BY`.
  */
+const EFFECTIVE_ORDER = `(source = '${HUMAN_SOURCE}') DESC, cree_le DESC`
 const EFFECTIVE_RANK = `ROW_NUMBER() OVER (
   PARTITION BY account_id, message_id, question
-  ORDER BY (source = 'humain') DESC, cree_le DESC
+  ORDER BY ${EFFECTIVE_ORDER}
 )`
 
 /** Toutes les lignes d'un mail, toutes sources, plus l'effective par question. */
@@ -199,7 +200,7 @@ export async function readTags(accountId: string, messageId: string): Promise<{ 
     `SELECT question, valeur, probabilites, confiance, source, modele, cree_le, valide_par,
             entrainement_autorise, ${EFFECTIVE_RANK} AS rang
        FROM message_tags WHERE account_id = $1 AND message_id = $2
-      ORDER BY question, (source = 'humain') DESC, cree_le DESC`,
+      ORDER BY question, ${EFFECTIVE_ORDER}`,
     [accountId, messageId]
   )
   return { tags: rows.map(toStored), effective: rows.filter(r => Number(r.rang) === 1).map(toStored) }

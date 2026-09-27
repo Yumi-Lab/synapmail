@@ -15,7 +15,7 @@
 // `lib/` importe ses dépendances à l'alias `@/…`, que `node` ne résout pas seul : le banc
 // apprend l'alias au lieu de faire plier le code mesuré (voir scripts/alias-resolver.mjs).
 import './alias-resolver.mjs'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import crypto from 'node:crypto'
 
 const env = Object.fromEntries(readFileSync('.env', 'utf8').split('\n')
@@ -136,8 +136,13 @@ try {
   const first = effective[taggedIds[0]] ?? []
   const questionsSeen = new Set(first.map(tag => tag.question))
   check(first.length === questionsSeen.size, 'D3 une seule étiquette par question (l’effective)', `${first.length} ligne(s), ${questionsSeen.size} question(s)`)
-  check(first.every(tag => typeof tag.confiance === 'number' && tag.source === 'jev'),
-    'D4 chaque étiquette porte sa confiance et sa source', JSON.stringify(first[0]))
+  // Toute effective dit d'OÙ elle vient. La confiance, elle, n'existe que pour un MOTEUR : une
+  // ligne humaine n'en a pas par nature (un humain ne devine pas), et une correction laissée par
+  // un passage précédent doit donc être acceptée telle quelle, pas comptée comme un défaut.
+  check(first.every(tag => (tag.source === 'humain'
+    ? tag.confiance === null
+    : tag.source === 'jev' && typeof tag.confiance === 'number')),
+    'D4 chaque étiquette dit sa source, et sa confiance quand elle vient d’un moteur', JSON.stringify(first[0]))
 
   // --- E. la correction humaine AJOUTE, elle n'efface pas (décision 5) ---------------
   const target = taggedIds[0]
@@ -221,7 +226,9 @@ try {
   // Les étiquettes du banc sont RETIRÉES, sauf en mode graine : la boîte est réelle, le banc ne
   // laisse rien derrière lui par défaut. Pas de route de suppression (aucune corbeille par
   // étiquette, décision 11) : le nettoyage passe par la base, comme les autres bancs DB.
-  if (!SEED && taggedIds.length) {
+  // Un `.gate-handoff` en attente signifie qu'un humain regarde CES étiquettes : les effacer
+  // viderait l'écran qu'il est en train de juger. Le banc se tait alors plutôt que de nettoyer.
+  if (!SEED && taggedIds.length && !existsSync('.gate-handoff')) {
     const { query } = await import('../lib/db.ts')
     await query('DELETE FROM message_tags WHERE account_id = $1 AND message_id = ANY($2::text[])', [accountId, taggedIds])
     await query('DELETE FROM tagged_messages WHERE account_id = $1 AND message_id = ANY($2::text[])', [accountId, taggedIds])
