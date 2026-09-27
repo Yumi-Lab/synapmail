@@ -84,12 +84,13 @@ export const STATE_BODY_CHARS = 1500
 
 /**
  * Le coût supposé d'un mail tant qu'AUCUNE moyenne n'a été mesurée sur la boîte. Constante
- * documentée comme telle, et remplacée dès la première mesure : ~1 600 jetons d'entrée par
- * mail, relevés sur 1 000 requêtes de la boîte nicolas@3d-expert.fr le 22/09/2026 avec les
- * 7 questions d'alors. Les 41 questions d'aujourd'hui en coûtent davantage : cette valeur
- * SOUS-estime, elle ne sert qu'à afficher un ordre de grandeur avant le premier tri.
+ * documentée comme telle, et remplacée dès la première mesure : 5 018 jetons d'entrée en
+ * moyenne, relevés sur 20 mails réels de nicolas@yumi-lab.com le 28/09/2026 avec les
+ * 41 questions d'aujourd'hui (jev-1.13.0, lot T8, `.loop/t8-measure.out`), arrondis à
+ * 5 000. La moyenne précédente (~1 600) portait sur 7 questions et sous-estimait d'un
+ * facteur 3 l'estimation affichée avant le premier tri.
  */
-export const ASSUMED_INPUT_TOKENS_PER_MAIL = 1600
+export const ASSUMED_INPUT_TOKENS_PER_MAIL = 5000
 
 export interface MailForState {
   fromName?: string

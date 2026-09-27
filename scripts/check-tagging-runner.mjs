@@ -65,7 +65,7 @@ const check = (label, ok, detail = '') => {
 
 const { initDb, query } = await import('../lib/db.ts')
 const runner = await import('../lib/tagging/runner.ts')
-const { EngineError } = await import('../lib/tagging/engine.ts')
+const { ASSUMED_INPUT_TOKENS_PER_MAIL, EngineError } = await import('../lib/tagging/engine.ts')
 const { QUESTIONS, valuesOf } = await import('../lib/tagging/questions.ts')
 const store = await import('../lib/tagging/store.ts')
 
@@ -174,7 +174,7 @@ const makeEngine = (opts = {}) => {
         const a = ANSWERS[q.id]
         const valeur = q.type === 'noul' ? 'oui' : valuesOf(q)[0]
         return { question: q.id, valeur, probabilites: a.probabilities ?? null, confiance: 0.8 }
-      }), rejected: [], inputTokens: opts.inputTokens ?? 1600 }
+      }), rejected: [], inputTokens: opts.inputTokens ?? ASSUMED_INPUT_TOKENS_PER_MAIL }
     },
   }
 }
