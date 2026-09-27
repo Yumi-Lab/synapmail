@@ -54,16 +54,29 @@ const ACCOUNT_PATH_EXCEPTIONS = ['test']
 const ACCOUNT_BY_OBJECT: { prefix: string; sql: string }[] = [
   { prefix: '/api/rules/', sql: 'SELECT account_id AS id FROM email_rules WHERE id = $1' },
   { prefix: '/api/signatures/', sql: 'SELECT account_id AS id FROM signatures WHERE id = $1' },
+  // Un webhook nomme sa boîte : l'appeler, le modifier ou lire son journal, c'est agir sur
+  // cette boîte. `/api/webhooks/deliveries/<id>/retry` désigne la sienne à travers la LIGNE
+  // du journal — c'est le même geste, et il doit franchir la même barrière.
+  { prefix: '/api/webhooks/deliveries/', sql: 'SELECT account_id AS id FROM webhook_deliveries WHERE id = $1' },
+  { prefix: '/api/webhooks/', sql: 'SELECT account_id AS id FROM webhooks WHERE id = $1' },
 ]
 
 /** Un identifiant d'objet est un UUID : tout le reste est un sous-chemin (`/run`, `/test`). */
 const OBJECT_ID = /^[0-9a-f-]{36}$/i
 
-/** La boîte visée à travers l'objet nommé dans le chemin, ou `null`. */
+/**
+ * La boîte visée à travers l'objet nommé dans le chemin, ou `null`.
+ *
+ * L'objet est le PREMIER segment qui suit le préfixe, jamais tout le reste du chemin : sans
+ * cela `/api/webhooks/<id>/secret` ne désignerait aucune boîte et la barrière serait
+ * contournée par un sous-chemin. Le préfixe le plus long d'abord (`/api/webhooks/deliveries/`
+ * avant `/api/webhooks/`), sinon le plus court l'attraperait et chercherait un webhook là où
+ * vit une livraison.
+ */
 async function accountIdFromObject(path: string): Promise<string | null> {
   for (const { prefix, sql } of ACCOUNT_BY_OBJECT) {
     if (!path.startsWith(prefix)) continue
-    const segment = path.slice(prefix.length)
+    const segment = path.slice(prefix.length).split('/')[0]
     if (!OBJECT_ID.test(segment)) continue
     const rows = await query<{ id: string | null }>(sql, [segment])
     return rows[0]?.id ?? null

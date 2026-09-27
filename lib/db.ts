@@ -2,7 +2,7 @@ import { Pool } from 'pg'
 import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
 import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
 import { BULK_STATES, ENGINES, PAUSE_REASONS, TAG_SOURCES, TRAINING_SOURCES } from '@/lib/tagging/engine'
-import { DELIVERY_STATUSES, ERROR_MAX } from '@/lib/webhooks'
+import { DELIVERY_STATUSES, ERROR_MAX, WEBHOOK_NAME_MAX } from '@/lib/webhooks'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -650,7 +650,7 @@ export async function initDb(): Promise<void> {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
-      name VARCHAR(120) NOT NULL,
+      name VARCHAR(${WEBHOOK_NAME_MAX}) NOT NULL,
       url TEXT NOT NULL,
       secret_encrypted TEXT NOT NULL,
       enabled BOOLEAN NOT NULL DEFAULT true,

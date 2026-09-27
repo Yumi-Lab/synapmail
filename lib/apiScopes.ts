@@ -43,6 +43,8 @@ export const API_SCOPES = {
   'ai:use': "Utiliser les actions d'assistance",
   'tags:read': 'Lire les étiquettes des messages',
   'tags:write': 'Écrire des étiquettes et piloter le tri automatique',
+  'webhooks:read': 'Lire les webhooks et leur journal d\'envois',
+  'webhooks:write': 'Créer, modifier et supprimer des webhooks, et déclencher un envoi',
 } as const
 
 export type ApiScope = keyof typeof API_SCOPES
@@ -71,6 +73,8 @@ export const OPT_IN_SCOPES: ApiScope[] = [
   'settings:write',
   'tags:read',
   'tags:write',
+  'webhooks:read',
+  'webhooks:write',
 ]
 
 /**
@@ -140,6 +144,15 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'GET /api/tags/export': 'tags:read',
   'GET /api/tagging/status': 'tags:read',
   'POST /api/tagging/run': 'tags:write',
+  'GET /api/webhooks': 'webhooks:read',
+  'POST /api/webhooks': 'webhooks:write',
+  'GET /api/webhooks/[id]': 'webhooks:read',
+  'PATCH /api/webhooks/[id]': 'webhooks:write',
+  'DELETE /api/webhooks/[id]': 'webhooks:write',
+  'POST /api/webhooks/[id]/secret': 'webhooks:write',
+  'POST /api/webhooks/[id]/test': 'webhooks:write',
+  'GET /api/webhooks/[id]/deliveries': 'webhooks:read',
+  'POST /api/webhooks/deliveries/[id]/retry': 'webhooks:write',
 }
 
 /**
@@ -180,6 +193,15 @@ export const ROUTE_ACCOUNT_PERMISSION: Record<string, AccountPermission> = {
   // La lecture n'en exige aucune — un partage actif EST l'accès en lecture.
   'PUT /api/messages/[id]/tags': 'organize',
   'POST /api/tagging/run': 'organize',
+  // Un webhook EST une règle vue de l'autre bout (décision 1) : le geste qu'un partage doit
+  // autoriser pour l'écrire est donc le MÊME que pour une règle. Renvoyer un mail à un webhook
+  // (`/test`, `/retry`) est une écriture aussi : cela fait sortir du contenu de la boîte.
+  'POST /api/webhooks': 'manageRules',
+  'PATCH /api/webhooks/[id]': 'manageRules',
+  'DELETE /api/webhooks/[id]': 'manageRules',
+  'POST /api/webhooks/[id]/secret': 'manageRules',
+  'POST /api/webhooks/[id]/test': 'manageRules',
+  'POST /api/webhooks/deliveries/[id]/retry': 'manageRules',
 }
 
 export const isApiScope = (value: unknown): value is ApiScope =>

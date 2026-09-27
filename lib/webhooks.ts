@@ -22,6 +22,7 @@ import { lookup } from 'dns/promises'
 import { query } from './db'
 import { decrypt, encrypt } from './encrypt'
 import { guardApiPayload } from './promptGuard'
+import type { Webhook, WebhookDelivery, WebhookWithSecret } from '@/types/webhook'
 
 // ---------------------------------------------------------------------------
 // Les valeurs du protocole, écrites UNE fois (elles sont relues par les routes,
@@ -56,6 +57,11 @@ const CLAIM_BATCH = 20
 export const PREVIEW_MAX = 500
 /** Une erreur retenue au journal reste lisible, elle ne devient pas une pièce jointe. */
 export const ERROR_MAX = 500
+/** Le nom d'un webhook, tel que la colonne le range ET tel que les routes le refusent. */
+export const WEBHOOK_NAME_MAX = 120
+/** Combien d'envois un journal rend par défaut, et au plus. */
+export const DELIVERY_PAGE_DEFAULT = 50
+export const DELIVERY_PAGE_MAX = 200
 
 export const DELIVERY_STATUSES = ['pending', 'ok', 'failed'] as const
 export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number]
@@ -510,4 +516,202 @@ export async function queueRuleDelivery(args: {
     message: args.message,
     tags: args.tags,
   })
+}
+
+// ---------------------------------------------------------------------------
+// Les webhooks comme OBJETS : ce que les routes et l'écran lisent et écrivent
+// ---------------------------------------------------------------------------
+
+/**
+ * La forme rendue au dehors, construite en UNE requête : le webhook, son dernier envoi et
+ * combien de règles le visent. Les deux dernières colonnes sont des sous-requêtes plutôt que
+ * deux allers-retours par ligne — une liste de N webhooks reste une requête.
+ *
+ * `actions @> '[{"type":"webhook","value":"<id>"}]'` lit le JSONB des règles : c'est la même
+ * forme que `applyAction` exécute, donc « ses déclencheurs » ne peut pas dériver de « ce qui
+ * le déclenche vraiment ».
+ */
+const WEBHOOK_SELECT = `
+  SELECT w.id, w.account_id, w.name, w.url, w.enabled, w.created_at,
+         d.created_at AS last_at, d.status AS last_status, d.response_status AS last_response,
+         (SELECT COUNT(*)::int FROM email_rules r
+           WHERE r.account_id = w.account_id
+             AND r.actions @> jsonb_build_array(jsonb_build_object('type', 'webhook', 'value', w.id::text))
+         ) AS rule_count
+    FROM webhooks w
+    LEFT JOIN LATERAL (
+      SELECT created_at, status, response_status FROM webhook_deliveries
+       WHERE webhook_id = w.id ORDER BY created_at DESC LIMIT 1
+    ) d ON true`
+
+interface WebhookListRow {
+  id: string
+  account_id: string
+  name: string
+  url: string
+  enabled: boolean
+  created_at: Date
+  last_at: Date | null
+  last_status: string | null
+  last_response: number | null
+  rule_count: number
+}
+
+const rowToWebhook = (r: WebhookListRow): Webhook => ({
+  id: r.id,
+  accountId: r.account_id,
+  name: r.name,
+  url: r.url,
+  enabled: r.enabled,
+  createdAt: r.created_at.toISOString(),
+  lastDelivery: r.last_at
+    ? { at: r.last_at.toISOString(), status: r.last_status ?? 'pending', responseStatus: r.last_response }
+    : null,
+  ruleCount: r.rule_count ?? 0,
+})
+
+/** Les webhooks de cet utilisateur, éventuellement d'une seule boîte. */
+export async function listWebhooks(userId: string, accountId?: string | null): Promise<Webhook[]> {
+  const rows = await query<WebhookListRow>(
+    `${WEBHOOK_SELECT} WHERE w.user_id = $1 AND ($2::uuid IS NULL OR w.account_id = $2)
+      ORDER BY w.created_at DESC`,
+    [userId, accountId ?? null]
+  )
+  return rows.map(rowToWebhook)
+}
+
+/** Un webhook, à condition qu'il soit à cet utilisateur. `null` sinon — jamais un 403 qui révèle. */
+export async function getWebhook(id: string, userId: string): Promise<Webhook | null> {
+  const rows = await query<WebhookListRow>(`${WEBHOOK_SELECT} WHERE w.id = $1 AND w.user_id = $2`, [id, userId])
+  return rows.length ? rowToWebhook(rows[0]) : null
+}
+
+/**
+ * Crée un webhook et rend son secret EN CLAIR — la seule fois, avec la régénération, où il
+ * sort. L'adresse a déjà été contrôlée par l'appelant (`checkWebhookUrl`), qui sait rendre un
+ * 422 nommant le motif du refus ; la refaire ici doublerait la résolution DNS.
+ */
+export async function createWebhook(args: {
+  userId: string
+  accountId: string
+  name: string
+  url: string
+  enabled?: boolean
+  createdByApiKey?: string | null
+}): Promise<WebhookWithSecret> {
+  const secret = newWebhookSecret()
+  const rows = await query<{ id: string }>(
+    `INSERT INTO webhooks (user_id, account_id, name, url, secret_encrypted, enabled, created_by_api_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+    [args.userId, args.accountId, args.name, args.url, sealSecret(secret), args.enabled ?? true, args.createdByApiKey ?? null]
+  )
+  const created = await getWebhook(rows[0].id, args.userId)
+  if (!created) throw new Error('webhook créé puis introuvable')
+  return { ...created, secret }
+}
+
+/** Modifie ce qui est donné, laisse le reste. `null` si le webhook n'est pas à cet utilisateur. */
+export async function updateWebhook(
+  id: string,
+  userId: string,
+  patch: { name?: string; url?: string; enabled?: boolean }
+): Promise<Webhook | null> {
+  const rows = await query<{ id: string }>(
+    `UPDATE webhooks SET name = COALESCE($3, name), url = COALESCE($4, url), enabled = COALESCE($5, enabled)
+      WHERE id = $1 AND user_id = $2 RETURNING id`,
+    [id, userId, patch.name ?? null, patch.url ?? null, patch.enabled ?? null]
+  )
+  return rows.length ? getWebhook(id, userId) : null
+}
+
+export async function deleteWebhook(id: string, userId: string): Promise<boolean> {
+  const rows = await query(`DELETE FROM webhooks WHERE id = $1 AND user_id = $2 RETURNING id`, [id, userId])
+  return rows.length > 0
+}
+
+/**
+ * Un secret neuf en remplacement de l'ancien, rendu en clair une fois. L'ancien cesse
+ * immédiatement de valider : c'est le but — un secret qu'on régénère est un secret qu'on
+ * suppose lu par quelqu'un d'autre.
+ */
+export async function rotateWebhookSecret(id: string, userId: string): Promise<string | null> {
+  const secret = newWebhookSecret()
+  const rows = await query<{ id: string }>(
+    `UPDATE webhooks SET secret_encrypted = $3 WHERE id = $1 AND user_id = $2 RETURNING id`,
+    [id, userId, sealSecret(secret)]
+  )
+  return rows.length ? secret : null
+}
+
+/** Le journal d'un webhook, le plus récent d'abord. Le nom de la règle et l'objet du mail viennent avec. */
+export async function listDeliveries(webhookId: string, limit: number): Promise<WebhookDelivery[]> {
+  const rows = await query<{
+    id: string; webhook_id: string; rule_id: string | null; rule_name: string | null
+    message_id: string | null; payload: Record<string, unknown>; status: string; attempts: number
+    response_status: number | null; duration_ms: number | null; error: string | null
+    next_attempt_at: Date | null; created_at: Date
+  }>(
+    `SELECT d.id, d.webhook_id, d.rule_id, r.name AS rule_name, d.message_id, d.payload, d.status,
+            d.attempts, d.response_status, d.duration_ms, d.error, d.next_attempt_at, d.created_at
+       FROM webhook_deliveries d LEFT JOIN email_rules r ON r.id = d.rule_id
+      WHERE d.webhook_id = $1 ORDER BY d.created_at DESC LIMIT $2`,
+    [webhookId, limit]
+  )
+  return rows.map(r => {
+    const message = (r.payload as { message?: { subject?: unknown } } | null)?.message
+    return {
+      id: r.id,
+      webhookId: r.webhook_id,
+      ruleId: r.rule_id,
+      ruleName: r.rule_name,
+      messageId: r.message_id,
+      subject: typeof message?.subject === 'string' ? message.subject : null,
+      event: String((r.payload as { event?: unknown } | null)?.event ?? EVENT_RULE_MATCHED),
+      status: r.status,
+      attempts: r.attempts,
+      responseStatus: r.response_status,
+      durationMs: r.duration_ms,
+      error: r.error,
+      nextAttemptAt: r.next_attempt_at?.toISOString() ?? null,
+      createdAt: r.created_at.toISOString(),
+    }
+  })
+}
+
+/** Une ligne de journal, à condition que son webhook soit à cet utilisateur. */
+export async function getDeliveryOwned(id: string, userId: string): Promise<{ id: string; webhookId: string } | null> {
+  const rows = await query<{ id: string; webhook_id: string }>(
+    `SELECT d.id, d.webhook_id FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id
+      WHERE d.id = $1 AND w.user_id = $2`,
+    [id, userId]
+  )
+  return rows.length ? { id: rows[0].id, webhookId: rows[0].webhook_id } : null
+}
+
+/**
+ * Ce qu'une règle a le droit de viser (décision 9) : un webhook de LA MÊME boîte et du même
+ * propriétaire. Rend le motif du refus en nommant l'action fautive, `null` si tout va bien.
+ *
+ * Écrit ici plutôt que dans `lib/rules.ts` parce que c'est la table `webhooks` qui répond —
+ * et lu par les DEUX routes de règles, jamais recopié dans chacune. `queueRuleDelivery` refait
+ * la même vérification à l'envoi : celle-ci rend une erreur LISIBLE à l'écriture, celle-là
+ * ferme la porte si une incohérence était quand même entrée.
+ */
+export async function validateWebhookActions(
+  actions: readonly { type?: string; value?: string }[],
+  accountId: string,
+  userId: string
+): Promise<string | null> {
+  for (let i = 0; i < actions.length; i++) {
+    const a = actions[i]
+    if (a?.type !== 'webhook') continue
+    const where = `action ${i + 1} (webhook)`
+    if (!a.value) return `${where}: a webhook id is required`
+    const rows = await query<{ id: string }>(
+      `SELECT id FROM webhooks WHERE id = $1 AND account_id = $2 AND user_id = $3`,
+      [a.value, accountId, userId]
+    )
+    if (!rows.length) return `${where}: webhook ${a.value} is not one of this mailbox's webhooks`
+  }
+  return null
 }
