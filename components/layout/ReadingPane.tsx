@@ -18,6 +18,8 @@ import { messageHref, originOfMessage } from '@/lib/mailOrigin'
 import { unreadRefresh, unreadShift } from '@/lib/unreadSignal'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { FlagPicker } from '@/components/mail/FlagPicker'
+import { TagsPanel } from '@/components/mail/MessageTags'
+import type { StoredTag } from '@/lib/tagging/store'
 import { ThinScroll } from './ThinScroll'
 
 const fetcher = async (url: string) => {
@@ -828,6 +830,15 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
   )
   const focusItems = focusRes?.data ?? []
 
+  // Les étiquettes du message ouvert. Une SEULE requête par message, et seulement quand il en
+  // est un : `readTags` rend `effective` (ce que le panneau affiche, décision 5) et `tags`
+  // (toutes les sources, ce qui fait tenir « le moteur a dit » en infobulle). Un mail sans
+  // `Message-ID` n'a pas de clé côté client (voir MessageTags.tsx) : rien n'est demandé.
+  const tagsKey = message?.messageId && accountId
+    ? `/api/messages/${encodeURIComponent(message.messageId)}/tags?account=${encodeURIComponent(accountId)}`
+    : null
+  const { data: tagsRes, mutate: refreshTags } = useSWR<{ data: { tags: StoredTag[]; effective: StoredTag[] } }>(tagsKey, fetcher)
+
   const openFocus = (f: FocusItem) => {
     window.dispatchEvent(new CustomEvent('synapmail:open-message', {
       detail: { uid: f.uid, accountId: f.accountId, folder: f.folder },
@@ -1056,6 +1067,17 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
 
       {/* Security banner */}
       <SecurityBanner message={message} />
+
+      {/* Étiquettes — replié, sous les bannières : information de tri, pas d'alerte */}
+      {accountId && (
+        <TagsPanel
+          message={message}
+          tags={tagsRes?.data.effective ?? []}
+          engineTags={tagsRes?.data.tags ?? []}
+          onCorrected={() => { refreshTags() }}
+          canOrganize={perms.canOrganize}
+        />
+      )}
 
       {/* Unsubscribe banner */}
       {message.listUnsubscribe && accountId && (

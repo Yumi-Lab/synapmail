@@ -27,6 +27,10 @@ import { ThinScroll } from './ThinScroll'
 import { accountColor, accountInitials, readableInk, useAccountAccent } from './AccountAvatar'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
+import { TagPills } from '@/components/mail/MessageTags'
+import { QUESTIONS, valuesOf } from '@/lib/tagging/questions'
+import { TAGS_ENDPOINT, taggedRows } from '@/lib/tagging/view'
+import type { StoredTag, TaggedMessage } from '@/lib/tagging/store'
 
 const fetcher = async (url: string) => {
   const res = await fetch(url)
@@ -121,6 +125,8 @@ const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDat
  * sur le sélecteur de portée n'obtenait plus sa navigation.
  */
 const NO_MESSAGES: readonly Message[] = []
+/** Même raison que `NO_MESSAGES` : « ce message n'a pas d'étiquette » est UN tableau, pas un neuf par rendu. */
+const NO_TAGS: readonly StoredTag[] = []
 
 type DensityMode = 'comfortable' | 'compact'
 
@@ -154,6 +160,7 @@ interface AppSettings {
 export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, activeAccountId, search = '', searchScope = SCOPE_FOLDER, permissions }: Props) {
   const perms = permissions ?? DEFAULT_PERMISSIONS
   const t = useTranslations('mail')
+  const tTags = useTranslations('tags')
   const locale = useLocale()
   // État partagé : la liste est la SEULE à publier et à enregistrer des actions.
   const { publish, register } = useMailSelection()
@@ -163,6 +170,9 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const [refreshKey, setRefreshKey] = useState(0)
   const [readUids, setReadUids] = useState<Set<string>>(new Set())
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
+  // Filtre par étiquette : `question|valeur`, l'unique valeur que le sélecteur porte. Une seule
+  // chaîne d'état plutôt que deux, parce qu'une question sans valeur ne filtre rien.
+  const [tagFilter, setTagFilter] = useState('')
 
   // Les boîtes de l'utilisateur, prises à la MÊME source que la barre latérale
   // (mêmes clés SWR, donc aucune requête de plus) : la pastille d'un résultat doit
@@ -402,8 +412,29 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     }
   }, [data, page, refreshKey])
 
+  // ── Étiquettes ────────────────────────────────────────────────────────────
+  // Le filtre par étiquette interroge `tagged_messages` et non la page chargée : c'est la
+  // raison d'être de cette table (décision 4), montrer un mail sorti de la fenêtre. Il ne
+  // coexiste pas avec une recherche — deux jeux de résultats dans une colonne ne diraient plus
+  // lequel commande.
+  const [tagQuestion, tagValue] = tagFilter ? tagFilter.split('|') : ['', '']
+  const isTagMode = !isSearchMode && !!tagQuestion && !!tagValue && !!activeAccountId
+  const { data: tagHits } = useSWR<{ data: { messages: TaggedMessage[]; total: number } }>(
+    isTagMode
+      ? `${TAGS_ENDPOINT}?account=${encodeURIComponent(activeAccountId!)}` +
+        `&question=${encodeURIComponent(tagQuestion)}&valeur=${encodeURIComponent(tagValue)}`
+      : null,
+    fetcher,
+  )
+
   const searchMessages = isStreamingScope ? streamed.messages : (searchData?.messages ?? NO_MESSAGES)
-  const messages = isSearchMode ? searchMessages : accumulated
+  // Un mail retrouvé par son étiquette est décrit par la page chargée quand elle le contient
+  // (non lu, drapeau, pièces jointes), par sa dernière position connue sinon.
+  const tagged = useMemo(
+    () => taggedRows(tagHits?.data.messages ?? [], accumulated, activeAccountId ?? ''),
+    [tagHits, accumulated, activeAccountId],
+  )
+  const messages = isSearchMode ? searchMessages : (isTagMode ? tagged.rows : accumulated)
   const total = data?.total ?? 0
   // Le serveur peut avoir trouvé plus que ce qu'il rend (plafond SEARCH_RESULT_LIMIT) :
   // le bandeau annonce alors « X premiers sur N » au lieu de laisser croire à N = X.
@@ -432,12 +463,28 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     })
     return byId
   }, [accounts])
+  // Les pastilles des lignes AFFICHÉES, en UNE requête par page — jamais une par ligne
+  // (décision 11). La clé est la liste des `Message-ID` affichés : elle ne change qu'au
+  // chargement d'une page de plus ou au changement de dossier, donc SWR ne redemande rien
+  // quand seul un drapeau bouge. Un mail sans `Message-ID` ne peut porter aucune étiquette
+  // (rien ne l'indexerait) : il n'entre pas dans la requête.
+  const pillIds = useMemo(
+    () => messages.map(m => m.messageId).filter(Boolean),
+    [messages],
+  )
+  const pillKey = activeAccountId && pillIds.length
+    ? `${TAGS_ENDPOINT}?account=${encodeURIComponent(activeAccountId)}` +
+      pillIds.map(id => `&id=${encodeURIComponent(id)}`).join('')
+    : null
+  const { data: pillsRes } = useSWR<{ data: { effective: Record<string, StoredTag[]> } }>(pillKey, fetcher)
+  const pills = pillsRes?.data.effective
+
   const loadError = !isSearchMode && !!error && accumulated.length === 0
   const loading = isSearchMode ? (messages.length === 0 && isSearching) : (!data && !error)
 
   // Infinite scroll — a failed page > 1 keeps the list but shows a retry button
   const morePageError = !isSearchMode && !!error && accumulated.length > 0
-  const canLoadMore = !isSearchMode && !error && messages.length > 0 && messages.length < total
+  const canLoadMore = !isSearchMode && !isTagMode && !error && messages.length > 0 && messages.length < total
 
   useEffect(() => {
     const sentinel = sentinelRef.current
@@ -1013,6 +1060,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     const isChecked = checkedKeys.has(rowKey)
     const isDragging = draggingUid === msg.uid
     const initial = (msg.from.name || msg.from.address)[0]?.toUpperCase() ?? '?'
+    const rowPills = (msg.messageId && pills?.[msg.messageId]) || NO_TAGS
     const avatarColor = isRead ? 'bg-muted text-muted-foreground' : cn(getAvatarColor(msg.from.address), 'text-white')
 
     return (
@@ -1136,10 +1184,18 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             {thread.subject}
           </div>
 
-          {/* line 3 — preview (hidden in compact) */}
-          {!compact && (
-            <div className={cn('text-[11px] truncate leading-relaxed', isRead ? 'text-muted-foreground/70' : 'text-muted-foreground')}>
-              {msg.preview}
+          {/* line 3 — aperçu, et les pastilles d'étiquettes à sa droite. Elles ne prennent pas
+              de ligne à elles : un mail reste UN item d'une ligne, et l'aperçu cède avant elles
+              (`truncate` sur lui, `shrink-0` sur elles). En compact, l'aperçu disparaît et les
+              pastilles restent — c'est l'information de tri, elle survit à la densité. */}
+          {(!compact || rowPills.length > 0) && (
+            <div className="flex items-center gap-2">
+              {!compact && (
+                <span className={cn('min-w-0 flex-1 truncate text-[11px] leading-relaxed', isRead ? 'text-muted-foreground/70' : 'text-muted-foreground')}>
+                  {msg.preview}
+                </span>
+              )}
+              <TagPills tags={rowPills} compact={compact} />
             </div>
           )}
         </div>
@@ -1206,6 +1262,41 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
               </button>
             ))}
           </div>
+          {/* Filtre par étiquette : question → valeur. UN `<select>` natif et non deux, parce
+              qu'une question sans valeur ne filtre rien — le choix est donc la PAIRE, groupée
+              par question (`<optgroup>`). Natif : la liste est fermée, le navigateur la rend
+              déjà au clavier, au doigt et au lecteur d'écran, et rien à replier au clic dehors. */}
+          <select
+            value={tagFilter}
+            onChange={e => setTagFilter(e.target.value)}
+            aria-label={tTags('filterLabel')}
+            data-tag-filter
+            className={cn(
+              'max-w-[12rem] rounded-lg border border-border bg-transparent px-2 py-1.5 text-xs font-medium transition-colors',
+              tagFilter ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <option value="">{tTags('filterAll')}</option>
+            {QUESTIONS.map(q => (
+              <optgroup key={q.id} label={tTags(`q.${q.id}`)}>
+                {valuesOf(q).map(v => (
+                  <option key={v} value={`${q.id}|${v}`}>{tTags(`v.${v}`)}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          {isTagMode && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground" data-tag-filter-count>
+              <span className="tabular-nums">{tTags('filterCount', { count: tagHits?.data.total ?? 0 })}</span>
+              <button
+                onClick={() => setTagFilter('')}
+                title={tTags('filterClear')}
+                className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
           <div className="ml-auto" />
           <ScheduledPopover />
           <SnoozePopover activeAccountId={activeAccountId} />
@@ -1328,8 +1419,18 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-3">
               <Search className="w-6 h-6 opacity-30" />
             </div>
-            <p className="text-sm font-medium">{isSearchMode ? t('noSearchResults') : t('noMessages')}</p>
+            <p className="text-sm font-medium">
+              {isSearchMode ? t('noSearchResults') : isTagMode ? tTags('filterEmpty') : t('noMessages')}
+            </p>
           </div>
+        )}
+
+        {/* Un mail étiqueté dont on ne connaît ni le dossier ni l'uid n'est pas ouvrable : il est
+            COMPTÉ ici plutôt que tu, sinon le total du filtre ne collerait pas aux lignes. */}
+        {isTagMode && tagged.unpositioned > 0 && (
+          <p className="px-4 py-2 text-[11px] text-muted-foreground/70" data-tag-unpositioned>
+            {tTags('unpositioned', { count: tagged.unpositioned })}
+          </p>
         )}
 
         {groupedThreads.map((group, gi) => (
@@ -1343,7 +1444,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
           </div>
         ))}
 
-        {!isSearchMode && messages.length > 0 && (
+        {!isSearchMode && !isTagMode && messages.length > 0 && (
           messages.length < total ? (
             <div ref={sentinelRef} className="px-4 py-4">
               {morePageError ? (

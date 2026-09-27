@@ -1,0 +1,220 @@
+'use client'
+
+/**
+ * Les étiquettes d'un message dans l'interface : les pastilles d'une LIGNE de liste, et le
+ * panneau du volet de lecture. Les deux vivent ici parce qu'ils affichent la MÊME chose sous
+ * deux tailles — un libellé, une valeur, et en infobulle la confiance et la source.
+ *
+ * Aucun libellé n'est écrit dans ce fichier : `tags.q.<question>` et `tags.v.<valeur>` viennent
+ * des trois fichiers de `locales/` (décision 1). Une question ou une valeur que `questions.ts`
+ * ne connaît pas n'arrive jamais jusqu'ici : c'est déjà refusé à l'écriture.
+ */
+
+import { useMemo, useState } from 'react'
+import { useTranslations } from 'next-intl'
+import { Tags } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { questionById, valuesOf } from '@/lib/tagging/questions'
+import { HUMAN_SOURCE } from '@/lib/tagging/engine'
+import { listPills, tagsByGroup } from '@/lib/tagging/view'
+import type { StoredTag } from '@/lib/tagging/store'
+import type { Message } from '@/types/email'
+
+/** Ce qu'une étiquette dit d'elle-même quand on s'arrête dessus : valeur, confiance, source. */
+function useTagText() {
+  const t = useTranslations('tags')
+  return (tag: StoredTag): string => {
+    const parts = [`${t(`q.${tag.question}`)} : ${t(`v.${tag.valeur}`)}`]
+    if (tag.confiance !== null) parts.push(t('confidence', { percent: Math.round(tag.confiance * 100) }))
+    parts.push(tag.source === HUMAN_SOURCE ? t('sourceHuman') : t('sourceEngine', { engine: tag.modele ?? tag.source }))
+    return parts.join(' · ')
+  }
+}
+
+/**
+ * Les pastilles d'une ligne de liste : seulement les étiquettes que `questions.ts` marque
+ * visibles en liste. L'infobulle porte TOUT le reste (décision 11) — c'est l'attribut `title`
+ * natif, celui que la ligne emploie déjà pour son drapeau et sa boîte : rien à mesurer, rien à
+ * positionner, et il survit à un défilement sous le pointeur.
+ */
+export function TagPills({ tags, compact }: { tags: readonly StoredTag[]; compact?: boolean }) {
+  const t = useTranslations('tags')
+  const describe = useTagText()
+  const pills = useMemo(() => listPills(tags), [tags])
+  if (!pills.length) return null
+
+  // Deux pastilles au plus : au-delà, la ligne ne dit plus rien de l'objet du mail. Le reste
+  // se compte, et l'infobulle de ce compteur porte l'ENSEMBLE des étiquettes du message.
+  const shown = pills.slice(0, compact ? 1 : 2)
+  const hidden = tags.length - shown.length
+  const all = tags.map(describe).join('\n')
+
+  return (
+    <span className="flex min-w-0 items-center gap-1" data-tag-pills={pills.length}>
+      {shown.map(tag => (
+        <span
+          key={tag.question}
+          data-tag-pill={tag.question}
+          title={describe(tag)}
+          className="max-w-[10rem] shrink-0 truncate rounded border border-border bg-muted/60 px-1 text-[10px] leading-[15px] text-muted-foreground"
+        >
+          {t(`v.${tag.valeur}`)}
+        </span>
+      ))}
+      {hidden > 0 && (
+        <span data-tag-pill-more={hidden} title={all} className="shrink-0 text-[10px] leading-[15px] text-muted-foreground/70">
+          {t('more', { count: hidden })}
+        </span>
+      )}
+    </span>
+  )
+}
+
+/** Une correction : la valeur choisie par un humain, pour cette question, sur ce message. */
+type Correct = (question: string, valeur: string) => Promise<void>
+
+/**
+ * Une ligne du panneau : un libellé, sa valeur, et de quoi la corriger en UN clic.
+ *
+ * « Confirmer » écrit la valeur du moteur en `humain` : c'est la seule source entraînable, donc
+ * confirmer n'est pas un geste vide, c'est ce qui rend la réponse réutilisable (décision 3).
+ * Choisir une autre valeur en écrit une différente — dans les deux cas, la ligne du moteur reste
+ * en base et reste LISIBLE en infobulle (décision 5).
+ */
+function TagRow({ tag, engine, correct, disabled }: {
+  tag: StoredTag; engine: StoredTag | undefined; correct: Correct; disabled: boolean
+}) {
+  const t = useTranslations('tags')
+  const describe = useTagText()
+  const [busy, setBusy] = useState(false)
+  const question = questionById(tag.question)
+  if (!question) return null
+
+  const confirmed = tag.source === HUMAN_SOURCE
+  const run = async (valeur: string) => {
+    if (busy || valeur === '') return
+    setBusy(true)
+    try { await correct(tag.question, valeur) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="flex items-center gap-2 py-1 text-xs" data-tag-row={tag.question}>
+      <span className="min-w-0 flex-1 truncate text-muted-foreground" title={describe(tag)}>
+        {t(`q.${tag.question}`)}
+      </span>
+      <span
+        className={cn('shrink-0 truncate', confirmed ? 'font-medium text-foreground' : 'text-foreground/80')}
+        // La valeur du moteur reste visible même après correction : c'est ce que le panneau doit
+        // au lecteur qui compare, et c'est ce que la base conserve de toute façon.
+        title={engine && engine.valeur !== tag.valeur ? t('engineSaid', { value: t(`v.${engine.valeur}`) }) : describe(tag)}
+        data-tag-value={tag.valeur}
+      >
+        {t(`v.${tag.valeur}`)}
+      </span>
+      {!disabled && (
+        <>
+          {!confirmed && (
+            <button
+              type="button"
+              onClick={() => run(tag.valeur)}
+              disabled={busy}
+              data-tag-confirm={tag.question}
+              className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+            >
+              {busy ? t('saving') : t('confirm')}
+            </button>
+          )}
+          {/* `<select>` natif : la liste des valeurs d'une question est fermée et courte, le
+              navigateur la rend déjà au clavier, au doigt et au lecteur d'écran. Sa valeur
+              affichée reste `''` pour qu'il serve de bouton « Corriger » et non de miroir de
+              l'étiquette, qui est déjà écrite à sa gauche. */}
+          <select
+            value=""
+            onChange={e => run(e.target.value)}
+            disabled={busy}
+            aria-label={t('change')}
+            data-tag-change={tag.question}
+            className="shrink-0 rounded border border-border bg-transparent px-1 py-0.5 text-[10px] text-muted-foreground disabled:opacity-50"
+          >
+            <option value="">{t('change')}</option>
+            {valuesOf(question).map(v => (
+              <option key={v} value={v}>{t(`v.${v}`)}</option>
+            ))}
+          </select>
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Le panneau du volet de lecture, replié. `<details>` natif : le pli est un état du navigateur,
+ * donc rien à tenir en React, rien à ré-ouvrir à chaque message, et il reste ouvrable au
+ * clavier. Les étiquettes sont rangées par GROUPE de `questions.ts`, groupes vides omis.
+ */
+export function TagsPanel({ message, tags, engineTags, onCorrected, canOrganize }: {
+  message: Message
+  tags: readonly StoredTag[]
+  /** Toutes les lignes du message, sources comprises : ce qui fait tenir « le moteur a dit ». */
+  engineTags: readonly StoredTag[]
+  onCorrected: () => void
+  canOrganize: boolean
+}) {
+  const t = useTranslations('tags')
+  const groups = useMemo(() => tagsByGroup(tags), [tags])
+  const engineByQuestion = useMemo(
+    () => new Map(engineTags.filter(tag => tag.source !== HUMAN_SOURCE).map(tag => [tag.question, tag])),
+    [engineTags],
+  )
+
+  // Un mail SANS `Message-ID` n'a pas d'identifiant côté client : le repli dérivé de la
+  // décision 6 est un sha256 calculé par `store.ts`, côté serveur, et le recalculer ici en
+  // ferait une seconde source. La correction est donc refusée dans ce cas (bouton désactivé)
+  // plutôt qu'écrite sous une clé approximative. Mesuré sur la base de la lane le 27/09/2026 :
+  // 0 des 2 900 lignes de `messages_cache` ont un `message_id` vide.
+  const correct: Correct = async (question, valeur) => {
+    const res = await fetch(`/api/messages/${encodeURIComponent(message.messageId)}/tags`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      // La position accompagne la correction : c'est elle qui permettra au filtre de retrouver
+      // ce mail une fois sorti de la page chargée (`tagged_messages`).
+      body: JSON.stringify({
+        accountId: message.accountId, tags: [{ question, valeur }],
+        folder: message.folder, uid: Number(message.uid),
+        fromName: message.from.name, fromAddress: message.from.address,
+        subject: message.subject, date: message.date,
+      }),
+    })
+    if (res.ok) onCorrected()
+  }
+
+  return (
+    <details className="group border-b border-border" data-tags-panel>
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50">
+        <Tags className="h-3.5 w-3.5 shrink-0" />
+        <span className="font-medium">{t('panelTitle')}</span>
+        <span className="tabular-nums text-muted-foreground/70">{tags.length || ''}</span>
+      </summary>
+      <div className="px-4 pb-3">
+        {!tags.length ? (
+          <p className="text-xs text-muted-foreground/70">{t('none')}</p>
+        ) : (
+          groups.map(({ group, tags: groupTags }) => (
+            <div key={group} className="mt-2 first:mt-0">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60">{t(`g.${group}`)}</p>
+              {groupTags.map(tag => (
+                <TagRow
+                  key={tag.question}
+                  tag={tag}
+                  engine={engineByQuestion.get(tag.question)}
+                  correct={correct}
+                  disabled={!canOrganize || !message.messageId}
+                />
+              ))}
+            </div>
+          ))
+        )}
+      </div>
+    </details>
+  )
+}
