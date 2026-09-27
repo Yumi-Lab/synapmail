@@ -19,7 +19,7 @@
 import { createHash } from 'crypto'
 import { query } from '../db'
 import { HUMAN_SOURCE, isEngineKind, trainingAllowed, type TagSource } from './engine'
-import { isValidTag } from './questions'
+import { engineQuestionsFor, isValidTag } from './questions'
 
 /**
  * Un mail sans `Message-ID` (ils existent) a tout de même besoin d'un identifiant STABLE, sinon
@@ -35,6 +35,25 @@ export function messageIdOf(m: { messageId?: string | null; fromAddress?: string
   const seed = `${m.fromAddress ?? ''}|${date}|${m.subject ?? ''}`
   return `<${createHash('sha256').update(seed).digest('hex')}@${DERIVED_ID_DOMAIN}>`
 }
+
+/**
+ * La VERSION d'une question : les 12 premiers hex du SHA-256 du corps EXACT envoyé au moteur
+ * (consigne + critères, `engineQuestionsFor` — la même fonction que la requête, donc rien à
+ * tenir en accord à la main). Elle change dès qu'une définition change, et c'est tout son
+ * intérêt : un export ne mélange plus jamais deux définitions d'une même question dans un seul
+ * jeu d'entraînement.
+ *
+ * Calculée ICI et nulle part ailleurs, et pour TOUTES les sources : une correction humaine
+ * porte la version de la question telle qu'elle a été posée, sinon la ligne `humain` et la
+ * ligne du moteur qu'elle corrige passeraient pour deux réponses à deux questions différentes.
+ *
+ * Pas de cache : 41 hachages de quelques centaines d'octets par mail, hors de toute mesure
+ * devant l'aller-retour à la base qui suit.
+ */
+const VERSION_CHARS = 12
+
+export const questionVersion = (question: string): string =>
+  createHash('sha256').update(JSON.stringify(engineQuestionsFor([question]))).digest('hex').slice(0, VERSION_CHARS)
 
 export interface TagToWrite {
   question: string
@@ -54,6 +73,8 @@ export interface StoredTag {
   creeLe: Date
   validePar: string | null
   entrainementAutorise: boolean
+  /** La version de la question à laquelle CETTE ligne répond — voir `questionVersion`. */
+  questionVersion: string
 }
 
 /** La position connue d'un mail tagué, pour le retrouver hors de la page chargée. */
@@ -137,19 +158,20 @@ export async function writeTags(params: {
   if (params.position) await upsertPosition(accountId, messageId, params.position)
   await query(
     `INSERT INTO message_tags (account_id, message_id, question, valeur, probabilites, confiance,
-                               source, modele, valide_par, entrainement_autorise, cree_le)
-     SELECT $1, $2, q.question, q.valeur, q.probabilites, q.confiance, $3, $4, $5, $6, NOW()
-       FROM unnest($7::text[], $8::text[], $9::jsonb[], $10::real[])
-              AS q(question, valeur, probabilites, confiance)
+                               source, modele, valide_par, entrainement_autorise, question_version, cree_le)
+     SELECT $1, $2, q.question, q.valeur, q.probabilites, q.confiance, $3, $4, $5, $6, q.question_version, NOW()
+       FROM unnest($7::text[], $8::text[], $9::jsonb[], $10::real[], $11::text[])
+              AS q(question, valeur, probabilites, confiance, question_version)
      ON CONFLICT (account_id, message_id, question, source) DO UPDATE SET
        valeur = EXCLUDED.valeur, probabilites = EXCLUDED.probabilites, confiance = EXCLUDED.confiance,
        modele = EXCLUDED.modele, valide_par = EXCLUDED.valide_par,
-       entrainement_autorise = EXCLUDED.entrainement_autorise, cree_le = NOW()`,
+       entrainement_autorise = EXCLUDED.entrainement_autorise,
+       question_version = EXCLUDED.question_version, cree_le = NOW()`,
     [accountId, messageId, source, params.modele ?? null, params.validePar ?? null,
       trainingAllowed(source),
       tags.map(t => t.question), tags.map(t => t.valeur),
       tags.map(t => (t.probabilites ? JSON.stringify(t.probabilites) : null)),
-      tags.map(t => t.confiance ?? null)]
+      tags.map(t => t.confiance ?? null), tags.map(t => questionVersion(t.question))]
   )
   return tags.length
 }
@@ -174,12 +196,13 @@ export async function upsertPosition(accountId: string, messageId: string, p: Ta
 type TagRow = {
   question: string; valeur: string; probabilites: Record<string, number> | null; confiance: number | null
   source: TagSource; modele: string | null; cree_le: Date; valide_par: string | null; entrainement_autorise: boolean
+  question_version: string
 }
 
 const toStored = (r: TagRow): StoredTag => ({
   question: r.question, valeur: r.valeur, probabilites: r.probabilites, confiance: r.confiance,
   source: r.source, modele: r.modele, creeLe: r.cree_le, validePar: r.valide_par,
-  entrainementAutorise: r.entrainement_autorise,
+  entrainementAutorise: r.entrainement_autorise, questionVersion: r.question_version,
 })
 
 /**
@@ -198,7 +221,7 @@ const EFFECTIVE_RANK = `ROW_NUMBER() OVER (
 export async function readTags(accountId: string, messageId: string): Promise<{ tags: StoredTag[]; effective: StoredTag[] }> {
   const rows = await query<TagRow & { rang: number }>(
     `SELECT question, valeur, probabilites, confiance, source, modele, cree_le, valide_par,
-            entrainement_autorise, ${EFFECTIVE_RANK} AS rang
+            entrainement_autorise, question_version, ${EFFECTIVE_RANK} AS rang
        FROM message_tags WHERE account_id = $1 AND message_id = $2
       ORDER BY question, ${EFFECTIVE_ORDER}`,
     [accountId, messageId]
@@ -216,7 +239,7 @@ export async function readEffectiveFor(accountId: string, messageIds: string[]):
   const rows = await query<TagRow & { message_id: string; rang: number }>(
     `SELECT * FROM (
        SELECT message_id, question, valeur, probabilites, confiance, source, modele, cree_le,
-              valide_par, entrainement_autorise, ${EFFECTIVE_RANK} AS rang
+              valide_par, entrainement_autorise, question_version, ${EFFECTIVE_RANK} AS rang
          FROM message_tags WHERE account_id = $1 AND message_id = ANY($2::text[])
      ) r WHERE rang = 1 ORDER BY message_id, question`,
     [accountId, messageIds]
@@ -284,7 +307,7 @@ export async function exportTags(params: {
   const limit = Math.min(Math.max(params.limit ?? 500, 1), 5000)
   const rows = await query<TagRow & { id: string; message_id: string }>(
     `SELECT id, message_id, question, valeur, probabilites, confiance, source, modele, cree_le,
-            valide_par, entrainement_autorise
+            valide_par, entrainement_autorise, question_version
        FROM message_tags
       WHERE account_id = $1 AND id > $2
         AND ($3::boolean IS NOT TRUE OR entrainement_autorise)

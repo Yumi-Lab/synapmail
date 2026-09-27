@@ -578,12 +578,18 @@ export async function initDb(): Promise<void> {
       cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       valide_par UUID REFERENCES users(id) ON DELETE SET NULL,
       entrainement_autorise BOOLEAN NOT NULL DEFAULT false,
+      question_version VARCHAR(12) NOT NULL DEFAULT '',
       PRIMARY KEY (account_id, message_id, question, source),
       CONSTRAINT message_tags_training_sources
         CHECK (NOT entrainement_autorise OR source IN (${sqlList(TRAINING_SOURCES)}))
     )
   `)
   await query(`CREATE INDEX IF NOT EXISTS message_tags_filter_idx ON message_tags(account_id, question, valeur)`)
+  // La VERSION de la question à laquelle chaque ligne répond (`lib/tagging/store.ts`
+  // `questionVersion`). Sur une base antérieure au lot T10, les lignes existantes gardent la
+  // chaîne vide : elles ont bien été écrites, mais sous une définition qu'on ne peut plus
+  // nommer — les dire « inconnues » vaut mieux que leur prêter la version d'aujourd'hui.
+  await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS question_version VARCHAR(12) NOT NULL DEFAULT ''`)
 
   // La dernière position CONNUE d'un mail tagué, pour que le filtre par étiquette montre des
   // mails absents de la page chargée. `messages_cache` ne suffit pas : il ne garde qu'une

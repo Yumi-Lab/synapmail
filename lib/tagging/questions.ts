@@ -104,6 +104,12 @@ export const QUESTIONS: TagQuestion[] = [
         notFor: "un envoi périodique à contenu éditorial auquel on est abonné : c'est `newsletter`",
         examples: ['une offre de remise valable une semaine', 'une prospection qui demande un rendez-vous'],
       },
+      {
+        value: 'notification_plateforme',
+        definition: "notification automatique d'une plateforme ou d'un service (compte, sécurité, activité, confirmation), sans offre commerciale ni contenu éditorial",
+        notFor: "un message qui cherche à vendre ou à obtenir un rendez-vous : c'est `marketing` ; un envoi périodique à contenu éditorial : c'est `newsletter`",
+        examples: ['« nouvelle connexion à votre compte »', '« votre mot de passe a été modifié »', '« votre abonnement a été renouvelé »'],
+      },
       { value: 'spam', definition: "courrier indésirable non sollicité, arnaque ou tentative d'hameçonnage" },
       { value: 'autre', definition: "aucune des catégories précédentes ne convient à ce mail" },
     ],
@@ -148,6 +154,37 @@ export const QUESTIONS: TagQuestion[] = [
   {
     id: 'reponse_requise', group: 'general', type: 'noul', listBadge: true,
     instructions: "Un humain de l'entreprise doit-il répondre personnellement à ce mail ?",
+  },
+  {
+    id: 'action_attendue', group: 'general', type: 'choice', listBadge: true,
+    // Carte TypeSafe, support client : « commitments, follow-up actions ». `reponse_requise` dit
+    // SI quelqu'un doit agir ; celle-ci dit QUOI faire — deux questions atomiques, pas une.
+    instructions: "Quelle action ce mail attend-il de l'entreprise ?",
+    options: [
+      {
+        value: 'repondre',
+        definition: 'écrire une réponse : une question est posée, un avis ou une information est demandé',
+        notFor: "transmettre une pièce jointe ou un document nommément demandé : c'est `fournir_document`",
+        examples: ['« quel est le délai de livraison ? »'],
+      },
+      { value: 'payer', definition: 'régler une facture, un acompte ou un montant dû' },
+      { value: 'signer_valider', definition: 'signer, approuver ou valider un document, un devis ou une commande' },
+      { value: 'expedier', definition: 'envoyer ou livrer un produit, préparer ou remettre un colis' },
+      {
+        value: 'fournir_document',
+        definition: 'transmettre une pièce, un justificatif ou une information nommément demandée',
+        notFor: "écrire une réponse en texte, sans pièce à joindre : c'est `repondre`",
+        examples: ['« merci de nous envoyer votre Kbis »'],
+      },
+      { value: 'rappeler', definition: 'téléphoner à l\'expéditeur ou fixer un rendez-vous' },
+      {
+        value: 'rien',
+        definition: "aucune action : lecture seule, notification, publicité, message qui n'attend rien",
+        notFor: "un mail qui attend une action que la liste ne nomme pas : c'est `autre`",
+        examples: ['« votre colis a été livré »'],
+      },
+      { value: 'autre', definition: "une action attendue qu'aucune des valeurs précédentes ne décrit" },
+    ],
   },
   {
     id: 'urgence', group: 'general', type: 'score', listBadge: 'sous_48h',
