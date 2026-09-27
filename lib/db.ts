@@ -2,6 +2,7 @@ import { Pool } from 'pg'
 import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
 import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
 import { BULK_STATES, ENGINES, PAUSE_REASONS, TAG_SOURCES, TRAINING_SOURCES } from '@/lib/tagging/engine'
+import { DELIVERY_STATUSES, ERROR_MAX } from '@/lib/webhooks'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -639,6 +640,54 @@ export async function initDb(): Promise<void> {
     await query(`ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${name}`)
     await query(`ALTER TABLE ${table} ADD CONSTRAINT ${name} CHECK (${expr})`)
   }
+
+  // Un webhook : une URL que le serveur appellera, et le secret qui SIGNE l'appel. Le secret est
+  // CHIFFRÉ (pas haché comme une clé API) parce qu'il doit être relu à chaque envoi pour calculer
+  // le HMAC. `account_id` est la boîte dont les mails peuvent le déclencher : c'est par elle que
+  // passe la barrière par boîte d'une clé d'API.
+  await query(`
+    CREATE TABLE IF NOT EXISTS webhooks (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      name VARCHAR(120) NOT NULL,
+      url TEXT NOT NULL,
+      secret_encrypted TEXT NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      created_by_api_key UUID REFERENCES api_keys(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS webhooks_account_idx ON webhooks(account_id)`)
+
+  // Ce qui est parti, ou doit partir. L'unicité `(webhook_id, rule_id, message_id)` EST la
+  // garantie « une seule fois par mail » : un redémarrage, une repasse ou deux planificateurs
+  // ne peuvent pas la contourner, là où une lecture préalable le pourrait. Un envoi d'essai
+  // porte `rule_id` ET `message_id` à NULL : en SQL NULL n'égale pas NULL, donc l'unicité ne
+  // le retient pas — un essai reste répétable, ce qu'on veut.
+  await query(`
+    CREATE TABLE IF NOT EXISTS webhook_deliveries (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      webhook_id UUID NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+      rule_id UUID REFERENCES email_rules(id) ON DELETE CASCADE,
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      message_id TEXT,
+      status VARCHAR(10) NOT NULL DEFAULT 'pending' CHECK (status IN (${sqlList(DELIVERY_STATUSES)})),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      response_status INTEGER,
+      duration_ms INTEGER,
+      error VARCHAR(${ERROR_MAX}),
+      next_attempt_at TIMESTAMPTZ,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS webhook_deliveries_once_idx
+      ON webhook_deliveries (webhook_id, rule_id, message_id)
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS webhook_deliveries_due_idx ON webhook_deliveries (next_attempt_at) WHERE status = 'pending'`)
+  await query(`CREATE INDEX IF NOT EXISTS webhook_deliveries_hook_idx ON webhook_deliveries (webhook_id, created_at DESC)`)
 
   // Identité de l'instance — UNE seule ligne, forcée par `id BOOLEAN PRIMARY KEY DEFAULT TRUE`
   // contraint à TRUE : une deuxième insertion viole la clé primaire. Tout à NULL = apparence

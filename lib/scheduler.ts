@@ -6,6 +6,7 @@ import { upsertContactsFromAddresses } from './contacts'
 import { getEnabledRulesForAccount, applyRulesToMessages, logRuleExecution, tagsForMessages } from './rules'
 import { engineFromRow, mailboxesToSort, runPass } from './tagging/runner'
 import { imapMailSource } from './tagging/imapSource'
+import { DELIVERY_RETENTION_DAYS, processWebhookDeliveries, purgeOldDeliveries } from './webhooks'
 
 type AccountRow = {
   id: string; email: string; smtp_host: string; smtp_port: number; smtp_secure: boolean;
@@ -376,6 +377,24 @@ export async function processExpiredShares(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Webhooks — un passage envoie ce qui est dû (premier envoi ou reprise) ; le journal
+// est purgé au même rythme que celui des clés d'API, pour la même raison.
+// ---------------------------------------------------------------------------
+
+const WEBHOOK_INTERVAL_MS = 60_000
+const WEBHOOK_PURGE_INTERVAL_MS = 6 * 60 * 60_000
+
+export async function processWebhooks(): Promise<void> {
+  const { sent, failed } = await processWebhookDeliveries()
+  if (sent || failed) console.log(`[scheduler/webhooks] ${sent} envoyé(s), ${failed} abandonné(s)`)
+}
+
+export async function processWebhookLogCleanup(): Promise<void> {
+  const purged = await purgeOldDeliveries()
+  if (purged) console.log(`[scheduler/webhooks] purgé ${purged} envoi(s) de plus de ${DELIVERY_RETENTION_DAYS} jours`)
+}
+
+// ---------------------------------------------------------------------------
 // Singleton scheduler — starts once per process lifetime
 // ---------------------------------------------------------------------------
 
@@ -399,6 +418,14 @@ export function startScheduler(): void {
   setInterval(() => {
     processRules().catch(err => console.error('[scheduler/rules]', err))
   }, 5 * 60_000)
+
+  // Webhooks — every 60s (envois dus et reprises), purge du journal toutes les 6 h
+  setInterval(() => {
+    processWebhooks().catch(err => console.error('[scheduler/webhooks]', err))
+  }, WEBHOOK_INTERVAL_MS)
+  setInterval(() => {
+    processWebhookLogCleanup().catch(err => console.error('[scheduler/webhooks]', err))
+  }, WEBHOOK_PURGE_INTERVAL_MS)
 
   // Expired share cleanup — every 5 minutes
   setInterval(() => {
