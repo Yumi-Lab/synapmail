@@ -18,7 +18,7 @@
  */
 import { createHash } from 'crypto'
 import { query } from '../db'
-import { HUMAN_SOURCE, isEngineKind, TRAINING_SOURCES, type TagSource } from './engine'
+import { HUMAN_SOURCE, isEngineKind, trainingAllowed, type TagSource } from './engine'
 import { isValidTag } from './questions'
 
 /**
@@ -77,8 +77,6 @@ export class InvalidTagError extends Error {
     this.valeur = valeur
   }
 }
-
-const trainingAllowedFor = (source: TagSource): boolean => (TRAINING_SOURCES as readonly string[]).includes(source)
 
 /** Une source refusée à l'écrivain qui la demande : la route en fait un 403 qui la NOMME. */
 export class ForbiddenSourceError extends Error {
@@ -148,7 +146,7 @@ export async function writeTags(params: {
        modele = EXCLUDED.modele, valide_par = EXCLUDED.valide_par,
        entrainement_autorise = EXCLUDED.entrainement_autorise, cree_le = NOW()`,
     [accountId, messageId, source, params.modele ?? null, params.validePar ?? null,
-      trainingAllowedFor(source),
+      trainingAllowed(source),
       tags.map(t => t.question), tags.map(t => t.valeur),
       tags.map(t => (t.probabilites ? JSON.stringify(t.probabilites) : null)),
       tags.map(t => t.confiance ?? null)]
