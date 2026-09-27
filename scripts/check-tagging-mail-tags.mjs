@@ -159,19 +159,17 @@ try {
   check(engineRow?.valeur === 'ecommerce', 'E2 la ligne du moteur reste lisible (infobulle)', JSON.stringify(engineRow))
   check(humanRow?.valeur === 'logistique', 'E3 la correction humaine est enregistrée à côté', JSON.stringify(humanRow))
   check(effectiveRow?.source === 'humain', 'E4 l’effective affichée est celle de l’humain', JSON.stringify(effectiveRow))
-  check(humanRow?.entrainementAutorise === true && engineRow?.entrainementAutorise === false,
-    'E5 seule la ligne humaine est entraînable', `humain=${humanRow?.entrainementAutorise} moteur=${engineRow?.entrainementAutorise}`)
 
-  // Confirmer SANS changer de valeur écrit aussi une ligne humaine : c'est ce qui rend la
-  // réponse du moteur réutilisable, donc « Confirmer » n'est pas un geste vide.
+  // Confirmer SANS changer de valeur écrit aussi une ligne humaine : c'est ce qui fait passer la
+  // réponse du moteur à une étiquette validée, donc « Confirmer » n'est pas un geste vide.
   const confirmTarget = taggedIds[1]
   const confirmed = await fetch(`${BASE}${tagsPath(confirmTarget)}`, {
     method: 'PUT', headers: { cookie, 'content-type': 'application/json' },
     body: JSON.stringify({ accountId, tags: [{ question: 'categorie', valeur: 'banque' }] }),
   }).then(r => r.json())
   const confirmedRow = (confirmed.data?.effective ?? []).find(r => r.question === 'categorie')
-  check(confirmedRow?.source === 'humain' && confirmedRow?.entrainementAutorise === true,
-    'E6 confirmer la valeur du moteur la rend entraînable', JSON.stringify(confirmedRow))
+  check(confirmedRow?.source === 'humain' && confirmedRow?.valeur === 'banque',
+    'E5 confirmer la valeur du moteur écrit une ligne humaine qui la porte', JSON.stringify(confirmedRow))
 
   // --- F. le filtre montre un mail HORS de la page chargée (décision 4) --------------
   // La valeur corrigée en E : elle n'appartient à AUCUNE des étiquettes posées par le moteur,

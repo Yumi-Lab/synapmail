@@ -9,15 +9,13 @@
  *   A. une clé SANS `tags:read` est refusée par un 403 QUI NOMME la portée ;
  *   B. une clé à qui la boîte n'est PAS cochée est refusée par un 403 qui NOMME la boîte ;
  *   C. une clé `tags:write` écrit une source de MOTEUR, mais `humain` lui est refusé par un
- *      403 qui nomme la source — c'est la décision 7 : un agent ne blanchit pas une réponse
- *      de moteur en étiquette entraînable ;
+ *      403 qui nomme la source — c'est la décision 7 : un agent ne signe pas une réponse de
+ *      moteur comme validée par une main ;
  *   D. une valeur hors liste est refusée par un 422 QUI LA NOMME, et rien n'est écrit ;
  *   E. une SESSION écrit `humain` avec `valide_par`, la ligne du moteur reste visible, et
  *      c'est l'humaine qui devient l'effective (décision 5) ;
  *   F. le filtre par étiquette rend le mail sous sa valeur EFFECTIVE, et la lecture par
  *      LISTE d'identifiants rend les effectives de plusieurs mails en UNE requête ;
- *   G. `export?entrainement=1` ne rend AUCUNE ligne de moteur, alors que la base en contient
- *      pour ce même mail ;
  *   H. `GET /api/tagging/settings` et `/api/tagging/status` ne rendent JAMAIS la clé du
  *      moteur, ni en clair ni chiffrée ; et un Message-ID contenant `/ + % =` fait
  *      l'aller-retour intact (décision 6, mesure exigée par le lot).
@@ -32,11 +30,10 @@
  *   node --experimental-strip-types scripts/check-tagging-api.mjs --negative
  *
  * CONTRÔLE NÉGATIF (`--negative`) : les clés du banc reçoivent TOUTES les portées et TOUTES
- * les boîtes, et l'export est demandé SANS son filtre d'entraînement — l'état du produit si
- * les portées, la liste par boîte et le filtre serveur ne restreignaient rien. Le banc DOIT
- * alors virer au rouge sur A, B et G. Ce qu'il démontre : les assertions sont sensibles à
- * l'état des autorisations et du filtre. Ce qu'il ne démontre PAS : le comportement d'un
- * binaire dont on aurait retiré `keyReachesAccount` ou le `WHERE entrainement_autorise`.
+ * les boîtes — l'état du produit si les portées et la liste par boîte ne restreignaient rien.
+ * Le banc DOIT alors virer au rouge sur A et B. Ce qu'il démontre : ces assertions sont
+ * sensibles à l'état des autorisations. Ce qu'il ne démontre PAS : le comportement d'un
+ * binaire dont on aurait retiré `keyReachesAccount`.
  */
 import './alias-resolver.mjs'
 import crypto from 'node:crypto'
@@ -237,13 +234,6 @@ try {
     laundering.status === 403 && laundering.body?.source === HUMAN_SOURCE,
     `reçu ${laundering.status} — ${laundering.text.slice(0, 200)}`)
 
-  const trainable = await pool.query(
-    'SELECT COUNT(*)::int AS n FROM message_tags WHERE account_id = $1 AND entrainement_autorise',
-    [accountId]
-  )
-  check('C3 aucune ligne entraînable n\'existe après l\'écriture du moteur',
-    trainable.rows[0].n === 0, `${trainable.rows[0].n} ligne(s) entraînable(s)`)
-
   // ---- D. une valeur hors liste ----------------------------------------------------
   const bogus = 'valeur-que-la-question-ne-prevoit-pas'
   const refused = await call(tagsPath(PLAIN_ID), {
@@ -276,8 +266,8 @@ try {
   check('E2 la ligne du moteur reste visible à côté de la correction',
     engineRowStill?.valeur === CHOICE.values[0],
     `ligne moteur : ${JSON.stringify(engineRowStill ?? null).slice(0, 160)}`)
-  check('E3 l\'effective est l\'humaine, et elle est entraînable',
-    effective?.source === HUMAN_SOURCE && effective?.valeur === corrected && effective?.entrainementAutorise === true,
+  check('E3 l\'effective est l\'humaine',
+    effective?.source === HUMAN_SOURCE && effective?.valeur === corrected,
     `effective : ${JSON.stringify(effective ?? null).slice(0, 200)}`)
 
   // ---- F. le filtre et la lecture par liste ----------------------------------------
@@ -312,25 +302,6 @@ try {
     listed.status === 200 && Array.isArray(byId[PLAIN_ID]) && Array.isArray(byId[TRICKY_ID])
       && byId[PLAIN_ID].some(t => t.question === CHOICE.id && t.valeur === corrected),
     `reçu ${listed.status} — clés ${JSON.stringify(Object.keys(byId)).slice(0, 200)}`)
-
-  // ---- G. l'export d'entraînement --------------------------------------------------
-  // En négatif, le filtre est retiré de la requête : c'est ce qui doit faire virer ce bras
-  // au rouge, puisque les lignes du moteur ressortiraient alors.
-  const exportPath = `/api/tags/export?account=${accountId}${NEGATIVE ? '' : '&entrainement=1'}`
-  const exported = await call(exportPath, { key: readerKey })
-  const rows = exported.body?.data?.tags ?? []
-  const engineInDb = await pool.query(
-    `SELECT COUNT(*)::int AS n FROM message_tags WHERE account_id = $1 AND source = 'jev'`,
-    [accountId]
-  )
-  check('G1 la base contient bien des lignes de moteur pour cette boîte (sinon le bras ne mesure rien)',
-    engineInDb.rows[0].n > 0, `${engineInDb.rows[0].n} ligne(s) jev`)
-  check('G2 l\'export d\'entraînement ne rend AUCUNE ligne de moteur',
-    exported.status === 200 && rows.length > 0 && rows.every(t => t.source === HUMAN_SOURCE || t.source === 'dossier'),
-    `reçu ${exported.status} — ${rows.length} ligne(s), sources ${JSON.stringify([...new Set(rows.map(t => t.source))])}`)
-  check('G3 toutes les lignes exportées sont marquées entraînables',
-    rows.length > 0 && rows.every(t => t.entrainementAutorise === true),
-    `${rows.filter(t => !t.entrainementAutorise).length} ligne(s) non entraînable(s) dans l'export`)
 
   // ---- H. la clé du moteur, et l'aller-retour du Message-ID -------------------------
   await call('/api/tagging/settings', { method: 'PUT', cookie, body: { accountId, engineId, budgetUsd: 3 } })
@@ -370,7 +341,7 @@ try {
 
 if (NEGATIVE) {
   if (failures.length) { console.log(`\ncontrôle négatif : ${failures.length} refus tombés, comme attendu`); process.exit(0) }
-  console.error('\nCONTRÔLE NÉGATIF MUET : tout accordé, filtre retiré, et le banc reste vert — il ne mesure rien')
+  console.error('\nCONTRÔLE NÉGATIF MUET : tout accordé, et le banc reste vert — il ne mesure rien')
   process.exit(1)
 }
 if (failures.length) { console.error(`\n${failures.length} échec(s)`); process.exit(1) }

@@ -50,7 +50,7 @@ const parseAnyValue = (q, a) => {
 
 const {
   ENGINES, ENGINE_PRESETS, EngineError, STATE_BODY_CHARS, askEngine, buildState, costUsd,
-  failureOf, isEngineKind, parseAnswer, parseResponse, trainingAllowed, TAG_SOURCES, TRAINING_SOURCES,
+  failureOf, isEngineKind, parseAnswer, parseResponse, TAG_SOURCES,
 } = await import('../lib/tagging/engine.ts')
 const { ENGINE_QUESTIONS, QUESTIONS, questionById, valuesOf } = await import('../lib/tagging/questions.ts')
 
@@ -259,11 +259,8 @@ try { await askEngine(CFG, state) } catch (e) { thrown = e }
 ok('une panne réseau devient `unavailable`, pas une exception nue',
   thrown instanceof EngineError && thrown.kind === 'unavailable', String(thrown?.kind))
 
-// ─── G. la règle contractuelle et le prix ─────────────────────────────────────
-console.log('\nG. la règle contractuelle et le prix')
-ok('seuls `humain` et `dossier` sont entraînables',
-  TRAINING_SOURCES.join('|') === 'humain|dossier' && !trainingAllowed('jev') && !trainingAllowed('one')
-    && trainingAllowed('humain') && trainingAllowed('dossier'))
+// ─── G. le prix ───────────────────────────────────────────────────────────────
+console.log('\nG. le prix')
 ok('le prix de JEV : 42 $ par milliard de jetons d’entrée',
   Math.abs(costUsd(ENGINE_PRESETS.jev.usdPerBillionInput, 1e9) - 42) < 1e-9,
   String(costUsd(ENGINE_PRESETS.jev.usdPerBillionInput, 1e9)))
@@ -275,8 +272,7 @@ ok('la dépense se calcule sur le prix DU MOTEUR, pas sur le préréglage de son
 ok('un moteur `autre` est un type reconnu et préréglé sans tarif',
   isEngineKind('autre') && ENGINES.join('|') === 'jev|one|autre' && ENGINE_PRESETS.autre.usdPerBillionInput === 0,
   ENGINES.join('|'))
-ok('`autre` est une source d’étiquette, et n’est PAS entraînable',
-  TAG_SOURCES.includes('autre') && !trainingAllowed('autre'))
+ok('`autre` est une source d’étiquette comme les autres', TAG_SOURCES.includes('autre'))
 
 // ─── H. poser un SOUS-ENSEMBLE de questions ───────────────────────────────────
 // Le lot T8 comparera le fan-out complet à un tronc commun sur les mêmes mails : le client

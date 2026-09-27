@@ -190,9 +190,7 @@ try {
   check('D3 la correction HUMAINE porte la même version : les deux répondent à la MÊME question',
     ligneHumaine?.questionVersion === store.questionVersion('categorie'),
     `${ligneHumaine?.questionVersion} / ${store.questionVersion('categorie')}`)
-  check('D4 et elle reste entraînable, version comprise',
-    ligneHumaine?.entrainementAutorise === true && !!ligneHumaine?.questionVersion)
-  const { rows } = await store.exportTags({ accountId: ACCOUNT, entrainementOnly: false, limit: 5000 })
+  const { rows } = await store.exportTags({ accountId: ACCOUNT, limit: 5000 })
   const exportees = rows.filter(r => String(r.messageId).startsWith('<banc-t10-'))
   check('D5 l’export rend la version avec chaque ligne (c’est ce qui sépare deux jeux)',
     exportees.length > 0 && exportees.every(r => /^[0-9a-f]+$/.test(r.questionVersion ?? '')),
