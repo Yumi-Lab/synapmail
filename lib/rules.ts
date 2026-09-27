@@ -376,7 +376,8 @@ export async function executeActions(
   uid: string,
   rule: EmailRule,
   fullMessage?: Message,  // needed for forward action
-  tags: readonly RuleTag[] = NO_TAGS   // voyagent dans la charge utile d'un webhook
+  tags: readonly RuleTag[] = NO_TAGS,  // voyagent dans la charge utile d'un webhook
+  allowWebhook = false   // cf. `case 'webhook'` : refus par défaut, un appelant doit le DEMANDER
 ): Promise<{ movedOrDeleted: boolean }> {
   let movedOrDeleted = false
 
@@ -415,8 +416,16 @@ export async function executeActions(
         // L'action n'ENVOIE pas : elle inscrit un envoi à faire. Le planificateur le porte,
         // avec ses reprises — une règle ne doit pas attendre un récepteur de 10 s, ni perdre
         // l'envoi si le processus tombe entre l'évaluation et l'appel.
+        //
+        // REFUS PAR DÉFAUT. Seul un appelant à CURSEUR peut inscrire un envoi (`allowWebhook`),
+        // parce que lui seul sait ce qui est NOUVEAU. Les autres appelants de `executeActions`
+        // balayent un état, pas un flux : `processRules` repasse les 30 derniers non-lus toutes
+        // les 5 min, `POST /api/rules/run` repasse un dossier entier à la demande — un webhook
+        // y partirait sur du vieux courrier, soit l'historique rejoué que la décision 8 interdit.
+        // C'est ici, au seul endroit qui exécute une action, que ce refus tient : un appelant
+        // ajouté demain est protégé sans avoir à le savoir.
         case 'webhook':
-          if (action.value) {
+          if (allowWebhook && action.value) {
             await queueRuleDelivery({
               webhookId: action.value,
               rule: { id: rule.id, name: rule.name, accountId: rule.accountId },
@@ -532,7 +541,8 @@ export async function applyRulesToMessages(
   messages: Message[],
   rules: EmailRule[],
   fullMessageFetcher?: (uid: string) => Promise<Message | null>,
-  tagsByUid?: Map<string, RuleTag[]>
+  tagsByUid?: Map<string, RuleTag[]>,
+  allowWebhook = false   // transmis tel quel à `executeActions` — cf. son `case 'webhook'`
 ): Promise<RuleResult[]> {
   const results: RuleResult[] = []
 
@@ -550,7 +560,7 @@ export async function applyRulesToMessages(
           fullMsg = (await fullMessageFetcher(msg.uid)) ?? undefined
         }
 
-        const { movedOrDeleted } = await executeActions(account, folder, msg.uid, rule, fullMsg ?? msg, tags)
+        const { movedOrDeleted } = await executeActions(account, folder, msg.uid, rule, fullMsg ?? msg, tags, allowWebhook)
         if (movedOrDeleted) result.movedOrDeleted = true
 
         if (result.movedOrDeleted || rule.stopProcessing) break

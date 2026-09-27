@@ -13,6 +13,10 @@
  *     transférer un mail, même si la règle le demande — ces actions restent le travail de
  *     `processRules`, une seule fois, à son rythme. Et comme il n'y a plus qu'une action possible,
  *     `applyRulesToMessages` est réutilisée telle quelle : aucune boucle d'évaluation en double.
+ *     La réciproque est tenue AILLEURS, et pas ici : l'action `webhook` est refusée par défaut
+ *     dans `executeActions` (`lib/rules.ts`), et ce balayage est le seul à l'autoriser. Réduire
+ *     les actions ne protégeait que ce sens-ci ; `processRules`, qui ne passe pas par cette
+ *     fonction, restait libre d'inscrire un envoi sur du vieux courrier.
  *  3. **Le corps n'est lu que si une condition le demande** (`needsBody`) : un dossier qui reçoit
  *     20 mails par minute ne télécharge rien de plus que leurs en-têtes quand aucune règle ne
  *     regarde le corps.
@@ -140,7 +144,9 @@ export async function scanFolder(params: {
     if (!batch.length) break
 
     const tagsByUid = await tagsForMessages(accountId, batch, rules)
-    const results = await applyRulesToMessages(account, folder, batch, rules, undefined, tagsByUid)
+    // `true` : le SEUL appelant autorisé à inscrire un envoi — cf. `case 'webhook'` de
+    // `lib/rules.ts`. C'est légitime ici parce que le curseur garantit que ce lot est NOUVEAU.
+    const results = await applyRulesToMessages(account, folder, batch, rules, undefined, tagsByUid, true)
     out.scanned += batch.length
     out.matched += results.length
 

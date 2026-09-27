@@ -25,13 +25,20 @@
  *   E. NON-RÉGRESSION : une règle `move` passée à ce balayage ne déplace rien (le balayage réduit
  *      les actions à `webhook`) — déplacer reste le travail de `processRules` ;
  *   F. une règle-webhook qui vise un webhook d'une AUTRE boîte, ou un webhook désactivé,
- *      n'inscrit rien.
+ *      n'inscrit rien ;
+ *   G. NON-RÉGRESSION, l'autre sens : un appelant SANS curseur — `processRules` toutes les 5 min,
+ *      `POST /api/rules/run` à la demande — n'inscrit AUCUN envoi, même sur une règle-webhook qui
+ *      colle. Ces deux-là repassent un ÉTAT (les 30 derniers non-lus, un dossier entier), pas un
+ *      flux : un envoi y partirait sur du courrier vieux de six ans, soit l'historique rejoué que
+ *      la décision 8 interdit. L'appel est celui de `lib/scheduler.ts` mot pour mot, règle NON
+ *      réduite, sur un mail non-lu daté de 2020.
  *
  * CONTRÔLE NÉGATIF (`--negative`) : `webhookRulesOf` est remplacée par un « on garde toutes les
- * actions » et le curseur de première activation par « on repart de zéro » — le produit tel qu'il
- * serait SANS les décisions de ce lot. Le banc DOIT alors virer au rouge sur A (l'historique part
- * au récepteur), sur B et C par conséquence (les comptes ne sont plus ceux des nouveaux mails
- * seuls) et sur E (les actions ne sont plus réduites). Ce qu'il démontre : ces assertions mesurent
+ * actions », le curseur de première activation par « on repart de zéro », et l'action `webhook`
+ * est autorisée aux appelants sans curseur — le produit tel qu'il serait SANS les décisions de ce
+ * lot. Le banc DOIT alors virer au rouge sur A (l'historique part au récepteur), sur B et C par
+ * conséquence (les comptes ne sont plus ceux des nouveaux mails seuls), sur E (les actions ne sont
+ * plus réduites) et sur G (un appelant sans curseur inscrit un envoi sur du vieux courrier). Ce qu'il démontre : ces assertions mesurent
  * bien ces deux décisions. Ce qu'il ne démontre PAS : le comportement de la source IMAP réelle
  * (`lib/webhookSource.ts`), ni celui des routes HTTP (W4).
  */
@@ -73,6 +80,7 @@ const check = (label, ok, detail = '') => {
 const { initDb, query } = await import('../lib/db.ts')
 const W = await import('../lib/webhooks.ts')
 const T = await import('../lib/webhookTrigger.ts')
+const R = await import('../lib/rules.ts')
 const { encrypt } = await import('../lib/encrypt.ts')
 
 const BANC = 'banc-w3'
@@ -150,6 +158,11 @@ const mailOf = (uid, subject, extra = {}) => ({
 const rulesOf = NEGATIVE ? (rules => rules.filter(r => r.actions.some(a => a.type === 'webhook'))) : T.webhookRulesOf
 /** Sans la pose du curseur : la première activation rejouerait tout l'historique. */
 const PRIME = !NEGATIVE
+/**
+ * Sans le refus par défaut de l'action `webhook` : un appelant SANS curseur (`processRules`,
+ * `POST /api/rules/run`) inscrirait un envoi sur du vieux courrier. C'est ce que G mesure.
+ */
+const PROCESS_RULES_ALLOWS_WEBHOOK = NEGATIVE
 
 console.log(`\nbanc du déclenchement${NEGATIVE ? ' — CONTRÔLE NÉGATIF (actions non réduites, curseur à zéro)' : ''}\n`)
 
@@ -319,6 +332,27 @@ try {
   } else {
     console.log('  --   F2 sauté : la base de lane n’a qu’une seule boîte')
   }
+  // ---- G. NON-RÉGRESSION : un appelant SANS curseur n'inscrit aucun envoi ----
+  console.log("\nG. un appelant sans curseur (processRules) n’inscrit rien")
+  // Le scénario du contrôle : un mail NON LU de 2020, encore dans la boîte, que `processRules`
+  // repasse toutes les 5 min parce qu'il fait partie des 30 derniers non-lus. La règle colle.
+  const oldHook = await makeHook('vieux-courrier', account.id)
+  const oldRule = await makeRule('vieux-courrier',
+    [{ id: 'c1', field: 'subject', operator: 'matches', value: 'facture\\s+\\d{4}' }],
+    [{ id: 'a1', type: 'webhook', value: oldHook }])
+  const oldMail = mailOf(900, 'Facture 2020-0001', { date: new Date(2020, 0, 3, 9, 0).toISOString() })
+  const oldTags = await R.tagsForMessages(account.id, [oldMail], [oldRule])
+  // L'appel de `lib/scheduler.ts` MOT POUR MOT : la règle N'EST PAS réduite (`processRules` ne
+  // connaît pas `webhookRulesOf`), il n'y a aucun curseur, et rien ici ne parle de webhook.
+  const processed = await R.applyRulesToMessages(
+    { id: account.id }, FOLDER, [oldMail], [oldRule], async () => null, oldTags,
+    ...(PROCESS_RULES_ALLOWS_WEBHOOK ? [true] : []))
+  check('G1 la règle COLLE bien au vieux mail (sinon G ne mesure rien)',
+    processed.length === 1 && processed[0].matchedRules.includes(oldRule.name), JSON.stringify(processed))
+  check("G2 et pourtant AUCUN envoi n’est inscrit : l’historique n’est pas rejoué",
+    await countDeliveries(oldHook) === 0, `${await countDeliveries(oldHook)} envoi(s)`)
+  check('G3 le récepteur n’a rien reçu de plus', (await W.processWebhookDeliveries(), receiver.seen.length === 1),
+    `${receiver.seen.length} appel(s)`)
 } finally {
   if (ALLOWED_BEFORE === undefined) delete process.env.WEBHOOK_ALLOWED_HOSTS
   else process.env.WEBHOOK_ALLOWED_HOSTS = ALLOWED_BEFORE
@@ -329,7 +363,7 @@ try {
 }
 
 if (NEGATIVE) {
-  console.log(`\ncontrôle négatif : ${failures.length} assertion(s) rouge(s) attendue(s) sur A, B, C et E`)
+  console.log(`\ncontrôle négatif : ${failures.length} assertion(s) rouge(s) attendue(s) sur A, B, C, E et G`)
   if (failures.length === 0) { console.error('KO : le contrôle négatif est VERT — les assertions ne mesurent rien'); process.exit(1) }
   console.log('contrôle négatif : OK (le banc sait virer au rouge)')
   process.exit(0)
