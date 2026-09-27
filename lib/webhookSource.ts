@@ -19,6 +19,7 @@
 import { simpleParser } from 'mailparser'
 import type { ImapFlow } from 'imapflow'
 import { toImapConfig, type ImapAccountRow } from './accounts'
+import { FLAG_IMAP_FLAG } from './flags'
 import { createClient, detectAttachments, messageDate } from './imap'
 import { SOURCE_MAX_BYTES } from './tagging/imapSource'
 import type { WebhookMailSource } from './webhookTrigger'
@@ -46,7 +47,6 @@ export function imapWebhookSource(account: ImapAccountRow): ImapWebhookSource {
     async state(folder) {
       const c = await open(folder)
       const box = await c.mailboxOpen(folder)
-      openFolder = folder
       // Le dernier UID du dossier, pas son nombre de mails : `uidNext` est ce que le PROCHAIN
       // mail portera, donc le dernier posé est juste en dessous. Un dossier vide rend 0.
       const next = Number(box.uidNext ?? 1)
@@ -66,6 +66,10 @@ export function imapWebhookSource(account: ImapAccountRow): ImapWebhookSource {
         { uid: `${afterUid + 1}:*` },
         {
           uid: true, flags: true, envelope: true, bodyStructure: true, internalDate: true, size: true,
+          // Les deux champs de condition qui vivent dans un en-tête (`list_unsubscribe`,
+          // `priority`) : sans eux, ces conditions seraient silencieusement fausses ici alors
+          // qu'elles sont vraies pour `processRules`.
+          headers: ['list-unsubscribe', 'x-priority'],
           ...(withBody ? { source: { maxLength: SOURCE_MAX_BYTES } } : {}),
         } as Parameters<typeof c.fetch>[1],
         { uid: true }
@@ -74,6 +78,10 @@ export function imapWebhookSource(account: ImapAccountRow): ImapWebhookSource {
         if (!Number.isFinite(uid) || uid <= afterUid) continue
         const src = (msg as unknown as { source?: Buffer }).source
         const parsed = withBody && src ? await simpleParser(src) : null
+        const hdr = (msg as unknown as { headers?: Buffer }).headers
+        const header = (name: string): string | undefined =>
+          (Buffer.isBuffer(hdr) ? hdr.toString('utf8') : '').match(new RegExp(`^${name}:\\s*(.+)`, 'im'))?.[1]?.trim()
+        const priority = header('x-priority')
         out.push({
           uid: String(uid),
           messageId: msg.envelope?.messageId ?? '',
@@ -87,14 +95,16 @@ export function imapWebhookSource(account: ImapAccountRow): ImapWebhookSource {
           date: messageDate(msg.envelope?.date, msg.internalDate),
           preview: (parsed?.text ?? '').slice(0, 200),
           isRead: msg.flags?.has('\\Seen') ?? false,
-          isStarred: false,
-          isFlagged: false,
+          isStarred: msg.flags?.has(FLAG_IMAP_FLAG) ?? false,
+          isFlagged: msg.flags?.has(FLAG_IMAP_FLAG) ?? false,
           hasAttachments: detectAttachments(msg.bodyStructure as unknown as Record<string, unknown>),
           folder,
           accountId: account.id,
           size: (msg as unknown as { size?: number }).size,
           bodyPlain: parsed?.text || undefined,
           bodyHtml: typeof parsed?.html === 'string' ? parsed.html : undefined,
+          listUnsubscribe: header('list-unsubscribe'),
+          xPriority: priority ? parseInt(priority, 10) || undefined : undefined,
         })
         if (out.length >= limit) break
       }

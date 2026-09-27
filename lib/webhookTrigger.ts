@@ -90,8 +90,13 @@ const saveCursor = (accountId: string, folder: string, lastUid: number, uidValid
 export interface ScanOutcome {
   /** Mails confrontés aux règles. */
   scanned: number
-  /** Envois inscrits (une règle a collé et ce mail n'était pas déjà parti). */
-  queued: number
+  /**
+   * Mails sur lesquels au moins une règle a collé. Ce N'EST PAS le nombre d'envois inscrits : un
+   * mail déjà parti par cette règle vers ce webhook colle toujours, et `queueRuleDelivery` rend
+   * alors `null` sans rien inscrire. Le nombre d'envois, seule la table le sait — et c'est très
+   * bien ainsi : l'unicité vit en base, pas dans un compteur qui pourrait en diverger.
+   */
+  matched: number
   /** Le passage n'a rien confronté : il vient de POSER le curseur, l'historique n'est pas rejoué. */
   primed: boolean
 }
@@ -110,7 +115,7 @@ export async function scanFolder(params: {
 }): Promise<ScanOutcome> {
   const { accountId, account, folder, source } = params
   const rules = webhookRulesOf(params.rules)
-  const out: ScanOutcome = { scanned: 0, queued: 0, primed: false }
+  const out: ScanOutcome = { scanned: 0, matched: 0, primed: false }
   if (!rules.length) return out
 
   const st = await source.state(folder)
@@ -137,7 +142,7 @@ export async function scanFolder(params: {
     const tagsByUid = await tagsForMessages(accountId, batch, rules)
     const results = await applyRulesToMessages(account, folder, batch, rules, undefined, tagsByUid)
     out.scanned += batch.length
-    out.queued += results.length
+    out.matched += results.length
 
     after = batch[batch.length - 1].uid === undefined ? after : Number(batch[batch.length - 1].uid)
     await saveCursor(accountId, folder, after, st.uidValidity)

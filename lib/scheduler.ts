@@ -7,6 +7,9 @@ import { getEnabledRulesForAccount, applyRulesToMessages, logRuleExecution, tags
 import { engineFromRow, mailboxesToSort, runPass } from './tagging/runner'
 import { imapMailSource } from './tagging/imapSource'
 import { DELIVERY_RETENTION_DAYS, processWebhookDeliveries, purgeOldDeliveries } from './webhooks'
+import { imapWebhookSource } from './webhookSource'
+import { TRIGGER_FOLDERS, accountsToScan, scanFolder } from './webhookTrigger'
+import { toImapConfig } from './accounts'
 
 type AccountRow = {
   id: string; email: string; smtp_host: string; smtp_port: number; smtp_secure: boolean;
@@ -389,6 +392,36 @@ export async function processWebhooks(): Promise<void> {
   if (sent || failed) console.log(`[scheduler/webhooks] ${sent} envoyé(s), ${failed} abandonné(s)`)
 }
 
+/**
+ * Le balayage du déclenchement (lot W3). Comme `processTagging`, cette fonction est le SEUL endroit
+ * qui assemble le balayage et sa source IMAP réelle — le banc mesure `scanFolder` avec une fausse
+ * source, ce qui est précisément ce qui lui permet de ne toucher aucune boîte.
+ *
+ * Une seule requête choisit les boîtes : celles qui ont au moins une règle active appelant un
+ * webhook. Sans webhook configuré, ce passage n'ouvre AUCUNE connexion.
+ */
+export async function processWebhookTriggers(): Promise<void> {
+  for (const acc of await accountsToScan()) {
+    const source = imapWebhookSource(acc)
+    try {
+      const rules = await getEnabledRulesForAccount(acc.id)
+      for (const folder of TRIGGER_FOLDERS) {
+        const out = await scanFolder({
+          accountId: acc.id, account: toImapConfig(acc), folder, source, rules,
+        })
+        if (out.matched || out.primed) {
+          console.log(`[scheduler/webhooks] ${acc.id}/${folder}: ${out.primed ? 'curseur posé' : `${out.scanned} lu(s), ${out.matched} correspondance(s)`}`)
+        }
+      }
+    } catch (err) {
+      // Une boîte injoignable ne doit pas empêcher les autres d'être balayées.
+      console.error(`[scheduler/webhooks] account ${acc.id}:`, err)
+    } finally {
+      await source.close().catch(() => {})
+    }
+  }
+}
+
 export async function processWebhookLogCleanup(): Promise<void> {
   const purged = await purgeOldDeliveries()
   if (purged) console.log(`[scheduler/webhooks] purgé ${purged} envoi(s) de plus de ${DELIVERY_RETENTION_DAYS} jours`)
@@ -419,7 +452,11 @@ export function startScheduler(): void {
     processRules().catch(err => console.error('[scheduler/rules]', err))
   }, 5 * 60_000)
 
-  // Webhooks — every 60s (envois dus et reprises), purge du journal toutes les 6 h
+  // Webhooks — every 60s (déclenchement sur les nouveaux mails, puis envois dus et reprises),
+  // purge du journal toutes les 6 h
+  setInterval(() => {
+    processWebhookTriggers().catch(err => console.error('[scheduler/webhooks]', err))
+  }, WEBHOOK_INTERVAL_MS)
   setInterval(() => {
     processWebhooks().catch(err => console.error('[scheduler/webhooks]', err))
   }, WEBHOOK_INTERVAL_MS)
