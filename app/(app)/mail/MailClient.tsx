@@ -486,6 +486,7 @@ export function MailClient() {
               onReply={handleReply}
               onForward={handleForward}
               onDelete={handleThreadDelete}
+              canOrganize={permissions.canOrganize}
             />
           ) : (
             <ReadingPane

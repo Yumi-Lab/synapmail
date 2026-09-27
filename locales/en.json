@@ -967,9 +967,9 @@
     "filterLabel": "Tag",
     "filterAll": "Any tag",
     "filterClear": "Clear tag filter",
-    "filterCount": "{count} tagged",
+    "filterCount": "{count, plural, one {# tagged} other {# tagged}}",
     "filterEmpty": "No message carries this tag.",
-    "unpositioned": "{count} hidden: their folder is unknown.",
+    "unpositioned": "{count, plural, one {# hidden: its folder is unknown.} other {# hidden: their folder is unknown.}}",
     "g": {
       "general": "General",
       "support": "Support",

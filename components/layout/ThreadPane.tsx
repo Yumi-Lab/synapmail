@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { parseDate } from '@/lib/dates'
 import { messageHref, originKey, originOfMessage } from '@/lib/mailOrigin'
+import { TagsPanel } from '@/components/mail/MessageTags'
 import { ThinScroll } from './ThinScroll'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -89,9 +90,10 @@ interface MessageCardProps {
   onForward?: (msg: Message) => void
   onDelete?: (uid: string) => void
   previewMsg: Message
+  canOrganize: boolean
 }
 
-function MessageCard({ uid, accountId, folder, isExpanded, isLast, onToggle, onReply, onForward, onDelete, previewMsg }: MessageCardProps) {
+function MessageCard({ uid, accountId, folder, isExpanded, isLast, onToggle, onReply, onForward, onDelete, previewMsg, canOrganize }: MessageCardProps) {
   const swrKey = isExpanded
     ? messageHref({ accountId, folder, uid })
     : null
@@ -155,6 +157,12 @@ function MessageCard({ uid, accountId, folder, isExpanded, isLast, onToggle, onR
       {/* Expanded body */}
       {isExpanded && (
         <div className="border-t border-border">
+          {/* Étiquettes — le MÊME panneau que le volet de lecture, sur chaque message déplié :
+              un mail dans une conversation se lit et se corrige comme un mail seul. */}
+          {fullMessage && (
+            <TagsPanel message={fullMessage} accountId={accountId} canOrganize={canOrganize} />
+          )}
+
           {/* To: header detail */}
           <div className="px-4 py-2 bg-muted/20 border-b border-border/50">
             <p className="text-xs text-muted-foreground">
@@ -237,9 +245,11 @@ interface Props {
   onReply?: (msg: Message) => void
   onForward?: (msg: Message) => void
   onDelete?: (uid: string) => void
+  /** Partage de compte : un délégué sans « organiser » lit ses étiquettes sans les corriger. */
+  canOrganize?: boolean
 }
 
-export function ThreadPane({ threadMessages, subject, folder, accountId, onReply, onForward, onDelete }: Props) {
+export function ThreadPane({ threadMessages, subject, folder, accountId, onReply, onForward, onDelete, canOrganize = true }: Props) {
   // Last message expanded by default
   const [expandedUids, setExpandedUids] = useState<Set<string>>(() => {
     const s = new Set<string>()
@@ -306,6 +316,7 @@ export function ThreadPane({ threadMessages, subject, folder, accountId, onReply
             accountId={msg.accountId || accountId}
             folder={msg.folder || folder}
             isExpanded={expandedUids.has(msg.uid)}
+            canOrganize={canOrganize}
             isLast={idx === threadMessages.length - 1}
             onToggle={() => toggleCard(msg.uid)}
             onReply={onReply}

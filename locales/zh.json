@@ -967,9 +967,9 @@
     "filterLabel": "标签",
     "filterAll": "全部",
     "filterClear": "清除筛选",
-    "filterCount": "已标记 {count} 封",
+    "filterCount": "{count, plural, other {已标记 # 封}}",
     "filterEmpty": "没有邮件带此标签。",
-    "unpositioned": "{count} 封已隐藏：文件夹未知。",
+    "unpositioned": "{count, plural, other {# 封已隐藏：文件夹未知。}}",
     "g": {
       "general": "总体",
       "support": "客服",

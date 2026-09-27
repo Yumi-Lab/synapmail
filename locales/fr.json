@@ -967,9 +967,9 @@
     "filterLabel": "Étiquette",
     "filterAll": "Toutes",
     "filterClear": "Retirer le filtre",
-    "filterCount": "{count} étiquetés",
+    "filterCount": "{count, plural, one {# étiqueté} other {# étiquetés}}",
     "filterEmpty": "Aucun message ne porte cette étiquette.",
-    "unpositioned": "{count} masqués : dossier inconnu.",
+    "unpositioned": "{count, plural, one {# masqué : dossier inconnu.} other {# masqués : dossier inconnu.}}",
     "g": {
       "general": "Général",
       "support": "Service",

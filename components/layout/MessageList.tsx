@@ -1179,23 +1179,21 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             </div>
           </div>
 
-          {/* line 2 — subject (full width) */}
-          <div className={cn('text-xs truncate', !isRead ? 'font-semibold text-foreground' : 'text-foreground/60', compact ? '' : 'mb-0.5')}>
-            {thread.subject}
+          {/* line 2 — objet, et les pastilles d'étiquettes À SA DROITE. Elles ne prennent
+              JAMAIS de ligne à elles : un mail reste un item de hauteur CONSTANTE, étiqueté ou
+              non. C'est l'objet qui cède (`truncate` sur lui, `shrink-0` sur elles), et la
+              pastille tient dans la boîte de ligne de l'objet (voir `TagPills`). */}
+          <div className={cn('flex items-center gap-2', compact ? '' : 'mb-0.5')}>
+            <span className={cn('min-w-0 flex-1 truncate text-xs', !isRead ? 'font-semibold text-foreground' : 'text-foreground/60')}>
+              {thread.subject}
+            </span>
+            <TagPills tags={rowPills} compact={compact} />
           </div>
 
-          {/* line 3 — aperçu, et les pastilles d'étiquettes à sa droite. Elles ne prennent pas
-              de ligne à elles : un mail reste UN item d'une ligne, et l'aperçu cède avant elles
-              (`truncate` sur lui, `shrink-0` sur elles). En compact, l'aperçu disparaît et les
-              pastilles restent — c'est l'information de tri, elle survit à la densité. */}
-          {(!compact || rowPills.length > 0) && (
-            <div className="flex items-center gap-2">
-              {!compact && (
-                <span className={cn('min-w-0 flex-1 truncate text-[11px] leading-relaxed', isRead ? 'text-muted-foreground/70' : 'text-muted-foreground')}>
-                  {msg.preview}
-                </span>
-              )}
-              <TagPills tags={rowPills} compact={compact} />
+          {/* line 3 — preview (hidden in compact) */}
+          {!compact && (
+            <div className={cn('text-[11px] truncate leading-relaxed', isRead ? 'text-muted-foreground/70' : 'text-muted-foreground')}>
+              {msg.preview}
             </div>
           )}
         </div>

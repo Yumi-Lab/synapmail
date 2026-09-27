@@ -11,6 +11,7 @@
  */
 
 import { useMemo, useState } from 'react'
+import useSWR from 'swr'
 import { useTranslations } from 'next-intl'
 import { Tags } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -36,6 +37,10 @@ function useTagText() {
  * visibles en liste. L'infobulle porte TOUT le reste (décision 11) — c'est l'attribut `title`
  * natif, celui que la ligne emploie déjà pour son drapeau et sa boîte : rien à mesurer, rien à
  * positionner, et il survit à un défilement sous le pointeur.
+ *
+ * Hauteur : une pastille fait `h-4` (16 px, bordure comprise — `box-sizing: border-box`), soit
+ * EXACTEMENT la boîte de ligne du `text-xs` de l'objet à côté duquel elle se pose. Une ligne
+ * étiquetée mesure donc la même chose qu'une ligne nue ; c'est ce que le gate mesure.
  */
 export function TagPills({ tags, compact }: { tags: readonly StoredTag[]; compact?: boolean }) {
   const t = useTranslations('tags')
@@ -56,13 +61,13 @@ export function TagPills({ tags, compact }: { tags: readonly StoredTag[]; compac
           key={tag.question}
           data-tag-pill={tag.question}
           title={describe(tag)}
-          className="max-w-[10rem] shrink-0 truncate rounded border border-border bg-muted/60 px-1 text-[10px] leading-[15px] text-muted-foreground"
+          className="flex h-4 max-w-[10rem] shrink-0 items-center truncate rounded border border-border bg-muted/60 px-1 text-[10px] leading-none text-muted-foreground"
         >
           {t(`v.${tag.valeur}`)}
         </span>
       ))}
       {hidden > 0 && (
-        <span data-tag-pill-more={hidden} title={all} className="shrink-0 text-[10px] leading-[15px] text-muted-foreground/70">
+        <span data-tag-pill-more={hidden} title={all} className="flex h-4 shrink-0 items-center text-[10px] leading-none text-muted-foreground/70">
           {t('more', { count: hidden })}
         </span>
       )}
@@ -103,7 +108,7 @@ function TagRow({ tag, engine, correct, disabled }: {
         {t(`q.${tag.question}`)}
       </span>
       <span
-        className={cn('shrink-0 truncate', confirmed ? 'font-medium text-foreground' : 'text-foreground/80')}
+        className={cn('shrink-0 truncate', confirmed ? 'font-semibold text-foreground' : 'text-foreground/80')}
         // La valeur du moteur reste visible même après correction : c'est ce que le panneau doit
         // au lecteur qui compare, et c'est ce que la base conserve de toute façon.
         title={engine && engine.valeur !== tag.valeur ? t('engineSaid', { value: t(`v.${engine.valeur}`) }) : describe(tag)}
@@ -151,20 +156,34 @@ function TagRow({ tag, engine, correct, disabled }: {
  * Le panneau du volet de lecture, replié. `<details>` natif : le pli est un état du navigateur,
  * donc rien à tenir en React, rien à ré-ouvrir à chaque message, et il reste ouvrable au
  * clavier. Les étiquettes sont rangées par GROUPE de `questions.ts`, groupes vides omis.
+ *
+ * Le panneau lit ses étiquettes LUI-MÊME (une requête par message ouvert, et seulement quand il
+ * en est un). C'est ce qui lui permet d'être posé tel quel dans le volet de lecture ET sur
+ * chaque message déplié d'une conversation, sans que l'appelant recâble un chargement : une
+ * seule source pour ce qu'une étiquette affiche et pour la façon de la corriger.
  */
-export function TagsPanel({ message, tags, engineTags, onCorrected, canOrganize }: {
+export function TagsPanel({ message, accountId, canOrganize }: {
   message: Message
-  tags: readonly StoredTag[]
-  /** Toutes les lignes du message, sources comprises : ce qui fait tenir « le moteur a dit ». */
-  engineTags: readonly StoredTag[]
-  onCorrected: () => void
+  accountId: string
   canOrganize: boolean
 }) {
   const t = useTranslations('tags')
+  // `effective` = ce que le panneau affiche (décision 5) ; `tags` = toutes les sources, ce qui
+  // fait tenir « le moteur a dit » en infobulle. Un mail sans `Message-ID` n'a pas de clé côté
+  // client : rien n'est demandé (et la correction est refusée, voir plus bas).
+  const { data, mutate } = useSWR<{ data: { tags: StoredTag[]; effective: StoredTag[] } }>(
+    message.messageId ? `/api/messages/${encodeURIComponent(message.messageId)}/tags?account=${encodeURIComponent(accountId)}` : null,
+    async (url: string) => {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return res.json()
+    },
+  )
+  const tags = data?.data.effective ?? []
   const groups = useMemo(() => tagsByGroup(tags), [tags])
   const engineByQuestion = useMemo(
-    () => new Map(engineTags.filter(tag => tag.source !== HUMAN_SOURCE).map(tag => [tag.question, tag])),
-    [engineTags],
+    () => new Map((data?.data.tags ?? []).filter(tag => tag.source !== HUMAN_SOURCE).map(tag => [tag.question, tag])),
+    [data],
   )
 
   // Un mail SANS `Message-ID` n'a pas d'identifiant côté client : le repli dérivé de la
@@ -185,7 +204,7 @@ export function TagsPanel({ message, tags, engineTags, onCorrected, canOrganize 
         subject: message.subject, date: message.date,
       }),
     })
-    if (res.ok) onCorrected()
+    if (res.ok) mutate()
   }
 
   return (

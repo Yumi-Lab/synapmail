@@ -200,6 +200,20 @@ try {
   }
   check(missing.length === 0, 'G1 les 3 langues nomment chaque question, groupe et valeur', missing.slice(0, 8).join(' '))
 
+  // Un libellé qui porte un NOMBRE le décline : « 1 étiqueté », pas « 1 étiquetés ». C'est la
+  // forme ICU de next-intl, celle que le reste de `locales/` emploie déjà (`mail.searchCount`).
+  // Le zh n'a qu'une forme — `other` seul suffit et c'est ce qui est vérifié : une clause, pas
+  // un « one » recopié pour la forme.
+  const COUNTED = ['filterCount', 'unpositioned']
+  const unplural = []
+  for (const locale of ['en', 'fr', 'zh']) {
+    const dict = JSON.parse(readFileSync(`locales/${locale}.json`, 'utf8')).tags ?? {}
+    for (const key of COUNTED) {
+      if (!/\{count, plural,/.test(dict[key] ?? '')) unplural.push(`${locale}:tags.${key}`)
+    }
+  }
+  check(unplural.length === 0, 'G2 un libellé qui compte décline son nombre (ICU)', unplural.join(' '))
+
   // --- H. l'écran de courrier se rend avec tout cela -------------------------------
   const mailRes = await get('/mail')
   check(mailRes.status === 200, 'H1 /mail se rend pour une session', `statut ${mailRes.status}`)
