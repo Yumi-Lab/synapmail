@@ -102,7 +102,7 @@ try {
   // droit d'écrire une source de moteur, et c'est précisément ce que le panneau doit corriger.
   const keyRes = await fetch(`${BASE}/api/api-keys`, {
     method: 'POST', headers: { cookie, 'content-type': 'application/json' },
-    body: JSON.stringify({ name: `t6-bench-${crypto.randomBytes(4).toString('hex')}`, scopes: ['tags:read', 'tags:write'], accountIds: [accountId] }),
+    body: JSON.stringify({ name: `bench etiquettes ${crypto.randomBytes(4).toString('hex')}`, scopes: ['tags:read', 'tags:write'], accountIds: [accountId] }),
   })
   const keyBody = await keyRes.json()
   const engineKey = keyBody.data?.key

@@ -38,6 +38,7 @@ import crypto from 'node:crypto'
 import { ImapFlow } from 'imapflow'
 import { decrypt } from '../lib/encrypt.ts'
 import { HIDDEN_CONTENT_KINDS, UNTRUSTED_FIELDS } from '../lib/promptGuard.ts'
+import { ROUTE_SCOPES } from '../lib/apiScopes.ts'
 
 const FOLDER = 'Tests-lane'
 /** An IMAP APPEND has to become visible to the route's own IMAP connection. */
@@ -178,11 +179,19 @@ if (!Array.isArray(me.data)) { console.error('HARNESS: session cannot read /api/
 // A key of the bench's own, revoked and deleted in the finally block. The raw
 // key never leaves this process and is never logged.
 const RAW_KEY = 'syn_' + crypto.randomBytes(32).toString('hex')
+// A key with no scopes is allowed NOTHING, so it must carry the one the two routes
+// below require. Read off ROUTE_SCOPES rather than copied here, so renaming a scope
+// cannot leave this bench asking for one that no longer exists.
+const READ_SCOPES = [...new Set([ROUTE_SCOPES['GET /api/messages/[id]'], ROUTE_SCOPES['GET /api/messages']])]
 const { rows: keyRows } = await pool.query(
-  `INSERT INTO api_keys (user_id, name, key_prefix, key_hash) VALUES ($1, $2, $3, $4) RETURNING id`,
-  [acc.owner_id, 'check-prompt-guard bench', RAW_KEY.slice(0, 12), crypto.createHash('sha256').update(RAW_KEY).digest('hex')]
+  `INSERT INTO api_keys (user_id, name, key_prefix, key_hash, scopes) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+  [acc.owner_id, 'check-prompt-guard bench', RAW_KEY.slice(0, 12), crypto.createHash('sha256').update(RAW_KEY).digest('hex'), READ_SCOPES]
 )
 const apiKeyId = keyRows[0].id
+// A key also has to be BOUND to the mailbox it speaks about (api_key_accounts), or
+// every request naming one is refused before the route runs. Creating the key by raw
+// INSERT skips what POST /api/api-keys does, so the binding is written here too.
+await pool.query('INSERT INTO api_key_accounts (api_key_id, account_id) VALUES ($1, $2)', [apiKeyId, acc.id])
 
 // ── plant the traps ─────────────────────────────────────────────────────────
 const uids = {}
