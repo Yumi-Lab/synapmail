@@ -8,27 +8,18 @@
  * IMAP et n'appelle AUCUN moteur — les étiquettes qu'il écrit sont écrites à la main.
  *
  *   node --experimental-strip-types scripts/check-tagging-store.mjs
- *   node --experimental-strip-types scripts/check-tagging-store.mjs --negative
  *
  * CE QUI EST MESURÉ :
  *   A. aller-retour : ce qu'on écrit est ce qu'on relit (valeur, probabilités, confiance, modèle) ;
  *   B. une ligne `humain` s'AJOUTE sans toucher la ligne du moteur, et devient l'EFFECTIVE ;
  *      une seconde correction humaine REMPLACE la première, celle du moteur restant intacte ;
- *   C. la base REFUSE un INSERT SQL direct d'une ligne de moteur marquée entraînable — le second
- *      niveau de la règle contractuelle, celui qu'un bug applicatif ne peut pas contourner ;
- *   D. l'export `entrainement` ne rend QUE `humain`/`dossier`, et pagine par `id` ;
+ *   D. l'export pagine par `id` et dit où reprendre ;
  *   E. le filtre par étiquette rend les mails dont l'EFFECTIVE porte cette valeur — donc PAS
  *      celui qu'un humain a corrigé ailleurs — avec leur position connue hors de `messages_cache` ;
  *   F. une valeur non prévue est refusée AVANT la base, en NOMMANT la question et la valeur, et
  *      n'écrit RIEN du lot (l'INSERT est unique, donc atomique) ;
  *   G. un mail sans Message-ID reçoit un identifiant dérivé STABLE, et deux mails différents en
  *      reçoivent deux différents.
- *
- * CONTRÔLE NÉGATIF (`--negative`) : l'export est relu SANS son filtre serveur, comme si le
- * paramètre `entrainement` était appliqué côté client. Le banc DOIT alors virer au rouge sur D.
- * Ce qu'il démontre : l'assertion D mesure bien le filtre, pas la simple absence de lignes de
- * moteur dans le jeu de banc. Ce qu'il ne démontre PAS : le comportement des routes HTTP (lot T4),
- * ni celui de la contrainte CHECK, qui est mesurée en C et ne peut pas être « débranchée ».
  */
 import './alias-resolver.mjs'
 import { existsSync, readFileSync } from 'node:fs'
@@ -44,7 +35,6 @@ for (const file of ['../.env', '../.env.local']) {
 }
 
 const { DATABASE_URL: DB_URL } = process.env
-const NEGATIVE = process.argv.includes('--negative')
 
 /** Le banc n'a rien pu mesurer : il ne conclut RIEN sur le produit. */
 const harness = msg => { console.error(`HARNESS: ${msg}`); process.exit(2) }
@@ -59,7 +49,6 @@ const check = (label, ok, detail = '') => {
 
 const { initDb, query } = await import('../lib/db.ts')
 const store = await import('../lib/tagging/store.ts')
-const { TRAINING_SOURCES } = await import('../lib/tagging/engine.ts')
 const { questionById, valuesOf } = await import('../lib/tagging/questions.ts')
 
 /**
@@ -77,18 +66,7 @@ const clean = async () => {
   await pool.query('DELETE FROM tagged_messages WHERE message_id LIKE $1', [MID_LIKE])
 }
 
-/** L'export du produit, ou celui du CONTRÔLE NÉGATIF : le même, sans son filtre serveur. */
-const exportTags = NEGATIVE
-  ? async ({ accountId, after = 0, limit = 500 }) => {
-    const rows = await query(
-      `SELECT id, message_id, question, valeur, source, entrainement_autorise
-         FROM message_tags WHERE account_id = $1 AND id > $2 ORDER BY id LIMIT $3`,
-      [accountId, after, limit])
-    return { rows: rows.map(r => ({ ...r, id: Number(r.id), messageId: r.message_id, entrainementAutorise: r.entrainement_autorise })), nextAfter: null }
-  }
-  : store.exportTags
-
-console.log(`\nbanc du stockage des étiquettes${NEGATIVE ? ' — CONTRÔLE NÉGATIF (export sans son filtre serveur)' : ''}\n`)
+console.log('\nbanc du stockage des étiquettes\n')
 
 // Les tables du lot doivent EXISTER : c'est `initDb()` qui les crée, et c'est lui qu'on mesure.
 await initDb()
@@ -120,8 +98,6 @@ try {
     cat?.valeur === CATEGORIE && Math.abs((cat?.confiance ?? 0) - 0.82) < 1e-6 && cat?.probabilites?.[CATEGORIE] === 0.82,
     JSON.stringify(cat))
   check('A3 le modèle RÉPONDANT est retenu avec l’étiquette', cat?.modele === 'jev-1.13.0', String(cat?.modele))
-  check('A4 une étiquette de moteur n’est JAMAIS entraînable, sans qu’on l’ait demandé',
-    back.tags.every(t => t.entrainementAutorise === false))
 
   // ---- B. l'humain s'ajoute, ne remplace pas le moteur ----
   console.log('\nB. la correction humaine s’AJOUTE, et devient l’effective')
@@ -138,8 +114,7 @@ try {
   const effCat = corrected.effective.find(t => t.question === 'categorie')
   check('B2 l’EFFECTIVE est celle de l’humain', effCat?.source === 'humain' && effCat?.valeur === AUTRE,
     `${effCat?.source}=${effCat?.valeur}`)
-  check('B3 la correction humaine est entraînable, et porte QUI l’a validée',
-    effCat?.entrainementAutorise === true && effCat?.validePar === USER)
+  check('B3 la correction humaine porte QUI l’a validée', effCat?.validePar === USER, String(effCat?.validePar))
   const TROISIEME = valuesOf(questionById('categorie')).find(v => v !== CATEGORIE && v !== AUTRE)
   await store.writeTags({ accountId: ACCOUNT, messageId: MID(1), source: 'humain', validePar: USER,
     tags: [{ question: 'categorie', valeur: TROISIEME }] })
@@ -150,53 +125,17 @@ try {
   check('B5 et la ligne du moteur n’a toujours pas bougé',
     recorrected.tags.find(t => t.question === 'categorie' && t.source === 'jev')?.valeur === CATEGORIE)
 
-  // ---- C. la base refuse ce que le contrat interdit ----
-  console.log('\nC. la base refuse une étiquette de moteur entraînable')
-  let refused = null
-  try {
-    await pool.query(
-      `INSERT INTO message_tags (account_id, message_id, question, valeur, source, entrainement_autorise)
-       VALUES ($1, $2, 'categorie', $3, 'jev', true)`,
-      [ACCOUNT, MID(9), CATEGORIE])
-  } catch (e) { refused = e }
-  check('C1 un INSERT SQL DIRECT d’une ligne `jev` entraînable est REFUSÉ par la base',
-    refused !== null, 'la base a ACCEPTÉ la ligne')
-  check('C2 et c’est bien la contrainte contractuelle qui refuse',
-    String(refused?.constraint ?? refused?.message).includes('message_tags_training_sources'),
-    `${refused?.constraint ?? ''} ${refused?.message ?? ''}`)
-  let refusedAutre = null
-  try {
-    await pool.query(
-      `INSERT INTO message_tags (account_id, message_id, question, valeur, source, entrainement_autorise)
-       VALUES ($1, $2, 'categorie', $3, 'autre', true)`,
-      [ACCOUNT, MID(9), CATEGORIE])
-  } catch (e) { refusedAutre = e }
-  check('C3 un moteur `autre` (décision 13) est refusé de la même façon, sans règle en plus',
-    refusedAutre !== null, 'la base a ACCEPTÉ la ligne')
-  const { rows: [dbCheck] } = await pool.query(
-    `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'message_tags_training_sources'`)
-  check('C4 la contrainte en base nomme EXACTEMENT la liste blanche du code',
-    TRAINING_SOURCES.every(s => String(dbCheck?.def).includes(`'${s}'`))
-      && !String(dbCheck?.def).includes("'jev'") && !String(dbCheck?.def).includes("'autre'"),
-    String(dbCheck?.def))
-
-  // ---- D. l'export entraînement ----
-  console.log('\nD. l’export d’entraînement ne rend que ce qui est entraînable')
+  // ---- D. l'export ----
+  console.log('\nD. l’export rend les lignes de la boîte, et pagine')
   await store.writeTags({ accountId: ACCOUNT, messageId: MID(2), source: 'jev', modele: 'jev-1.13.0',
     tags: [{ question: 'categorie', valeur: CATEGORIE, confiance: 0.9 }] })
-  const trainable = await exportTags({ accountId: ACCOUNT, entrainementOnly: true, limit: 5000 })
-  const benchRows = trainable.rows.filter(r => String(r.messageId).startsWith('<banc-t2-'))
-  check('D1 l’export d’entraînement ne contient AUCUNE ligne de moteur',
-    benchRows.length > 0 && benchRows.every(r => TRAINING_SOURCES.includes(r.source)),
-    benchRows.map(r => r.source).join(' ') || 'aucune ligne de banc exportée')
-  check('D2 toutes ses lignes sont marquées entraînables',
-    benchRows.every(r => r.entrainementAutorise === true))
-  const all = await store.exportTags({ accountId: ACCOUNT, entrainementOnly: false, limit: 5000 })
+  const all = await store.exportTags({ accountId: ACCOUNT, limit: 5000 })
   const allBench = all.rows.filter(r => r.messageId.startsWith('<banc-t2-'))
-  check('D3 sans le filtre, les lignes de moteur SONT là (donc D1 mesure le filtre, pas un jeu vide)',
-    allBench.some(r => r.source === 'jev'), allBench.map(r => r.source).join(' '))
-  const firstPage = await store.exportTags({ accountId: ACCOUNT, entrainementOnly: false, limit: 1 })
-  check('D4 l’export pagine par `id` et dit où reprendre',
+  check('D1 l’export rend les lignes des DEUX sortes de source, sans en filtrer aucune',
+    allBench.some(r => r.source === 'jev') && allBench.some(r => r.source === 'humain'),
+    allBench.map(r => r.source).join(' '))
+  const firstPage = await store.exportTags({ accountId: ACCOUNT, limit: 1 })
+  check('D2 l’export pagine par `id` et dit où reprendre',
     firstPage.rows.length === 1 && firstPage.nextAfter === firstPage.rows[0].id,
     `${firstPage.rows.length} ligne(s), nextAfter=${firstPage.nextAfter}`)
 
@@ -263,10 +202,5 @@ try {
   await pool.end()
 }
 
-if (NEGATIVE) {
-  if (failures.length) { console.log(`\ncontrôle négatif : ${failures.length} refus tombés, comme attendu`); process.exit(0) }
-  console.error('\nCONTRÔLE NÉGATIF MUET : export sans filtre, et le banc reste vert — il ne mesure rien')
-  process.exit(1)
-}
 if (failures.length) { console.error(`\n${failures.length} échec(s)`); process.exit(1) }
 console.log('\nstockage des étiquettes : OK')

@@ -1185,7 +1185,6 @@ interface StoredTag {
   source: 'jev' | 'one' | 'autre' | 'humain' | 'dossier'
   modele: string | null; creeLe: string
   validePar: string | null                      // the user who validated, for `humain`
-  entrainementAutorise: boolean                 // deduced from the source, never requested
 }
 ```
 
@@ -1203,8 +1202,8 @@ The messages whose **effective** tag for `question` is `valeur`, with their last
 ### `GET /api/tags?account=&id=<mid>&id=<mid>` 🔑 Bearer (`tags:read`)
 The effective tags of a **list** of messages — what the message list paints as chips, in one request per page and never one per row. **Response** `{ data: { effective: Record<string, StoredTag[]> } }`, keyed by Message-ID.
 
-### `GET /api/tags/export?account=&entrainement=1&after=&limit=` 🔑 Bearer (`tags:read`)
-Paginated by `id` (`after` = the last id read, `limit` default 500, capped 5000). `entrainement=1` returns only what a human validated — the filter is applied **server-side**, so the client does not choose what it may read. **Response** `{ data: { tags: (StoredTag & { id: number; messageId: string })[]; nextAfter: number | null } }`.
+### `GET /api/tags/export?account=&after=&limit=` 🔑 Bearer (`tags:read`)
+Every stored tag of one mailbox, all sources, paginated by `id` (`after` = the last id read, `limit` default 500, capped 5000). **Response** `{ data: { tags: (StoredTag & { id: number; messageId: string })[]; nextAfter: number | null } }`.
 
 ### `GET /api/tagging/status?account=` 🔑 Bearer (`tags:read`)
 Where a mailbox's sorting stands: counters, spend, estimate, and the chosen engine — **never its key**, only `hasKey`.

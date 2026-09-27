@@ -3235,22 +3235,10 @@
         ],
         "operationId": "exportTags",
         "summary": "Export the tags, paginated by id",
-        "description": "`entrainement=1` returns only what a human validated — filtered SERVER-side, so the client does not choose what it may read; the database refuses the same thing from its own end. Requires the `tags:read` scope; a key without it gets 403 naming it.",
+        "description": "Every stored tag of one mailbox, all sources. Requires the `tags:read` scope; a key without it gets 403 naming it.",
         "parameters": [
           {
             "$ref": "#/components/parameters/AccountQueryRequired"
-          },
-          {
-            "name": "entrainement",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1",
-                "true"
-              ]
-            },
-            "description": "Keep only the rows a model may train on."
           },
           {
             "name": "after",
@@ -3672,8 +3660,7 @@
           "source",
           "modele",
           "creeLe",
-          "validePar",
-          "entrainementAutorise"
+          "validePar"
         ],
         "properties": {
           "question": {
@@ -3720,10 +3707,6 @@
             "format": "uuid",
             "nullable": true,
             "description": "The user who validated, for `humain`."
-          },
-          "entrainementAutorise": {
-            "type": "boolean",
-            "description": "Deduced from the source, never requested: only `humain` and `dossier` may train a model."
           }
         }
       },

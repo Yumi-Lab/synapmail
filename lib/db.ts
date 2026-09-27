@@ -1,7 +1,7 @@
 import { Pool } from 'pg'
 import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
 import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
-import { BULK_STATES, ENGINES, PAUSE_REASONS, TAG_SOURCES, TRAINING_SOURCES } from '@/lib/tagging/engine'
+import { BULK_STATES, ENGINES, PAUSE_REASONS, TAG_SOURCES } from '@/lib/tagging/engine'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -535,7 +535,7 @@ export async function initDb(): Promise<void> {
   // ── Tagging : étiquettes d'un mail, décidées par un moteur System One ou par un humain ──
   //
   // Les listes de valeurs des CHECK ci-dessous sont dérivées des constantes de
-  // `lib/tagging/engine.ts` : `TAG_SOURCES`, `TRAINING_SOURCES`, `ENGINES`, `PAUSE_REASONS`,
+  // `lib/tagging/engine.ts` : `TAG_SOURCES`, `ENGINES`, `PAUSE_REASONS`,
   // `BULK_STATES`. Aucun vocabulaire n'est recopié à la main ici — ajouter un type de moteur
   // dans le code met la base d'accord au prochain démarrage (les CHECK sont remplacées plus bas).
 
@@ -560,10 +560,6 @@ export async function initDb(): Promise<void> {
   // Une étiquette = une réponse à UNE question, par UNE source. La clé primaire porte `source` :
   // la ligne du moteur et celle de l'humain coexistent (décision 5), et une seconde correction
   // humaine remplace la précédente. `id` sert uniquement à paginer l'export.
-  //
-  // La contrainte d'ENTRAÎNEMENT est le second niveau de la règle contractuelle (décision 3) :
-  // même un INSERT SQL direct ne peut pas marquer entraînable une étiquette de moteur. Liste
-  // BLANCHE (`TRAINING_SOURCES`), donc tout moteur ajouté demain est refusé sans rien changer.
   await query(`
     CREATE TABLE IF NOT EXISTS message_tags (
       id BIGSERIAL UNIQUE,
@@ -577,12 +573,9 @@ export async function initDb(): Promise<void> {
       modele VARCHAR(100),
       cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       valide_par UUID REFERENCES users(id) ON DELETE SET NULL,
-      entrainement_autorise BOOLEAN NOT NULL DEFAULT false,
       question_version VARCHAR(12) NOT NULL DEFAULT '',
       taxonomy_version VARCHAR(12) NOT NULL DEFAULT '',
-      PRIMARY KEY (account_id, message_id, question, source),
-      CONSTRAINT message_tags_training_sources
-        CHECK (NOT entrainement_autorise OR source IN (${sqlList(TRAINING_SOURCES)}))
+      PRIMARY KEY (account_id, message_id, question, source)
     )
   `)
   await query(`CREATE INDEX IF NOT EXISTS message_tags_filter_idx ON message_tags(account_id, question, valeur)`)
@@ -597,6 +590,12 @@ export async function initDb(): Promise<void> {
   // recevrait jamais la question neuve. Les lignes antérieures gardent la chaîne vide, donc une
   // boîte déjà triée SE REJOUE une fois après cette migration — voulu, et facturé au plafond.
   await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS taxonomy_version VARCHAR(12) NOT NULL DEFAULT ''`)
+  // Retrait de la notion « entraînable » : la contrainte PUIS la colonne, dans cet ordre (une
+  // CHECK qui nomme la colonne empêcherait son DROP). Les deux `IF EXISTS` rendent le passage
+  // idempotent, donc une base déjà nettoyée redémarre sans rien faire, et une base antérieure
+  // (lane, staging) migre seule au prochain démarrage sans migration écrite à la main.
+  await query(`ALTER TABLE message_tags DROP CONSTRAINT IF EXISTS message_tags_training_sources`)
+  await query(`ALTER TABLE message_tags DROP COLUMN IF EXISTS entrainement_autorise`)
 
   // La dernière position CONNUE d'un mail tagué, pour que le filtre par étiquette montre des
   // mails absents de la page chargée. `messages_cache` ne suffit pas : il ne garde qu'une
@@ -646,7 +645,6 @@ export async function initDb(): Promise<void> {
   // (décision 13) sans écrire de migration à la main.
   for (const [table, name, expr] of [
     ['message_tags', 'message_tags_source_check', `source IN (${sqlList(TAG_SOURCES)})`],
-    ['message_tags', 'message_tags_training_sources', `NOT entrainement_autorise OR source IN (${sqlList(TRAINING_SOURCES)})`],
     ['decision_engines', 'decision_engines_kind_check', `kind IN (${sqlList(ENGINES)})`],
   ] as const) {
     await query(`ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${name}`)

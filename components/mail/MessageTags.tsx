@@ -81,8 +81,8 @@ type Correct = (question: string, valeur: string) => Promise<void>
 /**
  * Une ligne du panneau : un libellé, sa valeur, et de quoi la corriger en UN clic.
  *
- * « Confirmer » écrit la valeur du moteur en `humain` : c'est la seule source entraînable, donc
- * confirmer n'est pas un geste vide, c'est ce qui rend la réponse réutilisable (décision 3).
+ * « Confirmer » écrit la valeur du moteur en `humain` : c'est ce qui la fait passer d'une réponse
+ * de moteur à une étiquette validée par une main, donc ce n'est pas un geste vide.
  * Choisir une autre valeur en écrit une différente — dans les deux cas, la ligne du moteur reste
  * en base et reste LISIBLE en infobulle (décision 5).
  */

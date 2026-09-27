@@ -1,15 +1,12 @@
 /**
  * Le stockage des étiquettes : écrire ce qu'une source a décidé, relire ce qui a été décidé.
  *
- * Deux règles commandent tout ce fichier :
+ * Une règle commande tout ce fichier :
  *
  *  1. **Une étiquette n'entre que si sa valeur est PRÉVUE** (`isValidTag`). C'est la même porte
  *     que pour le moteur : ni un agent, ni un clic, ni un INSERT applicatif ne peuvent ranger
  *     une valeur inventée. Une écriture qui en contient une échoue ENTIÈREMENT (transaction),
  *     avec le nom de la question et de la valeur fautives — une route en fait un 422 qui NOMME.
- *  2. **Une étiquette de moteur n'est jamais entraînable** (décision 3). Le code ne l'écrit pas,
- *     et la base le refuse : la contrainte `message_tags_training_sources` (`lib/db.ts`) double
- *     la liste blanche `TRAINING_SOURCES`, donc même un INSERT SQL direct est rejeté.
  *
  * L'historique des corrections (décision 5) tient dans la clé primaire `(account_id, message_id,
  * question, source)` : la ligne `humain` s'AJOUTE à côté de celle du moteur au lieu de l'écraser,
@@ -18,7 +15,7 @@
  */
 import { createHash } from 'crypto'
 import { query } from '../db'
-import { HUMAN_SOURCE, isEngineKind, trainingAllowed, type TagSource } from './engine'
+import { HUMAN_SOURCE, isEngineKind, type TagSource } from './engine'
 import { engineQuestionsFor, isValidTag } from './questions'
 
 /**
@@ -84,7 +81,6 @@ export interface StoredTag {
   modele: string | null
   creeLe: Date
   validePar: string | null
-  entrainementAutorise: boolean
   /** La version de la question à laquelle CETTE ligne répond — voir `questionVersion`. */
   questionVersion: string
 }
@@ -125,11 +121,9 @@ export class ForbiddenSourceError extends Error {
  * QUI a le droit d'écrire QUELLE source (décision 7), en UN endroit : la route qui écrit s'en
  * sert, elle ne redécide pas.
  *
- * Une session humaine écrit `humain`, toujours : c'est elle qui valide, et c'est la seule source
- * entraînable qu'on produise. Une clé API parle POUR un moteur, donc elle écrit le `kind` d'un
- * moteur — jamais `humain` ni `dossier`, sinon un agent blanchirait une réponse de moteur en
- * étiquette entraînable. C'est la même liste blanche que la contrainte de la base, prise par
- * l'autre bout : ici on refuse l'appelant, là-bas on refuse la ligne.
+ * Une session humaine écrit `humain`, toujours : c'est elle qui valide. Une clé API parle POUR un
+ * moteur, donc elle écrit le `kind` d'un moteur — jamais `humain` ni `dossier`, sinon un agent
+ * signerait une réponse de moteur comme validée par une main.
  */
 export function sourceForWriter(params: { session: boolean; requested?: unknown }): TagSource {
   const requested = params.requested
@@ -148,8 +142,7 @@ export function sourceForWriter(params: { session: boolean; requested?: unknown 
  * questions d'un mail tiennent dans un seul INSERT.
  *
  * Une valeur non prévue jette `InvalidTagError` AVANT de toucher la base : inutile de l'ouvrir
- * pour refuser. `entrainement_autorise` n'est jamais un paramètre — il se DÉDUIT de la source
- * (liste blanche), ce qui rend impossible de blanchir une réponse de moteur en la demandant.
+ * pour refuser.
  *
  * La position du mail est enregistrée quand on la connaît : c'est ce qui permet au filtre par
  * étiquette de montrer un mail sorti de la fenêtre de `messages_cache`.
@@ -170,20 +163,18 @@ export async function writeTags(params: {
   if (params.position) await upsertPosition(accountId, messageId, params.position)
   await query(
     `INSERT INTO message_tags (account_id, message_id, question, valeur, probabilites, confiance,
-                               source, modele, valide_par, entrainement_autorise, question_version,
+                               source, modele, valide_par, question_version,
                                taxonomy_version, cree_le)
-     SELECT $1, $2, q.question, q.valeur, q.probabilites, q.confiance, $3, $4, $5, $6, q.question_version,
-            $12, NOW()
-       FROM unnest($7::text[], $8::text[], $9::jsonb[], $10::real[], $11::text[])
+     SELECT $1, $2, q.question, q.valeur, q.probabilites, q.confiance, $3, $4, $5, q.question_version,
+            $11, NOW()
+       FROM unnest($6::text[], $7::text[], $8::jsonb[], $9::real[], $10::text[])
               AS q(question, valeur, probabilites, confiance, question_version)
      ON CONFLICT (account_id, message_id, question, source) DO UPDATE SET
        valeur = EXCLUDED.valeur, probabilites = EXCLUDED.probabilites, confiance = EXCLUDED.confiance,
        modele = EXCLUDED.modele, valide_par = EXCLUDED.valide_par,
-       entrainement_autorise = EXCLUDED.entrainement_autorise,
        question_version = EXCLUDED.question_version, taxonomy_version = EXCLUDED.taxonomy_version,
        cree_le = NOW()`,
     [accountId, messageId, source, params.modele ?? null, params.validePar ?? null,
-      trainingAllowed(source),
       tags.map(t => t.question), tags.map(t => t.valeur),
       tags.map(t => (t.probabilites ? JSON.stringify(t.probabilites) : null)),
       tags.map(t => t.confiance ?? null), tags.map(t => questionVersion(t.question)),
@@ -211,14 +202,14 @@ export async function upsertPosition(accountId: string, messageId: string, p: Ta
 
 type TagRow = {
   question: string; valeur: string; probabilites: Record<string, number> | null; confiance: number | null
-  source: TagSource; modele: string | null; cree_le: Date; valide_par: string | null; entrainement_autorise: boolean
+  source: TagSource; modele: string | null; cree_le: Date; valide_par: string | null
   question_version: string
 }
 
 const toStored = (r: TagRow): StoredTag => ({
   question: r.question, valeur: r.valeur, probabilites: r.probabilites, confiance: r.confiance,
   source: r.source, modele: r.modele, creeLe: r.cree_le, validePar: r.valide_par,
-  entrainementAutorise: r.entrainement_autorise, questionVersion: r.question_version,
+  questionVersion: r.question_version,
 })
 
 /**
@@ -237,7 +228,7 @@ const EFFECTIVE_RANK = `ROW_NUMBER() OVER (
 export async function readTags(accountId: string, messageId: string): Promise<{ tags: StoredTag[]; effective: StoredTag[] }> {
   const rows = await query<TagRow & { rang: number }>(
     `SELECT question, valeur, probabilites, confiance, source, modele, cree_le, valide_par,
-            entrainement_autorise, question_version, ${EFFECTIVE_RANK} AS rang
+            question_version, ${EFFECTIVE_RANK} AS rang
        FROM message_tags WHERE account_id = $1 AND message_id = $2
       ORDER BY question, ${EFFECTIVE_ORDER}`,
     [accountId, messageId]
@@ -255,7 +246,7 @@ export async function readEffectiveFor(accountId: string, messageIds: string[]):
   const rows = await query<TagRow & { message_id: string; rang: number }>(
     `SELECT * FROM (
        SELECT message_id, question, valeur, probabilites, confiance, source, modele, cree_le,
-              valide_par, entrainement_autorise, question_version, ${EFFECTIVE_RANK} AS rang
+              valide_par, question_version, ${EFFECTIVE_RANK} AS rang
          FROM message_tags WHERE account_id = $1 AND message_id = ANY($2::text[])
      ) r WHERE rang = 1 ORDER BY message_id, question`,
     [accountId, messageIds]
@@ -312,23 +303,18 @@ export async function filterByTag(params: {
   }
 }
 
-/**
- * L'export, paginé par `id`. `entrainementOnly` filtre côté SERVEUR (décision 3) : le client ne
- * choisit pas ce qu'il a le droit de lire. Le filtre porte sur `entrainement_autorise`, que la
- * base ne laisse être vrai que pour `humain`/`dossier` — deux verrous pour la même règle.
- */
+/** L'export d'une boîte, paginé par `id` : toutes les lignes, toutes sources. */
 export async function exportTags(params: {
-  accountId: string; entrainementOnly: boolean; after?: number; limit?: number
+  accountId: string; after?: number; limit?: number
 }): Promise<{ rows: (StoredTag & { id: number; messageId: string })[]; nextAfter: number | null }> {
   const limit = Math.min(Math.max(params.limit ?? 500, 1), 5000)
   const rows = await query<TagRow & { id: string; message_id: string }>(
     `SELECT id, message_id, question, valeur, probabilites, confiance, source, modele, cree_le,
-            valide_par, entrainement_autorise, question_version
+            valide_par, question_version
        FROM message_tags
       WHERE account_id = $1 AND id > $2
-        AND ($3::boolean IS NOT TRUE OR entrainement_autorise)
-      ORDER BY id LIMIT $4`,
-    [params.accountId, params.after ?? 0, params.entrainementOnly, limit]
+      ORDER BY id LIMIT $3`,
+    [params.accountId, params.after ?? 0, limit]
   )
   return {
     rows: rows.map(r => ({ ...toStored(r), id: Number(r.id), messageId: r.message_id })),

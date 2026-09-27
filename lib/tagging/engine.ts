@@ -26,23 +26,13 @@ import { NOUL_NO, NOUL_YES, engineQuestionsFor, isValidTag, posedQuestions, valu
 
 /**
  * Les sources d'une étiquette : le TYPE du moteur qui l'a produite (décision 13, donc `autre`
- * comprise), ou la main qui l'a écrite. Seules `humain` et `dossier` peuvent entraîner un
- * modèle — liste BLANCHE, donc tout moteur ajouté demain est non entraînable par construction.
+ * comprise), ou la main qui l'a écrite.
  */
 export const TAG_SOURCES = ['jev', 'one', 'autre', 'humain', 'dossier'] as const
 export type TagSource = (typeof TAG_SOURCES)[number]
 
 /** La main qui valide. Écrite par une session humaine, jamais par une clé (décision 7). */
 export const HUMAN_SOURCE: TagSource = 'humain'
-
-/**
- * LA règle contractuelle. Le Master Customer Agreement de TypeSafe (§2.3(b)) interdit
- * d'utiliser les sorties « to perform model distillation, train a model to imitate the
- * output ». Une étiquette d'un moteur n'est donc jamais entraînable. La base double cette
- * liste d'une contrainte CHECK (`lib/db.ts`), pour qu'un INSERT direct soit refusé LÀ AUSSI.
- */
-export const TRAINING_SOURCES: readonly TagSource[] = ['humain', 'dossier']
-export const trainingAllowed = (source: TagSource): boolean => TRAINING_SOURCES.includes(source)
 
 /**
  * Les TYPES de moteur. `autre` (décision 13) couvre tout service qui parle le même protocole

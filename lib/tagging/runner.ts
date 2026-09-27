@@ -544,8 +544,8 @@ export interface DecisionEngineRow {
  * vient du MOTEUR (décision 13), jamais du type : deux moteurs `jev` peuvent être facturés
  * différemment, et le préréglage ne sert qu'à préremplir le formulaire.
  *
- * La `source` des étiquettes est le `kind` du moteur — donc jamais `humain` ni `dossier`, que la
- * liste blanche `TRAINING_SOURCES` réserve à ce qu'un humain a validé.
+ * La `source` des étiquettes est le `kind` du moteur — donc jamais `humain` ni `dossier`, que
+ * `sourceForWriter` réserve à ce qu'une main a écrit.
  */
 export function engineFromRow(row: DecisionEngineRow): TaggingEngine {
   const cfg = { url: row.url, apiKey: row.key_encrypted ? decrypt(row.key_encrypted) : '', model: row.model }
