@@ -170,20 +170,24 @@ export async function writeTags(params: {
   if (params.position) await upsertPosition(accountId, messageId, params.position)
   await query(
     `INSERT INTO message_tags (account_id, message_id, question, valeur, probabilites, confiance,
-                               source, modele, valide_par, entrainement_autorise, question_version, cree_le)
-     SELECT $1, $2, q.question, q.valeur, q.probabilites, q.confiance, $3, $4, $5, $6, q.question_version, NOW()
+                               source, modele, valide_par, entrainement_autorise, question_version,
+                               taxonomy_version, cree_le)
+     SELECT $1, $2, q.question, q.valeur, q.probabilites, q.confiance, $3, $4, $5, $6, q.question_version,
+            $12, NOW()
        FROM unnest($7::text[], $8::text[], $9::jsonb[], $10::real[], $11::text[])
               AS q(question, valeur, probabilites, confiance, question_version)
      ON CONFLICT (account_id, message_id, question, source) DO UPDATE SET
        valeur = EXCLUDED.valeur, probabilites = EXCLUDED.probabilites, confiance = EXCLUDED.confiance,
        modele = EXCLUDED.modele, valide_par = EXCLUDED.valide_par,
        entrainement_autorise = EXCLUDED.entrainement_autorise,
-       question_version = EXCLUDED.question_version, cree_le = NOW()`,
+       question_version = EXCLUDED.question_version, taxonomy_version = EXCLUDED.taxonomy_version,
+       cree_le = NOW()`,
     [accountId, messageId, source, params.modele ?? null, params.validePar ?? null,
       trainingAllowed(source),
       tags.map(t => t.question), tags.map(t => t.valeur),
       tags.map(t => (t.probabilites ? JSON.stringify(t.probabilites) : null)),
-      tags.map(t => t.confiance ?? null), tags.map(t => questionVersion(t.question))]
+      tags.map(t => t.confiance ?? null), tags.map(t => questionVersion(t.question)),
+      TAXONOMY_VERSION]
   )
   return tags.length
 }
@@ -333,16 +337,20 @@ export async function exportTags(params: {
 }
 
 /**
- * Les mails de cette boîte que cette source a DÉJÀ tagués, parmi ceux qu'on s'apprête à
- * demander : c'est ce qui fait sauter un mail au lieu de le repayer (lot T3). Un seul aller à la
- * base pour un petit lot, jamais une requête par mail.
+ * Les mails de cette boîte que cette source a DÉJÀ tagués SOUS LA TAXONOMIE COURANTE, parmi ceux
+ * qu'on s'apprête à demander : c'est ce qui fait sauter un mail au lieu de le repayer (lot T3).
+ * Un seul aller à la base pour un petit lot, jamais une requête par mail.
+ *
+ * Le filtre par `taxonomy_version` est ce qui fait rejouer une boîte après un changement de
+ * taxonomie, au lieu de sauter des mails qui n'auraient jamais la question neuve. C'est voulu, et
+ * ça coûte : la relance repasse la boîte entière, sous le même plafond et les mêmes pauses.
  */
 export async function alreadyTagged(accountId: string, source: TagSource, messageIds: string[]): Promise<Set<string>> {
   if (!messageIds.length) return new Set()
   const rows = await query<{ message_id: string }>(
     `SELECT DISTINCT message_id FROM message_tags
-      WHERE account_id = $1 AND source = $2 AND message_id = ANY($3::text[])`,
-    [accountId, source, messageIds]
+      WHERE account_id = $1 AND source = $2 AND taxonomy_version = $3 AND message_id = ANY($4::text[])`,
+    [accountId, source, TAXONOMY_VERSION, messageIds]
   )
   return new Set(rows.map(r => r.message_id))
 }

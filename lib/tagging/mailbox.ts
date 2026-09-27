@@ -12,6 +12,7 @@
 import { query } from '../db'
 import { estimateUsd } from './runner'
 import { QUESTIONS } from './questions'
+import { TAXONOMY_VERSION } from './store'
 import type { BulkState, EngineKind, PauseReason } from './engine'
 
 /** Ce qu'une boîte expose de son tri. Lu par l'écran, jamais écrit tel quel. */
@@ -34,6 +35,11 @@ export interface TaggingStatus {
   estimateUsd: number | null
   /** Le nombre de questions posées à chaque mail : ce qui explique l'ordre de grandeur du coût. */
   questions: number
+  /**
+   * La version du JEU de questions (`TAXONOMY_VERSION`). Affichée parce qu'elle explique une
+   * relance : un tri « terminé » repart de zéro quand cette chaîne a changé.
+   */
+  taxonomyVersion: string
 }
 
 interface StatusRow {
@@ -113,6 +119,7 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
       ? null
       : estimateUsd({ mails: remaining, usdPerBillionInput: Number(r.engine_price), inputTokens, tagged: r.tagged }),
     questions: QUESTIONS.length,
+    taxonomyVersion: TAXONOMY_VERSION,
   }
 }
 
