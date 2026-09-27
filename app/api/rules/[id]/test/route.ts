@@ -5,7 +5,7 @@
  */
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { getRuleById, testRule } from '@/lib/rules'
+import { getRuleById, testRule, tagsForMessages } from '@/lib/rules'
 import { listMessages } from '@/lib/imap'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 
@@ -43,7 +43,7 @@ export async function POST(req: Request, { params }: Ctx) {
     const perPage = Math.min(Number(limit), 200)
     const result = await listMessages(accountConfig, folder, 1, perPage, 'all', session.user!.id!)
 
-    const matched = testRule(result.messages, rule)
+    const matched = testRule(result.messages, rule, await tagsForMessages(rule.accountId, result.messages, [rule]))
 
     return NextResponse.json({
       data: {

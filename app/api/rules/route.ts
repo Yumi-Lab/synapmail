@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
-import { getRulesForUser, createRule } from '@/lib/rules'
+import { getRulesForUser, createRule, validateConditions } from '@/lib/rules'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { query } from '@/lib/db'
 import type { EmailRule } from '@/types/rule'
@@ -37,6 +37,11 @@ async function postHandler(req: Request) {
     if (!body.name?.trim()) return NextResponse.json({ error: 'name required' }, { status: 400 })
     if (!body.conditions?.length) return NextResponse.json({ error: 'At least one condition required' }, { status: 400 })
     if (!body.actions?.length) return NextResponse.json({ error: 'At least one action required' }, { status: 400 })
+
+    // Un motif est compilé ICI : une règle enregistrée ne porte jamais une regex qui ne
+    // compile pas, et l'erreur NOMME la condition fautive.
+    const invalid = validateConditions(body.conditions)
+    if (invalid) return NextResponse.json({ error: invalid }, { status: 422 })
 
     const account = await getAccessibleAccount(body.accountId, userId, ['manageRules'])
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })

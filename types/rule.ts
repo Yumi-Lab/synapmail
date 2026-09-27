@@ -10,6 +10,7 @@ export type RuleField =
   | 'date_received'
   | 'priority'
   | 'header'
+  | 'tag'
 
 export type RuleOperator =
   | 'contains'
@@ -24,6 +25,8 @@ export type RuleOperator =
   | 'less_than'
   | 'before'
   | 'after'
+  | 'matches'
+  | 'not_matches'
 
 export type RuleActionType =
   | 'move'
@@ -42,6 +45,8 @@ export interface RuleCondition {
   operator: RuleOperator
   value: string
   headerName?: string  // for 'header' field
+  /** Pour le champ 'tag' : l'identifiant de la question (lib/tagging/questions.ts). */
+  tagQuestion?: string
 }
 
 export interface RuleAction {

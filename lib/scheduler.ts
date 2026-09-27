@@ -3,7 +3,7 @@ import { sendMail } from './smtp'
 import { appendToSentFolder, getAttachmentContent, listMessages, getMessage } from './imap'
 import { schedulerEvents } from './schedulerEvents'
 import { upsertContactsFromAddresses } from './contacts'
-import { getEnabledRulesForAccount, applyRulesToMessages, logRuleExecution } from './rules'
+import { getEnabledRulesForAccount, applyRulesToMessages, logRuleExecution, tagsForMessages } from './rules'
 import { engineFromRow, mailboxesToSort, runPass } from './tagging/runner'
 import { imapMailSource } from './tagging/imapSource'
 
@@ -216,7 +216,8 @@ export async function processRules(): Promise<void> {
             catch { return null }
           }
 
-          const results = await applyRulesToMessages(accountConfig, folder, messages, rules, fullMessageFetcher)
+          const tagsByUid = await tagsForMessages(acc.id, messages, rules)
+          const results = await applyRulesToMessages(accountConfig, folder, messages, rules, fullMessageFetcher, tagsByUid)
           if (!results.length) continue
 
           // Log per-rule stats

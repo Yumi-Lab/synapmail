@@ -12,6 +12,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { QUESTIONS, questionById, valuesOf } from '@/lib/tagging/questions'
+import { REGEX_PATTERN_MAX } from '@/lib/rules'
 import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
 import { RowMenu, ContextMenuItem, ContextMenuSeparator, MENU_ICON } from '@/components/ui/ContextMenu'
 import type {
@@ -55,20 +57,22 @@ const FIELD_LABELS: Record<RuleField, string> = {
   date_received:   'Date de réception',
   priority:        'Priorité (X-Priority)',
   header:          'En-tête personnalisé',
+  tag:             'Étiquette',
 }
 
 const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
-  from:            ['contains','not_contains','equals','not_equals','starts_with','ends_with'],
-  to:              ['contains','not_contains','equals','not_equals'],
-  cc:              ['contains','not_contains','equals','not_equals'],
-  subject:         ['contains','not_contains','equals','not_equals','starts_with','ends_with'],
-  body:            ['contains','not_contains'],
+  from:            ['contains','not_contains','equals','not_equals','starts_with','ends_with','matches','not_matches'],
+  to:              ['contains','not_contains','equals','not_equals','matches','not_matches'],
+  cc:              ['contains','not_contains','equals','not_equals','matches','not_matches'],
+  subject:         ['contains','not_contains','equals','not_equals','starts_with','ends_with','matches','not_matches'],
+  body:            ['contains','not_contains','matches','not_matches'],
   has_attachments: ['is_true','is_false'],
   list_unsubscribe:['is_true','is_false'],
   size:            ['greater_than','less_than'],
   date_received:   ['before','after'],
   priority:        ['equals','less_than','greater_than'],
   header:          ['contains','not_contains','equals'],
+  tag:             ['equals','not_equals'],
 }
 
 const OPERATOR_LABELS: Record<RuleOperator, string> = {
@@ -84,6 +88,8 @@ const OPERATOR_LABELS: Record<RuleOperator, string> = {
   less_than:    'inférieur à',
   before:       'avant le',
   after:        'après le',
+  matches:      'correspond au motif',
+  not_matches:  'ne correspond pas au motif',
 }
 
 const ACTION_LABELS: Record<RuleActionType, string> = {
@@ -208,14 +214,25 @@ function ConditionRow({
   onRemove: () => void
   canRemove: boolean
 }) {
+  const tTag = useTranslations('tags')
   const operators = FIELD_OPERATORS[cond.field] ?? []
   const isBoolean = BOOLEAN_FIELDS.includes(cond.field)
   const isDate    = cond.field === 'date_received'
   const isPriority = cond.field === 'priority'
+  const isTag     = cond.field === 'tag'
+  const isRegex   = cond.operator === 'matches' || cond.operator === 'not_matches'
+  // Les questions et leurs valeurs viennent de `questions.ts`, les libellés de `locales/` :
+  // rien de la taxonomie n'est recopié ici.
+  const tagQuestion = questionById(cond.tagQuestion ?? '') ?? QUESTIONS[0]
 
   const handleFieldChange = (field: RuleField) => {
     const ops = FIELD_OPERATORS[field] ?? []
-    onChange({ ...cond, field, operator: ops[0], value: '' })
+    if (field === 'tag') {
+      const q = QUESTIONS[0]
+      onChange({ ...cond, field, operator: ops[0], tagQuestion: q.id, value: valuesOf(q)[0] })
+      return
+    }
+    onChange({ ...cond, field, operator: ops[0], value: '', tagQuestion: undefined })
   }
 
   return (
@@ -240,8 +257,33 @@ function ConditionRow({
         ))}
       </select>
 
+      {isTag && (
+        <select
+          value={tagQuestion.id}
+          onChange={e => {
+            const q = questionById(e.target.value) ?? QUESTIONS[0]
+            onChange({ ...cond, tagQuestion: q.id, value: valuesOf(q)[0] })
+          }}
+          className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
+        >
+          {QUESTIONS.map(q => (
+            <option key={q.id} value={q.id}>{tTag(`q.${q.id}`)}</option>
+          ))}
+        </select>
+      )}
+
       {!isBoolean && (
-        isDate ? (
+        isTag ? (
+          <select
+            value={cond.value}
+            onChange={e => onChange({ ...cond, value: e.target.value })}
+            className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
+          >
+            {valuesOf(tagQuestion).map(v => (
+              <option key={v} value={v}>{tTag(`v.${v}`)}</option>
+            ))}
+          </select>
+        ) : isDate ? (
           <Input
             type="date"
             value={cond.value}
@@ -264,8 +306,9 @@ function ConditionRow({
           <Input
             value={cond.value}
             onChange={e => onChange({ ...cond, value: e.target.value })}
-            placeholder={cond.field === 'size' ? 'Ko (ex: 5120 = 5 Mo)' : 'Valeur…'}
-            className="h-8 text-sm flex-1 min-w-[120px]"
+            maxLength={isRegex ? REGEX_PATTERN_MAX : undefined}
+            placeholder={isRegex ? 'Motif (ex : ^facture n°\\d+)' : cond.field === 'size' ? 'Ko (ex: 5120 = 5 Mo)' : 'Valeur…'}
+            className={cn('h-8 text-sm flex-1 min-w-[120px]', isRegex && 'font-mono')}
           />
         )
       )}
