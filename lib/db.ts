@@ -635,9 +635,21 @@ export async function initDb(): Promise<void> {
       paused_reason VARCHAR(20) CHECK (paused_reason IS NULL OR paused_reason IN (${sqlList(PAUSE_REASONS)})),
       paused_detail TEXT,
       locked_until TIMESTAMPTZ,
+      sample_size INTEGER,
+      sample_seed BIGINT,
+      sample_cursor JSONB,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)
+
+  // Le mode « échantillon » (lot T10b) : `sample_size` NULL = tri complet, sinon le nombre de
+  // mails tirés au hasard avant l'arrêt, `sample_seed` la graine qui rejoue LE MÊME tirage, et
+  // `sample_cursor` le tirage LUI-MÊME (la liste des mails tirés) plus où on en est dedans —
+  // enregistré parce qu'un tirage se fait sur l'état de la boîte à un instant donné : le rejouer
+  // à chaque passage donnerait une liste différente dès qu'un mail arrive.
+  await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_size INTEGER`)
+  await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_seed BIGINT`)
+  await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_cursor JSONB`)
 
   // Les CHECK ci-dessus ne sont posées qu'à la CRÉATION de la table : sur une base qui existe
   // déjà, élargir une liste dans le code ne changerait rien. On les repose donc à chaque
