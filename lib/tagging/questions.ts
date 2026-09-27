@@ -157,33 +157,46 @@ export const QUESTIONS: TagQuestion[] = [
   },
   {
     id: 'action_attendue', group: 'general', type: 'choice', listBadge: true,
-    // Carte TypeSafe, support client : « commitments, follow-up actions ». `reponse_requise` dit
-    // SI quelqu'un doit agir ; celle-ci dit QUOI faire — deux questions atomiques, pas une.
+    // Liste VALIDÉE par Nicolas pour son activité (28/09) : elle remplace celle de la décision 15.
+    // `reponse_requise` dit SI quelqu'un doit agir ; celle-ci dit QUOI faire — deux questions
+    // atomiques, pas une. `relancer` est le seul cas où l'action part de NOUS vers un tiers.
     instructions: "Quelle action ce mail attend-il de l'entreprise ?",
     options: [
       {
         value: 'repondre',
         definition: 'écrire une réponse : une question est posée, un avis ou une information est demandé',
-        notFor: "transmettre une pièce jointe ou un document nommément demandé : c'est `fournir_document`",
+        notFor: "relancer un tiers qui nous doit quelque chose : c'est `relancer`",
         examples: ['« quel est le délai de livraison ? »'],
       },
-      { value: 'payer', definition: 'régler une facture, un acompte ou un montant dû' },
-      { value: 'signer_valider', definition: 'signer, approuver ou valider un document, un devis ou une commande' },
+      {
+        value: 'payer',
+        definition: 'régler une facture, un acompte ou un montant que nous devons',
+        notFor: "rendre à un client une somme déjà encaissée : c'est `rembourser`",
+      },
+      { value: 'signer', definition: 'signer, approuver ou valider un document, un devis ou une commande' },
       { value: 'expedier', definition: 'envoyer ou livrer un produit, préparer ou remettre un colis' },
       {
-        value: 'fournir_document',
-        definition: 'transmettre une pièce, un justificatif ou une information nommément demandée',
-        notFor: "écrire une réponse en texte, sans pièce à joindre : c'est `repondre`",
-        examples: ['« merci de nous envoyer votre Kbis »'],
+        value: 'rembourser',
+        definition: "rendre à un client une somme qu'il a déjà payée, en tout ou en partie",
+        notFor: "régler une facture que nous devons à un tiers : c'est `payer`",
       },
-      { value: 'rappeler', definition: 'téléphoner à l\'expéditeur ou fixer un rendez-vous' },
       {
-        value: 'rien',
-        definition: "aucune action : lecture seule, notification, publicité, message qui n'attend rien",
-        notFor: "un mail qui attend une action que la liste ne nomme pas : c'est `autre`",
+        value: 'relancer',
+        definition: "c'est à NOUS de relancer un tiers : une réponse, un paiement ou une pièce se fait attendre de sa part",
+        notFor: "répondre à une question qui nous est posée : c'est `repondre`",
+        examples: ['un devis envoyé la semaine dernière et resté sans réponse'],
+      },
+      {
+        value: 'archiver',
+        definition: 'rien à faire, mais le mail est à garder pour trace : notification, confirmation, justificatif',
+        notFor: "un mail qui n'attend rien ET qui ne sert à rien de garder : c'est `aucune`",
         examples: ['« votre colis a été livré »'],
       },
-      { value: 'autre', definition: "une action attendue qu'aucune des valeurs précédentes ne décrit" },
+      {
+        value: 'aucune',
+        definition: "aucune action et rien à garder : publicité, envoi de masse, message qui n'attend rien",
+        notFor: "un message sans action mais utile comme trace : c'est `archiver`",
+      },
     ],
   },
   {
@@ -204,6 +217,62 @@ export const QUESTIONS: TagQuestion[] = [
       { value: 'en', definition: 'anglais' },
       { value: 'zh', definition: 'chinois' },
       { value: 'autre', definition: 'une autre langue' },
+    ],
+  },
+  {
+    id: 'relation', group: 'general', type: 'choice', listBadge: true,
+    // La question qui MANQUAIT : les dossiers humains sont rangés par EXPÉDITEUR, et l'accord
+    // entre `categorie` et ces dossiers ne montait qu'à 45 % sur 161 635 mails. Elle décrit QUI
+    // écrit, là où `categorie` décrit DE QUOI le mail parle.
+    instructions: "Quelle est la relation de l'expéditeur avec l'entreprise ?",
+    options: [
+      {
+        value: 'client',
+        definition: 'achète ou a acheté chez nous',
+        notFor: "un inconnu qui nous démarche pour nous vendre quelque chose : c'est `inconnu`",
+      },
+      {
+        value: 'fournisseur',
+        definition: 'nous vend des produits ou des pièces : usine, grossiste',
+        notFor: "un service rendu à l'entreprise plutôt qu'un bien livré : c'est `prestataire`",
+      },
+      { value: 'transporteur', definition: 'acheminement de colis ou de fret : Colissimo, DHL, UPS, maritime' },
+      {
+        value: 'plateforme',
+        definition: 'marketplace ou outil en ligne qui nous notifie : Amazon, TikTok Shop, Shopify, PayPal',
+        notFor: "un humain qui écrit depuis cette plateforme au nom d'un acheteur : c'est `client`",
+      },
+      { value: 'administration', definition: 'organisme public : impôts, URSSAF, douane, tribunal, mairie' },
+      { value: 'banque', definition: 'banque, établissement de paiement ou de financement' },
+      {
+        value: 'prestataire',
+        definition: "service rendu à l'entreprise : comptable, avocat, agence, hébergeur, SaaS",
+        notFor: "un bien matériel livré plutôt qu'un service : c'est `fournisseur`",
+      },
+      { value: 'interne', definition: `collaborateur ou société du groupe (${GROUP_DOMAINS})` },
+      { value: 'inconnu', definition: "aucune relation connue, ou la relation ne se lit pas dans le mail" },
+    ],
+  },
+  {
+    id: 'pays', group: 'general', type: 'choice',
+    // Consigne EXPLICITE : ne rien déduire de la seule langue du mail. Un fournisseur chinois
+    // écrit en anglais, un client belge écrit en français — `langue` répond déjà à la langue.
+    instructions: "De quel pays est l'expéditeur ou la commande ?",
+    options: [
+      {
+        value: 'france', definition: 'France',
+        notFor: "un pays déduit de la SEULE langue du mail : s'appuyer sur l'adresse `expediteur.adresse`, le domaine ou le contenu, sinon répondre `inconnu`",
+      },
+      { value: 'belgique', definition: 'Belgique' },
+      { value: 'suisse', definition: 'Suisse' },
+      { value: 'allemagne', definition: 'Allemagne' },
+      { value: 'espagne', definition: 'Espagne' },
+      { value: 'italie', definition: 'Italie' },
+      { value: 'royaume_uni', definition: 'Royaume-Uni' },
+      { value: 'chine', definition: 'Chine continentale' },
+      { value: 'hong_kong', definition: 'Hong Kong' },
+      { value: 'autre', definition: 'un autre pays, nommé ou lisible dans le mail' },
+      { value: 'inconnu', definition: "le pays ne se lit ni dans l'adresse, ni dans le domaine, ni dans le contenu" },
     ],
   },
   {
@@ -387,6 +456,28 @@ export const QUESTIONS: TagQuestion[] = [
     instructions: 'Ce mail signale-t-il une rupture de stock, un retard de production ou d’expédition, ou une hausse de prix fournisseur ?',
   },
   {
+    id: 'canal_vente', group: 'prospection', type: 'choice',
+    instructions: 'Par quel canal de vente passe la commande ou le client dont parle ce mail ?',
+    options: [
+      { value: 'amazon', definition: 'Amazon (Seller Central, Vendor Central, un acheteur Amazon)' },
+      { value: 'tiktok_shop', definition: 'TikTok Shop' },
+      { value: 'shopify', definition: 'une boutique Shopify' },
+      { value: 'aliexpress', definition: 'AliExpress' },
+      { value: 'cdiscount', definition: 'Cdiscount' },
+      {
+        value: 'direct',
+        definition: 'vente directe : mail, téléphone, boutique, sans marketplace',
+        notFor: "une commande passée sur une marketplace, même si le client écrit ensuite par mail : c'est le canal de la COMMANDE qui compte",
+      },
+      { value: 'aucun', definition: 'le mail ne concerne aucune vente ni aucun client' },
+    ],
+  },
+  {
+    id: 'retour_positif', group: 'prospection', type: 'noul',
+    // Pourquoi : récupérer les avis et témoignages, qui se perdent aujourd'hui dans le flot.
+    instructions: "L'expéditeur remercie-t-il ou félicite-t-il l'entreprise pour un produit ou un service ?",
+  },
+  {
     id: 'mention_concurrent', group: 'prospection', type: 'noul',
     // Carte, Demand forecasting (« competitive pressure »).
     instructions: 'Ce mail cite-t-il un concurrent ou une offre concurrente, en comparaison ou en alternative ?',
@@ -469,6 +560,51 @@ export const QUESTIONS: TagQuestion[] = [
       { value: 'relance', definition: 'une relance de paiement ou de document en retard' },
       { value: 'avis_administratif', definition: "un avis, une décision ou un courrier d'une administration" },
       { value: 'aucun', definition: 'aucun de ces documents' },
+    ],
+  },
+  {
+    id: 'sens_flux', group: 'finance', type: 'choice', listBadge: true,
+    instructions: "Ce mail concerne-t-il de l'argent à payer ou à encaisser ?",
+    options: [
+      { value: 'a_payer', definition: "une somme que l'entreprise doit verser" },
+      { value: 'a_encaisser', definition: "une somme que l'entreprise doit recevoir" },
+      {
+        value: 'information',
+        definition: "un montant est cité, mais il n'entre ni ne sort de chez nous",
+        notFor: "un montant que nous devons verser ou recevoir : c'est `a_payer` ou `a_encaisser`",
+        examples: ['un tarif annoncé dans une publicité', "le chiffre d'affaires d'un tiers"],
+      },
+      { value: 'aucun', definition: "aucun montant, aucun flux d'argent" },
+    ],
+  },
+  {
+    id: 'organisme', group: 'finance', type: 'choice',
+    instructions: "Quel organisme officiel ou financier est à l'origine du mail ?",
+    options: [
+      { value: 'impots', definition: 'administration fiscale : impôts, TVA, 税务局' },
+      { value: 'urssaf', definition: 'URSSAF ou organisme de cotisations sociales' },
+      { value: 'douane', definition: 'douane ou service des droits à l\'importation' },
+      { value: 'banque', definition: 'banque ou établissement de paiement' },
+      { value: 'assurance', definition: 'assureur ou mutuelle' },
+      { value: 'tribunal_justice', definition: 'tribunal, huissier, greffe ou autorité judiciaire' },
+      { value: 'aucun', definition: "le mail ne vient d'aucun organisme officiel ni financier" },
+    ],
+  },
+  {
+    id: 'transporteur', group: 'finance', type: 'choice',
+    // Rangée en finance avec les autres questions de LOGISTIQUE administrative : elle nomme un
+    // tiers du dossier, comme `organisme`. `probleme_livraison` dit ce qui a raté, pas qui livre.
+    instructions: 'Quel transporteur est concerné ?',
+    options: [
+      { value: 'colissimo', definition: 'Colissimo ou La Poste' },
+      { value: 'chronopost', definition: 'Chronopost' },
+      { value: 'dhl', definition: 'DHL' },
+      { value: 'ups', definition: 'UPS' },
+      { value: 'gls', definition: 'GLS' },
+      { value: 'fedex', definition: 'FedEx' },
+      { value: 'maritime_fret', definition: 'fret maritime ou aérien, transitaire, conteneur' },
+      { value: 'autre', definition: 'un transporteur que la liste ne nomme pas' },
+      { value: 'aucun', definition: 'aucun transporteur ne concerne ce mail' },
     ],
   },
   {

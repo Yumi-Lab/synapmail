@@ -579,6 +579,7 @@ export async function initDb(): Promise<void> {
       valide_par UUID REFERENCES users(id) ON DELETE SET NULL,
       entrainement_autorise BOOLEAN NOT NULL DEFAULT false,
       question_version VARCHAR(12) NOT NULL DEFAULT '',
+      taxonomy_version VARCHAR(12) NOT NULL DEFAULT '',
       PRIMARY KEY (account_id, message_id, question, source),
       CONSTRAINT message_tags_training_sources
         CHECK (NOT entrainement_autorise OR source IN (${sqlList(TRAINING_SOURCES)}))
@@ -590,6 +591,12 @@ export async function initDb(): Promise<void> {
   // chaîne vide : elles ont bien été écrites, mais sous une définition qu'on ne peut plus
   // nommer — les dire « inconnues » vaut mieux que leur prêter la version d'aujourd'hui.
   await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS question_version VARCHAR(12) NOT NULL DEFAULT ''`)
+  // Le JEU de questions sous lequel la ligne a été écrite (`TAXONOMY_VERSION`). Le trieur ne saute
+  // un mail que s'il porte la version COURANTE : une question AJOUTÉE ne change la
+  // `question_version` d'aucune autre, donc sans cette colonne le mail serait sauté et ne
+  // recevrait jamais la question neuve. Les lignes antérieures gardent la chaîne vide, donc une
+  // boîte déjà triée SE REJOUE une fois après cette migration — voulu, et facturé au plafond.
+  await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS taxonomy_version VARCHAR(12) NOT NULL DEFAULT ''`)
 
   // La dernière position CONNUE d'un mail tagué, pour que le filtre par étiquette montre des
   // mails absents de la page chargée. `messages_cache` ne suffit pas : il ne garde qu'une

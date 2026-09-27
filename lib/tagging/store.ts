@@ -55,6 +55,18 @@ const VERSION_CHARS = 12
 export const questionVersion = (question: string): string =>
   createHash('sha256').update(JSON.stringify(engineQuestionsFor([question]))).digest('hex').slice(0, VERSION_CHARS)
 
+/**
+ * La version de la TAXONOMIE ENTIÈRE : le même hachage, sur le corps de TOUTES les questions
+ * posées. `questionVersion` dit à quelle définition UNE étiquette répond ; celle-ci dit avec quel
+ * JEU de questions un mail a été traité — c'est ce que le trieur compare pour décider de rejouer
+ * une boîte (une question AJOUTÉE laisse les autres inchangées, donc aucune `questionVersion` ne
+ * bouge, et sans cette version globale le mail serait sauté sans jamais recevoir la nouvelle).
+ *
+ * Constante et non fonction : la taxonomie ne change pas en cours de processus.
+ */
+export const TAXONOMY_VERSION: string =
+  createHash('sha256').update(JSON.stringify(engineQuestionsFor())).digest('hex').slice(0, VERSION_CHARS)
+
 export interface TagToWrite {
   question: string
   valeur: string
