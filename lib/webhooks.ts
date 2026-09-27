@@ -478,3 +478,36 @@ export async function purgeOldDeliveries(): Promise<number> {
 
 /** Le chiffré d'un secret, tel que la table le range. Une seule porte vers `lib/encrypt.ts`. */
 export const sealSecret = (secret: string): string => encrypt(secret)
+
+/**
+ * L'envoi qu'une règle demande, inscrit À FAIRE. Une seule requête décide de tout ce qui doit
+ * l'être : le webhook existe, il est ACTIF, il appartient à la boîte de la règle (donc une règle
+ * ne peut pas faire appeler le webhook d'une autre boîte, même si un écrit avait laissé passer
+ * l'incohérence) — et elle rend au passage l'adresse de la boîte que la charge utile nomme.
+ *
+ * Rend `null` sans rien inscrire quand le webhook ne tient pas cette condition, ou quand ce mail
+ * est DÉJÀ parti par cette règle vers ce webhook (c'est l'unicité de `webhook_deliveries` qui le
+ * dit — décision 7).
+ */
+export async function queueRuleDelivery(args: {
+  webhookId: string
+  rule: { id: string; name: string; accountId: string }
+  message: WebhookMessage
+  tags?: Array<{ question: string; valeur: string }>
+}): Promise<string | null> {
+  const [hook] = await query<{ id: string; account_id: string; email: string }>(
+    `SELECT w.id, w.account_id, a.email
+       FROM webhooks w JOIN email_accounts a ON a.id = w.account_id
+      WHERE w.id = $1 AND w.account_id = $2 AND w.enabled = true`,
+    [args.webhookId, args.rule.accountId]
+  )
+  if (!hook) return null
+  return queueWebhookDelivery({
+    webhook: { id: hook.id, accountId: hook.account_id },
+    rule: { id: args.rule.id, name: args.rule.name },
+    account: { id: hook.account_id, email: hook.email },
+    event: EVENT_RULE_MATCHED,
+    message: args.message,
+    tags: args.tags,
+  })
+}

@@ -689,6 +689,21 @@ export async function initDb(): Promise<void> {
   await query(`CREATE INDEX IF NOT EXISTS webhook_deliveries_due_idx ON webhook_deliveries (next_attempt_at) WHERE status = 'pending'`)
   await query(`CREATE INDEX IF NOT EXISTS webhook_deliveries_hook_idx ON webhook_deliveries (webhook_id, created_at DESC)`)
 
+  // Jusqu'où le balayage des règles-webhook est allé dans un dossier. À la PREMIÈRE activation
+  // la ligne est écrite au dernier UID connu : l'historique n'est jamais rejoué (décision 8).
+  // `uid_validity` garde la même fonction que dans le curseur du trieur — des UID qui ne
+  // désignent plus les mêmes mails rendent le curseur muet, donc il repart du dernier UID.
+  await query(`
+    CREATE TABLE IF NOT EXISTS webhook_cursors (
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      folder TEXT NOT NULL,
+      last_uid BIGINT NOT NULL DEFAULT 0,
+      uid_validity TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (account_id, folder)
+    )
+  `)
+
   // Identité de l'instance — UNE seule ligne, forcée par `id BOOLEAN PRIMARY KEY DEFAULT TRUE`
   // contraint à TRUE : une deuxième insertion viole la clé primaire. Tout à NULL = apparence
   // d'origine, donc aucune instance ne change d'aspect à la mise à jour.

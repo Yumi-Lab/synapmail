@@ -38,7 +38,7 @@ function normalizeSubjectForThread(subject: string): string {
 // Recursively check bodyStructure for attachment parts.
 // In imapflow: disposition is a plain string ('attachment'|'inline'),
 // dispositionParameters holds filename, parameters holds Content-Type params (name).
-function detectAttachments(structure: Record<string, unknown> | null | undefined): boolean {
+export function detectAttachments(structure: Record<string, unknown> | null | undefined): boolean {
   if (!structure) return false
   const disp = String(structure.disposition ?? '').toLowerCase()
   const params = structure.parameters as Record<string, string> | undefined

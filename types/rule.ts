@@ -36,6 +36,7 @@ export type RuleActionType =
   | 'mark_unstarred'
   | 'delete'
   | 'forward'
+  | 'webhook'
 
 export type ConditionLogic = 'all' | 'any'
 

@@ -100,9 +100,12 @@ const ACTION_LABELS: Record<RuleActionType, string> = {
   mark_unstarred:"Retirer l'étoile",
   delete:        'Supprimer',
   forward:       'Transférer à',
+  webhook:       'Appeler le webhook',
 }
 
-const ACTIONS_NEEDING_VALUE: RuleActionType[] = ['move', 'forward']
+// `webhook` prend l'identifiant du webhook. Le sélecteur qui le CHOISIT vient avec l'écran des
+// webhooks (lot W5) ; en attendant, le champ générique le reçoit tel quel.
+const ACTIONS_NEEDING_VALUE: RuleActionType[] = ['move', 'forward', 'webhook']
 const BOOLEAN_FIELDS: RuleField[] = ['has_attachments', 'list_unsubscribe']
 
 // ---------------------------------------------------------------------------
@@ -362,7 +365,8 @@ function ActionRow({
         <Input
           value={action.value ?? ''}
           onChange={e => onChange({ ...action, value: e.target.value })}
-          placeholder={action.type === 'forward' ? 'email@exemple.com' : 'Nom du dossier…'}
+          placeholder={action.type === 'forward' ? 'email@exemple.com'
+            : action.type === 'webhook' ? 'Identifiant du webhook' : 'Nom du dossier…'}
           className="h-8 text-sm flex-1 min-w-0"
         />
       ) : null}
