@@ -10,7 +10,7 @@
  */
 
 import { query } from '../db'
-import { estimateUsd } from './runner'
+import { estimateUsd, SAMPLE_SEED_DEFAULT, SAMPLE_SIZE_DEFAULT } from './runner'
 import { QUESTIONS } from './questions'
 import { TAXONOMY_VERSION } from './store'
 import type { BulkState, EngineKind, PauseReason } from './engine'
@@ -40,6 +40,16 @@ export interface TaggingStatus {
    * relance : un tri « terminé » repart de zéro quand cette chaîne a changé.
    */
   taxonomyVersion: string
+  /**
+   * L'échantillon en cours (lot T10b), ou `null` quand le tri porte sur la boîte entière : la
+   * taille demandée, la graine du tirage, et combien de mails tirés restent à faire. C'est ce
+   * qui permet à l'écran de dire « échantillon de 1 000 » au lieu de « tri en cours ».
+   */
+  sample: { size: number; seed: number; drawn: number; done: number } | null
+  /** Le coût estimé d'un échantillon de la taille par défaut, pour l'annoncer AVANT de le lancer. */
+  sampleEstimateUsd: number | null
+  /** La taille et la graine proposées par défaut à l'écran, nommées en UN endroit. */
+  sampleDefaults: { size: number; seed: number }
 }
 
 interface StatusRow {
@@ -61,6 +71,10 @@ interface StatusRow {
   skipped: number
   errors: number
   total: number
+  sample_size: number | null
+  sample_seed: string | null
+  sample_drawn: number | null
+  sample_done: number | null
 }
 
 /**
@@ -81,6 +95,9 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
   const rows = await query<StatusRow>(
     `SELECT m.account_id, m.engine_id, m.budget_usd, m.spent_usd, m.input_tokens, m.live,
             m.bulk_state, m.paused_reason, m.paused_detail, m.tagged, m.skipped, m.errors, m.total,
+            m.sample_size, m.sample_seed,
+            jsonb_array_length(COALESCE(m.sample_cursor -> 'picks', '[]'::jsonb)) AS sample_drawn,
+            (m.sample_cursor -> 'done')::int AS sample_done,
             e.name AS engine_name, e.kind AS engine_kind, e.model AS engine_model,
             e.usd_per_billion_input AS engine_price,
             (e.key_encrypted IS NOT NULL AND e.key_encrypted <> '') AS engine_has_key
@@ -120,6 +137,18 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
       : estimateUsd({ mails: remaining, usdPerBillionInput: Number(r.engine_price), inputTokens, tagged: r.tagged }),
     questions: QUESTIONS.length,
     taxonomyVersion: TAXONOMY_VERSION,
+    sample: r.sample_size === null ? null : {
+      size: r.sample_size,
+      seed: r.sample_seed === null ? SAMPLE_SEED_DEFAULT : Number(r.sample_seed),
+      drawn: r.sample_drawn ?? 0,
+      done: r.sample_done ?? 0,
+    },
+    // L'estimation d'un échantillon se lit AVANT de le lancer : elle porte donc sur la taille par
+    // défaut, pas sur le reste d'un tirage en cours — c'est le prix du bouton, pas de l'état.
+    sampleEstimateUsd: r.engine_price === null || r.engine_price === undefined
+      ? null
+      : estimateUsd({ mails: SAMPLE_SIZE_DEFAULT, usdPerBillionInput: Number(r.engine_price), inputTokens, tagged: r.tagged }),
+    sampleDefaults: { size: SAMPLE_SIZE_DEFAULT, seed: SAMPLE_SEED_DEFAULT },
   }
 }
 

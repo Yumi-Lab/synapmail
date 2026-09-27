@@ -16,7 +16,7 @@
 import { createHash } from 'crypto'
 import { query } from '../db'
 import { HUMAN_SOURCE, isEngineKind, type TagSource } from './engine'
-import { engineQuestionsFor, isValidTag } from './questions'
+import { engineQuestionsFor, isValidTag, posedQuestions } from './questions'
 
 /**
  * Un mail sans `Message-ID` (ils existent) a tout de même besoin d'un identifiant STABLE, sinon
@@ -320,6 +320,42 @@ export async function exportTags(params: {
     rows: rows.map(r => ({ ...toStored(r), id: Number(r.id), messageId: r.message_id })),
     nextAfter: rows.length === limit ? Number(rows[rows.length - 1].id) : null,
   }
+}
+
+/**
+ * La RÉPARTITION des valeurs, par question, sur les mails d'une boîte : ce que l'écran de tri
+ * montre après un échantillon, pour décider de lancer le reste ou de revoir la taxonomie.
+ *
+ * Elle porte sur l'étiquette EFFECTIVE (même règle que la liste et le volet de lecture, par
+ * `EFFECTIVE_RANK`) : une valeur corrigée à la main compte pour la correction, pas pour ce que le
+ * moteur avait dit — sinon la répartition décrirait le moteur au lieu de décrire la boîte.
+ *
+ * Restreinte à la taxonomie COURANTE : mélanger deux jeux de questions dans un même tableau
+ * donnerait des totaux par question qui ne s'additionnent pas.
+ */
+export async function tagDistribution(accountId: string): Promise<Array<{ question: string; values: Array<{ valeur: string; count: number }> }>> {
+  const rows = await query<{ question: string; valeur: string; n: string }>(
+    `SELECT question, valeur, COUNT(*) AS n FROM (
+       SELECT question, valeur, ${EFFECTIVE_RANK} AS rang
+         FROM message_tags WHERE account_id = $1 AND taxonomy_version = $2
+     ) r WHERE rang = 1
+      GROUP BY question, valeur`,
+    [accountId, TAXONOMY_VERSION]
+  )
+  const byQuestion = new Map<string, Array<{ valeur: string; count: number }>>()
+  for (const r of rows) {
+    const list = byQuestion.get(r.question) ?? []
+    list.push({ valeur: r.valeur, count: Number(r.n) })
+    byQuestion.set(r.question, list)
+  }
+  // L'ordre des questions est celui de `questions.ts`, et celui des valeurs le plus fréquent
+  // d'abord : c'est ce qu'on lit dans une répartition, pas un ordre alphabétique.
+  return posedQuestions()
+    .filter(q => byQuestion.has(q.id))
+    .map(q => ({
+      question: q.id,
+      values: (byQuestion.get(q.id) ?? []).sort((a, b) => b.count - a.count || (a.valeur < b.valeur ? -1 : 1)),
+    }))
 }
 
 /**

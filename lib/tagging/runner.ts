@@ -20,6 +20,7 @@
  * Le verrou (`locked_until`) garantit qu'un seul passage travaille une boîte : deux tics du
  * planificateur qui se chevauchent ne peuvent pas payer deux fois le même mail.
  */
+import { createHash } from 'crypto'
 import type { ImapAccountRow } from '../accounts'
 import { query } from '../db'
 import { decrypt } from '../encrypt'
@@ -94,6 +95,74 @@ export interface BulkCursor {
 /** Où en est le tri au fil de l'eau : le dernier UID vu dans chaque dossier suivi. */
 export type LiveCursor = Record<string, { lastUid: number; uidValidity: string }>
 
+/** La taille d'un échantillon quand l'écran n'en propose pas d'autre (décision T10b). */
+export const SAMPLE_SIZE_DEFAULT = 1000
+
+/** La graine par défaut du tirage : fixe, pour que deux boîtes se comparent sur le même hasard. */
+export const SAMPLE_SEED_DEFAULT = 20260926
+
+/**
+ * Le tirage d'un échantillon, et où on en est dedans. Le tirage est ENREGISTRÉ plutôt que
+ * recalculé à chaque passage : il porte sur l'état de la boîte à l'instant du tirage, donc le
+ * refaire donnerait une liste différente dès qu'un mail arrive — et l'échantillon ne serait plus
+ * celui qu'on a annoncé.
+ */
+export interface SampleCursor {
+  seed: number
+  size: number
+  /** Les mails tirés, dans l'ordre du tirage : `folder` + `uid`, rien de plus. */
+  picks: Array<{ folder: string; uid: number }>
+  /** Combien de ces mails ont déjà été traités : le tirage reprend exactement là. */
+  done: number
+}
+
+/**
+ * Le rang de tirage d'un mail : les 13 premiers hex du SHA-256 de `graine|dossier|uid`, lus comme
+ * un nombre. C'est un hachage et non un générateur pseudo-aléatoire parce qu'il rend le tirage
+ * INDÉPENDANT de l'ordre d'énumération : trier les mails par ce rang et garder les N premiers
+ * donne le même échantillon quel que soit l'ordre dans lequel les dossiers ont été parcourus, et
+ * le même à graine égale — c'est exactement ce que « rejouer le même tirage » demande.
+ *
+ * 13 hex = 52 bits, le plus grand entier qu'un `number` porte exactement : au-delà, deux rangs
+ * distincts se confondraient à l'arrondi et le tri deviendrait arbitraire.
+ */
+const SAMPLE_RANK_HEX = 13
+
+export const sampleRank = (seed: number, folder: string, uid: number): number =>
+  parseInt(createHash('sha256').update(`${seed}|${folder}|${uid}`).digest('hex').slice(0, SAMPLE_RANK_HEX), 16)
+
+/**
+ * Tire `size` mails AU HASARD parmi tous ceux que la source annonce, tous dossiers confondus.
+ *
+ * L'énumération passe par `fetch` — la seule façon qu'a `MailSource` de nommer les UID d'un
+ * dossier (ils ne sont pas contigus : un mail supprimé laisse un trou, donc `1..total` ne marche
+ * pas). Elle ne lit que des en-têtes déjà téléchargés par le lot, n'appelle AUCUN moteur et ne
+ * coûte donc rien en crédit.
+ *
+ * ponytail: l'énumération est intégrale (elle liste la boîte entière avant de tirer). Sur
+ * 161 635 mails, c'est ~8 000 `fetch` de 20 en-têtes, quelques minutes de IMAP et rien de plus —
+ * hors de toute comparaison avec le tri lui-même. Le jour où ce plafond gêne, la source gagnera
+ * une méthode qui rend les UID seuls (`SEARCH ALL`), sans rien changer ici.
+ */
+export async function drawSample(
+  source: MailSource, params: { seed: number; size: number }
+): Promise<SampleCursor['picks']> {
+  const all: Array<{ folder: string; uid: number; rank: number }> = []
+  for (const f of await source.folders()) {
+    let after = 0
+    for (;;) {
+      const batch = await source.fetch(f.path, after, BATCH_SIZE)
+      if (!batch.length) break
+      for (const m of batch) all.push({ folder: f.path, uid: m.uid, rank: sampleRank(params.seed, f.path, m.uid) })
+      after = batch[batch.length - 1].uid
+    }
+  }
+  // Le rang départage seul ; `folder`/`uid` ne sont là que pour qu'une égalité de rang (elle est
+  // improbable, pas impossible) reste un ordre STABLE, donc reproductible.
+  all.sort((a, b) => a.rank - b.rank || (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : a.uid - b.uid))
+  return all.slice(0, Math.max(params.size, 0)).map(m => ({ folder: m.folder, uid: m.uid }))
+}
+
 /** La ligne `mailbox_tagging` d'une boîte, telle que le trieur la lit. */
 interface TaggingRow {
   account_id: string
@@ -110,6 +179,9 @@ interface TaggingRow {
   errors: number
   total: number
   paused_reason: PauseReason | null
+  sample_size: number | null
+  sample_seed: string | null
+  sample_cursor: SampleCursor | null
 }
 
 /** Ce qu'un passage a fait. Rendu au planificateur, et lisible par le banc. */
@@ -193,6 +265,7 @@ export async function startBulk(accountId: string, opts: { restart?: boolean } =
   await query(
     `UPDATE mailbox_tagging
         SET bulk_state = 'running', ${PAUSE_IF_NO_ENGINE}, locked_until = NULL,
+            sample_size = NULL, sample_seed = NULL, sample_cursor = NULL,
             bulk_cursor = CASE WHEN $2 THEN NULL ELSE bulk_cursor END,
             tagged = CASE WHEN $2 THEN 0 ELSE tagged END,
             skipped = CASE WHEN $2 THEN 0 ELSE skipped END,
@@ -200,6 +273,28 @@ export async function startBulk(accountId: string, opts: { restart?: boolean } =
             updated_at = NOW()
       WHERE account_id = $1`,
     [accountId, opts.restart === true]
+  )
+}
+
+/**
+ * Démarre un ÉCHANTILLON : le même tri en masse, mais borné à `size` mails tirés au hasard, puis
+ * arrêt. C'est un `bulk_state = 'running'` comme un autre — le planificateur, le verrou, le
+ * plafond et les pauses sont exactement ceux du tri complet, il n'y a pas un second trieur à
+ * tenir d'accord avec le premier. Seule la LISTE des mails change.
+ *
+ * Le tirage n'est pas fait ici : il demande la boîte entière, donc de l'IMAP, ce qu'une requête
+ * HTTP ne doit pas porter. C'est `advanceSample` qui le fait à son premier passage, et l'écrit.
+ */
+export async function startSample(
+  accountId: string, opts: { size?: number; seed?: number } = {}
+): Promise<void> {
+  await query(
+    `UPDATE mailbox_tagging
+        SET bulk_state = 'running', ${PAUSE_IF_NO_ENGINE}, locked_until = NULL,
+            sample_size = $2, sample_seed = $3, sample_cursor = NULL, bulk_cursor = NULL,
+            tagged = 0, skipped = 0, errors = 0, updated_at = NOW()
+      WHERE account_id = $1`,
+    [accountId, Math.max(Math.trunc(opts.size ?? SAMPLE_SIZE_DEFAULT), 1), Math.trunc(opts.seed ?? SAMPLE_SEED_DEFAULT)]
   )
 }
 
@@ -354,7 +449,11 @@ export async function runPass(params: {
 
     if (row.bulk_state === 'running') {
       worked = true
-      const res = await advanceBulk({ row, source, engine, deadline, spent, budget: row.budget_usd })
+      // Un échantillon est un tri en masse BORNÉ : même état, même verrou, même plafond, mêmes
+      // pauses — seule la liste des mails diffère, donc un seul `if` les sépare.
+      const res = row.sample_size === null
+        ? await advanceBulk({ row, source, engine, deadline, spent, budget: row.budget_usd })
+        : await advanceSample({ row, source, engine, deadline, spent, budget: row.budget_usd })
       acc.tagged += res.tagged; acc.skipped += res.skipped; acc.errors += res.errors; acc.calls += res.calls
       spent = res.spent
       acc.spentUsd = spent
@@ -478,6 +577,84 @@ async function advanceBulk(params: {
     if (res.complete) {
       cursor = { ...cursor, lastUid: res.lastUid }
       await saveBulkCursor(accountId, cursor)
+    }
+    if (res.paused) return { ...acc, paused: res.paused }
+    if (!res.complete) return acc
+  }
+
+  return { ...acc, finished: true }
+}
+
+/** Le curseur d'échantillon enregistré : le tirage et l'avancement dedans, en un seul écrit. */
+const saveSampleCursor = (accountId: string, cursor: SampleCursor): Promise<unknown> =>
+  query(`UPDATE mailbox_tagging SET sample_cursor = $2::jsonb, updated_at = NOW() WHERE account_id = $1`,
+    [accountId, JSON.stringify(cursor)])
+
+/**
+ * L'échantillon : les mails TIRÉS, dans l'ordre du tirage, puis ARRÊT à la fin de la liste.
+ *
+ * Deux choses lui appartiennent, tout le reste est partagé avec le tri complet (`processBatch` :
+ * le saut du déjà-fait, le comptage, le plafond, les pauses) :
+ *
+ *  1. **Le tirage est fait UNE fois**, au premier passage, et enregistré : refait à chaque
+ *     passage il désignerait d'autres mails dès qu'un mail arrive dans la boîte ;
+ *  2. **`total` vaut la taille du tirage**, pas celle de la boîte : l'écran doit annoncer le coût
+ *     de CE qu'il va faire, et une barre d'avancement sur 161 635 mails pour un échantillon de
+ *     1 000 ne bougerait jamais.
+ *
+ * Les mails sont relus par `fetch(folder, uid - 1, 1)` : la seule façon qu'a `MailSource` de
+ * nommer un mail précis, et c'est une lecture d'en-tête, pas un appel au moteur.
+ */
+async function advanceSample(params: {
+  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number
+}): Promise<Advance> {
+  const { row, source, engine, deadline } = params
+  const accountId = row.account_id
+  const acc: Advance = { tagged: 0, skipped: 0, errors: 0, calls: 0, spent: params.spent }
+  const size = row.sample_size ?? SAMPLE_SIZE_DEFAULT
+  const seed = row.sample_seed === null ? SAMPLE_SEED_DEFAULT : Number(row.sample_seed)
+
+  let cursor = row.sample_cursor
+  // Un tirage qui ne correspond plus à la taille ou à la graine demandées est refait : c'est ce
+  // qui fait qu'un second essai à graine différente tire bien autre chose.
+  if (!cursor || cursor.seed !== seed || cursor.size !== size) {
+    cursor = { seed, size, picks: await drawSample(source, { seed, size }), done: 0 }
+    await saveSampleCursor(accountId, cursor)
+    await query(`UPDATE mailbox_tagging SET total = $2, updated_at = NOW() WHERE account_id = $1`,
+      [accountId, cursor.picks.length])
+  }
+
+  while (cursor.done < cursor.picks.length) {
+    if (remaining(deadline) <= 0) return acc
+    const slice = cursor.picks.slice(cursor.done, cursor.done + BATCH_SIZE)
+    const mails: SourceMail[] = []
+    for (const pick of slice) {
+      const [mail] = await source.fetch(pick.folder, pick.uid - 1, 1)
+      // Le mail a été supprimé entre le tirage et maintenant : il est COMPTÉ comme sauté, jamais
+      // tu en silence, et le tirage avance quand même — sinon l'échantillon ne finirait jamais.
+      if (mail && mail.uid === pick.uid) mails.push(mail)
+    }
+    const missing = slice.length - mails.length
+
+    if (!mails.length) {
+      cursor = { ...cursor, done: cursor.done + slice.length }
+      await saveSampleCursor(accountId, cursor)
+      if (missing) {
+        acc.skipped += missing
+        acc.spent = await chargeMailbox(accountId, 0, engine.usdPerBillionInput, { tagged: 0, skipped: missing, errors: 0 })
+      }
+      continue
+    }
+
+    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget })
+    acc.tagged += res.tagged; acc.skipped += res.skipped + missing; acc.errors += res.errors; acc.calls += res.calls
+    acc.spent = res.spent
+    if (missing) {
+      acc.spent = await chargeMailbox(accountId, 0, engine.usdPerBillionInput, { tagged: 0, skipped: missing, errors: 0 })
+    }
+    if (res.complete) {
+      cursor = { ...cursor, done: cursor.done + slice.length }
+      await saveSampleCursor(accountId, cursor)
     }
     if (res.paused) return { ...acc, paused: res.paused }
     if (!res.complete) return acc
