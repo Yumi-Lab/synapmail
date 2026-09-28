@@ -283,7 +283,8 @@
       "apiKeys": "API 密钥",
       "admin": "管理",
       "branding": "标签页名称与图标",
-      "tagging": "自动分类"
+      "tagging": "自动分类",
+      "webhooks": "网络钩子"
     },
     "common": {
       "save": "保存",
@@ -305,7 +306,9 @@
       "pgpKeyDelete": "删除此密钥…",
       "pgpKeyDeleteConfirm": "删除 {name} 的公钥？在重新导入之前，您将无法向其发送加密邮件。",
       "ruleDelete": "删除此规则…",
-      "ruleDeleteConfirm": "删除规则“{name}”？它已分拣的邮件保持原位，但规则无法恢复。"
+      "ruleDeleteConfirm": "删除规则“{name}”？它已分拣的邮件保持原位，但规则无法恢复。",
+      "webhookDelete": "删除此网络钩子…",
+      "webhookDeleteConfirm": "删除网络钩子「{name}」？它的触发器将不再调用它，发送记录也会丢失。"
     },
     "accounts": {
       "title": "邮件账户",
@@ -636,6 +639,41 @@
       "kindJev": "JEV（TypeSafe）",
       "kindOne": "Yumi One 引擎",
       "kindAutre": "其他"
+    },
+    "webhooks": {
+      "title": "网络钩子",
+      "description": "让规则在邮件匹配时立即调用你自己的地址。",
+      "name": "名称",
+      "namePlaceholder": "订单机器人",
+      "url": "地址",
+      "urlPlaceholder": "https://n8n.example.com/webhook/订单",
+      "account": "邮箱",
+      "create": "创建",
+      "save": "保存",
+      "saving": "保存中…",
+      "cancel": "取消",
+      "new": "新建网络钩子",
+      "empty": "还没有网络钩子。先创建一个，再为它添加触发器。",
+      "noAccount": "请先添加邮箱：网络钩子由某个邮箱的邮件触发。",
+      "enabled": "启用",
+      "disabled": "已暂停",
+      "enable": "恢复",
+      "disable": "暂停",
+      "never": "从未调用",
+      "test": "发送测试",
+      "testQueued": "测试已排队。一分钟内发出，并显示在此记录中。",
+      "rotate": "重新生成密钥…",
+      "rotateConfirm": "重新生成「{name}」的密钥？用旧密钥校验签名的一方将立即无法接受调用。",
+      "secretWarn": "请像对待密码一样对待此密钥：它为每次调用签名，并且只在此显示一次。",
+      "secretCopy": "复制",
+      "secretCopied": "已复制",
+      "secretDone": "我已复制密钥",
+      "triggers": "触发器",
+      "triggersNone": "还没有规则调用此网络钩子。",
+      "triggersAdd": "添加触发器",
+      "deliveries": "发送记录",
+      "deliveriesNone": "尚未发出任何内容。",
+      "retry": "重新发送"
     }
   },
   "admin": {
@@ -950,7 +988,8 @@
       "apiKeys": "api, 密钥, 令牌, token, bearer, mcp, 代理",
       "admin": "管理, 管理员, 用户, 角色, admin",
       "branding": "标签页, 图标, favicon, 标题, 站点名称, 标识",
-      "tagging": "分类 标签 引擎 自动"
+      "tagging": "分类 标签 引擎 自动",
+      "webhooks": "钩子, 网络钩子, 回调, 机器人, n8n, 集成, 触发"
     }
   },
   "tags": {

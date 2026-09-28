@@ -13,13 +13,16 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { QUESTIONS, questionById, valuesOf } from '@/lib/tagging/questions'
-import { REGEX_PATTERN_MAX } from '@/lib/rules'
+import { webhooksOfAccount } from '@/lib/webhookRoutes'
+import type { RulePrefill } from '@/lib/rulePrefill'
 import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
 import { RowMenu, ContextMenuItem, ContextMenuSeparator, MENU_ICON } from '@/components/ui/ContextMenu'
 import type {
   EmailRule, RuleCondition, RuleAction, RuleField,
   RuleOperator, RuleActionType, RuleTemplate,
 } from '@/types/rule'
+import { REGEX_PATTERN_MAX } from '@/types/rule'
+import type { Webhook } from '@/types/webhook'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -331,13 +334,14 @@ function ConditionRow({
 // ---------------------------------------------------------------------------
 
 function ActionRow({
-  action, onChange, onRemove, canRemove, folders,
+  action, onChange, onRemove, canRemove, folders, webhooks,
 }: {
   action: RuleAction
   onChange: (a: RuleAction) => void
   onRemove: () => void
   canRemove: boolean
   folders: { path: string; name: string }[]
+  webhooks: Webhook[]
 }) {
   const needsValue = ACTIONS_NEEDING_VALUE.includes(action.type)
   return (
@@ -360,6 +364,19 @@ function ActionRow({
         >
           <option value="">— Choisir un dossier —</option>
           {folders.map(f => <option key={f.path} value={f.path}>{f.name}</option>)}
+        </select>
+      ) : needsValue && action.type === 'webhook' ? (
+        // Un webhook se CHOISIT par son nom : son identifiant est un uuid que personne ne
+        // retape. La liste est celle de la boîte de la règle, donc un webhook d'une autre
+        // boîte ne peut pas être visé ici (ce que la route refuserait de toute façon).
+        <select
+          value={action.value ?? ''}
+          onChange={e => onChange({ ...action, value: e.target.value })}
+          data-rule-webhook-picker
+          className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none flex-1"
+        >
+          <option value="">— Choisir un webhook —</option>
+          {webhooks.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
         </select>
       ) : needsValue ? (
         <Input
@@ -421,6 +438,12 @@ function RuleEditor({ rule, accounts, onSave, onCancel, saving, error }: EditorP
   )
   const folders = foldersData?.data ?? []
   const folderPaths = folders.map(f => ({ path: f.path, name: f.name }))
+
+  // Les webhooks de la boîte de la règle : ce que l'action « webhook » propose à choisir.
+  const { data: webhooksData } = useSWR<{ data: Webhook[] }>(
+    accountId ? webhooksOfAccount(accountId) : null, fetcher
+  )
+  const webhooks = webhooksData?.data ?? []
 
   const handleTest = async () => {
     if (!rule.id) return
@@ -504,7 +527,7 @@ function RuleEditor({ rule, accounts, onSave, onCancel, saving, error }: EditorP
               <ActionRow key={a.id} action={a}
                 onChange={updated => setActions(as => as.map((x, j) => j === i ? updated : x))}
                 onRemove={() => setActions(as => as.filter((_, j) => j !== i))}
-                canRemove={actions.length > 1} folders={folderPaths} />
+                canRemove={actions.length > 1} folders={folderPaths} webhooks={webhooks} />
             ))}
           </div>
           <button type="button" onClick={() => setActions(as => [...as, { id: uid(), type: 'mark_read' }])}
@@ -693,12 +716,7 @@ function RuleCard({
 // ---------------------------------------------------------------------------
 
 interface Props {
-  prefill?: {
-    fromAddress?: string
-    fromName?: string
-    subject?: string
-    accountId?: string
-  }
+  prefill?: RulePrefill
 }
 
 export default function RulesClient({ prefill }: Props) {
@@ -751,6 +769,7 @@ export default function RulesClient({ prefill }: Props) {
   useEffect(() => {
     if (!prefill || !accounts.length) return
     const prefillAccountId = prefill.accountId || accounts[0]?.id
+    if (prefillAccountId) setSelectedAccount(prefillAccountId)
     const initialConditions: RuleCondition[] = []
     if (prefill.fromAddress) {
       initialConditions.push({ id: uid(), field: 'from', operator: 'contains', value: prefill.fromAddress })
@@ -764,7 +783,9 @@ export default function RulesClient({ prefill }: Props) {
       name: prefill.fromName ? `De : ${prefill.fromName}` : prefill.fromAddress ? `De : ${prefill.fromAddress}` : '',
       conditionLogic: 'all',
       conditions: initialConditions.length ? initialConditions : [{ id: uid(), field: 'from', operator: 'contains', value: '' }],
-      actions: [{ id: uid(), type: 'mark_read' }],
+      actions: [prefill.webhookId
+        ? { id: uid(), type: 'webhook', value: prefill.webhookId }
+        : { id: uid(), type: 'mark_read' }],
       enabled: true,
       stopProcessing: false,
     })

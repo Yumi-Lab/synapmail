@@ -13,9 +13,11 @@ import ContactsPage from '@/app/(app)/settings/contacts/page'
 import { AccountsClient } from '@/app/(app)/settings/accounts/AccountsClient'
 import { AISettingsClient } from '@/app/(app)/settings/ai/AISettingsClient'
 import RulesClient from '@/components/settings/RulesClient'
+import { readRulePrefill } from '@/lib/rulePrefill'
 import PgpPage from '@/app/(app)/settings/pgp/page'
 import ApiKeysPage from '@/app/(app)/settings/api-keys/page'
 import TaggingPage from '@/app/(app)/settings/tagging/page'
+import WebhooksPage from '@/app/(app)/settings/webhooks/page'
 
 /**
  * Maps a settings segment (from the intercepted route path) to the same leaf
@@ -48,17 +50,8 @@ export function SettingsModalPanel({ segment }: { segment: string }) {
           initialSuccess={sp.get('success') ?? undefined}
         />
       )
-    case 'rules': {
-      const prefill = (sp.get('prefill_from') || sp.get('prefill_subject'))
-        ? {
-            fromAddress: sp.get('prefill_from') ?? undefined,
-            fromName: sp.get('prefill_from_name') ?? undefined,
-            subject: sp.get('prefill_subject') ?? undefined,
-            accountId: sp.get('prefill_account') ?? undefined,
-          }
-        : undefined
-      return <RulesClient prefill={prefill} />
-    }
+    case 'rules':
+      return <RulesClient prefill={readRulePrefill(key => sp.get(key))} />
     case 'ai':
       return <AISettingsClient />
     case 'pgp':
@@ -67,6 +60,8 @@ export function SettingsModalPanel({ segment }: { segment: string }) {
       return <ApiKeysPage />
     case 'tagging':
       return <TaggingPage />
+    case 'webhooks':
+      return <WebhooksPage />
     case 'profile':
     default:
       return <ProfilePage />
