@@ -80,18 +80,36 @@ const ceilingOrigin = (ceiling: SendCeiling) => ({
 const asArray = (value: string | string[] | undefined): string[] =>
   value === undefined ? [] : Array.isArray(value) ? value : [value]
 
+/** La boîte nommée AILLEURS que dans le corps se dit ici — jamais devinée. */
+export const ACCOUNT_MISMATCH = 'account_mismatch'
+
 /**
  * `userId` a déjà franchi `authorize()` : ce niveau ne vérifie pas la clé, il
  * vérifie la BOÎTE (`send`, comme l'annonce `ROUTE_ACCOUNT_PERMISSION`) et le corps.
+ *
+ * `fromUrl` est la boîte que la ROUTE impose (`?account=` de la mise à jour d'un
+ * brouillon). Quand elle est donnée, c'est elle qui compte : c'est celle que la
+ * barrière de `lib/apiKeyAccounts.ts` a contrôlée, qui lit le paramètre d'URL avant
+ * le corps. Un corps qui en nommerait une AUTRE est refusé plutôt qu'ignoré — une
+ * requête qui dit deux choses différentes ne doit pas voir la plus permissive gagner
+ * en silence.
  */
-export async function prepareOutgoing(req: Request, userId: string): Promise<OutgoingPreparation> {
+export async function prepareOutgoing(
+  req: Request,
+  userId: string,
+  fromUrl?: string | null
+): Promise<OutgoingPreparation> {
   const refuse = (body: Record<string, unknown>, status: number): OutgoingPreparation => ({
     ok: false,
     response: NextResponse.json(body, { status }),
   })
 
   const body = (await req.json()) as OutgoingBody
-  const { accountId, to, cc, bcc, subject, html, text, inReplyTo, references } = body
+  const { to, cc, bcc, subject, html, text, inReplyTo, references } = body
+  if (fromUrl && body.accountId && body.accountId !== fromUrl) {
+    return refuse({ error: ACCOUNT_MISMATCH, expected: fromUrl, received: body.accountId }, 400)
+  }
+  const accountId = fromUrl ?? body.accountId
 
   if (!accountId || !to || !subject) {
     return refuse({ error: 'accountId, to, and subject are required' }, 400)
