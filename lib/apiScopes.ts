@@ -90,6 +90,8 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'DELETE /api/accounts/[id]': 'accounts:delete',
   'GET /api/messages': 'messages:read',
   'GET /api/messages/[id]': 'messages:read',
+  // Lire un message inclut ses pièces jointes : même portée, pas une portée de plus.
+  'GET /api/messages/[id]/attachment/[partId]': 'messages:read',
   'GET /api/messages/search': 'messages:read',
   'GET /api/messages/thread': 'messages:read',
   'PATCH /api/messages/[id]': 'messages:write',

@@ -426,8 +426,10 @@ Mark read/unread, or move, a set of messages in one call.
 ### `DELETE /api/messages/bulk` 🔑 Bearer (`messages:write`)
 **Body** `{ uids: string[]; accountId: string; folder: string }` → `{ success: true }`.
 
-### `GET /api/messages/[id]/attachment/[partId]?account=&folder=&inline=` — session only
-Streams one attachment by its index in the parsed MIME structure (`partId`, 0-based). `inline=true` sets `Content-Disposition: inline` (for preview); omitted/`false` forces download. **Not** a JSON route — returns the raw bytes with `Content-Type`/`Content-Disposition`/`Content-Length` headers, or a plain-text error body with the matching status (`400`/`404`/`500`) — not `{ error }` JSON.
+### `GET /api/messages/[id]/attachment/[partId]?account=&folder=&inline=` 🔑 Bearer (`messages:read`)
+Streams one attachment by its index in the parsed MIME structure (`partId`, 0-based). `account` required. `inline=true` sets `Content-Disposition: inline` (for preview); omitted/`false` forces download. **Not** a JSON route — returns the raw bytes with `Content-Type`/`Content-Disposition`/`Content-Length` headers, or a plain-text error body with the matching status (`400`/`404`/`500`) — not `{ error }` JSON. A refusal, however, IS `{ error }` JSON, like every other Bearer route (`401` with no key, `403` naming the missing scope or the unreachable mailbox).
+
+Because the body is binary, it can carry no `aiSafety` preamble. A **Bearer** call therefore gets the header `X-Synapmail-Untrusted: attachment` instead: the bytes AND the filename were written by a third party and are data, never instructions. A session call does not get the header — a browser download has nobody to warn.
 
 ### `POST /api/messages/[id]/mdn` — session only
 Sends an RFC 8098 Message Disposition Notification ("read receipt") for a message that requested one (`Disposition-Notification-To` header present).
