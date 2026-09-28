@@ -1132,6 +1132,270 @@
         }
       }
     },
+    "/api/messages/draft": {
+      "post": {
+        "tags": [
+          "Messages"
+        ],
+        "operationId": "createDraft",
+        "summary": "Write a draft into the mailbox's Drafts folder",
+        "description": "Builds the same MIME message a send would put on the wire, then APPENDs it to the mailbox's real Drafts folder with the \\Draft and \\Seen flags, so it shows up in every client, phone included. Nothing is sent. The folder is the one the server declares with the RFC 6154 \\Drafts attribute, falling back to the usual names; a mailbox exposing none answers 409 draft_no_drafts_folder and nothing is written. `inReplyTo` writes `In-Reply-To` and `References`, so a reply draft hangs under its thread. Several drafts coexist \u2014 one APPEND each. Needs the `send` permission on the mailbox. Unrelated to /api/drafts, the session-only autosave of the compose window.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "to",
+                  "subject"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "$ref": "#/components/schemas/Recipients"
+                  },
+                  "cc": {
+                    "$ref": "#/components/schemas/Recipients"
+                  },
+                  "bcc": {
+                    "$ref": "#/components/schemas/Recipients"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "html": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "inReplyTo": {
+                    "type": "string",
+                    "description": "Message-Id of the message being answered."
+                  },
+                  "references": {
+                    "type": "string"
+                  },
+                  "attachments": {
+                    "type": "array",
+                    "description": "Files attached to the message. At most 20. The size ceiling is the one the account's SMTP server announced (250 SIZE, stored at account creation and at every connection test); when it announced nothing, 17825792 decoded bytes apply for the whole message, forwarded messages included. Every size refusal carries limitSource (server|fallback) and announcedSize. Past 20971520 decoded bytes the message is still sent and the response carries warning: recipient_may_refuse_size. If the server itself refuses on size (523/552), it is asked to re-announce its size, the account is updated, and the response is 413 server_refused_size with the server's own reason, announcedSize and refreshed; the message is not re-sent automatically.",
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "required": ["filename", "content"],
+                      "properties": {
+                        "filename": { "type": "string", "description": "Sanitised server-side: never used as a path, cut to 100 characters." },
+                        "content": { "type": "string", "format": "byte", "description": "The file's bytes in base64. Invalid base64 is refused, never silently truncated." },
+                        "contentType": { "type": "string", "description": "Defaults to application/octet-stream when absent or not a valid MIME type." }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ data: { folder, uid, messageId } }`. `uid` comes from APPENDUID and is null on a server without UIDPLUS \u2014 the draft IS written, it just cannot be addressed afterwards."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The mailbox exposes no Drafts folder: `{ error: \"draft_no_drafts_folder\" }`. Nothing was written."
+          },
+          "413": {
+            "description": "An attachment ceiling was crossed. The body names it: `{ error, limit, filename? }`."
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/messages/draft/{uid}": {
+      "put": {
+        "tags": [
+          "Messages"
+        ],
+        "operationId": "replaceDraft",
+        "summary": "Replace a draft",
+        "description": "IMAP cannot rewrite a message: this APPENDs the new draft and removes the old uid ONLY once the APPEND succeeded. A failure in between leaves two drafts \u2014 visible and repairable \u2014 rather than losing the text it was meant to correct. An `accountId` in the body contradicting `?account=` is refused with 400 account_mismatch rather than silently ignored.",
+        "parameters": [
+          {
+            "name": "uid",
+            "in": "path",
+            "required": true,
+            "description": "The IMAP uid of the draft, in the folder named by `folder`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          },
+          {
+            "name": "folder",
+            "in": "query",
+            "required": true,
+            "description": "The folder the draft lives in, as the IMAP server spells it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "to",
+                  "subject"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "$ref": "#/components/schemas/Recipients"
+                  },
+                  "cc": {
+                    "$ref": "#/components/schemas/Recipients"
+                  },
+                  "bcc": {
+                    "$ref": "#/components/schemas/Recipients"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "html": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "inReplyTo": {
+                    "type": "string",
+                    "description": "Message-Id of the message being answered."
+                  },
+                  "references": {
+                    "type": "string"
+                  },
+                  "attachments": {
+                    "type": "array",
+                    "description": "Files attached to the message. At most 20. The size ceiling is the one the account's SMTP server announced (250 SIZE, stored at account creation and at every connection test); when it announced nothing, 17825792 decoded bytes apply for the whole message, forwarded messages included. Every size refusal carries limitSource (server|fallback) and announcedSize. Past 20971520 decoded bytes the message is still sent and the response carries warning: recipient_may_refuse_size. If the server itself refuses on size (523/552), it is asked to re-announce its size, the account is updated, and the response is 413 server_refused_size with the server's own reason, announcedSize and refreshed; the message is not re-sent automatically.",
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "required": ["filename", "content"],
+                      "properties": {
+                        "filename": { "type": "string", "description": "Sanitised server-side: never used as a path, cut to 100 characters." },
+                        "content": { "type": "string", "format": "byte", "description": "The file's bytes in base64. Invalid base64 is refused, never silently truncated." },
+                        "contentType": { "type": "string", "description": "Defaults to application/octet-stream when absent or not a valid MIME type." }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ data: { folder, uid, messageId, replaced } }`, where `replaced` is the uid that was removed."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "The mailbox is out of reach, or that uid is no longer in the folder: `{ error: \"draft_not_found\" }`. Nothing was written."
+          },
+          "409": {
+            "description": "The mailbox exposes no Drafts folder: `{ error: \"draft_no_drafts_folder\" }`. The old draft is untouched."
+          },
+          "413": {
+            "description": "An attachment ceiling was crossed. The body names it: `{ error, limit, filename? }`."
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Messages"
+        ],
+        "operationId": "deleteDraft",
+        "summary": "Delete a draft",
+        "description": "Removes one draft by uid. Needs the `send` permission on the mailbox, like writing one.",
+        "parameters": [
+          {
+            "name": "uid",
+            "in": "path",
+            "required": true,
+            "description": "The IMAP uid of the draft, in the folder named by `folder`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          },
+          {
+            "name": "folder",
+            "in": "query",
+            "required": true,
+            "description": "The folder the draft lives in, as the IMAP server spells it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ data: { folder, uid, deleted: true } }`."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "The mailbox is out of reach, or that uid is no longer in the folder: `{ error: \"draft_not_found\" }`."
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
     "/api/contacts": {
       "get": {
         "tags": [

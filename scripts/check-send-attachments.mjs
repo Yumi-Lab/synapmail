@@ -20,11 +20,16 @@
  *   node --experimental-strip-types scripts/check-send-attachments.mjs --break=base64
  *   node --experimental-strip-types scripts/check-send-attachments.mjs --break=total
  *   node --experimental-strip-types scripts/check-send-attachments.mjs --break=wiring
+ *   node --experimental-strip-types scripts/check-send-attachments.mjs --break=carry
  * The `--break` forms damage ONE expectation and EXPECT the run to fail: a
  * battery that cannot fail proves nothing.
  */
+// L'alias `@/…` du code produit, appris par le banc en un seul endroit — posé
+// AVANT tout import de `lib/…`, sinon `lib/db.ts` ne se résout pas.
+import './alias-resolver.mjs'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { registerHooks } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -39,6 +44,7 @@ import {
   parseAttachments,
   safeAttachmentName,
 } from '../lib/attachments.ts'
+import { EML_CONTENT_TYPE } from '../lib/eml.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 /**
@@ -244,6 +250,83 @@ assert.ok(
 assert.ok(route.includes('prepareOutgoing'), 'the send route must go through the shared preparation')
 assert.ok(!route.includes('parseAttachments'), 'the send route must not parse attachments a second time')
 ok('one array, one sendMail call: both kinds of attachment share the same ceiling')
+
+console.log('prepareOutgoing — ce qui est validé arrive VRAIMENT dans le message')
+
+// Les assertions ci-dessus lisent le TEXTE de `lib/outgoing.ts` : elles voient bien
+// que les pièces jointes sont validées, pas qu'elles ressortent. Une clé absente de
+// l'objet rendu ne se voit qu'en APPELANT la fonction — c'est ce que fait ce bloc.
+// Ni base ni boîte : la lecture du compte et la relecture IMAP sont remplacées, ce
+// que `prepareOutgoing` accepte parce qu'il ne parle NI de SMTP NI d'IMAP lui-même.
+const stub = source => `data:text/javascript,${encodeURIComponent(source)}`
+const ACCOUNT_STUB = stub(
+  `export const getAccessibleAccount = async () => (` +
+  `{ id: 'banc', email: 'banc@example.invalid', smtp_max_size: null })`
+)
+const IMAP_STUB = stub(
+  `export const getMessageSources = async (_c, _f, uids) => (` +
+  `{ sources: uids.map(uid => ({ subject: \`objet \${uid}\`, source: Buffer.from(\`source \${uid}\`) })),` +
+  ` missing: [], totalBytes: 0, oversized: false })`
+)
+registerHooks({
+  resolve(spec, ctx, next) {
+    // `next/server` n'est pas exporté par le paquet pour `node` ; l'application
+    // passe par l'empaqueteur, le banc doit nommer le fichier.
+    if (spec === 'next/server') return next('next/server.js', ctx)
+    if (String(ctx.parentURL ?? '').endsWith('/lib/outgoing.ts')) {
+      if (spec === './accountAccess') return { url: ACCOUNT_STUB, shortCircuit: true }
+      if (spec === './imap') return { url: IMAP_STUB, shortCircuit: true }
+    }
+    // Le code produit importe ses voisins sans extension : `node` l'exige.
+    if (spec.startsWith('.') && !/\.[a-z]+$/.test(spec)) {
+      const url = new URL(`${spec}.ts`, ctx.parentURL)
+      if (existsSync(url)) return next(url.href, ctx)
+    }
+    return next(spec, ctx)
+  },
+})
+const { prepareOutgoing } = await import(new URL('../lib/outgoing.ts', import.meta.url).href)
+
+const prepared = async body => {
+  const r = await prepareOutgoing(
+    new Request('http://banc.invalid/api/messages/send', { method: 'POST', body: JSON.stringify(body) }),
+    'utilisateur-de-banc'
+  )
+  assert.equal(r.ok, true, `la préparation devait passer : ${JSON.stringify(body)}`)
+  // Le CONTRÔLE NÉGATIF reproduit exactement la panne à mesurer : la clé manque
+  // de l'objet rendu, tout le reste est intact.
+  return BREAK === 'carry' ? { ...r.value.mail, attachments: undefined } : r.value.mail
+}
+const BASE = { accountId: 'banc', to: 'destinataire@example.invalid', subject: 'objet' }
+
+const carried = await prepared({ ...BASE, attachments: [one] })
+assert.ok(Array.isArray(carried.attachments), 'le message rendu doit PORTER ses pièces jointes')
+assert.equal(carried.attachments.length, 1)
+assert.equal(carried.attachments[0].filename, 'note.txt')
+assert.equal(carried.attachments[0].content.toString(), 'hello', 'octet pour octet, pas seulement présent')
+ok('une pièce jointe validée ressort dans le message rendu')
+
+const forwarded = await prepared({
+  ...BASE,
+  forwardedMessages: { accountId: 'banc', folder: 'INBOX', uids: ['12', '34'] },
+})
+assert.ok(Array.isArray(forwarded.attachments), 'un message transféré doit PARTIR avec le message')
+assert.equal(forwarded.attachments.length, 2)
+assert.equal(forwarded.attachments[0].contentType, EML_CONTENT_TYPE)
+ok('deux messages transférés ressortent en pièces jointes .eml')
+
+const both = await prepared({
+  ...BASE,
+  forwardedMessages: { accountId: 'banc', folder: 'INBOX', uids: ['12'] },
+  attachments: [one],
+})
+assert.equal(both.attachments.length, 2, 'les deux sortes voyagent ENSEMBLE, aucune ne chasse l’autre')
+assert.deepEqual(
+  both.attachments.map(a => a.contentType),
+  [EML_CONTENT_TYPE, 'text/plain'],
+  'le transfert d’abord, la pièce jointe de la requête ensuite',
+)
+ok('transfert et pièce jointe de requête arrivent tous les deux dans le même message')
 
 const docs = readFileSync(join(ROOT, 'docs/API.md'), 'utf8')
 for (const named of [String(ATTACHMENT_MAX_COUNT), String(MESSAGE_MAX_TOTAL_BYTES)]) {

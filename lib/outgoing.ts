@@ -193,6 +193,7 @@ export async function prepareOutgoing(req: Request, userId: string): Promise<Out
         text,
         inReplyTo,
         references,
+        attachments,
       },
     },
   }

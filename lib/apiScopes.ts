@@ -25,6 +25,7 @@ export const API_SCOPES = {
   'messages:read': 'Lire, chercher et suivre les messages',
   'messages:write': 'Marquer, déplacer et supprimer des messages',
   'messages:send': 'Envoyer des messages',
+  'messages:draft': 'Écrire des brouillons',
   'folders:read': 'Lire les dossiers',
   'folders:write': 'Créer, renommer et supprimer des dossiers',
   'contacts:read': 'Lire les contacts',
@@ -58,6 +59,7 @@ export const ACCOUNT_WRITE_SCOPES: ApiScope[] = ['accounts:create', 'accounts:up
  */
 export const OPT_IN_SCOPES: ApiScope[] = [
   ...ACCOUNT_WRITE_SCOPES,
+  'messages:draft',
   'contacts:write',
   'signatures:read',
   'signatures:write',
@@ -99,6 +101,11 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'PATCH /api/messages/bulk': 'messages:write',
   'DELETE /api/messages/bulk': 'messages:write',
   'POST /api/messages/send': 'messages:send',
+  // Écrire un brouillon n'est PAS envoyer : une clé qui prépare du courrier pour
+  // relecture ne doit pas pouvoir le mettre sur le fil.
+  'POST /api/messages/draft': 'messages:draft',
+  'PUT /api/messages/draft/[uid]': 'messages:draft',
+  'DELETE /api/messages/draft/[uid]': 'messages:draft',
   'GET /api/folders': 'folders:read',
   'POST /api/folders': 'folders:write',
   'PATCH /api/folders': 'folders:write',
@@ -156,6 +163,11 @@ export const ROUTE_ACCOUNT_PERMISSION: Record<string, AccountPermission> = {
   'PATCH /api/messages/bulk': 'organize',
   'DELETE /api/messages/bulk': 'delete',
   'POST /api/messages/send': 'send',
+  // Un brouillon prépare un envoi DEPUIS cette boîte : même permission de partage
+  // que l'envoi, même si la portée de clé, elle, reste distincte.
+  'POST /api/messages/draft': 'send',
+  'PUT /api/messages/draft/[uid]': 'send',
+  'DELETE /api/messages/draft/[uid]': 'send',
   'POST /api/folders': 'organize',
   'PATCH /api/folders': 'organize',
   'DELETE /api/folders': 'delete',
