@@ -50,6 +50,14 @@ export interface MailSource {
   /** Les `limit` mails de `folder` d'UID strictement supérieur à `afterUid`, par UID croissant. */
   fetch(folder: string, afterUid: number, limit: number): Promise<SourceMail[]>
   /**
+   * Les mails de `folder` dont l'UID est dans `uids`, par UID croissant, en UNE commande. Un UID
+   * disparu depuis est simplement absent du résultat. Lire une LISTE et lire une PLAGE sont deux
+   * besoins distincts : l'échantillon désigne des UID épars, et les relire un par un par `fetch`
+   * faisait transmettre au serveur toute la fin du dossier à chaque mail (mesuré : aucun lot de
+   * 20 fini en 50 s sur 161 635 mails).
+   */
+  fetchUids(folder: string, uids: number[]): Promise<SourceMail[]>
+  /**
    * Les UID de `folder`, SANS lire un seul mail. Nommer les mails d'un dossier et les LIRE sont
    * deux besoins distincts : le tirage n'a besoin que des numéros, et passer par `fetch` pour les
    * obtenir téléchargeait le corps de chaque mail de la boîte (mesuré : jamais fini sur 161 635
@@ -624,8 +632,8 @@ const saveSampleCursor = (accountId: string, cursor: SampleCursor): Promise<unkn
  *     de CE qu'il va faire, et une barre d'avancement sur 161 635 mails pour un échantillon de
  *     1 000 ne bougerait jamais.
  *
- * Les mails sont relus par `fetch(folder, uid - 1, 1)` : la seule façon qu'a `MailSource` de
- * nommer un mail précis, et c'est une lecture d'en-tête, pas un appel au moteur.
+ * Les mails sont relus par `fetchUids(folder, [uid, …])`, une commande par dossier et par lot :
+ * c'est une lecture d'en-têtes bornée aux mails tirés, pas un appel au moteur.
  */
 async function advanceSample(params: {
   row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number
@@ -665,13 +673,14 @@ async function advanceSample(params: {
   while (cursor.done < cursor.picks.length) {
     if (remaining(deadline) <= 0) return acc
     const slice = cursor.picks.slice(cursor.done, cursor.done + BATCH_SIZE)
+    // Le lot est REGROUPÉ PAR DOSSIER : une commande par dossier présent dans le lot, et non une
+    // par mail. Un mail supprimé entre le tirage et maintenant manque simplement à la réponse ; il
+    // est COMPTÉ comme sauté, jamais tu en silence, et le tirage avance quand même — sinon
+    // l'échantillon ne finirait jamais.
+    const byFolder = new Map<string, number[]>()
+    for (const pick of slice) byFolder.set(pick.folder, [...(byFolder.get(pick.folder) ?? []), pick.uid])
     const mails: SourceMail[] = []
-    for (const pick of slice) {
-      const [mail] = await source.fetch(pick.folder, pick.uid - 1, 1)
-      // Le mail a été supprimé entre le tirage et maintenant : il est COMPTÉ comme sauté, jamais
-      // tu en silence, et le tirage avance quand même — sinon l'échantillon ne finirait jamais.
-      if (mail && mail.uid === pick.uid) mails.push(mail)
-    }
+    for (const folder of Array.from(byFolder.keys())) mails.push(...await source.fetchUids(folder, byFolder.get(folder) as number[]))
     const missing = slice.length - mails.length
 
     if (!mails.length) {

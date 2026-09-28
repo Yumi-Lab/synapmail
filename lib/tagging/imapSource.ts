@@ -62,6 +62,51 @@ export function imapMailSource(account: ImapAccountRow): ImapMailSource {
     return c
   }
 
+  /** Les UID de `folder`, sans lire un mail. Partagé par `uids`, `fetch` et le tirage. */
+  const uidsOf = async (folder: string): Promise<number[]> => {
+    const c = await open(folder)
+    // `UID SEARCH ALL` : une commande, une liste de nombres, AUCUN corps téléchargé. C'est la
+    // seule façon de nommer les mails d'un dossier sans les lire — les UID ne sont pas contigus
+    // (un mail supprimé laisse un trou), donc `1..total` ne dit pas lesquels existent.
+    const found = await c.search({ all: true }, { uid: true })
+    return found === false ? [] : found.map(Number).filter(Number.isFinite)
+  }
+
+  /**
+   * Les mails dont l'UID est dans `uids`, en UNE commande (`UID FETCH 631,1204,…`) : c'est la
+   * seule forme qui borne ce que le serveur transmet. Un UID disparu depuis est simplement
+   * absent de la réponse — l'appelant le compte sauté.
+   */
+  const fetchList = async (folder: string, uids: number[]): Promise<SourceMail[]> => {
+    if (!uids.length) return []
+    const c = await open(folder)
+    const keep = new Set(uids)
+    const out: SourceMail[] = []
+    for await (const msg of c.fetch(
+      uids.join(','),
+      { uid: true, envelope: true, internalDate: true, source: { maxLength: SOURCE_MAX_BYTES } },
+      { uid: true }
+    )) {
+      const uid = Number(msg.uid)
+      if (!Number.isFinite(uid) || !keep.has(uid)) continue
+      const parsed = await simpleParser(msg.source ?? Buffer.alloc(0))
+      out.push({
+        messageId: parsed.messageId ?? msg.envelope?.messageId ?? null,
+        folder,
+        uid,
+        fromName: parsed.from?.value?.[0]?.name ?? msg.envelope?.from?.[0]?.name ?? '',
+        fromAddress: parsed.from?.value?.[0]?.address ?? msg.envelope?.from?.[0]?.address ?? '',
+        subject: parsed.subject ?? msg.envelope?.subject ?? '',
+        bodyPlain: parsed.text || undefined,
+        bodyHtml: typeof parsed.html === 'string' ? parsed.html : undefined,
+        date: messageDate(parsed.date, msg.envelope?.date, msg.internalDate),
+      })
+    }
+    // IMAP rend les messages par UID croissant, mais le curseur en DÉPEND : on le garantit ici
+    // plutôt que de faire confiance au serveur.
+    return out.sort((a, b) => a.uid - b.uid)
+  }
+
   return {
     async folders() {
       const c = await connected()
@@ -93,45 +138,24 @@ export function imapMailSource(account: ImapAccountRow): ImapMailSource {
         }))
     },
 
-    async uids(folder) {
-      const c = await open(folder)
-      // `UID SEARCH ALL` : une commande, une liste de nombres, AUCUN corps téléchargé. C'est la
-      // seule façon de nommer les mails d'un dossier sans les lire — les UID ne sont pas contigus
-      // (un mail supprimé laisse un trou), donc `1..total` ne dit pas lesquels existent.
-      const found = await c.search({ all: true }, { uid: true })
-      return found === false ? [] : found.map(Number).filter(Number.isFinite)
+    uids(folder) {
+      return uidsOf(folder)
     },
 
     async fetch(folder, afterUid, limit) {
       if (limit <= 0) return []
-      const c = await open(folder)
-      const out: SourceMail[] = []
-      // `N:*` rend TOUJOURS au moins un message, même si aucun n'a un UID ≥ N (quirk IMAP bien
-      // connu) : le filtre sur `uid > afterUid` est donc obligatoire, pas défensif.
-      for await (const msg of c.fetch(
-        { uid: `${afterUid + 1}:*` },
-        { uid: true, envelope: true, internalDate: true, source: { maxLength: SOURCE_MAX_BYTES } },
-        { uid: true }
-      )) {
-        const uid = Number(msg.uid)
-        if (!Number.isFinite(uid) || uid <= afterUid) continue
-        const parsed = await simpleParser(msg.source ?? Buffer.alloc(0))
-        out.push({
-          messageId: parsed.messageId ?? msg.envelope?.messageId ?? null,
-          folder,
-          uid,
-          fromName: parsed.from?.value?.[0]?.name ?? msg.envelope?.from?.[0]?.name ?? '',
-          fromAddress: parsed.from?.value?.[0]?.address ?? msg.envelope?.from?.[0]?.address ?? '',
-          subject: parsed.subject ?? msg.envelope?.subject ?? '',
-          bodyPlain: parsed.text || undefined,
-          bodyHtml: typeof parsed.html === 'string' ? parsed.html : undefined,
-          date: messageDate(parsed.date, msg.envelope?.date, msg.internalDate),
-        })
-        if (out.length >= limit) break
-      }
-      // IMAP rend les messages par UID croissant, mais le curseur en DÉPEND : on le garantit ici
-      // plutôt que de faire confiance au serveur.
-      return out.sort((a, b) => a.uid - b.uid)
+      // Les UID d'abord, le corps ENSUITE et seulement pour ceux qu'on garde. La forme évidente
+      // (`UID FETCH ${afterUid + 1}:*` puis `break` après `limit` mails) ne marche PAS : la plage
+      // est ouverte, donc le serveur a déjà envoyé la réponse FETCH ENTIÈRE — corps compris —
+      // quand le client s'arrête. Mesuré sur une boîte de 161 635 mails : aucun lot de 20 ne
+      // finissait en 50 s. Un `UID SEARCH ALL` (aucun corps) suivi d'un `UID FETCH` de la liste
+      // exacte transmet exactement `limit` mails.
+      const wanted = (await uidsOf(folder)).filter(u => u > afterUid).sort((a, b) => a - b).slice(0, limit)
+      return fetchList(folder, wanted)
+    },
+
+    fetchUids(folder, uids) {
+      return fetchList(folder, uids)
     },
 
     async close() {

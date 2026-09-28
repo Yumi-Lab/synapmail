@@ -212,7 +212,7 @@ export default function TaggingSettingsPage() {
                   title={t('estimate')}
                   description={status.estimateUsd === null
                     ? t('estimateUnknown')
-                    : t('estimateDesc', { mails: remaining, questions: status.questions, version: status.taxonomyVersion })}
+                    : t('estimateDesc', { mails: count(remaining), questions: status.questions, version: status.taxonomyVersion })}
                 >
                   <span className="text-sm tabular-nums">
                     {status.estimateUsd === null ? '—' : status.estimateUsd === 0 ? t('free') : usd(status.estimateUsd)}

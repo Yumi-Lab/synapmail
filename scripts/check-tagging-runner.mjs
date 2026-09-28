@@ -28,7 +28,9 @@
  *      différente, indépendant de l'ordre d'énumération des dossiers et réparti sur plusieurs
  *      dossiers ; le tri s'ARRÊTE à N (critère = nombre d'appels au moteur) ; le tirage est
  *      ENREGISTRÉ et non refait ; `total` vaut la taille du tirage ; le plafond et les pauses sont
- *      ceux du tri complet ; un mail supprimé entre le tirage et son tour est compté sauté sans
+ *      ceux du tri complet ; la RELECTURE d'un lot tiré ne transmet QUE les mails tirés (H21, le
+ *      critère est le nombre de mails transmis, pas le nombre d'appels) ;
+ *      un mail supprimé entre le tirage et son tour est compté sauté sans
  *      bloquer le curseur ; la répartition par question totalise les mails tagués ; « lancer le
  *      tri complet » efface le mode échantillon.
  *
@@ -36,7 +38,8 @@
  * est effacée dans la base (curseurs de masse ET d'échantillon remis à NULL, et les étiquettes
  * déjà écrites supprimées) — le trieur ne peut donc plus savoir où il en était. Le banc DOIT alors
  * virer au rouge sur A2 (le nombre d'appels au moteur) et sur H5 (l'arrêt à N : un tirage refait à
- * chaque passage ne s'arrête pas où il faut). Rien n'est modifié dans le produit : l'effacement est fait par le banc, en
+ * chaque passage ne s'arrête pas où il faut), ET sur H21 (la relecture repasse par la plage
+ * ouverte `N:*` : elle transmet alors la fin du dossier au lieu des 20 mails tirés). Rien n'est modifié dans le produit : l'effacement est fait par le banc, en
  * SQL, sur ses propres lignes.
  * Ce qu'il démontre : le critère de A (le nombre d'appels) est bien SENSIBLE à l'état de reprise —
  * il ne se contente pas de constater que le jeu de banc n'a pas de doublons. Ce qu'il ne démontre
@@ -152,6 +155,16 @@ const makeSource = (folders = FOLDERS, holes = new Set()) => ({
       out.push(mailOf(folder, i))
     }
     return out
+  },
+  // La lecture d'une LISTE d'UID : ce que l'échantillon utilise pour relire ses mails tirés. Un
+  // UID dans un trou est simplement absent du résultat, comme un `UID FETCH` d'un UID supprimé.
+  async fetchUids(folder, uids) {
+    const f = folders.find(x => x.path === folder)
+    if (!f) return []
+    return uids
+      .filter(u => u >= 1 && u <= f.count && !holes.has(`${folder}|${u}`))
+      .sort((a, b) => a - b)
+      .map(u => mailOf(folder, u))
   },
 })
 
@@ -486,6 +499,44 @@ try {
     `${best.length} vs ${bigDraw.length}`)
   check(`H20 l’état gardé entre deux passages reste BORNÉ à la taille du tirage (${runner.SAMPLE_SIZE_DEFAULT}), pas la boîte (${BIG_TOTAL})`,
     best.length === runner.SAMPLE_SIZE_DEFAULT, `${best.length} entrées`)
+
+  // H21 : la RELECTURE des mails tirés. Le tirage (H17-H20) ne lit aucun mail ; il reste à
+  // mesurer ce que coûte de les relire. C'est le second défaut mesuré sur la vraie boîte : chaque
+  // mail tiré était relu par `fetch(folder, uid - 1, 1)`, dont la plage IMAP `N:*` est OUVERTE —
+  // le serveur transmet toute la fin du dossier avant que le client ne s'arrête. Le critère n'est
+  // donc PAS le nombre d'appels mais le nombre de mails TRANSMIS : lire 20 UID épars dans un
+  // dossier de 100 000 doit en transmettre 20.
+  const READ_PER_FOLDER = 100_000
+  const READ_PICKS = 20
+  let sent = 0
+  const readSource = {
+    async folders() { return [{ path: 'Gros', uidValidity: '1', total: READ_PER_FOLDER }] },
+    async uids() { return Array.from({ length: READ_PER_FOLDER }, (_, i) => i + 1) },
+    // La forme d'AVANT le correctif, telle que le serveur la sert : la plage `afterUid+1:*` est
+    // ouverte, donc TOUT ce qui suit est transmis, même si le client s'arrête après `limit`.
+    async fetch(folder, afterUid, limit) {
+      sent += Math.max(READ_PER_FOLDER - afterUid, 0)
+      const out = []
+      for (let i = afterUid + 1; i <= READ_PER_FOLDER && out.length < limit; i += 1) out.push(mailOf(folder, i))
+      return out
+    },
+    async fetchUids(folder, uids) {
+      // CONTRÔLE NÉGATIF : on remet le `N:*` d'avant le correctif. Le compte de mails transmis
+      // explose, et H21 DOIT virer au rouge — sinon son critère ne mesure rien.
+      if (NEGATIVE) {
+        const out = []
+        for (const u of [...uids].sort((a, b) => a - b)) out.push(...await readSource.fetch(folder, u - 1, 1))
+        return out
+      }
+      sent += uids.length
+      return [...uids].sort((a, b) => a - b).map(u => mailOf(folder, u))
+    },
+  }
+  const readPicks = (await runner.drawSample(readSource, { seed: SEED_A, size: READ_PICKS }))
+  sent = 0
+  const readBack = await readSource.fetchUids('Gros', readPicks.map(p => p.uid))
+  check(`H21 relire ${READ_PICKS} mails tirés dans un dossier de ${READ_PER_FOLDER.toLocaleString('fr-FR')} en transmet ${READ_PICKS}, pas la fin du dossier`,
+    sent === READ_PICKS && readBack.length === READ_PICKS, `${sent} mail(s) transmis, ${readBack.length} rendu(s)`)
 
   // H5 : le tri d'un échantillon, de bout en bout, en passages COURTS (donc coupés).
   await clean(ACCOUNT)
