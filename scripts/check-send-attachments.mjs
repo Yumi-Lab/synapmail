@@ -219,21 +219,30 @@ for (const valid of ['application/pdf', 'image/png', 'text/csv; charset=utf-8'])
   ok(`"${valid}" is kept as announced`)
 }
 
-console.log('the route FEEDS the existing array — no second path to sendMail')
+console.log('the preparation FEEDS the existing array — no second path to sendMail')
 
+// Depuis le lot D2, la validation d'un message SORTANT vit dans `lib/outgoing.ts` :
+// l'envoi et le brouillon la partagent, donc la mesure porte sur ce module. Ce que
+// l'assertion dit n'a pas changé — un seul tableau, un seul plafond ; elle est
+// seulement posée là où le code est. La route, elle, garde son unique `sendMail`.
+const prepare = readFileSync(join(ROOT, 'lib/outgoing.ts'), 'utf8')
 const route = readFileSync(join(ROOT, 'app/api/messages/send/route.ts'), 'utf8')
-const routeSource = BREAK === 'wiring' ? route.replace(/parseAttachments/g, 'somethingElse') : route
+const prepareSource = BREAK === 'wiring' ? prepare.replace(/parseAttachments/g, 'somethingElse') : prepare
 
-assert.ok(routeSource.includes('parseAttachments'), 'the route must validate through lib/attachments.ts')
-assert.ok(routeSource.includes('checkTotalSize'), 'the route must apply the ceiling of the whole message')
+assert.ok(prepareSource.includes('parseAttachments'), 'the preparation must validate through lib/attachments.ts')
+assert.ok(prepareSource.includes('checkTotalSize'), 'the preparation must apply the ceiling of the whole message')
 // ONE `sendMail` call, ONE `attachments` argument: forwarded messages and
 // request attachments must converge, or one of the two would escape the ceiling.
-assert.equal((routeSource.match(/await sendMail\(/g) ?? []).length, 1, 'exactly one send path')
-assert.equal((routeSource.match(/let attachments\b/g) ?? []).length, 1, 'exactly one attachments array')
+assert.equal((route.match(/await sendMail\(/g) ?? []).length, 1, 'exactly one send path')
+assert.equal((prepareSource.match(/let attachments\b/g) ?? []).length, 1, 'exactly one attachments array')
 assert.ok(
-  /attachments = \[\.\.\.\(attachments \?\? \[\]\), \.\.\.parsed\.value\]/.test(routeSource),
+  /attachments = \[\.\.\.\(attachments \?\? \[\]\), \.\.\.parsed\.value\]/.test(prepareSource),
   'request attachments must JOIN the forwarded ones, not replace them',
 )
+// La route ne doit pas rouvrir un second chemin : elle passe par la préparation
+// partagée et ne parse plus rien elle-même.
+assert.ok(route.includes('prepareOutgoing'), 'the send route must go through the shared preparation')
+assert.ok(!route.includes('parseAttachments'), 'the send route must not parse attachments a second time')
 ok('one array, one sendMail call: both kinds of attachment share the same ceiling')
 
 const docs = readFileSync(join(ROOT, 'docs/API.md'), 'utf8')
