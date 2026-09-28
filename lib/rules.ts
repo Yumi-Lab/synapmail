@@ -15,26 +15,16 @@ import { questionById, valuesOf } from './tagging/questions'
 import { messageIdOf, readEffectiveFor } from './tagging/store'
 import { queueRuleDelivery, type WebhookMessage } from './webhooks'
 import type { EmailRule, RuleCondition, RuleAction } from '@/types/rule'
+import { REGEX_BODY_MAX, REGEX_PATTERN_MAX, REGEX_TEXT_MAX } from '@/types/rule'
 
 // ---------------------------------------------------------------------------
 // Conditions regex : les bornes, écrites UNE fois
 // ---------------------------------------------------------------------------
 
-/**
- * Un bot écrit le motif, le serveur l'exécute : les trois bornes ci-dessous sont ce qui
- * tient un `(a+)+$` à distance d'une boucle d'évaluation.
- *
- * ponytail: le moteur regex de V8 revient en arrière — un motif pathologique reste
- * quadratique DANS ces bornes (200 car. de motif sur 10 000 car. de texte). Le plafond est
- * donc le temps que coûtent 200×10 000, pas zéro. Chemin de sortie si une mesure le réclame :
- * un moteur sans retour arrière (RE2), c'est-à-dire une dépendance nouvelle — interdite ici
- * tant que rien ne l'a mesurée.
- */
-export const REGEX_PATTERN_MAX = 200
-/** Objet, adresses : le texte confronté au motif est tronqué là. */
-export const REGEX_TEXT_MAX = 1000
-/** Corps : plus long, mais borné lui aussi. */
-export const REGEX_BODY_MAX = 10000
+// Les trois bornes vivent dans `types/rule.ts` : l'éditeur de règles, qui tourne dans le
+// NAVIGATEUR, borne sa saisie sur la même valeur que le serveur. Les importer depuis ce
+// fichier-ci y tirait `lib/imap.ts`, donc `tls`, et l'écran des règles ne se rendait plus.
+export { REGEX_PATTERN_MAX, REGEX_TEXT_MAX, REGEX_BODY_MAX } from '@/types/rule'
 
 const REGEX_OPERATORS = new Set(['matches', 'not_matches'])
 
