@@ -4,6 +4,7 @@ import { withApiLog } from '@/lib/apiLog'
 import { getRulesForUser, createRule, validateConditions } from '@/lib/rules'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { query } from '@/lib/db'
+import { validateWebhookActions } from '@/lib/webhooks'
 import type { EmailRule } from '@/types/rule'
 
 export const dynamic = 'force-dynamic'
@@ -45,6 +46,11 @@ async function postHandler(req: Request) {
 
     const account = await getAccessibleAccount(body.accountId, userId, ['manageRules'])
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+
+    // Une règle ne vise qu'un webhook de SA boîte (décision 9). Vérifié après la barrière :
+    // sonder les webhooks d'une boîte qu'on ne peut pas atteindre dirait déjà qu'elle existe.
+    const badWebhook = await validateWebhookActions(body.actions, body.accountId, userId)
+    if (badWebhook) return NextResponse.json({ error: badWebhook }, { status: 422 })
 
     // Get max priority for this account
     const maxRows = await query<{ max: number | null }>(
