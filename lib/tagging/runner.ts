@@ -49,6 +49,13 @@ export interface MailSource {
   folders(): Promise<Array<{ path: string; uidValidity: string; total: number }>>
   /** Les `limit` mails de `folder` d'UID strictement supérieur à `afterUid`, par UID croissant. */
   fetch(folder: string, afterUid: number, limit: number): Promise<SourceMail[]>
+  /**
+   * Les UID de `folder`, SANS lire un seul mail. Nommer les mails d'un dossier et les LIRE sont
+   * deux besoins distincts : le tirage n'a besoin que des numéros, et passer par `fetch` pour les
+   * obtenir téléchargeait le corps de chaque mail de la boîte (mesuré : jamais fini sur 161 635
+   * mails). En IMAP c'est un `UID SEARCH ALL`, une commande par dossier.
+   */
+  uids(folder: string): Promise<number[]>
 }
 
 /** Le moteur, réduit à ce que le trieur lui demande. `askEngine` en est l'implémentation. */
@@ -110,10 +117,26 @@ export const SAMPLE_SEED_DEFAULT = 20260926
 export interface SampleCursor {
   seed: number
   size: number
-  /** Les mails tirés, dans l'ordre du tirage : `folder` + `uid`, rien de plus. */
+  /** Les mails tirés, dans l'ordre du tirage : `folder` + `uid`, rien de plus. Vide tant que `draw` dure. */
   picks: Array<{ folder: string; uid: number }>
   /** Combien de ces mails ont déjà été traités : le tirage reprend exactement là. */
   done: number
+  /** Le tirage EN COURS, quand il n'a pas fini en un passage. Absent dès qu'il a fini. */
+  draw?: SampleDraw | null
+}
+
+/**
+ * Où en est le tirage lui-même. Il est enregistré après CHAQUE dossier, donc un passage coupé
+ * (50 s) ne le fait pas repartir de zéro — c'est exactement ce qui le bloquait sur une vraie
+ * boîte, où il ne finissait jamais un passage et ne gardait rien.
+ */
+export interface SampleDraw {
+  /** Les dossiers à parcourir, figés au départ du tirage. */
+  folders: string[]
+  /** Combien sont déjà comptés : le tirage reprend à celui-là. */
+  index: number
+  /** Les `size` meilleurs rangs vus jusqu'ici. BORNÉ : c'est tout ce que le tri final garde. */
+  best: Array<{ folder: string; uid: number; rank: number }>
 }
 
 /**
@@ -131,36 +154,40 @@ const SAMPLE_RANK_HEX = 13
 export const sampleRank = (seed: number, folder: string, uid: number): number =>
   parseInt(createHash('sha256').update(`${seed}|${folder}|${uid}`).digest('hex').slice(0, SAMPLE_RANK_HEX), 16)
 
+/** Le rang départage seul ; `folder`/`uid` ne rendent qu'une égalité de rang STABLE, donc reproductible. */
+const byRank = (a: SampleDraw['best'][number], b: SampleDraw['best'][number]): number =>
+  a.rank - b.rank || (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : a.uid - b.uid)
+
+/**
+ * Compte UN dossier dans le tirage : ses UID sont classés par rang et seuls les `size` meilleurs
+ * survivent. C'est ce qui rend le tirage reprenable SANS rien perdre : « les N plus petits rangs »
+ * ne dépend pas de l'ordre des dossiers (c'est la raison d'être du rang par hachage), donc un
+ * tirage fait en dix passages rend exactement celui fait en un seul — et l'état gardé entre deux
+ * passages pèse `size` entrées, pas la boîte entière.
+ */
+export function drawStep(
+  best: SampleDraw['best'], seed: number, size: number, folder: string, uids: number[]
+): SampleDraw['best'] {
+  const merged = best.concat(uids.map(uid => ({ folder, uid, rank: sampleRank(seed, folder, uid) })))
+  merged.sort(byRank)
+  return merged.slice(0, Math.max(size, 0))
+}
+
 /**
  * Tire `size` mails AU HASARD parmi tous ceux que la source annonce, tous dossiers confondus.
  *
- * L'énumération passe par `fetch` — la seule façon qu'a `MailSource` de nommer les UID d'un
- * dossier (ils ne sont pas contigus : un mail supprimé laisse un trou, donc `1..total` ne marche
- * pas). Elle ne lit que des en-têtes déjà téléchargés par le lot, n'appelle AUCUN moteur et ne
- * coûte donc rien en crédit.
- *
- * ponytail: l'énumération est intégrale (elle liste la boîte entière avant de tirer). Sur
- * 161 635 mails, c'est ~8 000 `fetch` de 20 en-têtes, quelques minutes de IMAP et rien de plus —
- * hors de toute comparaison avec le tri lui-même. Le jour où ce plafond gêne, la source gagnera
- * une méthode qui rend les UID seuls (`SEARCH ALL`), sans rien changer ici.
+ * L'énumération ne lit AUCUN mail : `uids()` rend les numéros seuls (`UID SEARCH ALL` côté IMAP),
+ * une commande par dossier. Passer par `fetch` téléchargeait le CORPS de chaque mail de la boîte
+ * pour n'en garder que le numéro — sur 161 635 mails le tirage ne finissait jamais un passage.
  */
 export async function drawSample(
   source: MailSource, params: { seed: number; size: number }
 ): Promise<SampleCursor['picks']> {
-  const all: Array<{ folder: string; uid: number; rank: number }> = []
+  let best: SampleDraw['best'] = []
   for (const f of await source.folders()) {
-    let after = 0
-    for (;;) {
-      const batch = await source.fetch(f.path, after, BATCH_SIZE)
-      if (!batch.length) break
-      for (const m of batch) all.push({ folder: f.path, uid: m.uid, rank: sampleRank(params.seed, f.path, m.uid) })
-      after = batch[batch.length - 1].uid
-    }
+    best = drawStep(best, params.seed, params.size, f.path, await source.uids(f.path))
   }
-  // Le rang départage seul ; `folder`/`uid` ne sont là que pour qu'une égalité de rang (elle est
-  // improbable, pas impossible) reste un ordre STABLE, donc reproductible.
-  all.sort((a, b) => a.rank - b.rank || (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : a.uid - b.uid))
-  return all.slice(0, Math.max(params.size, 0)).map(m => ({ folder: m.folder, uid: m.uid }))
+  return best.map(m => ({ folder: m.folder, uid: m.uid }))
 }
 
 /** La ligne `mailbox_tagging` d'une boîte, telle que le trieur la lit. */
@@ -316,18 +343,13 @@ export async function enableLive(accountId: string, source: MailSource): Promise
 }
 
 /**
- * Le dernier UID d'un dossier, demandé à la source elle-même. Un `fetch` sans limite utile
- * suffit : la source rend les mails par UID croissant, le dernier du dernier lot est le plus
- * récent. Il n'y a pas de méthode dédiée dans `MailSource` pour ne pas l'alourdir d'une
- * troisième opération que seul ce cas utiliserait.
+ * Le dernier UID d'un dossier. Il sort de `uids()` — les numéros seuls, une commande — et non
+ * d'un parcours par `fetch`, qui téléchargeait le corps de TOUS les mails du dossier pour n'en
+ * retenir qu'un numéro. Un dossier vide rend 0 : le fil de l'eau y démarre donc au premier mail.
  */
 async function lastUidOf(source: MailSource, folder: string): Promise<number> {
-  let after = 0
-  for (;;) {
-    const batch = await source.fetch(folder, after, BATCH_SIZE)
-    if (!batch.length) return after
-    after = batch[batch.length - 1].uid
-  }
+  const uids = await source.uids(folder)
+  return uids.length ? Math.max(...uids) : 0
 }
 
 /** Le temps qu'il reste à ce passage. */
@@ -618,7 +640,23 @@ async function advanceSample(params: {
   // Un tirage qui ne correspond plus à la taille ou à la graine demandées est refait : c'est ce
   // qui fait qu'un second essai à graine différente tire bien autre chose.
   if (!cursor || cursor.seed !== seed || cursor.size !== size) {
-    cursor = { seed, size, picks: await drawSample(source, { seed, size }), done: 0 }
+    cursor = { seed, size, picks: [], done: 0, draw: { folders: (await source.folders()).map(f => f.path), index: 0, best: [] } }
+    await saveSampleCursor(accountId, cursor)
+  }
+
+  // Le tirage, dossier par dossier, ENREGISTRÉ après chacun : un passage coupé au délai reprend
+  // au dossier suivant au lieu de tout recommencer. Sans cela, sur une boîte réelle le tirage ne
+  // finissait aucun passage et la boîte ne taguait jamais rien (mesuré : 6 min, tagged=0).
+  if (cursor.draw) {
+    let draw = cursor.draw
+    while (draw.index < draw.folders.length) {
+      if (remaining(deadline) <= 0) return acc
+      const folder = draw.folders[draw.index]
+      draw = { ...draw, best: drawStep(draw.best, seed, size, folder, await source.uids(folder)), index: draw.index + 1 }
+      cursor = { ...cursor, draw }
+      await saveSampleCursor(accountId, cursor)
+    }
+    cursor = { ...cursor, picks: draw.best.map(m => ({ folder: m.folder, uid: m.uid })), draw: null }
     await saveSampleCursor(accountId, cursor)
     await query(`UPDATE mailbox_tagging SET total = $2, updated_at = NOW() WHERE account_id = $1`,
       [accountId, cursor.picks.length])

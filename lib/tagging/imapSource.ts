@@ -93,6 +93,15 @@ export function imapMailSource(account: ImapAccountRow): ImapMailSource {
         }))
     },
 
+    async uids(folder) {
+      const c = await open(folder)
+      // `UID SEARCH ALL` : une commande, une liste de nombres, AUCUN corps téléchargé. C'est la
+      // seule façon de nommer les mails d'un dossier sans les lire — les UID ne sont pas contigus
+      // (un mail supprimé laisse un trou), donc `1..total` ne dit pas lesquels existent.
+      const found = await c.search({ all: true }, { uid: true })
+      return found === false ? [] : found.map(Number).filter(Number.isFinite)
+    },
+
     async fetch(folder, afterUid, limit) {
       if (limit <= 0) return []
       const c = await open(folder)

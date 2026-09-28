@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
-import { useTranslations } from 'next-intl'
+import { useLocale, useTranslations } from 'next-intl'
 import { Tags, Play, Pause, RotateCcw, FlaskConical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -38,6 +38,7 @@ const usd = (v: number) => `$${v.toFixed(v > 0 && v < 0.01 ? 4 : 2)}`
 
 export default function TaggingSettingsPage() {
   const t = useTranslations('settings.tagging')
+  const locale = useLocale()
   const tCommon = useTranslations('settings.common')
 
   const { data: accountsData } = useSWR<{ data: EmailAccount[] }>('/api/accounts', fetcher)
@@ -109,7 +110,7 @@ export default function TaggingSettingsPage() {
   async function run(action: 'start' | 'sample' | 'pause' | 'resume' | 'restart') {
     if (!accountId) return
     if (action === 'restart' && !window.confirm(t('restartConfirm'))) return
-    if (action === 'sample' && !window.confirm(t('sampleConfirm', { size: sampleSize }))) return
+    if (action === 'sample' && !window.confirm(t('sampleConfirm', { size: count(sampleSize) }))) return
     setBusy(true); setRunError(null)
     try {
       // Un refus du serveur se DIT : sans cela, un bouton pressé qui ne change rien se lit
@@ -134,6 +135,9 @@ export default function TaggingSettingsPage() {
   const engine = status?.engine ?? null
   const remaining = status ? Math.max(status.total - status.tagged - status.skipped, 0) : 0
   const sampleSize = status?.sampleDefaults.size ?? 0
+  // Une TAILLE est une quantité : elle se lit « 1 000 » en français, « 1,000 » en anglais. La
+  // GRAINE n'en est pas une (c'est un numéro à recopier pour rejouer le tirage) : elle reste brute.
+  const count = (n: number) => n.toLocaleString(locale)
 
   // La répartition ne se demande QUE quand il y a un échantillon tagué à lire : c'est un GROUP BY
   // sur toutes les étiquettes de la boîte, et elle n'a rien à dire avant le premier mail trié.
@@ -251,13 +255,17 @@ export default function TaggingSettingsPage() {
                   coûter, pas une estimation à chercher ailleurs.
                 */}
                 <SettingsRow
-                  title={t('sample', { size: sampleSize })}
+                  title={t('sample', { size: count(sampleSize) })}
                   description={status.sampleEstimateUsd === null
-                    ? t('sampleDescUnknown', { size: sampleSize })
-                    : t('sampleDesc', { size: sampleSize, cost: usd(status.sampleEstimateUsd) })}
+                    ? t('sampleDescUnknown', { size: count(sampleSize) })
+                    : t('sampleDesc', { size: count(sampleSize), cost: usd(status.sampleEstimateUsd) })}
                 >
                   <Button
-                    type="button" variant="ghost" disabled={busy || status.bulkState === 'running'}
+                    type="button" variant="ghost"
+                    // Un tri EN PAUSE laisse `bulkState` à « running » : le désactiver là empêchait
+                    // de tester un échantillon sur une boîte mise en pause, alors que l'échantillon
+                    // remet justement les compteurs à zéro. Même condition que le bouton Lecture.
+                    disabled={busy || (status.bulkState === 'running' && !status.pausedReason)}
                     onClick={() => run('sample')}
                   >
                     <FlaskConical className="mr-1.5 h-4 w-4" />{t('sampleAction')}
@@ -266,7 +274,7 @@ export default function TaggingSettingsPage() {
 
                 {status.sample && (
                   <p className="text-xs text-muted-foreground">
-                    {t('sampleState', { size: status.sample.size, done: status.sample.done, seed: status.sample.seed })}
+                    {t('sampleState', { size: count(status.sample.size), done: count(status.sample.done), seed: status.sample.seed })}
                   </p>
                 )}
 

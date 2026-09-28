@@ -133,6 +133,16 @@ const makeSource = (folders = FOLDERS, holes = new Set()) => ({
   async folders() {
     return folders.map(f => ({ path: f.path, uidValidity: f.uidValidity, total: f.count }))
   },
+  // Les UID SEULS, sans lire un mail : c'est ce que le tirage utilise. Le compteur `reads` plus
+  // bas mesure que le tirage n'appelle bien PLUS `fetch` — la vraie source y téléchargeait le
+  // corps de chaque mail de la boîte.
+  async uids(folder) {
+    const f = folders.find(x => x.path === folder)
+    if (!f) return []
+    const out = []
+    for (let i = 1; i <= f.count; i += 1) if (!holes.has(`${folder}|${i}`)) out.push(i)
+    return out
+  },
   async fetch(folder, afterUid, limit) {
     const f = folders.find(x => x.path === folder)
     if (!f) return []
@@ -436,6 +446,46 @@ try {
   const reversedSource = makeSource([...FOLDERS].reverse())
   check('H4 l’ordre dans lequel les dossiers sont parcourus ne change pas le tirage',
     key(await runner.drawSample(reversedSource, { seed: SEED_A, size: SAMPLE_N })) === key(drawA1))
+
+  // H17/H18/H19 : le TIRAGE sur une GROSSE boîte. C'est le défaut qui a fait échouer le gate sur
+  // la vraie boîte (161 635 mails) : le tirage énumérait tout en LISANT chaque mail, ne finissait
+  // aucun passage de 50 s, et ne gardait rien — la boîte ne taguait jamais rien.
+  const BIG_FOLDERS = 1000
+  const BIG_PER_FOLDER = 100
+  const BIG_TOTAL = BIG_FOLDERS * BIG_PER_FOLDER
+  let bigReads = 0
+  const bigSource = {
+    async folders() {
+      return Array.from({ length: BIG_FOLDERS }, (_, i) => ({ path: `Gros/${i}`, uidValidity: '1', total: BIG_PER_FOLDER }))
+    },
+    async uids(folder) {
+      // Les UID ne sont PAS contigus dans une vraie boîte : un mail supprimé laisse un trou.
+      const base = Number(folder.split('/')[1]) * 10
+      return Array.from({ length: BIG_PER_FOLDER }, (_, i) => base + i * 3 + 1)
+    },
+    async fetch() { bigReads += 1; return [] },
+  }
+  const BIG_MS = 30_000
+  const t0 = Date.now()
+  const bigDraw = await runner.drawSample(bigSource, { seed: SEED_A, size: runner.SAMPLE_SIZE_DEFAULT })
+  const bigMs = Date.now() - t0
+  check(`H17 le tirage finit sur ${BIG_TOTAL} mails / ${BIG_FOLDERS} dossiers en moins de ${BIG_MS} ms`,
+    bigDraw.length === runner.SAMPLE_SIZE_DEFAULT && bigMs < BIG_MS,
+    `${bigDraw.length} tirés en ${bigMs} ms`)
+  check('H18 le tirage ne LIT aucun mail : zéro appel à fetch (c’est le défaut mesuré sur la vraie boîte)',
+    bigReads === 0, `${bigReads} appel(s) à fetch`)
+  // H19 : le même tirage, mais COUPÉ — on le rejoue dossier par dossier via `drawStep`, exactement
+  // ce que fait le passage quand son délai tombe. Le résultat doit être IDENTIQUE, sinon la
+  // reprise change l'échantillon annoncé.
+  let best = []
+  for (const f of await bigSource.folders()) {
+    best = runner.drawStep(best, SEED_A, runner.SAMPLE_SIZE_DEFAULT, f.path, await bigSource.uids(f.path))
+  }
+  check('H19 un tirage COUPÉ puis repris dossier par dossier rend EXACTEMENT le même échantillon',
+    key(best.map(m => ({ folder: m.folder, uid: m.uid }))) === key(bigDraw),
+    `${best.length} vs ${bigDraw.length}`)
+  check(`H20 l’état gardé entre deux passages reste BORNÉ à la taille du tirage (${runner.SAMPLE_SIZE_DEFAULT}), pas la boîte (${BIG_TOTAL})`,
+    best.length === runner.SAMPLE_SIZE_DEFAULT, `${best.length} entrées`)
 
   // H5 : le tri d'un échantillon, de bout en bout, en passages COURTS (donc coupés).
   await clean(ACCOUNT)
