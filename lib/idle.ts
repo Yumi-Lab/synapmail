@@ -1,25 +1,25 @@
 import type { ImapFlow } from 'imapflow'
 import { createClient, type AccountConfig } from './imap'
 
-// Attente de reconnexion : double à chaque échec, plafonnée. Une coupure réseau
-// ne doit pas marteler le serveur IMAP, et une coupure longue doit finir par
-// retrouver la boîte sans intervention.
+// Reconnect delay: doubles on every failure, capped. A network drop must not hammer
+// the IMAP server, and a long outage must eventually find the mailbox again without
+// intervention.
 const RETRY_BASE_MS = 2_000
 const RETRY_MAX_MS = 60_000
 
 export interface MailboxWatcher {
-  /** Ferme la connexion et arrête toute reconnexion. Idempotent. */
+  /** Closes the connection and stops any reconnection. Idempotent. */
   close(): void
 }
 
 /**
- * Ouvre UNE connexion IMAP qui reste en IDLE sur `folder` et appelle `onChange`
- * à chaque annonce du serveur. imapflow passe seul en IDLE dès que la connexion
- * est inactive : il suffit d'ouvrir la boîte et d'écouter.
+ * Opens ONE IMAP connection that stays in IDLE on `folder` and calls `onChange` on
+ * every server announcement. imapflow enters IDLE by itself as soon as the connection
+ * goes quiet: opening the mailbox and listening is enough.
  *
- * ponytail: une connexion par flux SSE ouvert, donc par onglet. Plafond connu et
- * assumé ; ne mutualiser par utilisateur+compte que si le serveur IMAP refuse
- * des connexions.
+ * One connection per open SSE stream, hence per tab. This ceiling is known and
+ * accepted; only pool per user+account if the IMAP server starts refusing
+ * connections.
  */
 export function watchMailbox(
   account: AccountConfig,
@@ -44,9 +44,9 @@ export function watchMailbox(
     let c: ImapFlow | null = null
     try {
       c = await createClient(account)
-      // Sans écouteur 'error', une coupure de transport devient une exception
-      // non capturée et emporte le processus : imapflow émet, on absorbe, la
-      // reconnexion est gérée par 'close'.
+      // Without an 'error' listener, a transport drop becomes an uncaught exception
+      // and takes the process down: imapflow emits, we absorb, and reconnection is
+      // handled by 'close'.
       c.on('error', () => {})
       const opened = c
       c.on('close', () => {
@@ -54,8 +54,8 @@ export function watchMailbox(
         client = null
         schedule()
       })
-      // Les trois annonces non sollicitées qui changent ce que la liste affiche :
-      // un message arrive, un message disparaît, un drapeau bouge.
+      // The three unsolicited announcements that change what the list shows: a message
+      // arrives, a message disappears, a flag moves.
       c.on('exists', onChange)
       c.on('expunge', onChange)
       c.on('flags', onChange)
@@ -63,13 +63,13 @@ export function watchMailbox(
       if (stopped) { void opened.logout().catch(() => {}); return }
       client = opened
       attempt = 0
-      // imapflow n'entre en IDLE tout seul qu'après 15 s d'inactivité : sans cet
-      // appel, la PREMIÈRE arrivée attend ce délai (mesuré : ~9 s de latence là
-      // où la DoD en demande moins de 5). `idle()` ne rend la main qu'à la fin
-      // de l'IDLE, d'où l'appel non attendu ; sa rupture passe par 'close'.
+      // imapflow only enters IDLE on its own after 15 s of inactivity: without this
+      // call the FIRST arrival waits that long (measured: ~9 s of latency where the
+      // requirement is under 5). `idle()` only returns when the IDLE ends, hence the
+      // un-awaited call; its interruption surfaces through 'close'.
       void opened.idle().catch(() => {})
     } catch {
-      // Connexion refusée, identifiants rejetés, boîte absente : on réessaie.
+      // Connection refused, credentials rejected, mailbox missing: retry.
       if (c) void c.logout().catch(() => {})
       client = null
       schedule()

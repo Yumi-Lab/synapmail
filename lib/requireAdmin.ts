@@ -1,8 +1,8 @@
 /**
- * La garde d'administration, en UN seul endroit : le rôle vit en base (`users.role`)
- * et non dans la session, donc chaque route protégée doit le relire. Extraite de
- * `app/api/admin/users/route.ts` quand une deuxième zone d'administration est
- * apparue, pour que les deux refusent exactement de la même façon.
+ * The admin guard, in ONE single place: the role lives in the database (`users.role`)
+ * and not in the session, so every protected route must re-read it. Extracted from
+ * `app/api/admin/users/route.ts` when a second administration area appeared, so that
+ * both refuse in exactly the same way.
  */
 import { query } from '@/lib/db'
 

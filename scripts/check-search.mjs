@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Measures lot S1 against the RUNNING app and a REAL mailbox (read only: it issues
+ * Measures search against the RUNNING app and a REAL mailbox (read only: it issues
  * GET requests and never creates, moves or deletes a message, and never prints a
  * body or a password).
  *
@@ -9,11 +9,11 @@
  *     found. Reference arm (the previous behaviour, `from`+`subject` only) is
  *     recomputed from the SAME result set: the arm only passes when results exist
  *     that the reference could NOT have returned.
- *  B. WORDS — « w1 w2 » and « w2 w1 » return the same set, and it is not empty.
+ *  B. WORDS — "w1 w2" and "w2 w1" return the same set, and it is not empty.
  *  C. QUOTES — a quoted phrase returns a SUBSET of the same words unquoted.
  *  D. CONTRACT — `total` >= rows returned, `fields` is exactly SEARCH_FIELDS.
  *  E. BANNER — the list's search banner names the fields, the scope, and says
- *     « first N of M » when the result set is capped.
+ *     "first N of M" when the result set is capped.
  *
  * Queries are DISCOVERED from the mailbox (no hardcoded term), so the bench keeps
  * measuring after the test account's content changes.
@@ -35,7 +35,7 @@ const SEARCH_SETTLE_MS = 20000
 const SAMPLE_PAGE = 50
 
 // The contract is IMPORTED, never retyped: a change in lib/search.ts fails this
-// gate instead of silently making it measure something else.
+// check instead of silently making it measure something else.
 registerHooks({
   resolve(spec, ctx, next) {
     if (spec.startsWith('.') && !/\.[a-z]+$/.test(spec)) {
@@ -157,13 +157,14 @@ try {
   if (!bannerQuery) {
     console.log('  skip  no query discovered')
   } else {
-    // Le bandeau doit être confronté à LA requête que la page a elle-même émise :
-    // rejouer un appel à part interroge un autre dossier et compare deux mesures
-    // différentes (vécu : bandeau 104, appel séparé 212 — l'écart venait du banc).
+    // The banner must be compared against THE request the page itself issued:
+    // replaying a separate call queries another folder and compares two different
+    // measurements (observed: banner 104, separate call 212 — the gap came from
+    // the harness, not the product).
     let pageSearch = null
     page.on('response', async res => {
       if (!new URL(res.url()).pathname.endsWith('/api/messages/search')) return
-      try { pageSearch = await res.json() } catch { /* réponse non lue : sans effet */ }
+      try { pageSearch = await res.json() } catch { /* unreadable response: no effect */ }
     })
     await page.goto(`${BASE}/mail?${SEARCH_PARAM}=${encodeURIComponent(bannerQuery)}`, { waitUntil: 'domcontentloaded' })
     await page.waitForSelector('[data-search-summary]', { timeout: 30000 })

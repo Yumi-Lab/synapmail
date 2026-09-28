@@ -1,36 +1,36 @@
 /**
- * Drapeaux de couleur, convention Apple Mail — source UNIQUE.
+ * Colour flags, following the Apple Mail convention — SINGLE source.
  *
- * Mesuré sur le compte de test IONOS (imap.ionos.fr, 18/09/2026) : la boîte
- * annonce `\*` dans ses `permanentFlags` et un `STORE +FLAGS ($MailFlagBit0)`
- * survit à une reconnexion. Les mots-clés d'Apple sont donc écrits TELS QUELS
- * dans IMAP : un drapeau posé ici est celui que Mail sur Mac affiche, et
- * réciproquement. Aucune couleur n'est mémorisée en base.
+ * Measured against a real test account: the mailbox advertises `\*` in its
+ * `permanentFlags` and a `STORE +FLAGS ($MailFlagBit0)` survives a reconnect.
+ * Apple's keywords are therefore written AS IS into IMAP: a flag set here is the
+ * one a desktop mail client displays, and vice versa. No colour is stored in the
+ * database.
  *
- * Codage d'Apple : `\Flagged` porte le fait d'être marqué, et l'INDEX de la
- * couleur (0..6) est écrit en binaire sur trois mots-clés `$MailFlagBit0/1/2`,
- * bit 0 étant le poids faible. Rouge (index 0) n'a donc AUCUN bit : c'est la
- * couleur d'un `\Flagged` nu, ce qui rend l'ancienne étoile compatible.
+ * Apple's encoding: `\Flagged` carries the fact of being marked, and the colour
+ * INDEX (0..6) is written in binary across three keywords `$MailFlagBit0/1/2`,
+ * bit 0 being the least significant. Red (index 0) therefore has NO bit: it is the
+ * colour of a bare `\Flagged`, which keeps the legacy star compatible.
  */
 
 export const FLAG_IMAP_FLAG = '\\Flagged'
 
-/** Mots-clés portant les bits de couleur, du poids faible au poids fort. */
+/** Keywords carrying the colour bits, from least to most significant. */
 export const FLAG_BIT_KEYWORDS = ['$MailFlagBit0', '$MailFlagBit1', '$MailFlagBit2'] as const
 
 export interface MailFlag {
-  /** Clé stable, utilisée par l'API et l'interface. */
+  /** Stable key, used by the API and the interface. */
   key: string
-  /** Index d'Apple (0..6), encodé sur les bits. */
+  /** Apple's index (0..6), encoded across the bits. */
   index: number
   /**
-   * Couleur du drapeau — la SEULE couleur de cette interface. C'est une VALEUR
-   * CSS, pas une classe utilitaire : Tailwind ne scanne pas `lib/`, donc une
-   * classe nommée ici ne serait jamais générée. La variable est déclarée dans
-   * `app/globals.css` (clair + `.dark`), à poser en `style={{ color }}`.
+   * The flag's colour — the ONLY colour in this interface. It is a CSS VALUE, not a
+   * utility class: Tailwind does not scan `lib/`, so a class named here would never
+   * be generated. The variable is declared in `app/globals.css` (light + `.dark`),
+   * to be applied as `style={{ color }}`.
    */
   color: string
-  /** Clé i18n, sous l'espace `mail.flags`. */
+  /** i18n key, under the `mail.flags` namespace. */
   labelKey: string
 }
 
@@ -44,7 +44,7 @@ export const MAIL_FLAGS: readonly MailFlag[] = [
   { key: 'gray',   index: 6, color: 'var(--flag-gray)',   labelKey: 'gray' },
 ] as const
 
-/** Couleur d'un `\Flagged` sans bit — et couleur de l'ancien `isStarred: true`. */
+/** Colour of a `\Flagged` without bits — and colour of the legacy `isStarred: true`. */
 export const DEFAULT_FLAG_KEY = MAIL_FLAGS[0].key
 
 export function flagByKey(key: string | null | undefined): MailFlag | null {
@@ -52,14 +52,14 @@ export function flagByKey(key: string | null | undefined): MailFlag | null {
   return MAIL_FLAGS.find(f => f.key === key) ?? null
 }
 
-/** Mots-clés IMAP à POSER pour cette couleur (bits à 1 seulement). */
+/** IMAP keywords to SET for this colour (bits equal to 1 only). */
 export function keywordsForFlag(key: string): string[] {
   const flag = flagByKey(key)
   if (!flag) return []
   return FLAG_BIT_KEYWORDS.filter((_, bit) => (flag.index >> bit) & 1)
 }
 
-/** Couleur portée par un jeu de mots-clés IMAP, ou `null` si le message n'est pas marqué. */
+/** Colour carried by a set of IMAP keywords, or `null` when the message is not marked. */
 export function flagFromKeywords(flags: Iterable<string> | null | undefined): string | null {
   if (!flags) return null
   const set = flags instanceof Set ? (flags as Set<string>) : new Set(flags)
@@ -70,8 +70,8 @@ export function flagFromKeywords(flags: Iterable<string> | null | undefined): st
 }
 
 /**
- * Filtres de la liste. La valeur EST la clé i18n (`mail.<valeur>`) et la valeur
- * envoyée à l'API : un filtre ajouté ici n'a rien d'autre à mettre à jour.
+ * List filters. The value IS the i18n key (`mail.<value>`) and the value sent to the
+ * API: a filter added here has nothing else to update.
  */
 export const MAIL_LIST_FILTERS = ['all', 'unread', 'flagged'] as const
 export type MailListFilter = (typeof MAIL_LIST_FILTERS)[number]

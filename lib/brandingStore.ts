@@ -1,7 +1,7 @@
 /**
- * Lecture de l'identité de l'instance en base — seule porte vers la table
- * `instance_settings`. Les règles (nom par défaut, bornes, types acceptés)
- * vivent dans `lib/branding.ts`, qui reste pur et testable sans Postgres.
+ * Reading the instance identity from the database — the only door to the
+ * `instance_settings` table. The rules (default name, bounds, accepted types) live
+ * in `lib/branding.ts`, which stays pure and testable without Postgres.
  */
 import { query } from '@/lib/db'
 import { DEFAULT_APP_NAME, DEFAULT_BRANDING, cleanAppName, type Branding } from '@/lib/branding'
@@ -9,9 +9,9 @@ import { DEFAULT_APP_NAME, DEFAULT_BRANDING, cleanAppName, type Branding } from 
 type BrandingRow = { app_name: string | null; favicon_updated_at: Date | null }
 
 /**
- * Une base pas encore initialisée (table absente au premier démarrage) doit
- * rendre l'apparence d'origine, pas une page en erreur : l'échec retombe donc
- * sur `DEFAULT_BRANDING`.
+ * A database not yet initialised (table missing on first start) must yield the
+ * original appearance, not an error page: the failure therefore falls back to
+ * `DEFAULT_BRANDING`.
  */
 export async function readBranding(): Promise<Branding> {
   try {
@@ -31,7 +31,7 @@ export async function readBranding(): Promise<Branding> {
 
 export type StoredFavicon = { bytes: Buffer; type: string; version: number }
 
-/** Les octets de l'icône, ou `null` quand aucune n'est définie (la route répond 404). */
+/** The icon bytes, or `null` when none is set (the route then answers 404). */
 export async function readFavicon(): Promise<StoredFavicon | null> {
   try {
     const rows = await query<{ favicon: Buffer | null; favicon_type: string | null; favicon_updated_at: Date | null }>(

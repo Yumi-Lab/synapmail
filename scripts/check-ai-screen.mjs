@@ -4,7 +4,7 @@
  * no emoji and no em dash in what the user actually reads, and the step
  * titles coming from the locale files rather than from the component.
  *
- * Reading the rendered text is the point: the previous gate found emoji and
+ * Reading the rendered text is the point: a previous review found emoji and
  * em dashes that `check-locales` could not see, because they were written
  * straight into the JSX instead of going through a locale file.
  *
@@ -99,7 +99,7 @@ try {
   check(cardsWithIcon.every(Boolean), 'every provider card carries an icon')
 
   // ── the local provider, picked with a real click ──────────────────────────
-  // Gate of 2026-09-20 (a): with "Local, on this device" the detect button was
+  // Found on review, 2026-09-20 (a): with "Local, on this device" the detect button was
   // not rendered at all, so the model chips were never reachable and the model
   // had to be typed by hand.
   const localLabel = locales[served[0] ?? 'fr'].settings.ai.provider.local
@@ -121,13 +121,13 @@ try {
   }, BREAK === 'detect-hidden-for-local')
   check(detectVisible, 'the local provider offers the detect button')
 
-  // Gate of 2026-09-20 (c): the refused-permission sentence was printed twice,
+  // Found on review, 2026-09-20 (c): the refused-permission sentence was printed twice,
   // once inline and once in its own box. It must be said exactly once.
   const permissionSentence = locales[served[0] ?? 'fr'].mail.ai.errors.permission
   // The denied state is NOT reachable from this bench: a loopback origin is
   // exempt from the browser permission, so the baseline count here is 0 and
-  // only the human gate on an HTTPS origin sees the sentence for real. The
-  // control therefore injects the defect exactly as the gate read it, twice.
+  // only a manual review on an HTTPS origin sees the sentence for real. The
+  // control therefore injects the defect exactly as it was read on screen, twice.
   const saidTimes = await page.evaluate(({ sentence, breakIt }) => {
     const body = document.body
     if (breakIt) {

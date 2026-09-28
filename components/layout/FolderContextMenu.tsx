@@ -1,13 +1,13 @@
 'use client'
 
 /**
- * Clic droit sur un dossier de la barre (lot H3e). Le menu N'INVENTE aucune règle :
- * il grise ce que `lib/folderActions.ts` refuse — la MÊME fonction que les routes
- * `/api/folders*` appliquent avant d'agir. Une entrée offerte ici est donc une
- * entrée que le serveur acceptera, et l'inverse.
+ * Right-click on a sidebar folder. The menu INVENTS no rule of its own: it disables
+ * whatever `lib/folderActions.ts` refuses — the SAME function the `/api/folders*` routes
+ * apply before acting. So an item offered here is an item the server will accept, and
+ * the other way around.
  *
- * Il ne fait pas non plus les appels : il remonte l'intention, la barre l'exécute
- * (c'est elle qui tient la saisie en ligne et le rafraîchissement de la liste).
+ * It does not make the calls either: it reports the intent, and the sidebar runs it
+ * (the sidebar owns the inline input and the list refresh).
  */
 
 import { FolderPlus, FolderTree, Pencil, MailOpen, Eraser, Trash2 } from 'lucide-react'
@@ -24,7 +24,7 @@ export interface FolderMenuState {
   path: string
   name: string
   special: SpecialType
-  /** Vrai si un autre dossier est rangé sous celui-ci : on ne supprime pas un parent. */
+  /** True if another folder lives under this one: a parent is not deleted. */
   hasChildren: boolean
 }
 
@@ -36,8 +36,8 @@ interface Props {
   onClose: () => void
 }
 
-/** L'icône et le libellé de chaque action — la seule chose que ce fichier décide.
- *  QUELLES entrées s'affichent vient de `offeredActions`, l'ordre de `FOLDER_ACTIONS`. */
+/** The icon and label of each action — the only thing this file decides.
+ *  WHICH items show up comes from `offeredActions`, the order from `FOLDER_ACTIONS`. */
 const ENTRY: Record<FolderAction, { icon: React.ComponentType<{ className?: string }>; label: string; danger?: boolean }> = {
   create: { icon: FolderPlus, label: 'folderNew' },
   createChild: { icon: FolderTree, label: 'folderNewChild' },

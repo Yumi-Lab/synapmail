@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Self-check of the forward trust boundary (lot M5), with no database, no
+ * Self-check of the forward trust boundary, with no database, no
  * network and no browser: `lib/forward.ts` decides ALONE what the send route
  * accepts, so it can be executed alone.
  *
@@ -94,9 +94,9 @@ ok('an origin the user cannot read: 404, nothing is sent')
 
 console.log('refusal labels — one code, one sentence per locale, singular included')
 
-// Le serveur ne renvoie qu'un CODE : la phrase vient des fichiers de traduction.
-// On les rend donc pour de vrai (même moteur que next-intl) au lieu de les lire
-// à l'œil — un pluriel mal écrit lève ici, et `1 … ne sont plus` ne passe plus.
+// The server only returns a CODE: the sentence comes from the translation files.
+// They are therefore rendered for real (same engine as next-intl) instead of being
+// eyeballed — a badly written plural throws here, so a mismatched count cannot ship.
 const LOCALES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'locales')
 const MESSAGE_OF_CODE = {
   [FORWARD_ERROR.invalid]: 'forwardInvalid',
@@ -106,7 +106,7 @@ const MESSAGE_OF_CODE = {
   [FORWARD_ERROR.originDenied]: 'forwardOriginDenied',
 }
 
-// Un code ajouté sans phrase se verrait ici, pas en production.
+// A code added without a sentence surfaces here, not in production.
 assert.deepEqual(
   Object.keys(MESSAGE_OF_CODE).sort(),
   Object.values(FORWARD_ERROR).sort(),
@@ -123,8 +123,8 @@ for (const locale of ['en', 'fr', 'zh']) {
       assert.ok(!/[{}#]/.test(rendered), `${locale}.${key} left an unresolved placeholder: ${rendered}`)
     }
   }
-  // `forwardMissing` est le seul dont le verbe s'accorde : un message manquant
-  // se lit au singulier, trois au pluriel, et les deux phrases diffèrent.
+  // `forwardMissing` is the only one whose verb agrees with the count: one missing
+  // message reads as singular, three as plural, and the two sentences differ.
   const missing = labels.forwardMissing
   const one = new IntlMessageFormat(missing, locale).format({ count: 1 })
   const many = new IntlMessageFormat(missing, locale).format({ count: 3 })

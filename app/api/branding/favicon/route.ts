@@ -4,14 +4,13 @@ import { readFavicon } from '@/lib/brandingStore'
 export const dynamic = 'force-dynamic'
 
 /**
- * Icône de l'instance, en accès PUBLIC : la page de connexion en a besoin avant
- * toute session (voir `lib/publicPaths.ts`).
+ * The instance icon, served PUBLICLY: the sign-in page needs it before any session
+ * exists (see `lib/publicPaths.ts`).
  *
- * Le type servi est celui DÉTECTÉ à l'enregistrement, jamais celui déclaré par
- * le navigateur ; `nosniff` interdit au client de le réinterpréter, donc un
- * fichier à double lecture (octets PNG valides, HTML dans la charge utile) ne
- * peut pas s'exécuter depuis notre origine. L'URL porte sa version, d'où le
- * cache long et immuable : une nouvelle icône change l'URL.
+ * The served type is the one DETECTED at save time, never the one declared by the
+ * browser; `nosniff` forbids the client from reinterpreting it, so a dual-reading file
+ * (valid PNG bytes, HTML in the payload) cannot execute from our origin. The URL
+ * carries its version, hence the long immutable cache: a new icon changes the URL.
  */
 export async function GET() {
   const favicon = await readFavicon()

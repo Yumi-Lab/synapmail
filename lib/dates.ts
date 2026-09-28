@@ -1,4 +1,4 @@
-/** Parse une date ISO venue de l'API ; null si absente ou invalide (jamais « Invalid Date » à l'écran). */
+/** Parses an ISO date coming from the API; null when absent or invalid (never "Invalid Date" on screen). */
 export function parseDate(iso: string | null | undefined): Date | null {
   if (!iso) return null
   const d = new Date(iso)
@@ -6,14 +6,13 @@ export function parseDate(iso: string | null | undefined): Date | null {
 }
 
 /**
- * Date COMPLÈTE + heure d'une ligne de la liste (lot M3b) — source unique.
+ * FULL date + time of a list row — single source.
  *
- * Nicolas, 19/09/2026 : « à la place tu mets la date complète et l'heure ».
- * `Intl` porte le format, jamais une chaîne recopiée : la langue de l'interface
- * décide de l'ordre et du séparateur (fr « 18 sept. 2026, 10:41 », en « Sep 18,
- * 2026, 10:41 AM », zh « 2026年9月18日 10:41 »). Le jour même, la date cède la
- * place au libellé « Aujourd'hui » — celui des en-têtes de groupe, passé par
- * l'appelant pour que cette fonction reste sans i18n.
+ * `Intl` carries the format, never a hand-copied string: the interface language
+ * decides the order and the separator (en "Sep 18, 2026, 10:41 AM", zh
+ * "2026年9月18日 10:41"). On the current day, the date gives way to the "Today"
+ * label — the one used by the group headers, passed in by the caller so this
+ * function stays free of i18n.
  */
 export function formatRowDate(iso: string, locale: string, todayLabel: string): string {
   const d = parseDate(iso)

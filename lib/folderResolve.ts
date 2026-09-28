@@ -1,9 +1,9 @@
 /**
- * Résoudre un chemin de dossier AVANT d'agir dessus : le compte accessible, le dossier
- * réellement présent chez le serveur, son rôle, son délimiteur et ses enfants. Toutes
- * les routes de mutation partent de là — un chemin inventé par le client n'atteint
- * jamais IMAP, et la règle de `lib/folderActions.ts` est évaluée sur des faits du
- * serveur, pas sur ce que le client a bien voulu envoyer.
+ * Resolving a folder path BEFORE acting on it: the accessible account, the folder that
+ * actually exists on the server, its role, its delimiter and its children. Every mutating
+ * route starts from here — a path invented by the client never reaches IMAP, and the rule
+ * in `lib/folderActions.ts` is evaluated against server facts, not against whatever the
+ * client chose to send.
  */
 import { getAccessibleAccount, type AccessibleAccount, type AccountPermission } from './accountAccess'
 import { toImapConfig } from './accounts'
@@ -16,7 +16,7 @@ export interface ResolvedFolder {
   account: AccessibleAccount
   config: ReturnType<typeof toImapConfig>
   folders: Folder[]
-  /** Le dossier visé, `null` quand on ne vise que le compte (création à la racine). */
+  /** The targeted folder, `null` when only the account is targeted (creation at the root). */
   folder: Folder | null
   special: SpecialType
   delimiter: string
@@ -25,9 +25,9 @@ export interface ResolvedFolder {
 }
 
 /**
- * `path` vide ou absent = on ne vise aucun dossier (création à la racine). Retourne
- * `null` quand le compte n'est pas accessible OU quand le chemin n'existe pas : même
- * forme d'échec dans les deux cas, pour ne rien révéler de ce qui existe.
+ * An empty or absent `path` = no folder is targeted (creation at the root). Returns
+ * `null` when the account is not accessible OR when the path does not exist: the same
+ * shape of failure in both cases, so nothing about what exists is revealed.
  */
 export async function resolveFolder(
   accountId: string | null,

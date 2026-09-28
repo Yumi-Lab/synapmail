@@ -8,11 +8,11 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 
 /**
- * Champ mot de passe unique de l'app : input + bouton œil pour afficher/masquer.
- * `type` est imposé par le composant — ne pas le passer en prop.
+ * The application's single password field: input + eye button to show/hide.
+ * `type` is enforced by the component — do not pass it as a prop.
  */
 type PasswordInputProps = Omit<React.ComponentProps<'input'>, 'type'> & {
-  /** Classes de mise en page posées sur le conteneur (largeur, marges) plutôt que sur l'input. */
+  /** Layout classes applied to the container (width, margins) rather than to the input. */
   containerClassName?: string
 }
 

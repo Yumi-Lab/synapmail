@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Measures lot C1: the colour a mailbox carries is the one its owner chose, it is the SAME
+ * Measures that the colour a mailbox carries is the one its owner chose, and is the SAME
  * colour in the settings badge, in the sidebar bubble and in the bar's accent variable, and
  * whatever colour is picked the letters on it stay readable.
  *

@@ -16,9 +16,9 @@ import {
 } from '@/lib/theme'
 
 interface ThemeContextValue {
-  /** Préférence de l'utilisateur : light | dark | system. */
+  /** The user's preference: light | dark | system. */
   theme: Theme
-  /** Ce qui est réellement affiché (`system` déjà résolu). */
+  /** What is actually displayed (`system` already resolved). */
   resolvedTheme: ResolvedTheme
   setTheme: (theme: Theme) => void
 }
@@ -35,18 +35,18 @@ export function ThemeProvider({
   initialTheme = DEFAULT_THEME,
   children,
 }: {
-  /** Valeur du cookie lue au SSR : évite tout flash au premier rendu. */
+  /** Cookie value read during SSR: avoids any flash on the first render. */
   initialTheme?: Theme
   children: React.ReactNode
 }) {
   const [theme, setThemeState] = useState<Theme>(initialTheme)
   const [systemDark, setSystemDark] = useState(false)
 
-  // `user_settings.theme` fait autorité (multi-appareil) ; le cookie n'est qu'un
-  // miroir local pour le SSR. On ne l'applique qu'une fois, sinon une préférence
-  // changée dans l'onglet serait écrasée à chaque revalidation SWR. Sur une page
-  // publique (connexion, inscription…) il n'y a pas de session : on ne demande rien,
-  // le cookie suffit — sinon chaque chargement de /login logue un 401 en console.
+  // `user_settings.theme` is authoritative (cross-device); the cookie is only a local
+  // mirror for SSR. It is applied just once, otherwise a preference changed in the tab
+  // would be overwritten on every SWR revalidation. On a public page (sign-in, sign-up)
+  // there is no session: nothing is requested and the cookie is enough — otherwise every
+  // /login load would log a 401 in the console.
   const pathname = usePathname()
   const { data: settings } = useSWR<{ data?: { theme?: string } }>(isPublicPath(pathname) ? null : '/api/settings', fetcher)
   const hydratedFromServer = useRef(false)
@@ -60,7 +60,7 @@ export function ThemeProvider({
     document.cookie = themeCookieValue(next)
   }, [settings])
 
-  // `system` suit les changements de l'OS en direct, sans rechargement.
+  // `system` follows OS changes live, with no reload.
   useEffect(() => {
     const media = window.matchMedia(DARK_MEDIA_QUERY)
     setSystemDark(media.matches)
@@ -79,7 +79,7 @@ export function ThemeProvider({
     setThemeState(next)
     setSystemDark(prefersDark())
     document.cookie = themeCookieValue(next)
-    // Optimiste sur la clé SWR partagée, puis revalidation quand le PATCH a atterri.
+    // Optimistic on the shared SWR key, then revalidate once the PATCH has landed.
     globalMutate(
       '/api/settings',
       (curr: { data?: Record<string, unknown> } | undefined) =>

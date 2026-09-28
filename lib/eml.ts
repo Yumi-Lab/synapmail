@@ -1,25 +1,26 @@
 /**
- * Transfert d'un message ENTIER en pièce jointe (lot M5).
+ * Forwarding a WHOLE message as an attachment.
  *
- * Le type MIME et l'extension d'un message joint ne se recopient nulle part :
- * le serveur les lit ici pour habiller la pièce, le banc les relit pour vérifier
- * ce qui a été attaché. Une seule définition, donc aucune divergence possible.
+ * The MIME type and the extension of an attached message are not restated
+ * anywhere: the server reads them here to describe the part, the test harness
+ * reads them back to check what was attached. One single definition, so no drift
+ * is possible.
  */
 
-/** Type MIME d'un message complet joint à un autre (RFC 2046 §5.2.1). */
+/** MIME type of a complete message attached to another one (RFC 2046 §5.2.1). */
 export const EML_CONTENT_TYPE = 'message/rfc822'
 
-/** Extension du fichier proposé au destinataire. */
+/** Extension of the file offered to the recipient. */
 export const EML_EXTENSION = '.eml'
 
-/** Nom de secours quand le message transféré n'a pas d'objet. */
+/** Fallback name when the forwarded message has no subject. */
 export const EML_FALLBACK_NAME = 'message'
 
 /**
- * Nom de fichier d'un message joint, dérivé de son objet.
- * Les séparateurs de chemin et les caractères interdits par Windows sont
- * remplacés, la longueur est bornée : un objet de courrier peut faire des
- * centaines de caractères, or beaucoup de clients tronquent le nom au-delà.
+ * File name of an attached message, derived from its subject.
+ * Path separators and the characters Windows forbids are replaced, and the length
+ * is bounded: a mail subject can run to hundreds of characters, and many clients
+ * truncate the name beyond that.
  */
 export const EML_MAX_NAME_LENGTH = 80
 

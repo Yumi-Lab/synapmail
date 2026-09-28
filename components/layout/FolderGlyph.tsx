@@ -19,7 +19,7 @@ import { WORD_SPLIT, twoLetters } from './AccountAvatar'
 const TILE = 'w-4 h-4 flex items-center justify-center select-none tracking-[0.3px] text-[10px] font-semibold leading-none'
 /**
  * A CASE, not a bubble. `rounded-md` resolves to `calc(var(--radius) - 2px)` = 8 px in
- * this theme, which on a 16 px box is a perfect circle: the human gate of 19/09/2026
+ * this theme, which on a 16 px box is a perfect circle: a visual review
  * read a folder tile as an account bubble, two kinds of object wearing one shape. The
  * radius is therefore stated here in pixels and NEVER derived from `--radius`, whose
  * job is the app's cards. Softly rounded corners, still unmistakably square.
@@ -27,13 +27,13 @@ const TILE = 'w-4 h-4 flex items-center justify-center select-none tracking-[0.3
 const TILE_RADIUS_PX = 3
 /**
  * The plate must READ as a plate. `bg-secondary` (the theme's neutral pair) computes to
- * oklch(0.97) on a bar at oklch(0.985) in light — a measured 1.03:1, which the human gate
+ * oklch(0.97) on a bar at oklch(0.985) in light — a measured 1.03:1, which a reviewer
  * saw as letters floating with no tile at all. `color-mix` composites the theme's own
  * foreground into the surface at a fixed ratio, so ONE value serves both themes and the
  * tile stays greyscale (both operands are achromatic in this palette).
  * Calibration bench: `scripts/check-sidebar-collapse.mjs`, headless Chrome, the bar's
  * light `--sidebar` oklch(0.985) and dark oklch(0.205) — 24 % yields 1.90:1 light and
- * 1.88:1 dark against the bar, both clear of the 1.5:1 floor the gate enforces, while
+ * 1.88:1 dark against the bar, both clear of the 1.5:1 floor the harness enforces, while
  * keeping the letters themselves at ~10:1 on the plate.
  */
 const TILE_INK_MIX = '24%'
@@ -68,7 +68,7 @@ const GLYPH_UNKNOWN = '??'
 
 /**
  * A tile carries exactly two characters, in every case — a fixed width, not a floor with
- * a ceiling above it. Measured on a real mailbox (92 custom folders, gate of 19/09/2026):
+ * a ceiling above it. Measured on a real mailbox (92 custom folders, 19/09/2026):
  * the previous rule's 13 three-letter tiles inked 2.2 to 4.7 px past the 16 px plate,
  * because three glyphs at the 10 px semibold this plate is drawn for do not fit in it.
  * Lengthening is therefore not a tie-break the tile can afford; re-spelling is.

@@ -14,10 +14,10 @@ import {
 } from '@/lib/theme'
 
 /**
- * Le titre de l'onglet et son icône viennent du réglage d'instance quand il en
- * existe un, sinon de ce qui est livré : une instance qui n'a rien réglé ne
- * change pas d'aspect à la mise à jour. Les icônes PWA / apple-touch ne sont
- * PAS concernées par ce réglage (hors périmètre) : `apple` reste le fichier livré.
+ * The tab title and its icon come from the instance setting when one exists, and from
+ * the bundled defaults otherwise: an instance that configured nothing does not change
+ * appearance on upgrade. The PWA / apple-touch icons are NOT covered by this setting
+ * (out of scope): `apple` stays the bundled file.
  */
 export async function generateMetadata(): Promise<Metadata> {
   const { appName, faviconVersion } = await readBranding()
@@ -33,16 +33,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const messages = await getMessages()
   const theme = toTheme(cookies().get(THEME_COOKIE)?.value)
   const { appName } = await readBranding()
-  // `light`/`dark` sont résolus ici même (aucun flash) ; `system` dépend du client,
-  // d'où le script bloquant ci-dessous, qui vaut `null` pour les deux autres cas.
+  // `light`/`dark` are resolved right here (no flash); `system` depends on the client,
+  // hence the blocking script below, which is `null` for the other two cases.
   const initScript = themeInitScript(theme)
 
   return (
     <html lang={locale} className={theme === 'dark' ? DARK_CLASS : undefined} suppressHydrationWarning>
-      {/* Pas de `<head>` écrit à la main : l'App Router le compose lui-même (metadata,
-          feuilles de style) et un `<head>` manuel casse l'hydratation. Le script
-          d'initialisation est donc le PREMIER enfant de `<body>` — il s'exécute avant
-          le rendu du contenu, donc toujours sans flash. */}
+      {/* No hand-written `<head>`: the App Router composes it itself (metadata, style
+          sheets) and a manual `<head>` breaks hydration. The init script is therefore the
+          FIRST child of `<body>` — it runs before the content is rendered, so there is
+          never a flash. */}
       <body className="font-sans antialiased">
         {initScript !== null && <script dangerouslySetInnerHTML={{ __html: initScript }} />}
         <NextIntlClientProvider messages={messages}>

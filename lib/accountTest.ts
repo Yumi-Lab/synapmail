@@ -1,46 +1,46 @@
 /**
- * QUEL mot de passe le bouton « Tester la connexion » essaie, et pour QUI.
+ * WHICH password the "Test connection" button tries, and for WHOM.
  *
- * Mesuré en prod le 20/09/2026 : le bouton mentait. L'écran d'édition n'affiche jamais le
- * mot de passe enregistré (il ne quitte pas le serveur), donc le champ part vide ; le test
- * envoyait quand même le CONTENU du champ. Vide, la route répondait « Missing fields » ;
- * rempli à l'insu de la personne par le gestionnaire de mots de passe du navigateur, c'est
- * le mot de passe du WEBMAIL qui partait chez l'hébergeur. Chaque essai valait deux
- * authentifications ratées, et l'hébergeur finit par verrouiller pour de bon.
+ * Measured in production on 20/09/2026: the button was lying. The edit screen never shows the
+ * stored password (it does not leave the server), so the field starts empty; the test
+ * sent the CONTENT of the field anyway. Empty, the route answered "Missing fields";
+ * filled in without the person's knowledge by the browser password manager, it was
+ * the WEBMAIL password that went out to the hosting provider. Each attempt was worth two
+ * failed authentications, and the hosting provider eventually locks the account for good.
  *
- * La décision vit ici, hors de la route, pour être exécutable seule : pas de base, pas de
- * réseau, pas de navigateur. Elle ne renvoie JAMAIS le mot de passe, ni en clair ni
- * chiffré : elle dit lequel essayer, et la route va le chercher.
+ * The decision lives here, outside the route, so it can be run on its own: no database, no
+ * network, no browser. It NEVER returns the password, neither in clear text nor
+ * encrypted: it says which one to try, and the route goes and fetches it.
  */
 
-/** Ce que la route doit faire, une fois la décision prise. */
+/** What the route must do, once the decision is made. */
 export const TEST_DECISION = {
-  /** Essayer le mot de passe que la personne vient de taper. */
+  /** Try the password the person just typed. */
   SUBMITTED: 'submitted',
-  /** Essayer le mot de passe ENREGISTRÉ, déchiffré côté serveur. */
+  /** Try the STORED password, decrypted server side. */
   STORED: 'stored',
-  /** Rien à essayer : le compte s'authentifie par jeton. */
+  /** Nothing to try: the account authenticates by token. */
   OAUTH: 'oauth',
-  /** Refus : le compte n'existe pas, ou la personne n'en est pas propriétaire. */
+  /** Refusal: the account does not exist, or the person is not its owner. */
   DENIED: 'denied',
-  /** Refus : aucun mot de passe à essayer (création sans mot de passe saisi). */
+  /** Refusal: no password to try (creation without a password typed in). */
   MISSING: 'missing',
   /**
-   * Refus : le formulaire vise un AUTRE serveur (ou un autre identifiant) que celui
-   * enregistré, et personne n'a tapé de mot de passe. Le mot de passe enregistré ne part
-   * que vers les hôtes enregistrés : sinon une session volée suffirait à le faire lire en
-   * clair par un serveur choisi par l'attaquant, dans la commande LOGIN.
+   * Refusal: the form targets ANOTHER server (or another username) than the
+   * stored one, and nobody typed a password. The stored password only goes out
+   * to the stored hosts: otherwise a stolen session would be enough to have it read in
+   * clear text by a server chosen by the attacker, in the LOGIN command.
    */
   PASSWORD_REQUIRED: 'password_required',
 } as const
 
 export type TestDecision = (typeof TEST_DECISION)[keyof typeof TEST_DECISION]
 
-/** Ports par défaut, quand ni le compte ni le formulaire n'en donnent un utilisable. */
+/** Default ports, when neither the account nor the form provides a usable one. */
 export const DEFAULT_IMAP_PORT = 993
 export const DEFAULT_SMTP_PORT = 587
 
-/** Où et comment se connecter. Le mot de passe voyage à part : il n'est pas un réglage. */
+/** Where and how to connect. The password travels separately: it is not a setting. */
 export interface TestConnection {
   imapHost: string
   imapPort: number
@@ -51,12 +51,12 @@ export interface TestConnection {
   username: string
 }
 
-/** Le strict minimum que la décision lit d'un compte. Jamais le mot de passe lui-même. */
+/** The bare minimum the decision reads from an account. Never the password itself. */
 export interface TestableAccount {
   isOwner: boolean
   oauthProvider: string | null
   hasStoredPassword: boolean
-  /** Les réglages ENREGISTRÉS : les seules destinations du mot de passe enregistré. */
+  /** The STORED settings: the only destinations of the stored password. */
   imapHost: string | null
   imapPort?: number | null
   imapSecure?: boolean | null
@@ -67,11 +67,11 @@ export interface TestableAccount {
 }
 
 export interface TestRequest {
-  /** Présent en ÉDITION, absent à la CRÉATION. */
+  /** Present on EDIT, absent on CREATION. */
   accountId?: string | null
-  /** Ce que contient le champ. Vide en édition veut dire « inchangé ». */
+  /** What the field contains. Empty on edit means "unchanged". */
   password?: string | null
-  /** Ce que vise le FORMULAIRE. Comparé à l'enregistré avant d'envoyer un secret. */
+  /** What the FORM targets. Compared against the stored values before sending a secret. */
   imapHost?: string | null
   imapPort?: number | string | null
   imapSecure?: boolean | null
@@ -82,36 +82,36 @@ export interface TestRequest {
 }
 
 /**
- * Charge ce que la décision a besoin de savoir d'un compte, ou null s'il est hors de
- * portée. Injecté pour que l'auto-contrôle s'exécute sans base.
+ * Loads what the decision needs to know about an account, or null if it is out of
+ * reach. Injected so the self-check can run without a database.
  */
 export type AccountLoader = (accountId: string) => Promise<TestableAccount | null>
 
 /**
- * Va chercher le mot de passe ENREGISTRÉ, en clair. N'est appelé qu'après une décision
- * `STORED` : toute autre décision doit le laisser tranquille, et l'auto-contrôle le mesure.
+ * Fetches the STORED password, in clear text. Only called after a `STORED`
+ * decision: any other decision must leave it alone, and the self-check measures that.
  */
 export type StoredPasswordLoader = () => Promise<string>
 
 /**
- * Un mot de passe fait de blancs n'est pas un mot de passe : c'est un champ vide qu'on
- * enverrait quand même à l'hébergeur, donc un échec d'authentification de plus.
+ * A password made of whitespace is not a password: it is an empty field that would
+ * be sent to the hosting provider anyway, so one more authentication failure.
  */
 export const hasSubmittedPassword = (password?: string | null): boolean =>
   typeof password === 'string' && password.trim().length > 0
 
 /**
- * Un nom d'hôte et un identifiant se comparent sans tenir compte de la casse ni des blancs
- * de bord : `IMAP.Example.com ` et `imap.example.com` sont le même serveur, et refuser le
- * test pour une majuscule ferait passer la règle pour un bug.
+ * A hostname and a username are compared ignoring case and edge
+ * whitespace: `IMAP.Example.com ` and `imap.example.com` are the same server, and refusing the
+ * test over a capital letter would make the rule look like a bug.
  */
 const sameSetting = (a?: string | null, b?: string | null): boolean =>
   (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase()
 
 /**
- * Le formulaire vise-t-il EXACTEMENT le serveur enregistré ? Le port et l'option TLS
- * restent libres : on corrige un port et on réessaie sans avoir à retaper son mot de passe,
- * et un port ne change pas à qui le secret est confié. L'hôte et l'identifiant, si.
+ * Does the form target EXACTLY the stored server? The port and the TLS option
+ * stay free: a port can be corrected and retried without having to retype the password,
+ * and a port does not change who the secret is entrusted to. The host and the username do.
  */
 export const targetsSavedServer = (req: TestRequest, account: TestableAccount): boolean =>
   sameSetting(req.imapHost, account.imapHost) &&
@@ -124,32 +124,32 @@ export async function decideTestPassword(
 ): Promise<TestDecision> {
   const submitted = hasSubmittedPassword(req.password)
 
-  // Création : il n'y a pas de compte, donc rien d'enregistré. Comportement inchangé.
+  // Creation: there is no account, so nothing stored. Behavior unchanged.
   if (!req.accountId) return submitted ? TEST_DECISION.SUBMITTED : TEST_DECISION.MISSING
 
   const account = await loadAccount(req.accountId)
-  // Un invité ne teste pas les identifiants d'une boîte partagée : ils ne sont pas à lui.
-  // Même réponse qu'un compte inconnu, pour ne pas révéler qu'il existe.
+  // A guest does not test the credentials of a shared mailbox: they are not theirs.
+  // Same answer as for an unknown account, so as not to reveal that it exists.
   if (!account || !account.isOwner) return TEST_DECISION.DENIED
 
-  // Un mot de passe TAPÉ l'emporte : c'est le geste de qui change de mot de passe et veut
-  // l'essayer avant d'enregistrer.
+  // A TYPED password wins: it is the gesture of someone changing their password who wants
+  // to try it before saving.
   if (submitted) return TEST_DECISION.SUBMITTED
   if (account.oauthProvider) return TEST_DECISION.OAUTH
   if (!account.hasStoredPassword) return TEST_DECISION.MISSING
 
-  // Le mot de passe enregistré ne va QUE là où il est déjà connu. Le formulaire vient du
-  // navigateur : sans cette règle, une session volée demanderait le test vers un serveur
-  // pirate et le lirait en clair dans la commande LOGIN, pour chaque boîte.
+  // The stored password goes ONLY where it is already known. The form comes from the
+  // browser: without this rule, a stolen session would request the test against a rogue
+  // server and read it in clear text in the LOGIN command, for every mailbox.
   return targetsSavedServer(req, account)
     ? TEST_DECISION.STORED
     : TEST_DECISION.PASSWORD_REQUIRED
 }
 
 /**
- * L'étape serveur entière : décider, PUIS n'aller chercher le secret que si la décision le
- * demande. Le mot de passe enregistré n'est déchiffré que sur un `STORED` ; tout autre
- * verdict laisse le chargeur au repos, et l'auto-contrôle le vérifie.
+ * The whole server step: decide, THEN fetch the secret only if the decision
+ * calls for it. The stored password is decrypted only on a `STORED`; any other
+ * verdict leaves the loader at rest, and the self-check verifies it.
  */
 const port = (value: number | string | null | undefined, fallback: number): number =>
   Number(value) || fallback
@@ -157,10 +157,10 @@ const port = (value: number | string | null | undefined, fallback: number): numb
 const text = (value: string | null | undefined): string => (value ?? '').trim()
 
 /**
- * Une seule fabrique, deux sources. La DESTINATION (hôtes, identifiant) et le RÉGLAGE
- * (ports, TLS) ne répondent pas à la même question : la première dit à QUI le mot de passe
- * est confié — c'est la frontière de sécurité — la seconde dit COMMENT on frappe à la
- * porte. Les défauts ne vivent qu'ici, jamais recopiés d'un appel à l'autre.
+ * A single factory, two sources. The DESTINATION (hosts, username) and the TUNING
+ * (ports, TLS) do not answer the same question: the first says to WHOM the password
+ * is entrusted (that is the security boundary), the second says HOW we knock on the
+ * door. The defaults live only here, never copied from one call to another.
  */
 type ConnectionTarget = {
   imapHost?: string | null
@@ -184,21 +184,21 @@ const buildConnection = (target: ConnectionTarget, tuning: ConnectionTuning): Te
   username: text(target.username),
 })
 
-/** Les réglages du FORMULAIRE : ce qu'on essaie quand la personne a tapé son mot de passe. */
+/** The FORM settings: what is tried when the person has typed their password. */
 export const formConnection = (req: TestRequest): TestConnection => buildConnection(req, req)
 
 /**
- * Ce qu'on joint quand c'est le mot de passe ENREGISTRÉ qui part. Les HÔTES et
- * l'IDENTIFIANT viennent du compte : `targetsSavedServer` a établi que le formulaire
- * désigne ce serveur-là, s'y connecter avec les valeurs du compte supprime la dernière
- * différence entre ce qui est COMPARÉ et ce qui est JOINT (une espace de bord, une
- * majuscule, suffisaient à joindre un hôte accepté sous une autre écriture).
+ * What is contacted when it is the STORED password that goes out. The HOSTS and
+ * the USERNAME come from the account: `targetsSavedServer` has established that the form
+ * designates that server, and connecting with the account values removes the last
+ * difference between what is COMPARED and what is CONTACTED (an edge space, a
+ * capital letter, were enough to reach a host accepted under another spelling).
  *
- * Les PORTS et le TLS viennent du FORMULAIRE : c'est l'usage même du bouton, essayer un
- * réglage AVANT de l'enregistrer (587 → 465, cocher TLS pour réparer une boîte). Sur
- * l'hôte enregistré, changer de port ne confie le secret à personne d'autre ; refuser la
- * correction obligerait à enregistrer un réglage non vérifié, ou à retaper son mot de
- * passe pour rien.
+ * The PORTS and TLS come from the FORM: that is the very use of the button, trying a
+ * setting BEFORE saving it (587 -> 465, ticking TLS to repair a mailbox). On
+ * the stored host, changing port entrusts the secret to nobody else; refusing the
+ * correction would force saving an unverified setting, or retyping the password
+ * for nothing.
  */
 export const savedConnection = (account: TestableAccount, req: TestRequest): TestConnection =>
   buildConnection(account, req)
@@ -226,22 +226,22 @@ export async function resolveTestPassword(
   return { decision, password: null, connection: null }
 }
 
-/** Les deux échecs courants, traduits en une CAUSE au lieu de l'erreur brute du serveur. */
+/** The two common failures, translated into a CAUSE instead of the raw server error. */
 export const TEST_FAILURE = {
-  /** L'hôte a répondu, et il a refusé les identifiants. */
+  /** The host answered, and it refused the credentials. */
   CREDENTIALS: 'credentials',
-  /** L'hôte n'a pas répondu : nom introuvable, port fermé, délai dépassé. */
+  /** The host did not answer: name not found, port closed, timeout exceeded. */
   UNREACHABLE: 'unreachable',
-  /** Tout le reste : montré tel quel plutôt que rangé de travers. */
+  /** Everything else: shown as is rather than filed under the wrong category. */
   OTHER: 'other',
 } as const
 
 export type TestFailure = (typeof TEST_FAILURE)[keyof typeof TEST_FAILURE]
 
 /**
- * Motifs lus dans les messages réellement renvoyés par IONOS et par les bibliothèques :
- * `535 Invalid login` (SMTP), `Invalid credentials` / `AUTHENTICATIONFAILED` (IMAP) pour
- * le refus ; `ENOTFOUND` / `ECONNREFUSED` / `ETIMEDOUT` pour l'injoignable.
+ * Patterns read in the messages actually returned by servers and libraries:
+ * `535 Invalid login` (SMTP), `Invalid credentials` / `AUTHENTICATIONFAILED` (IMAP) for
+ * the refusal; `ENOTFOUND` / `ECONNREFUSED` / `ETIMEDOUT` for unreachable.
  */
 const CREDENTIAL_PATTERNS = [
   /\b535\b/,

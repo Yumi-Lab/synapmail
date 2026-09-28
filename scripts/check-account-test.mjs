@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Self-check of lot C4b: WHICH password "Test connection" tries, and for WHOM.
+ * Self-check: WHICH password "Test connection" tries, and for WHOM.
  *
  * No database, no network, no browser, and — the point of the lot — NOT ONE real
  * authentication attempt against a mail host. Measured in production on 20/09/2026, the
@@ -260,7 +260,7 @@ for (const [label, form] of [
   ok(`${label}: same connection as the exact settings, not the raw form string`)
 }
 
-// Lot C6, read back from the C5 gate: the PORT and the TLS box come from the FORM, even on
+// The PORT and the TLS box come from the FORM, even on
 // a stored test. Repairing a mailbox means trying 587 -> 465 BEFORE saving it; testing the
 // old port instead makes the button lie a second way. The host is unchanged, so the secret
 // is still confided to nobody new — only the way we knock at that door changes.

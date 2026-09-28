@@ -33,7 +33,7 @@ const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/
 const PROTOCOL_LITERAL = /^-{5}(BEGIN|END) /
 
 /**
- * House rule (Nicolas, H3e gate): no em dash in any displayed string, in any
+ * House rule: no em dash in any displayed string, in any
  * locale. Use a comma or two sentences instead. Checked here so the rule holds
  * on its own instead of depending on a reviewer spotting it.
  */

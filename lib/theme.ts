@@ -1,7 +1,7 @@
 /**
- * Source unique du thème : noms, cookie, classe CSS et résolution `system`.
- * Tout ce qui touche au thème (provider, toggle, SSR) importe d'ici — aucune de
- * ces valeurs ne doit être réécrite ailleurs.
+ * Single source for the theme: names, cookie, CSS class and `system` resolution.
+ * Everything theme-related (provider, toggle, SSR) imports from here — none of
+ * these values may be restated elsewhere.
  */
 
 export const THEMES = ['light', 'dark', 'system'] as const
@@ -10,11 +10,11 @@ export type ResolvedTheme = Exclude<Theme, 'system'>
 
 export const DEFAULT_THEME: Theme = 'system'
 
-/** Cookie lisible par le serveur (SSR sans flash) ET par le script inline. */
+/** Cookie readable by the server (flash-free SSR) AND by the inline script. */
 export const THEME_COOKIE = 'synapmail-theme'
 export const THEME_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 
-/** `darkMode: "class"` dans tailwind.config.ts : le seul contrat de rendu. */
+/** `darkMode: "class"` in tailwind.config.ts: the only rendering contract. */
 export const DARK_CLASS = 'dark'
 export const DARK_MEDIA_QUERY = '(prefers-color-scheme: dark)'
 
@@ -31,7 +31,7 @@ export function resolveTheme(theme: Theme, prefersDark: boolean): ResolvedTheme 
   return theme
 }
 
-/** Pose / retire la classe `dark` sur `<html>` — idempotent. */
+/** Adds / removes the `dark` class on `<html>` — idempotent. */
 export function applyResolvedTheme(resolved: ResolvedTheme) {
   document.documentElement.classList.toggle(DARK_CLASS, resolved === 'dark')
 }
@@ -41,11 +41,11 @@ export function themeCookieValue(theme: Theme): string {
 }
 
 /**
- * Script inline BLOQUANT, rendu en PREMIER ENFANT DE `<body>` : il n'est utile que
- * pour `system`, où la réponse dépend du client et ne peut pas tenir dans le cookie.
- * Pour `light` et `dark` la classe est déjà posée au SSR — on renvoie alors `null`
- * (et non `''`) pour que l'appelant ne rende AUCUN nœud plutôt qu'un nœud texte vide.
- * Aucune donnée utilisateur n'y entre : `theme` est une des constantes de THEMES.
+ * BLOCKING inline script, rendered as the FIRST CHILD OF `<body>`: it is only useful
+ * for `system`, where the answer depends on the client and cannot fit in the cookie.
+ * For `light` and `dark` the class is already applied during SSR — `null` is returned
+ * then (not `''`) so the caller renders NO node rather than an empty text node.
+ * No user data enters it: `theme` is one of the THEMES constants.
  */
 export function themeInitScript(theme: Theme): string | null {
   if (theme !== 'system') return null

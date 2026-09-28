@@ -1,9 +1,9 @@
 'use client'
 
 /**
- * Les sept drapeaux de couleur, plus « retirer ». Un seul rendu pour tous les
- * endroits qui posent un drapeau (volet de lecture, menu contextuel) : l'ordre,
- * les couleurs et les libellés viennent de lib/flags.ts et ne se recopient pas.
+ * The seven color flags, plus "remove". A single rendering for every place that sets a
+ * flag (reading pane, context menu): the order, the colors and the labels come from
+ * lib/flags.ts and are not copied anywhere else.
  */
 
 import { Flag, FlagOff } from 'lucide-react'
@@ -12,7 +12,7 @@ import { MAIL_FLAGS } from '@/lib/flags'
 import { cn } from '@/lib/utils'
 
 interface Props {
-  /** Couleur posée, pour cocher la pastille courante. */
+  /** The color already set, used to check the current swatch. */
   current?: string | null
   onPick: (flag: string | null) => void
   className?: string

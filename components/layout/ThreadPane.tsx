@@ -297,8 +297,8 @@ export function ThreadPane({ threadMessages, subject, folder, accountId, onReply
 
       {/* Messages */}
       <ThinScroll className="flex-1" viewportClassName="p-4 space-y-3">
-        {/* Chaque carte lit SON message dans SON dossier : un fil peut mêler
-            réception et envoyés, où le même uid désigne deux messages. */}
+        {/* Each card reads ITS message from ITS folder: one thread can mix
+            inbox and sent, where the same uid names two different messages. */}
         {threadMessages.map((msg, idx) => (
           <MessageCard
             key={originKey(originOfMessage(msg))}

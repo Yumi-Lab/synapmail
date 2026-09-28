@@ -6,7 +6,7 @@
  * Pure: it reads the two source files and the three locale files, runs nothing,
  * touches no network and no database.
  *
- * Why this bench exists (2026-09-19, Nicolas, on production): the reading pane
+ * Why this bench exists (found in production): the reading pane
  * button said "TL;DR" — English jargon, written in the source — and the AI
  * settings screen showed FRENCH to a visitor reading the site in zh or en.
  *
@@ -47,7 +47,7 @@ const REQUIRED_KEYS = [
   'settings.ai.pageDescription', 'settings.ai.configured', 'settings.nav.ai',
 ]
 
-/** The exact strings the 2026-09-19 gate found written in the source. */
+/** The exact strings found written in the source on 2026-09-19. */
 const BANNED = [
   'TL;DR', 'Résumé TL;DR', 'Bientôt', 'Bientôt disponible', 'Prochainement',
   'Détecter automatiquement', 'Détection…', 'Enregistrer et tester',
@@ -58,7 +58,7 @@ const BANNED = [
   'Chat avec la boîte mail', 'Règles IA intelligentes', 'Personas par compte',
   'Répondre avec l', 'Améliorer / Ton', 'En français', 'In English',
   'Traduire', 'Traduction', 'Enregistré', 'Modèle',
-  // Seen still in French on the zh screenshot of the 2026-09-19 gate.
+  // Seen still in French on the zh screenshot taken 2026-09-19.
   'IA Copilot', 'Résumés, réponses suggérées', 'Configuré',
 ]
 
