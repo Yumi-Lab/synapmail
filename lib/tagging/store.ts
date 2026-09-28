@@ -366,13 +366,25 @@ export async function tagDistribution(accountId: string): Promise<Array<{ questi
  * Le filtre par `taxonomy_version` est ce qui fait rejouer une boîte après un changement de
  * taxonomie, au lieu de sauter des mails qui n'auraient jamais la question neuve. C'est voulu, et
  * ça coûte : la relance repasse la boîte entière, sous le même plafond et les mêmes pauses.
+ *
+ * Le résultat est SÉPARÉ EN DEUX par `since` (l'instant où le tri courant a démarré) : `before`
+ * = tagué AVANT ce tri, donc sauté pour de bon et à compter comme tel ; `during` = tagué PAR ce
+ * tri, donc déjà compté en « tagués » et relu seulement parce qu'un lot coupé au délai ne fait
+ * pas avancer son curseur — le compter en « sautés » serait un double compte (lot T10c). Sans
+ * `since`, tout tombe dans `before` : un appelant qui ne trie pas n'a rien à distinguer.
  */
-export async function alreadyTagged(accountId: string, source: TagSource, messageIds: string[]): Promise<Set<string>> {
-  if (!messageIds.length) return new Set()
-  const rows = await query<{ message_id: string }>(
-    `SELECT DISTINCT message_id FROM message_tags
-      WHERE account_id = $1 AND source = $2 AND taxonomy_version = $3 AND message_id = ANY($4::text[])`,
-    [accountId, source, TAXONOMY_VERSION, messageIds]
+export async function alreadyTagged(
+  accountId: string, source: TagSource, messageIds: string[], since?: Date | null
+): Promise<{ before: Set<string>; during: Set<string> }> {
+  if (!messageIds.length) return { before: new Set(), during: new Set() }
+  const rows = await query<{ message_id: string; during: boolean }>(
+    `SELECT message_id, bool_or($5::timestamptz IS NOT NULL AND cree_le >= $5::timestamptz) AS during
+       FROM message_tags
+      WHERE account_id = $1 AND source = $2 AND taxonomy_version = $3 AND message_id = ANY($4::text[])
+      GROUP BY message_id`,
+    [accountId, source, TAXONOMY_VERSION, messageIds, since ?? null]
   )
-  return new Set(rows.map(r => r.message_id))
+  const before = new Set<string>(), during = new Set<string>()
+  for (const r of rows) (r.during ? during : before).add(r.message_id)
+  return { before, during }
 }

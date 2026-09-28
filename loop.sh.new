@@ -1,0 +1,2385 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# Boucle de codage autonome — une session agent par itération, jusqu'à terminé.
+#
+#   Chaque itération = une session agent FRAÎCHE (contexte propre) qui :
+#     1. lit GOAL.md (la définition de « fini ») + PROGRESS.md (l'état/les cases)
+#     2. lit .loop/inject.md (canal temps réel : tu peux y écrire pendant le run)
+#     3. prend la prochaine case non cochée, l'implémente, la teste, la coche, commit
+#     4. crée le fichier sentinelle ($DONE_FILE) quand TOUT est fini → la boucle s'arrête
+#
+#   MODE CONTRÔLÉ (loop.conf reviewer=true) : après la CODEUSE, une CONTRÔLEUSE (instance
+#   fraîche, read-only) écrit un verdict (.loop/control/last-verdict.json) que la codeuse
+#   applique au tour suivant. En mode contrôlé, .done n'est ACCEPTÉ que si verdict=PASS.
+#
+#   MULTI-PROVIDER — coder_model/reviewer_model route dans run_agent() : `kimi` → Kimi Code,
+#   `grok` → Grok (xAI), `mistral|vibe|devstral|mistral-local` → Mistral Vibe,
+#   `codex`/`codex:<modèle>` → CLI Codex (OpenAI, `codex exec --json`),
+#   `ollama|ollama:<modèle>` → CLI yumi via API Anthropic d'Ollama (local)
+#   (`ornith` = alias dédié du modèle local ornith-ctx256k — n'écrase aucun slot Claude),
+#   `run_custom` (hook loop.conf) → CLI custom, sinon → `claude`. Routage INSENSIBLE À LA CASSE.
+#
+#   GARDE-FOUS (anti-runaway) : preflight (fichiers/config/binaire), fail-fast sur échec
+#   provider (max_fails), garde de non-progrès git (max_stale), anti ping-pong revue
+#   (max_cr), plafond de coût (max_cost), verrou une-boucle-par-repo, verify.sh mécanique
+#   PLAFONNÉ en temps (verify_time_cap — un harnais figé ne suspend plus la boucle).
+#
+#   GATE-HANDOFF (gate_handoff=true) : la codeuse écrit $HANDOFF_FILE + STOP → cède la main.
+#   PAUSE (.pause) : sentinelle de pause VOLONTAIRE — sortie propre à la frontière d'itération,
+#   statut dédié « paused » (≠ done = terminé, ≠ handoff = attend un gate humain de validation).
+#   Supprime le fichier et relance pour reprendre.
+#   DÉPLOIEMENT LIVE (deploy_cmd) : déploie après TEST vert puis gate health_url. Vide = local.
+#
+# Usage :   ./loop.sh [--help|--dry-run|--fresh]   (depuis la racine de TON projet)
+#   --fresh : GARANTIT la dernière version du kit avant de démarrer — pull du kit
+#             (KIT_DIR, défaut ~/Documents/GitHub/autonomous-loop-kit) + sync-kit.sh vers ce
+#             projet + activation de loop.sh.new, puis relance sur la version à jour.
+# Réglages : voir loop.conf (mode contrôlé, multi-provider, gardes, gate-handoff, deploy).
+#   Env aussi supportés : MAX_ITERS MAX_TURNS MODEL DONE_FILE PROMPT_FILE CTX_WINDOW …
+# Prérequis : claude (CLI), jq (optionnel mais recommandé), git ; kimi/vibe si utilisés.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 🛡️ Garde anti-source (anti-runaway) : un `source loop.sh` NE LANCE PAS la boucle.
+_SOURCED=0
+if [ -n "${ZSH_VERSION:-}" ]; then
+  case "${ZSH_EVAL_CONTEXT:-}" in *file*) _SOURCED=1;; esac
+elif [ -n "${BASH_VERSION:-}" ] && [ "${BASH_SOURCE:-$0}" != "$0" ]; then
+  _SOURCED=1
+fi
+if [ "$_SOURCED" = 1 ]; then
+  echo "⚠️ loop.sh sourcé (pas exécuté) → boucle NON lancée (anti-runaway)." >&2
+  return 0 2>/dev/null || exit 0
+fi
+
+set -uo pipefail
+cd "$(dirname "$0")"
+
+# --- Diagnostic répertoire : ni GOAL.md ni PROGRESS.md dans le répertoire résolu -------------
+# Un seul des deux absent reste un usage normal (mission tout juste commencée, PROGRESS.md pas
+# encore créé) → silence. Les DEUX absents à la fois signale probablement un runner dérivé lancé
+# depuis un sous-dossier (ex. .yumi/) plutôt que la racine du projet → avertissement, PAS un exit
+# (certains usages légitimes n'ont ni l'un ni l'autre au tout premier lancement).
+if [ ! -f GOAL.md ] && [ ! -f PROGRESS.md ]; then
+  echo "⚠ ce répertoire ne ressemble pas à un projet kit (ni GOAL.md ni PROGRESS.md) — le runner est-il au bon endroit ? Répertoire résolu : $(pwd -P)" >&2
+fi
+
+# --- Args : --help / --dry-run / --fresh ------------------------------------
+DRY_RUN=0; FRESH=0
+case "${1:-}" in
+  -h|--help)    awk '/^# ─/{n++; next} n==1{sub(/^# ?/,""); print} n>=2{exit}' "$0"; exit 0;;
+  -n|--dry-run) DRY_RUN=1;;
+  --fresh|--sync-first) FRESH=1;;
+  '' ) ;;
+  *) echo "option inconnue: $1 (essaie --help)" >&2; exit 2;;
+esac
+
+# --- --fresh : GARANTIT la dernière version du kit avant de démarrer ---------
+# pull du kit + sync-kit.sh vers CE projet + activation de loop.sh.new, puis ré-exec sur la
+# nouvelle version (LOOP_FRESH_DONE coupe la récursion). Sûr : on n'a pas encore pris le verrou,
+# sync-kit remplace donc loop.sh en atomique ; le process courant garde son ancien inode et
+# exec bascule proprement sur le nouveau. KIT_DIR surchargable (pads/serveurs, chemins ≠ Mac).
+if [ "$FRESH" = 1 ] && [ -z "${LOOP_FRESH_DONE:-}" ]; then
+  KIT_DIR="${KIT_DIR:-$HOME/Documents/GitHub/autonomous-loop-kit}"
+  if [ -d "$KIT_DIR" ]; then
+    git -C "$KIT_DIR" pull --ff-only 2>/dev/null | tail -1 \
+      || echo "⚠ --fresh : pull du kit impossible (offline ?) — version LOCALE du kit utilisée." >&2
+    [ -x "$KIT_DIR/sync-kit.sh" ] && "$KIT_DIR/sync-kit.sh" "$PWD" | tail -2
+    if [ -f loop.sh.new ]; then mv -f loop.sh.new loop.sh && chmod +x loop.sh; fi
+    echo "↻ --fresh : kit $(git -C "$KIT_DIR" log -1 --format=%h 2>/dev/null || echo '?') synchronisé → relance sur la version à jour."
+    LOOP_FRESH_DONE=1 exec "$0" "$@"
+  else
+    echo "⚠ --fresh : kit introuvable ($KIT_DIR) — définis KIT_DIR=… ; démarrage sur la version locale." >&2
+  fi
+fi
+
+# --- Config file (optionnel) : rôles + modèle par instance + limites ---------
+# LOOP_CONF explicite (positionnée dans l'env AVANT le lancement) mais introuvable = échec
+# BRUYANT (exit 1) — repli silencieux vers les défauts serait dangereux (modèles ET
+# comportement changent sans un mot). Repli implicite (var absente → défaut "loop.conf")
+# reste silencieux si absent : coder-only sans loop.conf est un usage normal du kit.
+_LOOP_CONF_EXPLICIT=0
+[ "${LOOP_CONF+x}" = x ] && _LOOP_CONF_EXPLICIT=1
+LOOP_CONF="${LOOP_CONF:-loop.conf}"
+case "$LOOP_CONF" in */*) ;; *) LOOP_CONF="./$LOOP_CONF";; esac   # force le cwd (sinon `.` cherche PATH)
+if [ -f "$LOOP_CONF" ]; then
+  . "$LOOP_CONF"
+elif [ "$_LOOP_CONF_EXPLICIT" = 1 ]; then
+  echo "✗ LOOP_CONF=$LOOP_CONF positionnée explicitement mais introuvable — arrêt (pas de repli silencieux vers les défauts)." >&2
+  exit 1
+fi
+
+is_true() { case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in true|1|yes|on|y) return 0;; *) return 1;; esac; }
+
+MONITOR_DIR="${MONITOR_DIR:-.monitor}"
+DONE_FILE="${DONE_FILE:-.done}"
+INJECT_FILE="${INJECT_FILE:-.loop/inject.md}"
+PROMPT_FILE="${PROMPT_FILE:-PROMPT.md}"
+MAX_ITERS="${max_iters:-${MAX_ITERS:-60}}"
+# Plafond de TOURS CLI d'une itération codeuse. DÉFAUT KIT : AUCUN (vide) — Lot 4 RETEX
+# blackcat 29/08 (directive 30/08, SUPERSEDE le Lot 1 qui avait relevé 80→160) : --max-turns
+# n'existe que côté non-interactif des CLI et son défaut NATIF (flag absent) est AUCUNE LIMITE
+# — le kit reproduit ce comportement natif en ne passant le flag QUE si une valeur explicite
+# est configurée (run_agent : branches claude/yumi/grok/vibe ; kimi ne l'a jamais passé).
+# Ce plafond borne le coût D'UNE itération, ce N'EST PAS le garde-fou anti-divagation : un
+# agent qui divague sans committer est arrêté par max_stale/max_fails, plafond configuré ou
+# pas. Conséquence assumée : sans plafond configuré, le diagnostic « thrash error_max_turns →
+# lot surdimensionné » devient INATTEIGNABLE (plus de flag = plus jamais ce subtype) — le tri
+# divagation se reporte entièrement sur max_stale. Renseigner coder_max_turns reste possible
+# pour un projet qui VEUT sciemment borner le coût/temps d'une itération.
+MAX_TURNS="${coder_max_turns:-${MAX_TURNS:-}}"
+
+# Rôles + modèle PAR instance (conf > env > défaut). reviewer OFF par défaut → compat.
+coder="${coder:-true}"
+reviewer="${reviewer:-false}"
+# G04 (blackcat 205743) : une valeur affichée sans sa provenance rend un écrasement invisible
+# (overlay local qui écrasait coder_model, en-tête montrant la valeur sans d'où elle vient).
+# Source de résolution calculée UNE fois ici ; le libellé affiché (bascule failover comprise)
+# est rendu par model_source_display — source unique pour print_config ET write_state.
+model_source_of() {  # $1=valeur conf AVANT résolution $2=valeur env MODEL → stdout : loop.conf|env MODEL|défaut CLI
+  local _s='défaut CLI'
+  [ -n "$2" ] && _s='env MODEL'
+  [ -n "$1" ] && _s='loop.conf'   # conf > env > défaut (ordre de résolution)
+  printf '%s' "$_s"
+}
+model_source_display() {  # $1=source de résolution $2=modèle COURANT du rôle $3=modèle primaire → stdout : libellé affiché
+  # fb_i est GLOBAL au run : avec des providers primaires distincts, un seul rôle bascule
+  # (la contrôleuse ne suit la codeuse que si provider_of(primaire_rev)=provider_of(primaire_code)).
+  # On n'étiquette « failover » que si le modèle COURANT du rôle diffère de son primaire.
+  local _d="$1"
+  [ "${fb_i:--1}" -ge 1 ] && [ "$2" != "$3" ] && _d="failover (primaire: ${3:-défaut CLI})"
+  printf '%s' "$_d"
+}
+_conf_coder_model="${coder_model:-}"; _conf_reviewer_model="${reviewer_model:-}"
+coder_model="${coder_model:-${MODEL:-}}"
+reviewer_model="${reviewer_model:-}"
+coder_model_source="$(model_source_of "$_conf_coder_model" "${MODEL:-}")"
+reviewer_model_source="$(model_source_of "$_conf_reviewer_model" "")"
+REVIEWER_MAX_TURNS="${reviewer_max_turns:-}"   # vide = aucun plafond (même logique Lot 4 que MAX_TURNS)
+CODER_PROMPT_FILE="${coder_prompt:-prompts/coder.md}"
+REVIEWER_PROMPT_FILE="${reviewer_prompt:-prompts/reviewer.md}"
+CTL_DIR="${CTL_DIR:-.loop/control}"
+VERDICT_FILE="$CTL_DIR/last-verdict.json"
+
+# Garde-fous anti-runaway (surchargeable via loop.conf/env).
+MAX_FAILS="${max_fails:-3}"      # échecs provider consécutifs → abandon
+MAX_STALE="${max_stale:-4}"      # itérations sans nouveau commit → arrêt
+MAX_CR="${max_cr:-3}"            # verdicts CHANGES_REQUESTED d'affilée sur le même HEAD → arrêt
+MAX_REVIEW_RETRY="${max_review_retry:-3}"  # revues consécutives SANS verdict frais (contrôleuse morte/JSON illisible) → mode DÉGRADÉ (codeuse avance, commits « non relus »)
+REVIEW_TIME_CAP="${review_time_cap:-600}"    # plafond TEMPS d'une revue en secondes (0 = off) — une revue de 50 min est une revue qui sera interrompue
+VERIFY_TIME_CAP="${verify_time_cap:-900}"    # plafond TEMPS de verify.sh en secondes (0 = off) — un harnais figé (réseau/DB) suspendait la boucle entre deux itérations (26/08 : 1h34 perdues, monitor muet). Défaut 900 s calibré : ~5× le verify le plus lent observé (~3 min, bench blackcat : pnpm install + suites) ET < WD_STALL (5400 s, défaut watchdog.sh) → la boucle se répare SEULE avant d'être tuée.
+PROBE_TIME_CAP="${probe_time_cap:-60}"       # plafond TEMPS de la sonde failover en secondes (0 = off) — une sonde = 1 tour « ok » ; au-delà d'1 min le provider est de fait indisponible
+FALLBACK_MODELS="${fallback_models:-}"     # FAILOVER crédit/panne : modèles de secours essayés en rotation (vide = off)
+PROBE_EVERY="${probe_every:-3}"            # en failover : sonde le modèle primaire toutes les N itérations
+
+# --- Panne RÉSEAU / 429 : backoff borné (G16) -----------------------------------------------
+# Constat YUMI-POS-Printer 081316 + panne DNS réelle 13/09 : les échecs réseau se succédaient en
+# secondes (fails++ à chaque tour → abandon au bout de 3 en 2 min) alors que la panne dure des
+# MINUTES. backoff_base (défaut 60 s) est doublé à chaque récidive consécutive ; la borne
+# backoff_max_tries (défaut 10) arrête la boucle proprement si la panne dépasse tout backoff
+# raisonnable — jamais 22 cycles vides. Défaut 60 s calibré sur l'incident réel : panne DNS de
+# ~6 min (05:32→05:38) → 60/120/240/480/960 s couvrent ~31 min d'indisponibilité avant borne.
+BACKOFF_BASE="${backoff_base:-60}"
+BACKOFF_MAX_TRIES="${backoff_max_tries:-10}"
+
+# --- Rotation de COMPTE Claude sur 429 (claude_profiles) ------------------------------------
+# Un 429 Claude Max est la fenêtre 5 h / 7 j d'UN COMPTE épuisée, pas une panne du provider :
+# attendre le backoff alors qu'un autre compte est libre est du temps perdu (idée reprise
+# d'Orca, 20/09). Avec plusieurs profils ccacct (~/.claude-accounts/profiles/<nom>), la boucle
+# fait tourner CLAUDE_SECURESTORAGE_CONFIG_DIR (coffre trousseau par profil — contrat ccacct :
+# isole les credentials SANS toucher ~/.claude) à chaque 429 d'un rôle sur provider claude ; le
+# backoff G16 ne reprend qu'après un tour complet de la liste sans progrès. Vide = off (historique).
+# Un seul profil = boucle ÉPINGLÉE sur ce compte. Provider claude seul : yumi n'honore pas cette
+# variable (vérifié dans sa source le 20/09).
+CLAUDE_PROFILES="${claude_profiles:-}"
+CLAUDE_PROFILES_DIR="${CLAUDE_PROFILES_DIR:-$HOME/.claude-accounts/profiles}"   # env seul (tests), pas une clé loop.conf
+
+# --- UN SEUL ACTIF par serveur Ollama (GPU maison) ------------------------------------------
+# Un serveur Ollama sert UN modèle à la fois (ai-server-1, 23/09 : OLLAMA_NUM_PARALLEL=1,
+# OLLAMA_KEEP_ALIVE=30m, 62 Go de RAM pour un qcn de 36 Go) : une 2e boucle sur le MÊME modèle
+# ne fait qu'attendre derrière la 1re (chaque appel 2× plus lent, zéro débit gagné) ; sur un
+# AUTRE modèle elle force un déchargement/rechargement (35 s + KV) à chaque alternance — le
+# chargement du modèle est le vrai coût, pas le contexte. D'où : une seule boucle par HÔTE
+# Ollama, tous repos confondus. L'hôte vient de la source qui fait foi (aucune clé loop.conf) :
+# ~/.yumi/config.env pour yumi:<ep>:<modèle> (YUMI_PROVIDER_<EP>_KIND=ollama → hôte de
+# _BASE_URL), ollama_base_url pour la branche ollama:. Un endpoint cloud (zai, nvidia…) n'est
+# jamais verrouillé. Verrou global par utilisateur : $GPU_LOCK_ROOT/ollama-<hôte_port>/{pid,repo},
+# même discipline que .monitor/.lock (mkdir atomique, pid vivant = refus, pid mort = résidu nettoyé).
+# Limite assumée : un seul hôte par boucle (celui de la codeuse, sinon de la contrôleuse) ; un
+# modèle GPU atteint seulement via fallback_models n'est pas verrouillé.
+YUMI_CONFIG_ENV="${YUMI_CONFIG_ENV:-$HOME/.yumi/config.env}"           # env seul (tests)
+GPU_LOCK_ROOT="${GPU_LOCK_ROOT:-$HOME/.autonomous-loop-kit/locks}"     # env seul (tests)
+
+# --- Compteur de lectures avant le premier Edit/Write (G09, REX PR2 165003 ; H5) -----------
+# Constat : 70, 281 et 1336 lectures SANS un seul Edit malgré la règle « liste de lecture
+# fermée » dans la case — efficace seulement par injection fraîche. Une consigne de plus ne
+# change rien : le garde-fou doit être MÉCANIQUE (leçon RETEX §2.4). reads_watch suit le jsonl
+# EN COURS DE FLUX (même mécanique que turn_watch, Lot 11) et compte les lectures de CE run
+# (tool_use Read/Grep/Glob + Bash cat|sed|grep|head|tail) AVANT le premier Edit/Write ; au
+#-delà de max_reads_before_edit le tour est arrêté PROPREMENT (SIGTERM du CLI → rc 143 →
+# motif reads_cap, cf. classify_agent_stop) et la consigne « découpe + squelette + liste de
+# lecture » est injectée en tête du prochain tour. 0 = garde désactivée. Défaut 40 : une case
+# cadrée (liste fermée, GOAL.md) ne lit JAMAIS 40 fichiers — les constats 70/281/1336 sont
+# des divagations hors cadrage, pas un travail légitime.
+MAX_READS_BEFORE_EDIT="${max_reads_before_edit:-40}"
+
+# --- Délai HTTP dépassé CÔTÉ CLIENT (directive 2026-09-08) ---------------------------------
+# Mesuré sur un banc de 9 modèles (même énoncé, même dossier) : les deux runs zai (GLM-5.3,
+# GLM-5.3-Flash) sont morts à 610 s avec « context deadline exceeded (Client.Timeout … while
+# reading body) », coût et tokens de sortie NON nuls — le fournisseur répondait encore, c'est
+# yumi qui a raccroché sur son propre plafond HTTP de 600 s (durée TOTALE, flux compris). Classé
+# rc≠0 sans max_turns, cette coupure comptait comme une panne fournisseur : fails++ → failover →
+# modèle écarté pour une faute qu'il n'a pas commise. Elle a désormais sa propre classe.
+# Signatures, UNE SEULE source (le reste du script ne cite que ces constantes) :
+#   CLIENT_TIMEOUT_SIG  — libellé de http.Client.Timeout (Go) : « Client.Timeout exceeded while
+#                         awaiting headers » / « Client.Timeout or context cancellation while reading
+#                         body ». Seule NOTRE bibliothèque HTTP produit ce texte, jamais un serveur
+#                         distant → attribution sûre. Couvre les binaires yumi antérieurs au correctif.
+#   CLIENT_TIMEOUT_FIELD/KIND — champ structuré des événements error/api_error/result du binaire
+#                         corrigé (yumi-cli internal/provider/clienttimeout.go : ErrorKindClientTimeout,
+#                         engine/events.go ErrorPayload) — matché en PRIORITÉ.
+#   CLIENT_TIMEOUT_PREFIX — préfixe texte du même binaire (provider.ClientTimeoutPrefix), suivi de
+#                         « <secondes>s (<VARIABLE>) » ; repli documenté du contrat côté Go.
+CLIENT_TIMEOUT_SIG="Client.Timeout"
+CLIENT_TIMEOUT_FIELD="error_kind"
+CLIENT_TIMEOUT_KIND="client_timeout"
+CLIENT_TIMEOUT_PREFIX="provider: client idle timeout after "
+# Réglages yumi qui gouvernent ce plafond (cités dans le diagnostic, jamais modifiés par la boucle) :
+YUMI_TIMEOUT_VAR_PATTERN='YUMI_PROVIDER_<ENDPOINT>_HTTP_TIMEOUT_SECONDS'   # ex. YUMI_PROVIDER_ZAI_HTTP_TIMEOUT_SECONDS
+ANTHROPIC_TIMEOUT_VAR='ANTHROPIC_HTTP_TIMEOUT_SECONDS'
+
+# --- Panne RÉSEAU et 429 : backoff borné, jamais 22 cycles vides (G16) -----------------------
+# Constats : YUMI-POS-Printer 081316 — « lookup api.z.ai: no such host » → 22 cycles vides en
+# 4 min (chaque échec comptait fails++ jusqu'à l'abandon) ; panne DNS réelle 13/09 05:32 (run 2
+# de ce projet) — 3 échecs provider en 2 min → abandon SANS backoff, .err vides. Une panne
+# réseau (DNS, TCP, reset) ou un 429 n'est PAS une faute du modèle ni un crédit épuisé : basculer
+# de provider est inutile (le réseau est en panne pour TOUS) et réessayer en boucle sans attendre
+# aggrave la panne (rate-limit). Signatures, UNE SEULE source (le reste du script ne cite que ces
+# constantes), même mécanique que CLIENT_TIMEOUT_* :
+NETWORK_CLASS="network"
+#   Go (net.OpError) : « dial tcp: lookup host: no such host / i/o timeout », « connection reset by peer » ;
+#   curl/DNS générique : « could not resolve host », « Temporary failure in name resolution ».
+# Signatures = PHRASES délimitées par « | », matchées par contains (minuscules) — PAS des mots
+# isolés test() un à un (régression vécue : split(" ") faisait de chaque mot (« no », « such »,
+# « name »…) une signature indépendante → tout message provider verbeux classé [network] →
+# crédit épuisé/token invalide ne comptaient plus dans fails → failover mort).
+NETWORK_SIGS="dial tcp|no such host|connection reset|i/o timeout|could not resolve host|name resolution"
+RATELIMIT_CLASS="rate_limited"
+RATELIMIT_SIGS="429|too many requests|rate limit"
+
+# Hygiène de contexte : inject.md et PROGRESS.md sont relus INTÉGRALEMENT à chaque tour par les
+# DEUX agents — trop gros = tours épuisés en lecture (vécu : inject 266 lignes + PROGRESS 213 Ko).
+INJECT_WARN_LINES="${inject_warn_lines:-120}"      # seuil (lignes) → consigne d'archivage injectée
+PROGRESS_WARN_BYTES="${progress_warn_bytes:-153600}"  # seuil (octets, déf. 150 Ko) sur la SECTION JOURNAL
+# G07 (king3d 222637) : itérations docs-only (commit ne touchant que PROGRESS*.md / inject-archive)
+# comptées stale par défaut — sinon 6 commits d'archivage font bouger HEAD et masquent max_stale.
+DOCS_ONLY_STALE="${docs_only_stale:-true}"
+
+# Gate-handoff : la codeuse peut céder la main pour un gate visuel/device (écrit HANDOFF_FILE + STOP).
+GATE_HANDOFF="${gate_handoff:-true}"
+HANDOFF_FILE="${handoff_file:-.gate-handoff}"
+
+# G10 (blackcat 212856 ; K17 REX-construction) : la preuve du gate humain (.pass/.fail) est lue
+# au démarrage ET à CHAQUE début d'itération (l'humain peut déposer pendant que la boucle tourne),
+# ARCHIVÉE dans $CTL_DIR/gate-<iter>.<pass|fail> AVANT tout lancement codeuse (si l'itération qui
+# la reçoit meurt, la preuve survit sur disque et est RÉ-INJECTÉE — jamais redemandée à l'humain),
+# et un .fail résiduel derrière un .pass du même cycle est archivé « périmé » (gate-<iter>.fail-
+# stale) sans jamais être relayé : verdicts contradictoires interdits. Retour : 0 = preuve
+# consommée (GATE_NOTE remplie), 1 = rien à consommer.
+GATE_NOTE=""
+consume_gate_proof() {  # shlint-ok (remplit GATE_NOTE, appelée aux mêmes points que CODER_EXTRA)
+  GATE_NOTE=""
+  is_true "$GATE_HANDOFF" || return 1
+  [ -f "$HANDOFF_FILE" ] || return 1
+  local _iter="$1" _note=""
+  if [ -s "$HANDOFF_FILE.pass" ]; then
+    _note="$(cat "$HANDOFF_FILE.pass")"
+    echo "✅ $HANDOFF_FILE.pass trouvé — gate résolu par preuve, consommation des deux fichiers."
+    if [ -s "$HANDOFF_FILE.fail" ]; then
+      # .fail résiduel derrière un .pass du MÊME cycle : archivé « périmé », NON relayé.
+      cp "$HANDOFF_FILE.fail" "$CTL_DIR/gate-${_iter}.fail-stale" 2>/dev/null
+      echo "   ↳ $HANDOFF_FILE.fail coexistant archivé PÉRIMÉ ($CTL_DIR/gate-${_iter}.fail-stale) — non relayé (.pass du cycle fait foi)."
+    fi
+    cp "$HANDOFF_FILE.pass" "$CTL_DIR/gate-${_iter}.pass" 2>/dev/null
+    rm -f "$HANDOFF_FILE" "$HANDOFF_FILE.pass" "$HANDOFF_FILE.fail"
+    GATE_NOTE="GATE RESOLVED (by loop.sh, not by you) — the human left this evidence in what was ${HANDOFF_FILE}.pass: \"${_note}\" — check off the matching box now (Journal 'GATE PASS (human)' quoting this evidence verbatim), don't redo the work. A visual/device gate resolves THIS WAY ONLY. If the iteration is interrupted before you commit this resolution, the evidence is archived in $CTL_DIR/gate-${_iter}.pass and will be re-delivered verbatim: never ask the human again."
+    return 0
+  fi
+  if [ -s "$HANDOFF_FILE.fail" ]; then
+    _note="$(cat "$HANDOFF_FILE.fail")"
+    echo "❌ $HANDOFF_FILE.fail trouvé — gate échoué par preuve, consommation des deux fichiers, retour au codeur."
+    cp "$HANDOFF_FILE.fail" "$CTL_DIR/gate-${_iter}.fail" 2>/dev/null
+    rm -f "$HANDOFF_FILE" "$HANDOFF_FILE.fail" "$HANDOFF_FILE.pass"
+    GATE_NOTE="GATE FAILED (by loop.sh, relaying the human's verdict, not yours to declare) — the human's real check of the handoff found genuine problems, recorded in what was ${HANDOFF_FILE}.fail: \"${_note}\" — do NOT check the box. Fix what's described, then redo the SAME visual/device gate from scratch (write a fresh $HANDOFF_FILE, STOP again) once the fix is committed. This is not a pass and never becomes one by itself."
+    return 0
+  fi
+  return 1
+}
+
+# Sentinelle de PAUSE volontaire : présence du fichier → sortie propre à la frontière d'itération
+# avec le statut DÉDIÉ « paused », distinct de « done » (terminé) et de « handoff » (attend un
+# GESTE humain de validation). Sans tâche possible, la boucle ne relit plus tout à chaque tour
+# (RETEX « boucles à vide »). Supprimer le fichier puis relancer pour reprendre.
+PAUSE_FILE="${pause_file:-.pause}"
+
+# Déploiement live (optionnel, générique) : TA commande, injectée dans le prompt de la codeuse.
+DEPLOY_CMD="${deploy_cmd:-}"
+HEALTH_URL="${health_url:-}"
+
+JQ="$(command -v jq || true)"
+
+# Formate le flux stream-json en sortie lisible (texte + nom des outils) ; repli brut sans jq.
+# Gère le style Claude (.type=="assistant", .message.content[]) ET le style OpenAI/Vibe/Kimi
+# (.role=="assistant", .content + .tool_calls[]) → une seule vue quel que soit le provider.
+fmt() {
+  if [ -n "$JQ" ]; then
+    "$JQ" --unbuffered -Rrj 'fromjson? | if (type!="object") then ""
+      elif .type=="assistant" then
+        (if (.message.content|type)=="string" then ((.message.content // "")
+          + (if (.message.tool_calls|type)=="array" then ([.message.tool_calls[]? | (.function.name // .name // "?")] | map("\n  → "+.) | join("")) + "\n" else "" end))
+        else (.message.content[]?
+          | if .type=="text" then .text
+            elif .type=="tool_use" then "\n  → "+.name+"\n"
+            else "" end) end)
+      elif .role=="assistant" then ((.content // "")
+        + (if (.tool_calls|type)=="array" then ([.tool_calls[]? | (.function.name // "?")] | map("\n  → "+.) | join("")) + "\n" else "" end))
+      elif .role=="meta" then (if .type=="turn.step.retrying" then ("\n  ⟳ retry "+((.next_attempt // 0)|tostring)+"/"+((.max_attempts // 0)|tostring)+" — "+(.error_name // "erreur provider")+"\n") else "" end)
+      elif .type=="text" then (.data // "")
+      elif .type=="result" then "\n[✓ itération terminée]\n"
+      elif .type=="item.completed" then
+        (if .item.type=="agent_message" then (.item.text // "")
+         elif .item.type=="file_change" then ("\n  → edit "+([.item.changes[]?.path // empty] | join(", "))+"\n")
+         elif .item.type=="command_execution" then ("\n  → "+((.item.command // "?")|tostring)+"\n")
+         else "" end)
+      elif .type=="turn.completed" then "\n[✓ itération terminée]\n"
+      elif .type=="turn.failed" then ("\n[✗ codex : "+((.error.message // "échec")|tostring)+"]\n")
+      else "" end'
+  else
+    cat
+  fi
+}
+
+# --- Prompts de rôle (G24) : relecture à CHAQUE itération ---------------------
+# CODEUSE : PROMPT_FILE custom > fichier de rôle > prompt de repli intégré (renforcé).
+# CONTRÔLEUSE : fichier de rôle > prompt de repli intégré (JSON strict).
+# load_prompts init   — chargement au démarrage : fichier absent/vide → repli intégré (l'absence
+#                       de prompts/ est un usage normal documenté, l'avertissement est imprimé).
+# load_prompts reload — relecture en tête du while : mtime + taille par fichier ; changé →
+#                       rechargement + message « ↻ consigne … rechargée » ; ABSENT ou VIDÉ en
+#                       vol → bye (fail-closed : une consigne qui disparaît sous la boucle n'est
+#                       plus une source fiable, on ne continue pas sur un prompt fantôme).
+# mtime/size portables (bash 3.2, macOS BSD + GNU) : stat -f %m/%z (BSD) sinon stat -c %Y/%s (GNU).
+prompt_sig() {  # shlint-ok — $1=fichier → "mtime:size" ou "" si absent (valeur SEULE sur stdout)
+  [ -f "$1" ] || { printf ''; return 0; }
+  local _m _z
+  _m="$(stat -f %m "$1" 2>/dev/null)"; case "$_m" in ''|*[!0-9]*) _m="$(stat -c %Y "$1" 2>/dev/null || echo '?')";; esac
+  _z="$(stat -f %z "$1" 2>/dev/null)"; case "$_z" in ''|*[!0-9]*) _z="$(stat -c %s "$1" 2>/dev/null || echo '?')";; esac
+  printf '%s:%s' "$_m" "$_z"
+}
+load_prompts() {  # shlint-ok — $1 = init|reload
+  local _mode="${1:-init}"
+  if [ "$_mode" = reload ]; then
+    # Relecture : un fichier UTILISÉ à l'init et devenu ABSENT ou VIDE en vol = arrêt nommé (bye).
+    # Le repli intégré (source=builtin : fichiers absents AU DÉMARRAGE) reste légitime — le bye
+    # ne fringue que la consigne qui EXISTAIT et a disparu : le message cite le fichier.
+    if [ "${CODER_PROMPT_SRC:-builtin}" != builtin ]; then
+      [ ! -f "$CODER_PROMPT_SRC" ] && \
+        bye stopped "arrêt : $CODER_PROMPT_SRC absent — consigne codeuse disparue en cours de boucle, restaure le fichier puis relance." 1
+      [ ! -s "$CODER_PROMPT_SRC" ] && \
+        bye stopped "arrêt : $CODER_PROMPT_SRC est vide — consigne codeuse vidée en cours de boucle, restaure le fichier puis relance." 1
+    fi
+    if [ "${REVIEWER_PROMPT_SRC:-builtin}" != builtin ]; then
+      [ ! -f "$REVIEWER_PROMPT_SRC" ] && \
+        bye stopped "arrêt : $REVIEWER_PROMPT_SRC absent — consigne contrôleuse disparue en cours de boucle, restaure le fichier puis relance." 1
+      [ ! -s "$REVIEWER_PROMPT_SRC" ] && \
+        bye stopped "arrêt : $REVIEWER_PROMPT_SRC est vide — consigne contrôleuse vidée en cours de boucle, restaure le fichier puis relance." 1
+    fi
+  fi
+  local _new_p _new_c _new_r _changed=""
+  _new_p="$(prompt_sig "$PROMPT_FILE")"; _new_c="$(prompt_sig "$CODER_PROMPT_FILE")"; _new_r="$(prompt_sig "$REVIEWER_PROMPT_FILE")"
+  local _old_p="${_sig_PROMPT_FILE:-}" _old_c="${_sig_CODER_PROMPT_FILE:-}" _old_r="${_sig_REVIEWER_PROMPT_FILE:-}"
+  [ "$_mode" = reload ] && { [ "$_new_p" != "$_old_p" ] || [ "$_new_c" != "$_old_c" ] || [ "$_new_r" != "$_old_r" ]; } && _changed=1
+  # --- codeuse : PROMPT_FILE > fichier de rôle > repli intégré ---
+  if [ -f "$PROMPT_FILE" ]; then
+    CODER_PROMPT="$(cat "$PROMPT_FILE")"; CODER_PROMPT_SRC="$PROMPT_FILE"
+  elif [ -f "$CODER_PROMPT_FILE" ]; then
+    CODER_PROMPT="$(cat "$CODER_PROMPT_FILE")"; CODER_PROMPT_SRC="$CODER_PROMPT_FILE"
+  else
+    CODER_PROMPT_SRC="builtin"
+    if [ "$_mode" = init ]; then
+      echo "⚠️  $CODER_PROMPT_FILE (et $PROMPT_FILE) absents → prompt de repli minimal. Copie le dossier prompts/." >&2
+    fi
+    read -r -d '' CODER_PROMPT <<PROMPT
+You are an autonomous coding agent. On EVERY iteration:
+1. Read GOAL.md (the Definition of Done) and PROGRESS.md (the state) BEFORE anything.
+2. Then read $INJECT_FILE (the user's real-time channel): handle active requests FIRST, then MOVE the
+   processed entries to .loop/inject-archive.md (append, keep order) — never leave them in the channel.
+3. Take the NEXT unchecked box in PROGRESS.md, implement it FULLY, test it. ONE batch per iteration.
+4. Check a box ONLY if its PROGRESS.md Journal entry contains a PROOF block: the exact command(s) you ran
+   + the last ~5 lines of their REAL output. No PROOF = box stays unchecked. Then git commit ('wip: <task>')
+   with TARGETED staging (git add the batch files one by one — NEVER git add -A). No AI-tool mention.
+5. Create $DONE_FILE only when the WHOLE DoD is met AND tests are green — and in controlled mode ONLY if the
+   last verdict ($VERDICT_FILE) is PASS.
+PROMPT
+  fi
+  # --- contrôleuse : fichier de rôle > repli intégré (JSON strict) ---
+  if [ -f "$REVIEWER_PROMPT_FILE" ]; then
+    REVIEWER_PROMPT="$(cat "$REVIEWER_PROMPT_FILE")"; REVIEWER_PROMPT_SRC="$REVIEWER_PROMPT_FILE"
+  else
+    REVIEWER_PROMPT_SRC="builtin"
+    read -r -d '' REVIEWER_PROMPT <<PROMPT
+You are the QUALITY REVIEWER — READ-ONLY review. You modify NO code, commit NOTHING, check/uncheck
+NOTHING. Sole deliverable = a verdict file. Adversarial: rediscover the diff cold. RE-VERIFY every claim
+('tests green', 'deployed') with YOUR OWN tool results — never on trust.
+0. FIRST ACTION — read the existing $VERDICT_FILE and NOTE its .head (anchor of the range to review:
+last REAL review → HEAD), then overwrite it as {"head":"<the PREVIOUS .head, copied — NOT current
+HEAD; current sha only if no file existed>","verdict":"CHANGES_REQUESTED","provisional":true,
+"blocking":["review in progress"]} ; REFINE it into the final verdict (WITHOUT "provisional", and
+only THAT one carries the new HEAD sha) — a provisional verdict surviving your death beats no verdict.
+1. Read GOAL.md (DoD + rules). 2. \`git show --stat HEAD\` then \`git show HEAD\` (the diff) +
+the last PROGRESS.md Journal entry. 3. Read $CTL_DIR/log.md (previous verdicts).
+4. VERIFY: green tests (RUN them), DoD actually met, anti-hardcoding/DRY, hygiene (clear commit, no secret,
+no AI-tool mention, GOAL.md rules). 5. WRITE $VERDICT_FILE as STRICT JSON ONLY — no markdown fence, no prose,
+it MUST parse with \`jq .\`:
+{"head":"<sha>","verdict":"PASS"|"CHANGES_REQUESTED","tests":"green"|"red"|"harness-error"|"not-run",
+"blocking":[…],"advisory":[…],"summary":"…"} (CHANGES_REQUESTED as soon as ≥1 blocker). Each blocking point
+PRESCRIPTIVE (file:line + concrete fix + validation criterion). Also append a dated section to $CTL_DIR/log.md
+(🟢/🟡/🔴, file:line). FIX NOTHING.
+6. TURN + TIME BUDGET: you have a HARD turn cap AND a wall-clock cap (review_time_cap, ~10 min
+default) — WRITE the verdict file BEFORE hitting either. Large range (multi-commit catch-up)? Verify
+the essentials (tests, DoD, hygiene) and write EARLY; what you could NOT verify goes in 'blocking'
+("not verified: …"). A review that dies without a verdict is worse than a partial one.
+PROMPT
+  fi
+  # Évolution du signe : un fichier CRÉÉ ou re-rempli en vol change la consigne (mtime+taille
+  # diffèrent → _changed=1) et fait repasser le rôle du repli intégré au fichier.
+  _sig_PROMPT_FILE="$_new_p"; _sig_CODER_PROMPT_FILE="$_new_c"; _sig_REVIEWER_PROMPT_FILE="$_new_r"
+  if [ "$_mode" = reload ] && [ "$_changed" = 1 ]; then
+    echo "↻ consigne rechargée (prompt modifié : $CODER_PROMPT_SRC / $REVIEWER_PROMPT_SRC relus)."
+    PROMPTS_RELOADED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  fi
+  return 0
+}
+# Chargement initial (avant le verrou : dry-run / refus de verrou n'écrivent RIEN — le reload,
+# lui, est appelé dans le while APRÈS le verrou et peut faire bye en toute légitimité).
+load_prompts init
+
+# --- TIME_CAP_PREFIX : plafond TEMPS partagé (run_agent, verify.sh, sonde) ----
+# `timeout` est absent de macOS/BSD → perl fork+setpgid : au cap, tout le GROUPE du process
+# est tué (rc=142) — ses enfants héritent du tube stdout, tuer le seul parent laisserait
+# tee/fmt attendre ses petits-enfants (mesuré : appel borné à 3 s mais pipeline rendu à 8 s).
+# Usage : cmd=("${TIME_CAP_PREFIX[@]}" "$CAP" "${cmd[@]}") — requiert perl (dégradé signalé
+# par l'appelant, jamais de dépendance dure). Inactif pour run_custom (fonction non exec-able).
+TIME_CAP_PREFIX=(perl -e 'use POSIX "setpgid"; my $cap=shift; defined(my $pid=fork) or die "fork: $!";
+  if ($pid==0) { setpgid(0,0); exec @ARGV; die "exec: $!"; }
+  $SIG{ALRM}=sub { kill 9,-$pid; waitpid $pid,0; exit 142 };
+  alarm $cap; waitpid $pid,0; my $st=$?; kill 9,-$pid;
+  if ($st & 127) { exit(128+($st & 127)) } exit($st>>8);')
+
+# resolve_yumi_bin : résolution du binaire yumi (loop.conf yumi_bin > PATH > repli connu) —
+# SOURCE UNIQUE, réutilisée par la branche yumi, la branche ollama (Lot 5) et resolve_bin().
+resolve_yumi_bin() { echo "${yumi_bin:-$(command -v yumi 2>/dev/null || echo "$HOME/.local/bin/yumi")}"; }
+# Idem codex (codex_cmd, resolve_bin). Un codex_bin RELATIF (ex. bin/codex-haut) est relatif à la
+# racine du projet : loop.sh s'y place au démarrage (cd "$(dirname "$0")").
+resolve_codex_bin() { echo "${codex_bin:-$(command -v codex 2>/dev/null || echo "$HOME/.local/bin/codex")}"; }
+
+# codex_cmd MODÈLE PROMPT : construit la commande Codex dans `cmd` (tableau de l'APPELANT, portée
+# dynamique bash) — SOURCE UNIQUE, partagée par run_agent et --dry-run (qui l'affiche sans lancer).
+# Effort : AGENT_EFFORT (<rôle>_effort, posé par l'appelant) prime sur codex_effort ; vide = rien
+# passé → valeur de ~/.codex/config.toml (comportement historique, commande inchangée).
+codex_cmd() {
+  cmd=("$(resolve_codex_bin)" exec --json --skip-git-repo-check -C "$PWD")
+  case "${codex_sandbox:-bypass}" in
+    bypass|danger-full-access|full) cmd+=(--dangerously-bypass-approvals-and-sandbox);;
+    *) cmd+=(-s "${codex_sandbox}");;
+  esac
+  local xmodel="${codex_model:-}"; case "$1" in *:*) xmodel="${1#*:}";; esac
+  [ -n "$xmodel" ] && cmd+=(-m "$xmodel")
+  local xeff="${AGENT_EFFORT:-${codex_effort:-}}"
+  [ -n "$xeff" ] && cmd+=(-c "model_reasoning_effort=\"$xeff\"")
+  cmd+=("$2")
+}
+
+# --- run_agent : UNE exécution, statut de l'AGENT renvoyé (pas de fmt) -------
+# $1 label · $2 prompt · $3 jsonl · $4 max-turns · $5 modèle. Routage insensible à la casse.
+#   kimi → Kimi Code (pas de --max-turns exposé par ce CLI : tours non bornés côté kimi → gardes de boucle)
+#   mistral|vibe|devstral|mistral-local → Mistral Vibe   ·   yumi[:<modèle>] → CLI yumi (clone Go iso claude)
+#   ollama|ollama:<modèle> → CLI yumi (Lot 5 : SUPERSEDE le claude réel du Lot 1) via API Anthropic d'Ollama
+#   run_custom (loop.conf) → CLI custom
+#   sinon → claude (--allowedTools si allowed_tools défini, sinon --dangerously-skip-permissions)
+# stderr → fichier .err (JAMAIS dans le .jsonl : il peut contenir des fragments de secrets). stdin coupé.
+run_agent() {  # shlint-ok (affichage direct du flux, jamais capturée par $(...)) · $6 FROM_LINE optionnel (G09 : repère de début de CE run dans le jsonl, pour reads_watch)
+  local label="$1" prompt="$2" jsonl="$3" turns="$4" model="${5:-}" from_line="${6:-}"
+  echo; echo "── $label · modèle=${model:-défaut} · $(date '+%H:%M:%S') ──────────────"
+  local m; m="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+  # Alias lisible du modèle Ollama local maison : `ornith` → ollama:ornith-ctx256k,
+  # `ornith:<modèle>` → ollama:<modèle>. Mot-clé DÉDIÉ (n'écrase aucun slot Claude,
+  # haiku reste haiku). provider_of/resolve_bin/check_role le reconnaissent aussi.
+  case "$m" in
+    ornith)    model="ollama:ornith-ctx256k"; m="$model";;
+    ornith:*)  model="ollama:${m#ornith:}";   m="$model";;
+  esac
+  local cmd=()
+  # Lot 4 : --max-turns n'est passé QUE si $turns est non-vide (défaut kit = AUCUN plafond,
+  # comportement natif des CLI — la branche kimi ne l'a jamais passé, sans incident).
+  if [ "$m" = kimi ] || [ "${m#kimi:}" != "$m" ]; then
+    # Convention par instance : <rôle>_model=kimi:<modèle> (prioritaire sur kimi_model global).
+    # Alias lisibles → clés du registre kimi (~/.kimi-code/config.toml) :
+    #   k2.7 (256k) → kimi-code/kimi-for-coding · k3 (1M) → kimi-code/k3 · k3-256k → kimi-code/k3-256k
+    #   (registre renommé kimi-for-coding/* → kimi-code/* avec kimi 0.32 : anciennes clés remappées)
+    cmd=("${kimi_bin:-$HOME/.kimi-code/bin/kimi}" --output-format stream-json)
+    local kmodel="${kimi_model:-}"
+    case "$model" in *:*) kmodel="${model#*:}";; esac
+    case "$(printf '%s' "$kmodel" | tr '[:upper:]' '[:lower:]')" in
+      k2.7|k27|k2)              kmodel="kimi-code/kimi-for-coding";;
+      k3)                       kmodel="kimi-code/k3";;
+      k3-256k|k3-256)           kmodel="kimi-code/k3-256k";;
+      highspeed|k2.7-highspeed) kmodel="kimi-code/kimi-for-coding-highspeed";;
+      # Clés COMPLÈTES de l'ancien registre (loop.conf de la flotte figés avant kimi 0.32) → remap :
+      kimi-for-coding/kimi-for-coding)           kmodel="kimi-code/kimi-for-coding";;
+      kimi-for-coding/k3)                        kmodel="kimi-code/k3";;
+      kimi-for-coding/kimi-for-coding-highspeed) kmodel="kimi-code/kimi-for-coding-highspeed";;
+    esac
+    [ -n "$kmodel" ] && cmd+=(-m "$kmodel")
+    cmd+=(-p "$prompt")
+  elif [ "$m" = grok ]; then
+    # CLI Grok (xAI) — calque les conventions Claude Code. --always-approve = autonomie (auto-approve
+    # des outils), --cwd "$PWD" PIN le repo courant. streaming-json = format PROPRE à grok
+    # ({"type":"thought|text|end"}), rendu par fmt() ; pas de télémétrie tokens/coût émise (cf. monitor).
+    local gbin="${grok_bin:-$(command -v grok 2>/dev/null || echo "$HOME/.local/bin/grok")}"
+    cmd=("$gbin" -p "$prompt" --output-format streaming-json --always-approve --cwd "$PWD")
+    [ -n "$turns" ] && cmd+=(--max-turns "$turns")
+    [ -n "${grok_model:-}" ] && cmd+=(-m "$grok_model")
+    [ -n "${AGENT_EFFORT:-}" ] && cmd+=(--reasoning-effort "$AGENT_EFFORT")
+  elif [ "$m" = mistral ] || [ "$m" = vibe ] || [ "$m" = devstral ] || [ "$m" = mistral-local ]; then
+    local vbin="${vibe_bin:-$(command -v vibe 2>/dev/null || echo "$HOME/.local/bin/vibe")}"
+    local vmodel="${vibe_model:-}"
+    if [ -z "$vmodel" ]; then case "$m" in
+        devstral)      vmodel=devstral-small;;
+        mistral-local) vmodel=local;;
+        *)             vmodel=mistral-medium-3.5;;
+      esac; fi
+    # --workdir "$PWD" PIN le repo courant (SANS ça Vibe peut résoudre le contexte vers un autre repo).
+    cmd=(env "VIBE_ACTIVE_MODEL=$vmodel" VIBE_INCLUDE_COMMIT_SIGNATURE=false \
+      "$vbin" -p "$prompt" --output streaming --yolo --trust --workdir "$PWD")
+    [ -n "$turns" ] && cmd+=(--max-turns "$turns")
+    [ -n "${vibe_max_price:-}" ] && cmd+=(--max-price "$vibe_max_price")
+  elif [ "$m" = yumi ] || [ "${m#yumi:}" != "$m" ]; then
+    # CLI yumi (clone Go iso Claude Code — repo yumi-cli) : mêmes flags/stream-json que claude,
+    # ~10x moins de RAM par session, mêmes credentials (lecture seule) et même quota.
+    # Convention : <rôle>_model=yumi:<modèle> (alias haiku/sonnet/opus/fable résolus par yumi comme
+    # le vrai client) ; `yumi` seul = modèle par défaut du CLI. Émet total_cost_usd → max_cost/dash OK.
+    local ybin; ybin="$(resolve_yumi_bin)"
+    cmd=("$ybin" --dangerously-skip-permissions)
+    local ymodel=""; case "$model" in *:*) ymodel="${model#*:}";; esac
+    [ -n "$ymodel" ] && cmd+=(--model "$ymodel")
+    [ -n "$turns" ] && cmd+=(--max-turns "$turns")
+    cmd+=(--output-format stream-json --verbose -p "$prompt")
+  elif [ "$m" = ollama ] || [ "${m#ollama:}" != "$m" ]; then
+    # Provider Ollama (modèles locaux via API compatible Anthropic).
+    # Convention : ollama:<modèle> (ex. ollama:ornith) ou ollama seul (modèle par défaut via
+    # ollama_model de loop.conf, erreur claire si absent).
+    # Lot 5 SUPERSEDE le Lot 1 : invoque `yumi` (PAS le `claude` réel — directive Nicolas 31/08,
+    # yumi respecte nativement ANTHROPIC_BASE_URL/API_KEY — cf. GOAL.md — ET n'a pas le bug de
+    # coût facturé à tort du vrai claude sur un modèle Ollama non répertorié) avec
+    # ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY scopés à l'appel via env (JAMAIS export — fuit vers
+    # les appels claude/yumi suivants dans la même itération). Résolution du binaire :
+    # resolve_yumi_bin(), SOURCE UNIQUE partagée avec la branche yumi (DRY, GOAL.md Lot 5).
+    # yumi n'expose PAS --allowedTools (CLI Go, vérifié réel — flag inexistant côté yumi) :
+    # comme la branche yumi ci-dessus, toujours --dangerously-skip-permissions ; allowed_tools
+    # ne s'applique pas à ce provider.
+    local omodel=""; case "$model" in *:*) omodel="${model#*:}";; esac
+    [ -z "$omodel" ] && omodel="${ollama_model:-}"
+    if [ -z "$omodel" ]; then
+      echo "   ERREUR : modèle Ollama non spécifié (ollama:<modèle> ou ollama_model dans loop.conf) " >&2
+      return 1
+    fi
+    local oybin; oybin="$(resolve_yumi_bin)"
+    cmd=(env "ANTHROPIC_BASE_URL=${ollama_base_url:-http://localhost:11434}" \
+      "ANTHROPIC_API_KEY=${ollama_api_key:-ollama}" \
+      "$oybin" --dangerously-skip-permissions --model "$omodel")
+    [ -n "$turns" ] && cmd+=(--max-turns "$turns")
+    cmd+=(--output-format stream-json --verbose -p "$prompt")
+    # --- fin branche ollama ---
+  elif [ "$m" = codex ] || [ "${m#codex:}" != "$m" ]; then
+    # CLI Codex (OpenAI, `codex exec` non interactif). Convention : <rôle>_model=codex ou
+    # codex:<modèle> (ex. codex:gpt-5.1-codex-max) ; `codex_model` de loop.conf sert de défaut.
+    # Sortie : --json = JSONL PROPRE à codex ({"type":"thread.started|turn.started|item.started|
+    # item.completed|turn.completed|turn.failed"}), rendu par fmt() ; PAS de {type:result} claude
+    # → ni num_turns ni total_cost_usd (comme grok) ; les tokens sont lus depuis turn.completed.usage
+    # par write_iteration. Aucun équivalent de --max-turns côté codex : $turns est IGNORÉ (comme
+    # kimi) et les gardes de boucle (max_stale/max_fails) restent le seul filet.
+    # AUTONOMIE : par défaut --dangerously-bypass-approvals-and-sandbox (équivalent du
+    # --dangerously-skip-permissions / --yolo des autres providers : sans ça codex demande une
+    # approbation à chaque commande hors sandbox et la boucle se bloque/n'écrit rien). Pour un
+    # confinement plus strict (CONTRÔLEUSE seule : .git y est en lecture seule, codeuse refusée
+    # au démarrage) : codex_sandbox=workspace-write (écriture limitée au repo, RÉSEAU
+    # COUPÉ → npm install/git push échouent) ou read-only.
+    codex_cmd "$model" "$prompt"
+  elif type run_custom >/dev/null 2>&1; then
+    # Hook générique loop.conf : run_custom() lit AGENT_PROMPT/AGENT_MODEL/AGENT_TURNS ; doit sortir du
+    # JSON en streaming (style Claude ou OpenAI, fmt() gère les deux). Ex. Qwen/Ollama/gateway maison.
+    export AGENT_PROMPT="$prompt" AGENT_MODEL="$model" AGENT_TURNS="$turns"
+    cmd=(run_custom)
+  else
+    if [ -n "${allowed_tools:-}" ]; then cmd=(claude --allowedTools "$allowed_tools")
+    else cmd=(claude --dangerously-skip-permissions); fi
+    # claude_profiles : coffre trousseau du profil courant, scopé à l'appel (jamais export).
+    [ "${prof_i:-0}" -gt 0 ] && cmd=(env "CLAUDE_SECURESTORAGE_CONFIG_DIR=$CLAUDE_PROFILES_DIR/$(prof_name)" "${cmd[@]}")
+    # Opus 5 est dispo EN PARALLÈLE d'Opus 4.8 (même tarif, buckets de rate-limit séparés) :
+    # 'opus' seul = alias du CLI (résout vers Opus 5) ; pour ÉPINGLER une version, alias lisibles
+    # opus-5 / opus-4.8 (ou sonnet-5) → ids complets. Mix par instance possible (codeuse opus-5 +
+    # contrôleuse opus-4.8 = buckets distincts, double headroom).
+    local cmodel="$model"
+    case "$(printf '%s' "$cmodel" | tr '[:upper:]' '[:lower:]')" in
+      opus-5|opus5)                    cmodel="claude-opus-5";;
+      opus-4.8|opus-4-8|opus48)       cmodel="claude-opus-4-8";;
+      sonnet-5|sonnet5)                cmodel="claude-sonnet-5";;
+    esac
+    [ -n "$cmodel" ] && cmd+=(--model "$cmodel")
+    [ -n "$turns" ] && cmd+=(--max-turns "$turns")
+    [ -n "${AGENT_EFFORT:-}" ] && cmd+=(--effort "$AGENT_EFFORT")
+    cmd+=(--output-format stream-json --verbose -p "$prompt")
+  fi
+  # Plafond TEMPS optionnel (AGENT_TIME_CAP, revue + sonde) : mécanisme partagé TIME_CAP_PREFIX
+  # (perl fork+setpgid, voir son en-tête). Repli sans perl : pas de plafond (dégradé, signalé —
+  # jamais de dépendance dure). Inactif pour run_custom (fonction shell non exec-able) et
+  # AGENT_TIME_CAP=0.
+  if [ "${AGENT_TIME_CAP:-0}" -gt 0 ] 2>/dev/null && [ "${cmd[0]}" != "run_custom" ]; then
+    if command -v perl >/dev/null 2>&1; then
+      cmd=("${TIME_CAP_PREFIX[@]}" "$AGENT_TIME_CAP" "${cmd[@]}")
+    else
+      echo "   (perl absent → plafond temps ${AGENT_TIME_CAP}s INACTIF pour $label)" >&2
+    fi
+  fi
+  # Lot 11 : watcher checkpoint mi-tours — codeuse SEULE (c'est elle qui produit les commits),
+  # budget > 1 (à 1 tour il n'y a pas de moitié exploitable). Tué au retour du pipeline ;
+  # meurt aussi tout seul si loop.sh disparaît (kill -0 $$ dans le watcher).
+  # Watcher mi-tours : seulement s'il EXISTE un budget (turns non-vide — Lot 4 : sans plafond,
+  # pas de moitié à surveiller, le checkpoint auto est sans objet).
+  local wpid=""
+  if [ "$label" = "CODEUSE" ] && [ -n "$turns" ] && [ "$turns" -gt 1 ] 2>/dev/null; then
+    turn_watch "$jsonl" "$turns" &
+    wpid=$!
+  fi
+  # G09 : watcher comptage de lectures — codeuse SEULE, garde active (max_reads_before_edit > 0).
+  # FROM_LINE $2 = repère de début de CE run (le jsonl est cumulatif : seules les lectures du
+  # run en vol comptent). Tué au retour du pipeline, comme turn_watch.
+  local rwpid=""
+  if [ "$label" = "CODEUSE" ] && [ "${MAX_READS_BEFORE_EDIT:-0}" -gt 0 ] 2>/dev/null && [ -n "$from_line" ]; then
+    reads_watch "$jsonl" "$from_line" "$MAX_READS_BEFORE_EDIT" &
+    rwpid=$!
+  fi
+  # Pipeline en SOUS-SHELL de fond avec monitor mode : le sous-shell écrit le rc du CLI
+  # (PIPESTATUS[0], visible DANS le sous-shell où le pipeline est au premier plan) dans
+  # $rcf (.agent.rc.<rôle>, vidé AVANT le run) ; run_agent attend et relit le fichier.
+  # Pourquoi ce détour : après `wait` sur un
+  # job de fond, PIPESTATUS du parent n'est PAS peuplé (le rc par-commande serait perdu) — et
+  # G09 doit SIGTERM le CLI EN VOL (arrêt doux, rc 143 = le signal reçu → motif reads_cap),
+  # donc le pipeline doit être un job traçable. set -m : groupe de processus PROPRE au job →
+  # kill -TERM -$apid atteint le CLI (1re commande du pipeline), pas seulement le sous-shell.
+  local _had_m=0; case $- in *m*) _had_m=1;; esac
+  [ "$_had_m" = 0 ] && set -m
+  # rc PAR RUN et PAR RÔLE (revue fba20a7) : un fichier partagé .agent.rc non vidé survivait à un
+  # sous-shell tué avant son printf (SIGKILL watchdog/AGENT_TIME_CAP/OOM) et run_agent retournait
+  # le rc du run PRÉCÉDENT (revue : REVIEWER tué → rc=7 du CODEUSE d'avant → failover à tort,
+  # défaut que G02 avait corrigé). rm AVANT le lancement : fichier ABSENT après wait = le
+  # sous-shell n'a pas fini → 137 (tué), jamais 0.
+  local rcf="$MONITOR_DIR/.agent.rc.$label"
+  rm -f "$rcf" 2>/dev/null
+  ( "${cmd[@]}" < /dev/null 2>"$MONITOR_DIR/${label}.err" | tee -a "$jsonl" | fmt
+    printf '%s\n' "${PIPESTATUS[0]}" > "$rcf" ) &
+  local apid=$!
+  # pgid du job mémorisé pour le trap global (revue fba20a7) : sous `set -m` le pipeline vit dans
+  # SON PROPRE groupe — un SIGINT/SIGTERM visant le groupe de la boucle ne l'atteint plus et le
+  # CLI survit orphelin. APGID est global : cleanup() et le trap INT/TERM le tuent.
+  APGID="$apid"
+  while kill -0 "$apid" 2>/dev/null; do
+    # G09 : flag posé par reads_watch (plafond de lectures dépassé sans écriture) → SIGTERM au
+    # GROUPE du pipeline (CLI inclus). Le rc 143 du CLI traverse PIPESTATUS → classify_agent_stop
+    # is_killed_rc → motif reads_cap (posé dans la boucle principale sur le flag).
+    [ -f "$MONITOR_DIR/READS_CAP.hit" ] && [ "$label" = "CODEUSE" ] && kill -TERM -"$apid" 2>/dev/null
+    loop_poll
+  done
+  wait "$apid" 2>/dev/null
+  # APGID vidé dès que le pipeline est retombé (revue e0c2fff) : le garde kill -0 teste
+  # seulement l'EXISTENCE du pid, pas son identité — sur pid RECYCLÉ par l'OS, un Ctrl-C
+  # plus tard enverrait SIGTERM au groupe d'un process tiers innocent. Vidé ici, kill_apgid
+  # ne tire que pendant le vol réel de l'agent.
+  APGID=""
+  local arc
+  if [ -f "$rcf" ]; then
+    arc="$(cat "$rcf" 2>/dev/null | tr -dc '0-9')"
+    arc="${arc:-137}"
+  else
+    # Sous-shell tué avant son printf : le rc de CE run est inconnu → tué (SIGKILL), jamais 0.
+    arc=137
+  fi
+  [ "$_had_m" = 0 ] && set +m
+  [ -n "$wpid" ] && { kill "$wpid" 2>/dev/null; wait "$wpid" 2>/dev/null; }
+  [ -n "$rwpid" ] && { kill "$rwpid" 2>/dev/null; wait "$rwpid" 2>/dev/null; }
+  return "$arc"
+}
+
+# --- Failover crédit/panne provider (fallback_models) ------------------------
+# provider_of : famille de CLI d'un mot-clé modèle (pour savoir si la contrôleuse partage le
+# provider en panne de la codeuse et doit basculer avec elle).
+provider_of() { case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+  kimi|kimi:*) echo kimi;; grok) echo grok;; mistral|vibe|devstral|mistral-local) echo vibe;;
+  codex|codex:*) echo codex;;
+  yumi|yumi:*) echo yumi;; ollama|ollama:*|ornith|ornith:*) echo ollama;; *) echo claude;; esac; }
+# gpu_host_of MODEL → hôte:port du serveur Ollama que MODEL occupe (vide = pas un serveur
+# Ollama, rien à verrouiller). yumi:<ep>:<modèle> → ep en MAJUSCULES = segment d'env du registre
+# yumi (registry.go : nom = segment lowercasé) ; ollama|ornith → ollama_base_url (défaut localhost).
+gpu_host_of() {
+  local m url ep
+  m="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  case "$m" in
+    yumi:*:*)
+      ep="${m#yumi:}"; ep="$(printf '%s' "${ep%%:*}" | tr '[:lower:]' '[:upper:]')"
+      [ -f "$YUMI_CONFIG_ENV" ] || return 0
+      grep -q "^YUMI_PROVIDER_${ep}_KIND=ollama" "$YUMI_CONFIG_ENV" 2>/dev/null || return 0
+      url="$(sed -n "s/^YUMI_PROVIDER_${ep}_BASE_URL=//p" "$YUMI_CONFIG_ENV" 2>/dev/null | head -1)";;
+    ollama|ollama:*|ornith|ornith:*) url="${ollama_base_url:-http://localhost:11434}";;
+    *) return 0;;
+  esac
+  url="${url#*://}"; url="${url%%/*}"
+  printf '%s' "$url"
+}
+# claude_role MODEL : vrai si run_agent routera MODEL vers le CLI `claude` (provider_of rend claude
+# par DÉFAUT, custom:* inclus — un hook run_custom prime, même ordre de dispatch que run_agent).
+claude_role() { ! type run_custom >/dev/null 2>&1 && [ "$(provider_of "$1")" = claude ]; }
+# prof_name : nom du profil Claude courant (prof_i 1-based dans CLAUDE_PROFILES ; vide = rotation off).
+prof_name() { local c=0 p; for p in $CLAUDE_PROFILES; do c=$((c+1)); [ "$c" -eq "${prof_i:-0}" ] && { printf '%s' "$p"; return 0; }; done; return 0; }
+# prof_rotate : passe au profil suivant (globaux prof_i/prof_retry — appeler SANS $(...), même piège
+# que fb_advance) et rédige PROF_MSG. rc 0 = il restait un compte non essayé depuis le dernier
+# progrès → itération suivante SANS backoff ; rc 1 = off, ou tour de liste complet sans progrès →
+# le backoff G16 reprend (prof_retry remis à zéro : après l'attente, on refait un tour).
+prof_rotate() {
+  PROF_MSG=""
+  [ "${prof_count:-0}" -gt 1 ] || return 1
+  local _prev; _prev="$(prof_name)"
+  prof_i=$((prof_i % prof_count + 1)); prof_retry=$((prof_retry+1))
+  if [ "$prof_retry" -lt "$prof_count" ]; then
+    PROF_MSG="🔁 429 : fenêtre du compte « $_prev » épuisée → profil « $(prof_name) » ($prof_retry/$prof_count essayés) — itération suivante SANS backoff (ni fails ni stale)."
+    return 0
+  fi
+  PROF_MSG="🔁 429 : les $prof_count comptes ont été essayés sans progrès → profil « $(prof_name) » + backoff."
+  prof_retry=0
+  return 1
+}
+# fb_pick N : Nième modèle (1-based) de FALLBACK_MODELS (liste de mots — pas de tableau bash : 3.2).
+fb_pick() { local n="$1" c=0 m; for m in $FALLBACK_MODELS; do c=$((c+1)); [ "$c" -eq "$n" ] && { printf '%s' "$m"; return 0; }; done; }
+# fb_advance DEAD : avance fb_i/fb_cycles (globaux du while principal) en SAUTANT les entrées dont
+# le provider == DEAD (un 403/quota est par COMPTE, donc par provider — retenter le même provider
+# via un autre mot-clé modèle est perdu d'avance). Borne = 2 tours complets de la liste (fb_count*2
+# tentatives), mêmes seuils d'épuisement qu'avant l'ajout du filtre. Résultat dans $FB_RESULT (PAS
+# stdout — un appel en command substitution `x="$(fb_advance …)"` forke un SOUS-shell : les mutations
+# de fb_i/fb_cycles y seraient locales et jamais vues par la boucle principale, qui recroirait alors
+# le failover toujours inactif — symptôme observé : state.json.failover.active resté à false alors
+# que coder_model avait bien basculé). Appeler SANS $(...) : `if fb_advance "$dead"; then … $FB_RESULT`.
+# rc 1 = aucun provider différent de DEAD trouvé en 2 tours (liste épuisée).
+fb_advance() {
+  local dead="$1" steps=0 cand
+  while [ "$steps" -lt "$((fb_count*2))" ]; do
+    fb_i=$((fb_i<1 ? 1 : fb_i+1))
+    if [ "$fb_i" -gt "$fb_count" ]; then fb_i=1; fb_cycles=$((fb_cycles+1)); fi
+    steps=$((steps+1))
+    cand="$(fb_pick "$fb_i")"
+    [ "$(provider_of "$cand")" != "$dead" ] && { FB_RESULT="$cand"; return 0; }
+  done
+  return 1
+}
+# probe_model M : UNE requête minimale (1 tour, sortie jetée) — 0 = le provider répond (crédit OK).
+# Plafonnée (probe_time_cap) : une sonde figée (socket réseau sans réponse) suspendait la boucle au
+# sommet de l'itération, monitor muet — même classe de panne que le verify.sh du 26/08.
+probe_model() { AGENT_TIME_CAP="$PROBE_TIME_CAP" run_agent "PROBE" "Reply with exactly: ok" /dev/null 1 "$1" >/dev/null 2>/dev/null; }
+# subtype_of FILE [FROM_LINE] : extrait le subtype du dernier objet {type:result} écrit À PARTIR
+# de FROM_LINE — utilisé par motif_arret (Lot 2) et la classification existante (turncap,
+# retry_reason). FROM_LINE = repère de début de CE run (coder_jsonl_from/reviewer_jsonl_from) :
+# le jsonl est CUMULATIF sur toute la boucle, sans le repère un run tué avant son result relisait
+# le success du run PRÉCÉDENT (constat glm-feedback 150743 : lane 9 SIGTERM classée sur la
+# télémétrie de la lane 8). Absent/0 = fichier entier (compat appels existants).
+subtype_of() {
+  [ -n "$JQ" ] && [ -f "$1" ] || return 0
+  tail -n +"$(( ${2:-0} + 1 ))" "$1" 2>/dev/null | \
+    "$JQ" -Rr 'fromjson? | select(type=="object" and .type=="result") | .subtype // empty' 2>/dev/null | tail -1 || true
+}
+# client_timeout_of FILE FROM_LINE : message du dernier événement {type:error} de CE run (lignes
+# après FROM_LINE — le jsonl est cumulatif sur toute la boucle, un délai du run précédent ne doit
+# pas être relu) s'il porte la signature d'un délai côté client ; vide sinon (donc vide sans jq →
+# la classification retombe sur provider_fail, comportement historique, jamais un faux positif).
+client_timeout_of() {
+  [ -n "$JQ" ] && [ -f "$1" ] || return 0
+  tail -n +"$(( ${2:-0} + 1 ))" "$1" 2>/dev/null | "$JQ" -Rr --arg sig "$CLIENT_TIMEOUT_SIG" --arg pfx "$CLIENT_TIMEOUT_PREFIX" --arg field "$CLIENT_TIMEOUT_FIELD" --arg kind "$CLIENT_TIMEOUT_KIND" \
+    'fromjson? | select(type=="object" and .type=="error")
+     | select(((.[$field] // "") == $kind) or ((.error // "") | (startswith($pfx) or contains($sig))))
+     | .error // empty' 2>/dev/null | tail -1 || true
+}
+# net_class_of FILE FROM_LINE : classe réseau/429 du dernier événement significatif de CE run
+# (même mécanique de repère cumulatif que client_timeout_of) ; vide sinon. Envoie sur stdout la
+# valeur de NETWORK_CLASS ou RATELIMIT_CLASS — jamais autre chose (fonction capturée par $()).
+# Trois formes d'événement, le DERNIER qui matche l'emporte :
+#   {type:error} (yumi/custom, texte .error) ; le vrai `claude` n'en émet JAMAIS (vérifié doc
+#   stream-json 20/09) mais signale ses retries en {type:system, subtype:api_retry} avec le champ
+#   STRUCTURÉ .error ("rate_limit" → 429 ; .error_status null = aucune réponse HTTP → réseau), puis
+#   « prints the failure as the result » : {type:result, is_error:true} dont le texte .result est
+#   passé aux mêmes signatures. Sans ces deux formes, un 429 du vrai claude était provider_fail
+#   (fails++ → failover à tort) et la rotation de compte (claude_profiles) restait inerte.
+net_class_of() {  # shlint-ok
+  [ -n "$JQ" ] && [ -f "$1" ] || return 0
+  tail -n +"$(( ${2:-0} + 1 ))" "$1" 2>/dev/null | "$JQ" -Rr --arg nclass "$NETWORK_CLASS" --arg rclass "$RATELIMIT_CLASS" --arg nsigs "$NETWORK_SIGS" --arg rsigs "$RATELIMIT_SIGS" --arg field "$CLIENT_TIMEOUT_FIELD" \
+    'fromjson? | select(type=="object")
+     | if .type=="system" and .subtype=="api_retry" then
+         (if .error=="rate_limit" then $rclass elif (has("error_status") and .error_status==null) then $nclass else empty end)
+       else
+         (if .type=="error" then (.error // "") elif (.type=="result" and .is_error==true) then ((.result // "") | tostring) else empty end) as $e
+         | if ((.[$field] // "") == $rclass) or (($rsigs | split("|") | any(. as $s | ($e | ascii_downcase | contains($s | ascii_downcase)))))
+             then $rclass
+           elif ((.[$field] // "") == $nclass) or (($nsigs | split("|") | any(. as $s | ($e | ascii_downcase | contains($s | ascii_downcase)))))
+             then $nclass
+           else empty end
+       end' 2>/dev/null | tail -1 || true
+}
+# --- G09 : compteur de lectures avant le premier Edit/Write -----------------
+# READS_SIGS : commandes shell comptées comme une LECTURE (une seule source, le reste du
+# script ne cite que cette constante). Un `tool_use` Bash est une lecture si sa commande
+# contient un de ces mots (cat/sed/grep/head/tail) — approximation assumée, documentée :
+# un `grep -n` dans une pipeline de BUILD n'est pas le profil d'une divagation (70/281/1336
+# lectures = relectures successives de fichiers, pas des greps unitaires).
+READS_SIGS="cat sed grep head tail"
+# READ_TOOLS / WRITE_TOOLS : noms d'outils natifs comptés côté lectures / écritures.
+READ_TOOLS="Read Grep Glob"
+WRITE_TOOLS="Edit Write MultiEdit NotebookEdit"
+# reads_count_of JSONL [FROM_LINE] : nb d'événements tool_use LECTURE écrits À PARTIR de
+# FROM_LINE et AVANT le premier tool_use d'ÉCRITURE (même repère cumulatif que subtype_of :
+# seuls les événements de CE run comptent). Sans jq → 0 (garde muette, jamais un faux kill).
+# Un event tool_use = {"type":"assistant","message":{"content":[{"type":"tool_use","name":…,…}]}}.
+# Comptage FIGÉ au premier write (awk exit → END imprime le compte) : la valeur publiée est
+# « lectures avant le 1er Edit », qu'un Edit ait suivi ou non. Bash = lecture si sa commande
+# contient un mot de READS_SIGS (borne de mot, insensible à la casse) — approximation
+# documentée en tête de bloc G09.
+reads_count_of() {  # shlint-ok (fonction capturée par $() : stdout = le NOMBRE seul)
+  [ -n "$JQ" ] && [ -f "$1" ] || { printf '0'; return 0; }
+  tail -n +"$(( ${2:-0} + 1 ))" "$1" 2>/dev/null | "$JQ" -Rr --arg rt "$READ_TOOLS" --arg wt "$WRITE_TOOLS" --arg rs "$READS_SIGS" \
+    'fromjson? | select(type=="object" and .type=="assistant")
+     | (.message.content // [])[]? | select(.type=="tool_use")
+     | if (.name as $n | ($wt | split(" ") | any(. == $n)))
+         then "W"
+       elif (.name as $n | ($rt | split(" ") | any(. == $n)))
+         then "R"
+       elif (.name == "Bash") and ((.input.command // "") | ascii_downcase
+            | test("(^|[^a-z])(" + ($rs | split(" ") | join("|")) + ")([^a-z]|$)"))
+         then "R"
+       else empty end' 2>/dev/null \
+    | awk '{ if ($0=="W") exit; c++ } END { printf "%d", c+0 }'
+}
+
+# loop_sleep SECONDES : unique attente de la boucle (backoff réseau/429),
+# surchargeable par LOOP_SLEEP_CMD (env) pour les tests — « LOOP_SLEEP_CMD=true » ne dort pas.
+# stdout TOUJOURS vide (fonction d'attente, jamais capturée pour une valeur).
+loop_sleep() {  # shlint-ok
+  local s="$1"
+  if [ -n "${LOOP_SLEEP_CMD:-}" ]; then $LOOP_SLEEP_CMD "$s" >/dev/null 2>&1 || true
+  else sleep "$s"; fi
+}
+# loop_poll : pas de SCRUTATION des watchers (run_agent, reads_watch, turn_watch), 1 s par défaut,
+# surchargeable par LOOP_POLL (env, fractionnaire) pour les tests — sous charge machine, 4 watchers
+# bouclant sur `sleep 1` fixe faisaient dépasser à test-gate-G09 le plafond de 20 s (mesuré en
+# revue : 19,5–32,9 s selon la charge). Un pas court en test ne change AUCUNE sémantique : le
+# watcher ne fait que surveiller, il réagit seulement plus tôt.
+loop_poll() {  # shlint-ok
+  local s="${LOOP_POLL:-1}"
+  sleep "$s"
+}
+# AGENT_KILLED_RCS : codes retour d'INTERRUPTION par signal externe (128+15=143 SIGTERM,
+# 128+9=137 SIGKILL) — le harnais/OS a tué le CLI : le fournisseur n'y est pour rien, ni la
+# qualité du modèle. Source : constat glm-feedback 150743 (rc=143 → provider_fail → FAILOVER
+# à tort, modèle écarté pour une faute qu'il n'a pas commise). Décision pilote 11/09 02:46
+# (mission 67182a4) : killed = LE SIGNAL REÇU UNIQUEMENT — un rc≠0 sans result dans le run
+# reste provider_fail (codex/grok n'émettent jamais type:result, un critère « sans result »
+# les aurait classés killed et aurait désactivé leur failover légitime).
+AGENT_KILLED_RCS="143 137"
+# is_killed_rc RC : rc d'interruption par signal (143/137) → vrai.
+is_killed_rc() { local r; for r in $AGENT_KILLED_RCS; do [ "$1" = "$r" ] && return 0; done; return 1; }
+# classify_agent_stop RC SUB CTMO_MSG [NET_CLASS] : motif_arret d'un rôle (codeuse et
+# contrôleuse, UNE seule implémentation). Ordre : interruption par signal → killed ;
+# max_turns (le CLI a fini son budget, pas une panne) ; délai CÔTÉ CLIENT (notre plafond, pas
+# le fournisseur) ; panne RÉSEAU / 429 (G16 : ni faute du modèle ni crédit épuisé — backoff,
+# pas de failover) ; sinon provider_fail. NET_CLASS = sortie de net_class_of (vide sans jq →
+# retombe provider_fail, comportement historique, jamais un faux positif).
+classify_agent_stop() {  # shlint-ok
+  local _rc="$1" _sub="$2" _ctmo="$3" _net="${4:-}"
+  [ "$_rc" -eq 0 ] && { echo ok; return 0; }
+  is_killed_rc "$_rc" && { echo killed; return 0; }
+  case "$_sub" in *max_turns*) echo max_turns; return 0 ;; esac
+  [ -n "$_ctmo" ] && { echo client_timeout; return 0; }
+  [ -n "$_net" ] && { echo "$_net"; return 0; }
+  echo provider_fail
+  return 0
+}
+# Diagnostic UNIQUE d'un run interrompu (codeuse et contrôleuse) : nomme la cause et rassure
+# sur le modèle (aucune faute provider, aucun failover, compteur stale seulement).
+killed_diag() {  # shlint-ok (fonction d'AFFICHAGE : diagnostic direct, jamais capturée) · $1 rôle · $2 rc
+  echo "🛑 $1 : exécution INTERROMPUE (rc=$2 — SIGTERM/SIGKILL du harnais) : ce n'est PAS une panne fournisseur, le modèle n'est pas en cause."
+  echo "   → non compté dans max_fails, AUCUN failover ; stale++ seulement (garde-fou max_stale inchangé)."
+}
+# Diagnostic UNIQUE (codeuse et contrôleuse) d'un délai côté client : nomme la cause, cite le
+# message brut (le binaire corrigé y met la valeur effective et la variable exacte) et le remède.
+client_timeout_diag() {  # shlint-ok (fonction d'AFFICHAGE : diagnostic direct, jamais capturée) · $1 rôle · $2 message d'erreur brut
+  echo "⏱ $1 : délai HTTP dépassé CÔTÉ CLIENT — yumi a raccroché sur son propre plafond, ce n'est PAS une panne fournisseur."
+  echo "   $2"
+  echo "   → non compté dans max_fails, AUCUN failover (le modèle n'est pas en cause). Remède : relever le plafond de l'endpoint dans le config.env de yumi ($YUMI_TIMEOUT_VAR_PATTERN ; $ANTHROPIC_TIMEOUT_VAR pour Anthropic) ou mettre yumi à jour (plafond d'INACTIVITÉ au lieu de durée totale)."
+}
+# Diagnostic UNIQUE (codeuse et contrôleuse) d'une panne RÉSEAU ou d'un 429 : nomme la cause et
+# le remède (attendre — le backoff automatique le fait ; NE PAS changer de modèle ni de token).
+network_diag() {  # shlint-ok (fonction d'AFFICHAGE : diagnostic direct, jamais capturée) · $1 rôle · $2 classe · $3 message d'erreur brut
+  local _cause="panne RÉSEAU (DNS/TCP/reset)"
+  [ "$2" = "$RATELIMIT_CLASS" ] && _cause="rate-limit fournisseur (429)"
+  echo "🌐 $1 : $_cause — ni une faute du modèle ni un crédit épuisé, une bascule de provider ne changerait rien."
+  echo "   $3"
+  echo "   → backoff $BACKOFF_BASE s (doublé à chaque récidive, borne $BACKOFF_MAX_TRIES) AVANT l'itération suivante ; non compté dans max_fails ni max_stale tant que la borne n'est pas atteinte."
+}
+
+# G05 (blackcat 052737) : un rôle meurt rc≠0 avec .err VIDE (le CLI a tout avalé ou stderr
+# perdu) → jusqu'ici la boucle ne laissait AUCUNE piste. On imprime les 3 derniers événements
+# du jsonl DE CE RUN (repère FROM_LINE, même mécanique que subtype_of) : type + 160 premiers
+# caractères. Jamais dans le jsonl lui-même, jamais dans state.json (le jsonl peut contenir
+# des fragments sensibles ; .err est déjà exclu du jsonl pour cette raison).
+err_empty_diag() {  # shlint-ok (AFFICHAGE direct, jamais capturée) · $1 rôle · $2 jsonl · $3 FROM_LINE (0-based)
+  local _role="$1" _jf="$2" _from="${3:-0}"
+  echo "   🔍 $_role : .err vide — 3 derniers événements du jsonl de CE run :"
+  if [ -f "$_jf" ] && [ "$(wc -l < "$_jf" 2>/dev/null | tr -d ' ')" -gt "$_from" ] 2>/dev/null; then
+    tail -n +"$((_from + 1))" "$_jf" 2>/dev/null | tail -3 | while IFS= read -r _l; do
+      [ -z "$_l" ] && continue
+      _t=""; _sub=""
+      if [ -n "$JQ" ]; then
+        _t="$("$JQ" -r '.type // "?"' <<<"$_l" 2>/dev/null)"; _sub="$("$JQ" -r '.subtype // ""' <<<"$_l" 2>/dev/null)"
+      fi
+      [ -z "$_t" ] && _t="?"
+      [ -n "$_sub" ] && _t="$_t/$_sub"
+      echo "     · [$_t] $(printf '%s' "$_l" | cut -c1-160)"
+    done
+  else
+    echo "     · (aucun événement de CE run dans le jsonl — le CLI est mort AVANT tout output)"
+  fi
+}
+
+# --- Lot 11 : checkpoint automatique à mi-tours (lots surdimensionnés) --------
+# Mécanique (leçon RETEX §2.4 : un garde-fou doit être mécanique, jamais une consigne —
+# incident source « lots surdimensionnés ×4 arrêts, tours plafonnés SANS commit, travail
+# jeté »). Pendant run_agent CODEUSE, ce watcher suit le jsonl EN COURS DE FLUX et compte
+# les tours réellement consommés, au lieu d'attendre la fin du run (subtype_of, après coup).
+# Approximation documentée : une ligne {"type":"assistant"} ≈ un tour consommé (un tour peut
+# émettre plusieurs messages assistant) — le seuil MOITIÉ DE BUDGET absorbe l'écart, et un
+# checkpoint de trop coûte moins qu'un lot entier jeté au plafond.
+# Au franchissement de la moitié du budget SANS nouveau commit de la codeuse : commit de
+# sauvetage de l'arbre courant — JAMAIS les canaux de contrôle (.loop/, .monitor/) ni les
+# secrets (.env*) ni les fichiers de harnais (loop.out, loop-rc). One-shot, puis sortie.
+# Le jsonl est APPEND-only (tee -a) : la baseline est lue au démarrage, seuls les tours de
+# CE run comptent. $$ dans un sous-shell bash 3.2 = PID du shell parent → le watcher meurt
+# tout seul si loop.sh disparaît (kill -0), et run_agent le tue au retour du pipeline.
+turn_watch() {  # shlint-ok (tâche de fond d'AFFICHAGE/sauvetage, jamais capturée par $(...)) $1 jsonl · $2 budget tours de CE run
+  local jsonl="$1" cap="$2" half base n head0
+  half=$((cap / 2)); [ "$half" -lt 1 ] && return 0
+  head0="$(git rev-parse HEAD 2>/dev/null || echo none)"
+  # grep -c imprime DÉJÀ « 0 » sur zéro correspondance (rc=1) — un « || echo 0 » produirait
+  # la chaîne multi-ligne « 0\n0 » et tuerait le sous-shell au premier test arithmétique
+  # (mesuré en revue : watcher mort à son 1er poll sur un jsonl encore vide, feature inactive
+  # dans le cas réel). On normalise donc : chiffres seuls, 0 par défaut.
+  base=0; [ -f "$jsonl" ] && base=$(grep -c '"type":"assistant"' "$jsonl" 2>/dev/null | tr -dc '0-9'); base=${base:-0}
+  while kill -0 $$ 2>/dev/null; do
+    loop_poll
+    [ -f "$jsonl" ] || continue
+    n=$(grep -c '"type":"assistant"' "$jsonl" 2>/dev/null | tr -dc '0-9'); n=${n:-0}
+    [ "$n" -lt $((base + half)) ] && continue
+    # Seuil atteint. La codeuse a DÉJÀ committé elle-même → règle respectée, sortie silencieuse.
+    [ "$(git rev-parse HEAD 2>/dev/null || echo none)" != "$head0" ] && return 0
+    # Arbre sale (hors canaux/secrets/harnais) → checkpoint de sauvetage, one-shot.
+    # Exclusions : canaux de contrôle (.loop/, .monitor/), secrets sous TOUTES leurs formes
+    # (.env, .env.local, prod.env, quel que soit le dossier), harnais (loop.out, loop-rc),
+    # loop.conf — fichier SUIVI localement modifié pour le run, GOAL.md interdit de le committer —
+    # ET sk/ (dossier étranger non suivi, règle 🚫 GOAL.md). SOURCE UNIQUE (G13 : checkpoint_paths).
+    CHECKPOINT_EXCLUDES=(-- . ':(exclude).loop' ':(exclude).monitor' ':(exclude).env*' ':(exclude)*.env' ':(exclude)**/.env*' ':(exclude)loop.conf' ':(exclude)loop.out' ':(exclude)loop-rc' ':(exclude)sk')
+    if [ -n "$(git status --porcelain "${CHECKPOINT_EXCLUDES[@]}" 2>/dev/null)" ]; then
+      git add -A "${CHECKPOINT_EXCLUDES[@]}" 2>/dev/null
+      if git commit -qm "wip: checkpoint auto mi-tours — $((n - base))/$cap tours consommés sans commit (travail préservé avant plafond)" 2>/dev/null; then
+        echo "   📌 CHECKPOINT AUTO mi-tours : $((n - base))/$cap tours sans commit → arbre sauvegardé ('wip: checkpoint auto mi-tours')."
+      fi
+    fi
+    return 0
+  done
+}
+
+# G09 : watcher COMPTAGE DE LECTURES — même mécanique de fond que turn_watch (tâche
+# d'AFFICHAGE/sauvetage, jamais capturée par $(...), meurt tout seul si loop.sh disparaît
+# via kill -0 $$, tué par run_agent au retour du pipeline). Suit le jsonl EN COURS DE FLUX,
+# compte les lectures de CE run (repère FROM_LINE $2) et au franchissement du plafond $3
+# SANS aucune écriture : SIGTERM au groupe du CLI via $MONITOR_DIR/READS_CAP.hit (flag lu par
+# run_agent) + one-shot. Le kill DOIT cibler le CLI en vol : run_agent le détecte au retour
+# (flag + rc=143 → motif reads_cap via classify_agent_stop, « le signal reçu »).
+reads_watch() {  # $1 jsonl · $2 FROM_LINE (0-based) · $3 plafond de lectures
+  local jsonl="$1" from="$2" cap="$3"
+  [ "$cap" -ge 1 ] 2>/dev/null || return 0
+  while kill -0 $$ 2>/dev/null; do
+    loop_poll
+    [ -f "$MONITOR_DIR/READS_CAP.hit" ] && return 0
+    [ -f "$jsonl" ] || continue
+    local n
+    n="$(reads_count_of "$jsonl" "$from")"
+    [ "$n" -ge "$cap" ] 2>/dev/null || continue
+    # Plafond ATTEINT sans écriture (le plafond est la DERNIÈRE lecture tolérée : la valeur
+    # publiée dans iterations.jsonl est exactement ce que reads_watch a mesuré, écrite dans
+    # le flag — recompter après coup serait racy, le stub/CLI continue d'écrire). run_agent
+    # voit le flag au poll suivant → SIGTERM au groupe du CLI (rc 143 → motif reads_cap).
+    printf '%s\n' "$n" > "$MONITOR_DIR/READS_CAP.hit"
+    echo "   📚 $n lectures SANS aucun Edit/Write (plafond $cap) → arrêt doux du tour demandé (motif reads_cap)."
+    return 0
+  done
+}
+# Diagnostic UNIQUE d'un arrêt reads_cap (G09) : nomme la cause, rassure sur le modèle et
+# donne le remède (cadrage, pas capacité).
+reads_cap_diag() {  # shlint-ok (AFFICHAGE direct, jamais capturée) · $1 nb de lectures mesuré · $2 plafond
+  echo "📚 CODEUSE arrêtée après $1 lectures SANS aucun Edit/Write (plafond max_reads_before_edit=$2) — divagation de lecture, pas une panne fournisseur : le modèle n'est pas en cause."
+  echo "   → non compté dans max_fails, AUCUN failover ; consigne « découpe + squelette + liste de lecture » injectée au prochain tour."
+}
+
+
+# --- Notes injectées EN QUEUE du prompt codeuse selon la config (génériques) --
+# (assemblage : "$WATCHDOG_NOTE$pre$CODER_PROMPT$CODER_EXTRA" — CODER_EXTRA est APPENDU,
+#  après le corps du prompt ; seules les notes $pre/WATCHDOG_NOTE sont en tête)
+CODER_EXTRA=""
+if [ -n "$DEPLOY_CMD" ]; then
+  CODER_EXTRA="$CODER_EXTRA
+LIVE DEPLOYMENT (configured) — after a green TEST, DEPLOY with: \`$DEPLOY_CMD\`."
+  [ -n "$HEALTH_URL" ] && CODER_EXTRA="$CODER_EXTRA Then GATE the live: wait for HTTP 200 on $HEALTH_URL BEFORE checking off."
+  CODER_EXTRA="$CODER_EXTRA Live broken/not deployed → ROLLBACK (last green commit) and DO NOT check off."
+fi
+if is_true "$GATE_HANDOFF"; then
+  CODER_EXTRA="$CODER_EXTRA
+VISUAL/DEVICE GATE — if the DoD needs a browser/device check you CANNOT do alone (no Chrome MCP, physical device…): leave the box UNCHECKED, add a Journal line 'GATE PENDING: <box> — <URL/checklist>', do NOT create $DONE_FILE, write $HANDOFF_FILE (URL + checklist), then STOP (hand off to the human). Resolution is loop.sh's call, never yours: it arrives ONLY as an explicit 'GATE RESOLVED (by loop.sh, not by you)' note (check the box, quoting the evidence) or 'GATE FAILED (by loop.sh, relaying the human's verdict)' note (do NOT check the box — fix what's described, then redo the SAME gate from scratch: fresh $HANDOFF_FILE, STOP again) prepended to a later turn's prompt. You may NEVER check the box because the handoff file is merely gone, because you inferred a pass, or via any indirect/bundle/screenshot proof of your own — absence without a RESOLVED note means the handoff was LOST, not passed: re-write $HANDOFF_FILE with the same checklist and STOP again."
+fi
+
+# WATCHDOG.md présent → préambule STEP 0 en TÊTE du prompt (garanti même avec un prompt custom).
+WATCHDOG_NOTE=""
+[ -f WATCHDOG.md ] && WATCHDOG_NOTE="STEP 0 — read WATCHDOG.md FIRST: it describes the autonomous device you run inside (loop + watchdog auto-restart + $MONITOR_DIR/.lock lock + roles) and its hard rules — don't break the watchdog/lock, don't start a 2nd loop, create $DONE_FILE ONLY when everything is finished AND verified (it cleanly stops both loop and watchdog). Respect it before anything else.
+
+"
+
+# G08 : consigne PAR ITÉRATION — la méthode (cycle, squelette, cadence) vit dans PROGRESS.template.md
+# et le contrat dans prompts/coder.md ; ici on REPORTE à la codeuse la LISTE DE LECTURE de la case
+# courante (Fichiers/Lecture/Squelette/Preuve), pour qu'elle n'ait pas à la deviner ni à relire
+# PROGRESS.md au-delà des cases. Vide (case sans liste, projet sans PROGRESS.md) = aucune injection.
+next_box_note() {  # shlint-ok (retour par stdout, affichage pur)
+  [ -f PROGRESS.md ] || return 0
+  _nb_block="$(awk '!f && /^- \[ \]/{f=1; print; next} f{ if(/^[[:space:]]/) print; else exit }' PROGRESS.md)"
+  [ -n "$_nb_block" ] || return 0
+  printf 'CURRENT BOX — reading list (closed: do NOT read beyond it) and gate:\n%s\n' "$_nb_block"
+}
+
+# --- Récapitulatif de config (affiché au démarrage / --dry-run) -------------
+print_config() {  # shlint-ok (affichage pur)
+  local mode; mode=$(is_true "$reviewer" && echo 'coder+reviewer' || echo 'coder-only')
+  echo "── config · mode=$mode · jq=$([ -n "$JQ" ] && echo oui || echo 'NON(sortie brute)') · gate_handoff=$GATE_HANDOFF"
+  printf '   coder=%s(model=%s, source: %s, turns=%s) · reviewer=%s(model=%s, source: %s, turns=%s) · max_iters=%s\n' \
+    "$coder" "${coder_model:-défaut}" "$(model_source_display "$coder_model_source" "${coder_model:-}" "${primary_coder_model:-}")" "${MAX_TURNS:-aucun}" \
+    "$reviewer" "${reviewer_model:-défaut}" "$(model_source_display "$reviewer_model_source" "${reviewer_model:-}" "${primary_reviewer_model:-}")" "${REVIEWER_MAX_TURNS:-aucun}" "$MAX_ITERS"
+  printf '   gardes: max_fails=%s max_stale=%s max_cr=%s max_review_retry=%s rev_time_cap=%ss backoff=%ss×%s%s\n' "$MAX_FAILS" "$MAX_STALE" "$MAX_CR" "$MAX_REVIEW_RETRY" "$REVIEW_TIME_CAP" "$BACKOFF_BASE" "$BACKOFF_MAX_TRIES" \
+    "$([ -n "${max_cost:-}" ] && echo " · budget=\$$max_cost" || echo "")"
+  [ -n "$DEPLOY_CMD" ] && printf '   deploy=%s · health=%s\n' "$DEPLOY_CMD" "${HEALTH_URL:-aucun}"
+  [ -n "$CLAUDE_PROFILES" ] && printf '   claude_profiles=%s (rotation de compte sur 429, coffres %s)\n' "$CLAUDE_PROFILES" "$CLAUDE_PROFILES_DIR"
+  _gh=""; is_true "$coder" && _gh="$(gpu_host_of "$coder_model")"; [ -z "$_gh" ] && is_true "$reviewer" && _gh="$(gpu_host_of "$reviewer_model")"
+  [ -n "$_gh" ] && printf '   serveur Ollama %s : UNE boucle à la fois (verrou %s)\n' "$_gh" "$GPU_LOCK_ROOT"
+  [ -x ./verify.sh ] && echo '   verify.sh → gate mécanique actif'
+  type run_custom >/dev/null 2>&1 && echo '   run_custom (provider custom via loop.conf) actif'
+}
+
+# --dry-run : montre la config + un aperçu du prompt codeuse, sans rien lancer ni écrire.
+if [ "$DRY_RUN" = 1 ]; then
+  print_config
+  for _r in coder reviewer; do
+    eval "_on=\$$_r _rm=\${${_r}_model:-} AGENT_EFFORT=\${${_r}_effort:-}"
+    is_true "$_on" && [ "$(provider_of "$_rm")" = codex ] || continue
+    codex_cmd "$_rm" PROMPT; echo "   $_r → $(printf '%q ' "${cmd[@]}")"
+  done
+  echo; echo "--- DRY RUN · aperçu prompt CODEUSE (12 premières lignes) ---"
+  printf '%s\n' "$CODER_PROMPT" | sed -n '1,12p'
+  _nbn="$(next_box_note)"
+  [ -n "$_nbn" ] && { echo; echo "--- DRY RUN · consigne PAR ITÉRATION (liste de lecture de la case courante) ---"; printf '%s\n' "$_nbn"; }
+  exit 0
+fi
+
+# --- Runtime : dossiers, verrou, traps, seed monitor, .env, préflight -------
+
+mkdir -p "$MONITOR_DIR" "$CTL_DIR"
+
+# Verrou une-boucle-par-repo (mkdir atomique, portable bash 3.2). Nettoyé par le trap EXIT.
+# Vitalité du verrou : helper COMMUN lock-alive.sh (pid + identité ancrée au repo — M10/M11).
+# Repli si absent (projet non resynchronisé) : la PRÉSENCE du verrou vaut « vivant »
+# (comportement historique — sûr : refuse, jamais de double boucle).
+_LA="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/lock-alive.sh"
+if [ -f "$_LA" ]; then . "$_LA"; else lock_alive() { [ -d "$1/${MONITOR_DIR:-.monitor}/.lock" ]; }; fi
+LOCK="$MONITOR_DIR/.lock"
+if [ -f "$LOCK/pid" ] && [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ]; then
+  : # auto-update : exec conserve le PID → ce verrou est DÉJÀ le nôtre, on le garde tel quel.
+elif ! mkdir "$LOCK" 2>/dev/null; then
+  if lock_alive .; then
+    _op="$(cat "$LOCK/pid" 2>/dev/null || echo '?')"
+    echo "⛔ Une boucle tourne déjà dans ce repo ($LOCK, pid=$_op)." >&2
+    echo "   Si c'est un résidu (process mort) : rm -rf $LOCK" >&2; exit 1
+  fi
+  # Course au démarrage : lock_alive a ATTENDU un pid écrit tardivement (~1 s) — la lecture
+  # _op/_alive ne se fait QU'APRÈS, sinon un verrou en cours d'écriture (mkdir fait, pid pas
+  # encore posé) est figé à « mort » et le garde ci-dessous ne mord pas (revue bf65ac0).
+  _op="$(cat "$LOCK/pid" 2>/dev/null || echo '?')"
+  case "$_op" in ''|*[!0-9]*) _alive=mort ;; *) kill -0 "$_op" 2>/dev/null && _alive=vivant || _alive=mort ;; esac
+  if [ "$_alive" = vivant ]; then
+    # G23 (blackcat 232743) : pid VIVANT mais identité non résolue dans ce repo → ce n'est PAS
+    # un résiduel (un résiduel = pid MORT). Le rm -rf historique écrasait la boucle d'un AUTRE
+    # repo (ou d'un innocent dont le pid a été réutilisé) : refus, jamais de nettoyage auto.
+    echo "⛔ verrou tenu par un pid vivant ($_op) non reconnu comme boucle de ce repo — rm -rf $LOCK à la main si tu es sûr" >&2
+    exit 1
+  fi
+  # Verrou RÉSIDUEL : pid MORT (crash/reboot/coupure — ou jamais écrit) → nettoyage auto +
+  # démarrage (M11 — fin du rm -rf manuel). On ne tue RIEN : le pid est déjà parti.
+  echo "↻ verrou résiduel ($LOCK, pid=$_op mort) — nettoyage auto." >&2
+  rm -rf "$LOCK"
+  mkdir "$LOCK" || { echo "⛔ impossible de recréer le verrou $LOCK" >&2; exit 1; }
+fi
+echo $$ > "$LOCK/pid"   # PID de la boucle → permet un stop/restart propre (hub, loop-agent)
+
+# Résidus de runs précédents (revue fba20a7) : un READS_CAP.hit posé mais jamais consommé (mort
+# entre la pose et la consommation) tuait le tour suivant DÈS SA 1re SECONDE (SIGTERM au CLI à
+# 0 lecture, motif reads_cap en boucle) ; un .agent.rc.* d'un run mort sans sous-shell fini
+# serait relu tel quel. Purge ICI SEULEMENT : APRÈS l'acquisition du verrou (donc APRÈS la
+# branche --dry-run, contrat « dry-run n'écrit rien » l.1080) — la boucle qui tient le verrou
+# est seule propriétaire du monitor ; une invocation concurrente (dry-run, refus de verrou)
+# ne touche RIEN. Purger avant le verrou détruisait l'état en vol d'une boucle vivante
+# (revue e0c2fff : READS_CAP.hit + .agent.rc.CODEUSE effacés par un simple --dry-run).
+
+rm -f "$MONITOR_DIR/READS_CAP.hit" "$MONITOR_DIR/.agent.rc" "$MONITOR_DIR"/.agent.rc.* 2>/dev/null
+# APGID (revue fba20a7) : pgid du pipeline agent EN VOL, posé par run_agent. Sous `set -m` ce
+# groupe est indépendant de celui de la boucle — sans ce kill, Ctrl-C ou SIGTERM à la boucle
+# laisse le CLI orphelin (sonde A/B revue : sleep 40 survivant après kill -INT du groupe boucle).
+kill_apgid() { [ -n "${APGID:-}" ] && kill -0 "$APGID" 2>/dev/null && kill -TERM -"$APGID" 2>/dev/null; return 0; }
+# G23 (blackcat 232739) : cleanup() ne retire le verrou que s'il est le NOTRE ($LOCK/pid = $$).
+# Un rm/rmdir inconditionnel effaçait le verrou de la boucle LÉGITIME quand notre pid avait été
+# réutilisé ou remplacé dans $LOCK/pid (l'intruse tuée → .lock/pid disparaît → la légitime se
+# croit seule → double boucle). On ne retire QUE son pid (un verrou orphelin reste en place ;
+# le prochain démarrage le classera vivant/résiduel par lui-même).
+cleanup() {
+  kill_apgid
+  if [ -f "$LOCK/pid" ] && [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ]; then
+    rm -f "$LOCK/pid" 2>/dev/null
+    rmdir "$LOCK" 2>/dev/null || true
+  elif [ -f "$LOCK/pid" ]; then
+    _cp="$(cat "$LOCK/pid" 2>/dev/null || echo '?')"
+    echo "⚠ verrou tenu par $_cp, laissé en place" >&2
+  fi
+  # Verrou serveur Ollama : même règle, retiré SEULEMENT s'il est le nôtre.
+  if [ -n "${GPU_LOCK:-}" ] && [ -f "$GPU_LOCK/pid" ] && [ "$(cat "$GPU_LOCK/pid" 2>/dev/null)" = "$$" ]; then
+    rm -f "$GPU_LOCK/pid" "$GPU_LOCK/repo" 2>/dev/null
+    rmdir "$GPU_LOCK" 2>/dev/null || true
+  fi
+}
+trap 'cleanup' EXIT
+trap 'kill_apgid; echo; echo "⏹ interrompu — état sauvé (PROGRESS.md + git). Relance ./loop.sh pour continuer."; bye stopped "interrompu par signal (SIGINT/SIGTERM) — état sauvé, relance ./loop.sh pour continuer." 130' INT TERM
+
+# Verrou UN SEUL ACTIF par serveur Ollama (voir GPU_LOCK_ROOT en tête). Pris ici, APRÈS le trap
+# EXIT : un refus passe par cleanup() qui rend le verrou repo. exit direct (pas bye, défini plus
+# bas) : même catégorie « refus de verrou » que .monitor/.lock, rien n'est écrit dans le monitor.
+GPU_LOCK=""
+_gh=""; is_true "$coder" && _gh="$(gpu_host_of "$coder_model")"; [ -z "$_gh" ] && is_true "$reviewer" && _gh="$(gpu_host_of "$reviewer_model")"
+if [ -n "$_gh" ]; then
+  GPU_LOCK="$GPU_LOCK_ROOT/ollama-$(printf '%s' "$_gh" | tr -c 'A-Za-z0-9.' '_')"
+  mkdir -p "$GPU_LOCK_ROOT" 2>/dev/null
+  if [ -f "$GPU_LOCK/pid" ] && [ "$(cat "$GPU_LOCK/pid" 2>/dev/null)" = "$$" ]; then
+    : # auto-update (exec, même PID) : déjà le nôtre
+  elif ! mkdir "$GPU_LOCK" 2>/dev/null; then
+    _gp="$(cat "$GPU_LOCK/pid" 2>/dev/null || echo '?')"; _gr="$(cat "$GPU_LOCK/repo" 2>/dev/null || echo '?')"
+    case "$_gp" in ''|*[!0-9]*) _galive=0;; *) kill -0 "$_gp" 2>/dev/null && _galive=1 || _galive=0;; esac
+    if [ "$_galive" = 1 ]; then
+      echo "⛔ serveur Ollama $_gh déjà occupé par la boucle de $_gr (pid $_gp) — UNE seule boucle par serveur GPU (OLLAMA_NUM_PARALLEL=1 : une 2e lane ne ferait qu'attendre derrière la 1re, et un autre modèle forcerait un rechargement). Attends sa fin ou arrête-la." >&2
+      exit 1
+    fi
+    echo "↻ verrou GPU résiduel ($GPU_LOCK, pid=$_gp mort) — nettoyage auto." >&2
+    rm -rf "$GPU_LOCK"
+    mkdir "$GPU_LOCK" || { echo "⛔ impossible de créer le verrou $GPU_LOCK" >&2; exit 1; }
+  fi
+  echo $$ > "$GPU_LOCK/pid"; pwd -P > "$GPU_LOCK/repo"
+  echo "🔒 serveur Ollama $_gh réservé par cette boucle ($GPU_LOCK)."
+fi
+
+# Réinitialise le flux d'un rôle et l'AMORCE avec le modèle configuré (libellé + fenêtre de contexte
+# corrects dès le départ, même pour kimi/vibe qui n'émettent pas leur modèle). Modèle vide → le vrai
+# stream-json claude fournit le modèle exact (tag [1m] éventuel).
+seed_jsonl() {  # $1 = fichier jsonl · $2 = modèle configuré (peut être vide)
+  : > "$1"
+  [ -n "${2:-}" ] && printf '{"type":"system","subtype":"init","model":"%s"}\n' "$2" >> "$1"
+}
+json_str() {  # échappe une valeur pour un champ JSON (bash 3.2 : pattern substitution suffit)
+  local s=${1//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/ }; s=${s//$'\r'/ }; s=${s//$'\t'/ }
+  printf '%s' "$s"
+}
+# --- Télémétrie normalisée par itération (Lot 1-4) ------------------------------
+# write_iteration ROLE MODEL START_EPOCH END_EPOCH MOTIF [COMMIT_PRODUIT] [VERIFY_OK] [VERDICT] :
+# append une ligne au fichier .monitor/iterations.jsonl avec tous les champs du schéma.
+# Appelée après chaque run_agent CODEUSE et CONTRÔLEUSE.
+# Réutilise json_str() pour l'échappement et provider_of() pour le provider.
+# Lot 3 : commit_produit (coder uniquement), verify_ok, verdict (reviewer uniquement) sont
+# extraits des variables existantes de loop.sh (before/after/progress pour commit_produit,
+# VERIFY_STATE pour verify_ok, verdict/vhead pour verdict).
+write_iteration() {  # shlint-ok — [9e arg = FROM_LINE : repère de début de CE run] Le jsonl est
+  # CUMULATIF sur toute la boucle : sans repère, un run mort AVANT son result relisait le dernier
+  # result du run PRÉCÉDENT et recopiait tours/jetons/coût (constat glm-feedback 150743 : lane 9
+  # SIGTERM affichait la télémétrie de la lane 8). Avec repère : null quand CE run n'a pas de
+  # result — honnête, jamais un héritage.
+  local _role="$1" _model="$2" _start="$3" _end="$4" _motif="$5"
+  local _commit_produit="${6:-null}" _verify_ok="${7:-null}" _verdict="${8:-null}"
+  local _from="${9:-0}"
+  local _provider _duree_ms
+  _provider="$(provider_of "$_model")"
+  _duree_ms=$(( (_end - _start) * 1000 ))
+  # Mapper le fichier jsonl par rôle (coder-main.jsonl vs reviewer.jsonl)
+  local _jf
+  case "$_role" in
+    coder)    _jf="$MONITOR_DIR/coder-main.jsonl" ;;
+    reviewer) _jf="$MONITOR_DIR/reviewer.jsonl" ;;
+    *)        _jf="" ;;
+  esac
+  # Extraire les champs du result JSON si présent DANS CE RUN (claude/yumi émettent type=result).
+  # UN seul balayage jq des lignes de CE run (@tsv → 4 colonnes) ; read HORS pipeline (un read
+  # dans un pipe tourne en sous-shell : les 4 variables y restent — mesuré, télémétrie toute null).
+  local _tours=null _cout=null _jetons_in=null _jetons_out=null
+  if [ -n "$JQ" ] && [ -n "$_jf" ] && [ -f "$_jf" ]; then
+    local _t _c _in _out _row
+    _t="NULL"; _c="NULL"; _in="NULL"; _out="NULL"
+    _row="$(tail -n +"$(( _from + 1 ))" "$_jf" 2>/dev/null | "$JQ" -Rr \
+      'fromjson? | select(type=="object" and .type=="result")
+       | [(.num_turns // "NULL" | tostring), (.total_cost_usd // "NULL" | tostring),
+          ((.usage.input_tokens // "NULL") | tostring), ((.usage.output_tokens // "NULL") | tostring)]
+       | @tsv' 2>/dev/null | tail -1)"
+    IFS="$(printf '\t')" read -r _t _c _in _out <<< "$_row"
+    case "$_t" in ""|NULL|null) _t=null;; esac
+    case "$_c" in ""|NULL|null) _c=null;; esac
+    case "$_in" in ""|NULL|null) _in=null;; esac
+    case "$_out" in ""|NULL|null) _out=null;; esac
+    _tours="$_t"; _cout="$_c"; _jetons_in="$_in"; _jetons_out="$_out"
+    # Lot 2 : honnêteté du coût pour Ollama — Claude Code facture un modèle gratuit
+    # faute de reconnaître le nom du modèle. Forcer cout_usd=0 pour provider=ollama.
+    [ "$_provider" = "ollama" ] && _cout="0"
+    # Codex n'émet pas {type:result} : les tokens vivent dans le dernier turn.completed.usage
+    # (pas de coût facturé exposé → cout_usd reste null, comme grok).
+    if [ "$_provider" = "codex" ]; then
+      local _cin _cout_tok
+      _cin="$("$JQ" -Rr 'fromjson? | select(type=="object" and .type=="turn.completed") | (.usage.input_tokens // "NULL") | tostring' "$_jf" 2>/dev/null | tail -1 || echo "")"
+      _cout_tok="$("$JQ" -Rr 'fromjson? | select(type=="object" and .type=="turn.completed") | (.usage.output_tokens // "NULL") | tostring' "$_jf" 2>/dev/null | tail -1 || echo "")"
+      case "$_cin" in ""|NULL|null) ;; *) _jetons_in="$_cin";; esac
+      case "$_cout_tok" in ""|NULL|null) ;; *) _jetons_out="$_cout_tok";; esac
+    fi
+  fi
+  local _debut _fin _verdict_json
+  _debut="$(date -u -d @"$_start" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -r "$_start" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "")"
+  _fin="$(date -u -d @"$_end" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -r "$_end" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "")"
+  # verdict peut être une chaîne (PASS/CHANGES_REQUESTED) ou null - traiter séparément
+  if [ "$_verdict" = "null" ]; then
+    _verdict_json="null"
+  else
+    _verdict_json="\"$(json_str "$_verdict")\""
+  fi
+  # G09 : lectures_avant_premier_edit — variable globale $coder_reads (posée par la boucle
+  # principale AVANT chaque appel write_iteration codeuse ; codeuse SEULE, la contrôleuse n'a
+  # pas de garde de lecture). Télémétrie : 0 quand aucun tool_use n'a été émis.
+  local _reads="${coder_reads:-0}"
+  printf '{"lane":%d,"role":"%s","model":"%s","provider":"%s","debut":"%s","fin":"%s","duree_ms":%d,"tours":%s,"cout_usd":%s,"jetons_entree":%s,"jetons_sortie":%s,"lectures_avant_premier_edit":%s,"motif_arret":"%s","commit_produit":%s,"verify_ok":%s,"verdict":%s}
+'     "${i:-0}" "$(json_str "$_role")" "$(json_str "$_model")" "$(json_str "$_provider")"     "$(json_str "$_debut")" "$(json_str "$_fin")" "$_duree_ms"     "$(json_str "$_tours")" "$(json_str "$_cout")" "$(json_str "$_jetons_in")" "$(json_str "$_jetons_out")"     "$_reads" "$(json_str "$_motif")" "$(json_str "$_commit_produit")" "$(json_str "$_verify_ok")" "$_verdict_json"     >> "$MONITOR_DIR/iterations.jsonl"
+}
+# ÉTAT CENTRALISÉ (évolution A) : $MONITOR_DIR/state.json — assertion UNIQUE de l'état de la boucle,
+# écrite ATOMIQUEMENT (tmp + mv, même discipline qu'owner.json ci-dessous) aux POINTS SÛRS : avant
+# chaque agent (coder/reviewer), aux suspensions (wait_review/handoff_suspended) et à la sortie
+# (done/handoff/budget/stopped). scan.mjs le lit EN PRIORITÉ (repli heuristique pour les vieux
+# loop.sh). pid=$$ = celui du verrou (le re-exec d'auto-update CONSERVE le pid) → scan peut vérifier
+# que l'assertion est bien celle de la boucle VIVANTE, sinon il la juge périmée et replie.
+write_state() {  # shlint-ok — $1 = phase. Corps ENTIÈREMENT redirigé ({ … } > tmp + mv) : stdout
+  # toujours VIDE même si capturée ; appelée directement aux points sûrs, jamais dans $(...).
+  local _h _vh
+  _h="$(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+  _vh=""
+  [ -n "$JQ" ] && [ -f "$VERDICT_FILE" ] && _vh="$("$JQ" -r '.head // ""' "$VERDICT_FILE" 2>/dev/null)"
+  {
+    printf '{"phase":"%s","pid":%d,"iter":%d,"max_iters":%d' \
+      "$(json_str "$1")" "$$" "${i:-0}" "$MAX_ITERS"
+    printf ',"head":"%s","verdict_head":"%s"' "$(json_str "$_h")" "$(json_str "$_vh")"
+    printf ',"coder_model":"%s","reviewer_model":"%s"' \
+      "$(json_str "${coder_model:-}")" "$(json_str "${reviewer_model:-}")"
+    printf ',"coder_model_source":"%s","reviewer_model_source":"%s"' \
+      "$(json_str "$(model_source_display "$coder_model_source" "${coder_model:-}" "${primary_coder_model:-}")")" \
+      "$(json_str "$(model_source_display "$reviewer_model_source" "${reviewer_model:-}" "${primary_reviewer_model:-}")")"
+    printf ',"claude_profile":"%s"' "$(json_str "$(prof_name)")"
+    if [ "${fb_i:--1}" -ge 1 ]; then
+      printf ',"failover":{"active":true,"primary_coder":"%s","primary_reviewer":"%s","probe_every":%d}' \
+        "$(json_str "${primary_coder_model:-}")" "$(json_str "${primary_reviewer_model:-}")" "$PROBE_EVERY"
+    else
+      printf ',"failover":{"active":false}'
+    fi
+    printf ',"counters":{"fails":%d,"stale":%d,"turncap":%d,"client_timeout":%d,"network_backoff":%d,"review_retry":%d,"cr_streak":%d,"review_degraded":%d,"handoff_wait_review":%d,"reads_cap":%d}' \
+      "${fails:-0}" "${stale:-0}" "${turncap:-0}" "${ctmo:-0}" "${net_retry:-0}" "${review_retry:-0}" "${cr_streak:-0}" \
+      "${review_degraded:-0}" "${handoff_wait_review:-0}" "${reads_cap_count:-0}"
+    # G05 : toute sortie passe par bye → raison persistée (state.json.reason) ET imprimée.
+    if [ -n "${LOOP_EXIT_REASON:-}" ]; then
+      printf ',"reason":"%s"' "$(json_str "$LOOP_EXIT_REASON")"
+    fi
+    # G24 : dernière recharge de consigne (mtime prompt changé en vol) — vide si aucune.
+    [ -n "${PROMPTS_RELOADED_AT:-}" ] && printf ',"prompts_reloaded_at":"%s"' "$(json_str "$PROMPTS_RELOADED_AT")"
+    printf ',"updated":"%s"}\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  } > "$MONITOR_DIR/.state.tmp" && mv -f "$MONITOR_DIR/.state.tmp" "$MONITOR_DIR/state.json"
+}
+
+# G05 (blackcat 052737) : UNE fonction de sortie. Toute fin de boucle (normale ou anormale)
+# passe par bye : la raison est IMPRIMÉE (dernière ligne lisible de loop.out) et PERSISTÉE dans
+# state.json.reason — une boucle disparue sans .done ni gate laisse désormais son diagnostic
+# (3× « CONTRÔLEUSE rc=1 » sans aucune piste, boucle absente : l'état était muet).
+# Exceptions DÉLIBÉRÉES, restées en exit direct : --help/--dry-run/args (aucune écriture par
+# contrat — dry-run « sans rien lancer ni écrire ») et les refus de VERROU (state.json appartient
+# à la boucle qui TIENT le verrou ; une boucle repartie sans verrou ne doit JAMAIS l'écraser).
+bye() {  # shlint-ok — $1 état (phase state.json) · $2 raison (une ligne, lisible) · $3 rc (défaut 0)
+  local _st="$1" _reason="$2" _rc="${3:-0}"
+  LOOP_EXIT_REASON="$_reason"
+  write_state "$_st"
+  echo "$_reason"
+  exit "$_rc"
+}
+# G07 : arrêt max_stale — un seul corps, appelé depuis TOUTES les branches de non-progrès
+# (chemin historique, itérations docs-only) : la cause est dérivée du même diagnostic.
+stale_stop() {  # shlint-ok — $1=motif codeuse (killed|…), $2=cause nommée explicite optionnelle
+  local _motif="$1" _cause_arg="${2:-}" _stale_cause="iterations sans progres (agent bloque ?)"
+  if [ "$turncap" -ge 2 ]; then
+    echo "⛔ codeuse plafonnée en tours SANS commit $turncap fois → arrêt : lot SURDIMENSIONNÉ (thrash max_turns), pas un agent bloqué."
+    echo "   Remède : committer le WIP s'il est vert (checkpoint, staging ciblé), puis injecter une découpe du lot + un commit à mi-tours (cf. SKILL.md, « Lot surdimensionné »)."
+  elif [ "$ctmo" -ge 2 ]; then
+    echo "⛔ délai HTTP dépassé CÔTÉ CLIENT $ctmo fois de suite SANS commit → arrêt : plafond yumi trop court pour ce modèle, ni agent bloqué ni panne fournisseur."
+    echo "   Remède : relever $YUMI_TIMEOUT_VAR_PATTERN (ou $ANTHROPIC_TIMEOUT_VAR) dans le config.env de yumi, ou mettre yumi à jour (plafond d'inactivité), puis relancer — SANS changer de modèle."
+  elif [ "$_motif" = killed ]; then
+    echo "⛔ $stale exécutions INTERROMPUES sans commit (SIGTERM/SIGKILL du harnais) → arrêt : le harnais tue le CLI, ni agent bloqué ni panne fournisseur."
+    echo "   Remède : vérifier le watchdog, la charge machine et $MONITOR_DIR/CODEUSE.err, puis relancer — SANS changer de modèle."
+  else
+    echo "⛔ $stale itérations sans progrès → arrêt (agent bloqué ?)."
+  fi
+  [ -n "$_cause_arg" ] && _stale_cause="$_cause_arg"
+  [ "$turncap" -ge 2 ] && _stale_cause="lot surdimensionne (max_turns thrash, $turncap fois sans commit)"
+  [ "$ctmo" -ge 2 ] && _stale_cause="delai HTTP cote client ($ctmo fois sans commit — plafond yumi trop court)"
+  [ "$_motif" = killed ] && _stale_cause="executions interrompues par le harnais (SIGTERM/SIGKILL)"
+  # Du travail exploitable traîne peut-être sur le disque : le signaler AVANT de mourir.
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    if [ "$VERIFY_STATE" = green ]; then
+      echo "   ⚠ TRAVAIL VERT NON COMMITÉ présent (verify.sh vert + working tree modifié) — checkpointe-le (git add ciblé + commit) au lieu de le perdre."
+    else
+      echo "   ⚠ working tree modifié non commité ($(git status --porcelain 2>/dev/null | wc -l | tr -d ' ') fichier(s)) — inspecte-le avant de relancer."
+    fi
+  fi
+  write_iteration "coder" "$coder_model" "$coder_start_epoch" "$coder_end_epoch" "$_motif" false null null "${coder_jsonl_from:-0}"
+  bye stopped "arrêt : $stale itérations sans progrès ($_stale_cause)." 1
+}
+# Après un auto-update (LOOP_RESUME), on NE retronque PAS les jsonl : la télémétrie du run
+# (coût cumulé, contexte) survit à la bascule de version.
+if [ -z "${LOOP_RESUME:-}" ]; then
+  is_true "$coder"    && seed_jsonl "$MONITOR_DIR/coder-main.jsonl" "$coder_model"
+  is_true "$reviewer" && seed_jsonl "$MONITOR_DIR/reviewer.jsonl"   "$reviewer_model"
+fi
+mkdir -p "$(dirname "$INJECT_FILE")"; touch "$INJECT_FILE"
+
+# Secrets/config locaux : .env à la racine est PARSÉ (KEY=VALUE), jamais SOURCÉ → pas d'exécution de
+# shell (pas de RCE si .env hostile). Lignes non KEY=VALUE et commentaires ignorés. Ne committe jamais .env.
+if [ -f .env ]; then
+  while IFS= read -r _l || [ -n "$_l" ]; do
+    case "$_l" in ''|[[:space:]]*\#*|\#*) continue;; *=*) ;; *) continue;; esac
+    _k="${_l%%=*}"; _v="${_l#*=}"
+    _v="${_v%\"}"; _v="${_v#\"}"; _v="${_v%\'}"; _v="${_v#\'}"   # retire une paire de guillemets
+    case "$_k" in *[!A-Za-z0-9_]*) continue;; esac              # nom de var valide seulement
+    export "$_k=$_v"
+  done < .env
+fi
+
+# ATTRIBUTION boucle → agent (owner) : si l'agent qui ARME la boucle exporte LOOP_OWNER_ID (identité
+# gateway OPAQUE, copiée verbatim — jamais dérivée localement), on écrit le MIROIR local
+# $MONITOR_DIR/owner.json (ATOMIQUE : tmp + mv) lu par scan.mjs/hub.mjs (« lancé par X : N boucles »).
+# Optionnels : LOOP_OWNER_LABEL (affichage), LOOP_OWNER_SOURCE (déf. env), LOOP_OWNER_CONTEXT
+# (contextId A2A, futur orchestrateur). Sémantique : owner = QUI A ARMÉ la boucle (durable) — env
+# absent = fichier INTACT (relances watchdog/remote/--fresh sans env ne l'effacent jamais) ;
+# LOOP_RESUME (auto-update, même run) ne réécrit pas started_at. L'agent lanceur peut aussi écrire
+# le fichier lui-même (voie compatible avec tout loop.sh) : même contrat, écriture atomique exigée.
+if [ -n "${LOOP_OWNER_ID:-}" ] && [ -z "${LOOP_RESUME:-}" ]; then
+  {
+    printf '{"agent_id":"%s","source":"%s"' "$(json_str "$LOOP_OWNER_ID")" "$(json_str "${LOOP_OWNER_SOURCE:-env}")"
+    [ -n "${LOOP_OWNER_LABEL:-}" ]   && printf ',"label":"%s"'      "$(json_str "$LOOP_OWNER_LABEL")"
+    [ -n "${LOOP_OWNER_CONTEXT:-}" ] && printf ',"context_id":"%s"' "$(json_str "$LOOP_OWNER_CONTEXT")"
+    printf ',"started_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "$MONITOR_DIR/.owner.tmp" && mv -f "$MONITOR_DIR/.owner.tmp" "$MONITOR_DIR/owner.json" \
+    && echo "👤 owner.json : boucle armée par ${LOOP_OWNER_LABEL:-$LOOP_OWNER_ID}."
+fi
+
+# Préflight : échoue TÔT plutôt qu'au bout de MAX_ITERS.
+if ! is_true "$coder" && ! is_true "$reviewer"; then
+  echo "loop.conf : coder ET reviewer à false — rien à faire."; bye stopped "arrêt : coder ET reviewer à false dans loop.conf — rien à faire." 1
+fi
+[ -f "$DONE_FILE" ] && bye done "mission déjà terminée ($DONE_FILE présent) — supprime-le pour relancer." 0
+if [ -f "$PAUSE_FILE" ]; then
+  bye paused "en pause ($PAUSE_FILE) — rien à faire tant que le fichier existe. Supprime-le puis relance pour reprendre." 0
+fi
+for f in GOAL.md PROGRESS.md; do
+  [ -f "$f" ] || bye stopped "arrêt : $f manquant — copie les gabarits (GOAL.template.md / PROGRESS.template.md)." 1
+done
+for v in MAX_ITERS MAX_FAILS MAX_STALE MAX_CR MAX_REVIEW_RETRY REVIEW_TIME_CAP PROBE_EVERY INJECT_WARN_LINES PROGRESS_WARN_BYTES; do
+  eval "_n=\$$v"; case "$_n" in ''|*[!0-9]*) bye stopped "arrêt : $v='$_n' : entier attendu (vérifie loop.conf/env)." 1;; esac
+done
+# BACKOFF_BASE : secondes d'attente initiale du backoff réseau/429 (0 casserait la garde : le
+# backoff ne laisserait AUCUNE chance à une panne de quelques secondes de se résoudre seule) ;
+# BACKOFF_MAX_TRIES : borne d'arrêt (0 = arrêt immédiat au 1er échec réseau, garde morte).
+for v in BACKOFF_BASE BACKOFF_MAX_TRIES; do
+  eval "_n=\$$v"; case "$_n" in *[!0-9]*) bye stopped "arrêt : $v='$_n' : entier attendu (vérifie loop.conf/env)." 1;; esac
+  [ "$_n" -ge 1 ] || bye stopped "arrêt : $v=0 : valeur ≥ 1 exigée (0 casse cette garde — vérifie loop.conf/env)." 1
+done
+# claude_profiles : chaque profil doit exister sous CLAUDE_PROFILES_DIR (coffre ccacct) — fail-fast,
+# jamais N itérations sur un coffre fantôme. prof_i/prof_retry = globaux de la rotation (LOOP_RESUME
+# les restaure après un auto-update).
+prof_count=0
+for _p in $CLAUDE_PROFILES; do
+  [ -d "$CLAUDE_PROFILES_DIR/$_p" ] || bye stopped "arrêt : claude_profiles : profil '$_p' introuvable ($CLAUDE_PROFILES_DIR/$_p) — ccacct login $_p ?" 1
+  prof_count=$((prof_count+1))
+done
+prof_i=0; [ "$prof_count" -gt 0 ] && prof_i=1; prof_retry=0
+# Effort de raisonnement : vide = défaut du CLI (rien passé) ; sinon valeur commune codex/claude/grok.
+for v in codex_effort coder_effort reviewer_effort; do
+  eval "_n=\${$v:-}"
+  case "$_n" in ''|low|medium|high|xhigh) ;; *) bye stopped "arrêt : $v='$_n' : low|medium|high|xhigh attendu, ou vide = défaut du CLI." 1;; esac
+done
+# MAX_TURNS/REVIEWER_MAX_TURNS : VIDE = aucun plafond (défaut kit, Lot 4) — légal. Si renseigné :
+# entier ≥ 1 exigé (0 = agent muet, non numérique = flag invalide pour le CLI).
+for v in MAX_TURNS REVIEWER_MAX_TURNS; do
+  eval "_n=\$$v"
+  [ -z "$_n" ] && continue
+  case "$_n" in *[!0-9]*) bye stopped "arrêt : $v='$_n' : entier attendu, ou vide = aucun plafond (vérifie loop.conf/env)." 1;; esac
+  [ "$_n" -ge 1 ] || bye stopped "arrêt : $v=0 : valeur ≥ 1 exigée, ou vide = aucun plafond." 1
+done
+# 0 interdit là où il casse la garde ou la rend muette : PROBE_EVERY=0 = division par zéro dans la
+# sonde de failover ; MAX_FAILS/MAX_STALE/MAX_CR/MAX_REVIEW_RETRY=0 = déclenchement au 1er événement ;
+# MAX_ITERS=0 = boucle qui ne fait RIEN en silence ; seuils
+# d'hygiène 0 = alerte permanente. REVIEW_TIME_CAP et MAX_READS_BEFORE_EDIT acceptent 0 (= garde désactivée).
+for v in MAX_ITERS MAX_FAILS MAX_STALE MAX_CR MAX_REVIEW_RETRY PROBE_EVERY INJECT_WARN_LINES PROGRESS_WARN_BYTES; do
+  eval "_n=\$$v"; [ "$_n" -ge 1 ] || bye stopped "arrêt : $v=0 : valeur ≥ 1 exigée (0 casse cette garde — vérifie loop.conf/env)." 1
+done
+# MAX_READS_BEFORE_EDIT : entier ≥ 0 (0 = compteur de lectures désactivé, G09).
+case "$MAX_READS_BEFORE_EDIT" in
+  ''|*[!0-9]*) bye stopped "arrêt : MAX_READS_BEFORE_EDIT='$MAX_READS_BEFORE_EDIT' : entier attendu (0 = garde désactivée — vérifie loop.conf/env)." 1;;
+esac
+resolve_bin() { case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+  kimi|kimi:*) echo "${kimi_bin:-$HOME/.kimi-code/bin/kimi}";;
+  grok) echo "${grok_bin:-$(command -v grok 2>/dev/null || echo "$HOME/.local/bin/grok")}";;
+  mistral|vibe|devstral|mistral-local) echo "${vibe_bin:-$(command -v vibe 2>/dev/null || echo "$HOME/.local/bin/vibe")}";;
+  codex|codex:*) resolve_codex_bin;;
+  yumi|yumi:*) resolve_yumi_bin;;
+  ollama|ollama:*|ornith|ornith:*) resolve_yumi_bin;;   # Lot 5 : ollama/ornith invoquent yumi, pas claude (cf. run_agent)
+  *) command -v claude 2>/dev/null || echo claude;;
+esac; }
+check_role() {  # $1 = libellé · $2 = modèle
+  local b; b="$(resolve_bin "$2")"
+  [ -x "$b" ] || command -v "$b" >/dev/null 2>&1 || bye stopped "arrêt : $1 : binaire introuvable pour modèle='${2:-claude}' ($b)." 1
+  case "$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')" in
+    ''|kimi|kimi:*|grok|mistral|vibe|devstral|mistral-local|codex|codex:*|yumi|yumi:*|ollama|ollama:*|ornith|ornith:*|opus|sonnet|haiku|fable) ;;
+    *[-0-9]*) ;;   # ressemble à un id de modèle (tiret/chiffre) → laissé passer
+    *) echo "⚠️  $1 : modèle '$2' inconnu (ni alias ni id plausible) → routé en 'claude --model $2', risque d'échec." >&2;;
+  esac
+}
+if ! type run_custom >/dev/null 2>&1; then
+  is_true "$coder"    && check_role CODEUSE "$coder_model"
+  is_true "$reviewer" && check_role CONTRÔLEUSE "$reviewer_model"
+fi
+# Codex en sandbox (workspace-write/read-only) : .git est en LECTURE SEULE (« .git/index.lock:
+# Operation not permitted », laya-experts 26/09) → la codeuse code et valide mais ne commite
+# jamais, la contrôleuse boucle en CHANGES_REQUESTED jusqu'à max_cr (diagnostic trompeur).
+# Refus au démarrage ; la contrôleuse ne commite pas, elle peut rester confinée.
+if is_true "$coder" && [ "$(provider_of "$coder_model")" = codex ]; then
+  case "${codex_sandbox:-bypass}" in bypass|danger-full-access|full) ;;
+    *) bye stopped "arrêt : codex_sandbox=$codex_sandbox rend .git lecture seule → la codeuse Codex ne pourrait jamais commiter. Laisse codex_sandbox vide (bypass) pour la codeuse." 1;;
+  esac
+fi
+
+# Lot 3 : garde-fou préflight pour Ollama — avertissement si ollama en codeuse SANS contrôleuse forte.
+# Mesuré le 30/08 : ornith ignore les consignes dans le harnais Claude Code (rapport fabriqué),
+# même avec un contexte réduit de 98%. Nicolas a décrété : Ollama utilisable EN CODEUSE SEULEMENT,
+# JAMAIS en contrôleuse, et JAMAIS sans une contrôleuse forte et indépendante.
+# Deux cas à avertir (sans bloquer : le kit reste générique) :
+coder_provider="$(provider_of "${coder_model:-}")"
+if [ "$coder_provider" = "ollama" ]; then
+  if ! is_true "$reviewer"; then
+    # Cas 1 : ollama en codeuse mais PAS de contrôleuse du tout
+    echo "⚠️  ⚠️  ⚠️  AVERTISSEMENT SÉCURITÉ : coder_model résout vers le provider 'ollama' MAIS reviewer=false"
+    echo "    → RISQUE ÉLEVÉ : ornith (Ollama) a produit des rapports FABRIQUÉS sur consignes triviales"
+    echo "    (mesuré 30/08 : 3 tests indépendants, contexte réduit de 98% sans effet)."
+    echo "    RECOMMANDATION : active IMMÉDIATEMENT reviewer=true avec un modèle FORT et INDÉPENDANT"
+    echo "    (ex. reviewer_model=yumi:opus ou grok) pour valider chaque commit de la codeuse."
+    echo "    Ne lance PAS cette boucle sans contrôleuse — les commits seront fiables en APPARENCE seulement."
+    echo "    (Cet avertissement ne bloque pas la boucle : c'est un choix conscient de l'utilisateur.)"
+    echo ""
+  else
+    # reviewer=true, vérifier si la contrôleuse aussi utilise ollama
+    reviewer_provider="$(provider_of "${reviewer_model:-}")"
+    if [ "$reviewer_provider" = "ollama" ]; then
+      # Cas 2 : les DEUX rôles sur ollama → zéro indépendance adversariale
+      echo "⚠️  ⚠️  ⚠️  AVERTISSEMENT CRITIQUE : coder_model ET reviewer_model résolvent tous les DEUX vers 'ollama'"
+      echo "    → RISQUE MAXIMAL : ZÉRO indépendance adversariale. Si ornith produit un rapport fabriqué"
+      echo "    en codeuse, la contrôleuse (même provider, mêmes limites) validera le commit fabriqué."
+      echo "    RECOMMANDATION IMMÉDIATE : change reviewer_model vers un provider FORT et DIFFÉRENT"
+      echo "    (ex. yumi:opus, grok, ou claude:opus)."
+      echo "    Nicolas a EXPLICITEMENT exclu ce scénario le 30/08 : 'ornith utilisable EN CODEUSE SEULEMENT,"
+      echo "    JAMAIS en contrôleuse'."
+      echo "    (Cet avertissement ne bloque pas la boucle : c'est un choix conscient de l'utilisateur.)"
+      echo ""
+    fi
+  fi
+fi
+
+# --- Boucle : état + reprise auto-update ------------------------------------
+# (AVANT le préflight handoff : handoff_wait_review et VERIFY_STATE doivent survivre à l'exec,
+#  sinon un gate SUSPENDU — handoff présent sans verdict réel — partirait chez l'humain non revu.)
+i=0; fails=0; stale=0; turncap=0; ctmo=0; net_retry=0; cr_streak=0; last_cr_head=""; review_retry=0; handoff_wait_review=0; VERIFY_STATE=""; STATE=stopped; review_degraded=0; coder_reads=0; last_motif_reads=0; reads_cap_count=0
+# Reprise après auto-update : restaure les compteurs transmis par l'ancienne version (cf. bloc
+# PROTOCOLE AUTO-UPDATE dans la boucle) — la bascule de version est invisible pour les gardes.
+if [ -n "${LOOP_RESUME:-}" ]; then
+  # Garde : LOOP_RESUME est EVALUÉ → LISTE BLANCHE de caractères, pas liste noire (la classe
+  # [^;]* précédente n'excluait que ';' : &&, |, retour ligne et > passaient et étaient EXÉCUTÉS
+  # par eval — contournement prouvé sur 917f6c6). Seuls sont admis les caractères des valeurs
+  # LÉGITIMES produites par le bloc auto-update ci-dessous (entiers, sha hex, green/red, vide
+  # quoté ') : [A-Za-z0-9_=;.'-]. Tout autre caractère (espace, $, `, &, |, >, /, \n…) = refus.
+  # Une SEULE ligne exigée (un '\n' injecterait une 2e commande derrière un 1er champ valide —
+  # redondant avec la liste blanche mais conservé en défense en profondeur) + format strict
+  # a=b(;c=d)* avec valeurs bornées. Un résidu exporté dans le shell parent ne doit JAMAIS
+  # être exécuté.
+  if printf '%s' "$LOOP_RESUME" | grep -q "[^A-Za-z0-9_=;.'-]" \
+     || [ "$(printf '%s' "$LOOP_RESUME" | wc -l | tr -d ' ')" != 0 ] \
+     || ! printf '%s' "$LOOP_RESUME" | grep -Eq "^[A-Za-z_]+='?[A-Za-z0-9._-]*'?(;[A-Za-z_]+='?[A-Za-z0-9._-]*'?)*$"; then
+    echo "❌ LOOP_RESUME invalide (format attendu 'a=b;c=d' sur UNE ligne, caractères [A-Za-z0-9_=;.'-] seuls) — refus d'évaluer. unset LOOP_RESUME et relance."; bye stopped "arrêt : LOOP_RESUME invalide (caractères hors liste blanche) — refus d'évaluer." 1
+  fi
+  eval "$LOOP_RESUME"; unset LOOP_RESUME
+  echo "↻ auto-update : reprise sur la NOUVELLE version de loop.sh (itération $i conservée, compteurs restaurés)."
+fi
+
+# verdict_real_pass [verdict vhead] — le SEUL juge de « revue validante » (M2/M3/M4). Un verdict
+# n'ouvre le gate ni n'accepte .done que s'il est un PASS RÉEL (ni provisoire, ni synthétique
+# stale) ANCRÉ SUR LE HEAD COURANT : un PASS sur un vieux sha est PÉRIMÉ — il ne valide pas les
+# commits de tête non revus (M4). Sans jq ou sans fichier : invérifiable → NON (fail-closed, M3 —
+# aligné sur .done). Args optionnels = valeurs déjà lues par l'appelant (sinon relecture).
+verdict_real_pass() {
+  [ -n "$JQ" ] && [ -f "$VERDICT_FILE" ] || return 1
+  local v="${1:-}" h="${2:-}" hv
+  [ -n "$v" ] || v="$("$JQ" -r '.verdict // ""' "$VERDICT_FILE" 2>/dev/null)"
+  [ -n "$h" ] || h="$("$JQ" -r '.head // ""' "$VERDICT_FILE" 2>/dev/null)"
+  [ "$v" = PASS ] || return 1
+  [ "$("$JQ" -r '.provisional // .stale // false' "$VERDICT_FILE" 2>/dev/null)" = false ] || return 1
+  hv="$(git rev-parse --verify --quiet "$h^{commit}" 2>/dev/null)"
+  [ -n "$hv" ] && [ "$hv" = "$(git rev-parse HEAD 2>/dev/null)" ]
+}
+
+# Gate-handoff déjà en attente ? En mode contrôlé, la main n'est rendue à l'humain que si le
+# verdict couvrant le handoff est un PASS RÉEL ancré sur le HEAD courant — sinon (arrêt/restart/
+# auto-update pendant une suspension, abort MAX_REVIEW_RETRY avec handoff sur disque, PASS ancré
+# sur un vieux sha après de nouveaux commits…) le gate reste SUSPENDU : la contrôleuse repasse
+# d'abord, l'humain ne reçoit que du code revu (garantie 088259c durcie — elle n'était tenue
+# qu'en mémoire, pas entre deux runs — et l'ancrage HEAD manquait : M4).
+#
+# RÉSOLUTION PAR PREUVE (durci après un incident réel constaté sur un projet en production sous ce
+# kit : « fichier handoff absent = humain a validé » était une règle donnée à la codeuse par simple
+# texte de prompt — elle s'est auto-attribué plusieurs « GATE PASS (human) » sans qu'aucun humain
+# n'ait jamais réellement cliqué, la seule condition étant que le fichier ait disparu, pour
+# n'importe quelle raison). Désormais l'humain ne supprime plus $HANDOFF_FILE lui-même : il dépose
+# $HANDOFF_FILE.pass (texte non vide = ce qui a été vérifié + résultat). C'est loop.sh qui tranche
+# ICI, jamais la codeuse par inférence sur une absence de fichier — la codeuse ne reçoit
+# l'autorisation de cocher que sous la forme d'une note explicite injectée par loop.sh, jamais en
+# la déduisant elle-même.
+# G10 : consommation de la preuve déléguée à consume_gate_proof (archivage gate-<iter>.*,
+# .fail résiduel périmé non relayé). Au démarrage, l'itération porte le numéro 0.
+# La branche de suspension ne concerne qu'un handoff PRÉSENT sans preuve (jamais l'absence
+# de fichier — d'où la garde [ -f ] conservee du bloc d'origine).
+if ! consume_gate_proof 0 && [ -f "$HANDOFF_FILE" ]; then
+    _reviewed=1
+    if is_true "$reviewer"; then
+      # (sans jq : verdict invérifiable → gate SUSPENDU, fail-closed aligné sur .done — M3)
+      _reviewed=0
+      verdict_real_pass && _reviewed=1
+    fi
+    if [ "$_reviewed" = 1 ] && [ "${handoff_wait_review:-0}" != 1 ]; then
+      echo "⏸ $HANDOFF_FILE présent (gate visuel/device en attente humain). Contenu :"
+      cat "$HANDOFF_FILE" 2>/dev/null
+      echo "→ Fais le gate. Si OK, écris la preuve (non vide) dans $HANDOFF_FILE.pass ; si KO, écris le diagnostic (non vide) dans $HANDOFF_FILE.fail — dans les deux cas NE SUPPRIME PAS $HANDOFF_FILE toi-même, loop.sh consomme les deux fichiers au prochain démarrage — puis relance."
+      bye handoff "gate humain en attente : $HANDOFF_FILE — fais le gate puis relance." 0
+    else
+      handoff_wait_review=1
+      echo "⏸ $HANDOFF_FILE présent SANS verdict PASS réel ancré sur HEAD → gate SUSPENDU : la contrôleuse repasse d'abord (l'humain ne reçoit que du code revu)."
+    fi
+fi
+
+print_config
+# Failover : mémorise les modèles PRIMAIRES (ceux de la conf) et taille de la liste de secours.
+# (Après un auto-update, on repart volontairement sur le primaire : il sera re-sondé de fait.)
+primary_coder_model="$coder_model"; primary_reviewer_model="$reviewer_model"
+fb_count=0; for _m in $FALLBACK_MODELS; do fb_count=$((fb_count+1)); done
+fb_i=-1; fb_cycles=0
+# Lot 2 — branche attendue : mémorisée AU DÉMARRAGE, avant toute itération. Une contrôleuse
+# qui fait `git checkout <sha>` dans SON worktree de travail (au lieu d'un git worktree
+# séparé, pourtant prescrit par son prompt) laisse le repo en HEAD détaché, plusieurs
+# commits en avance sur la branche — rien ne le détectait mécaniquement (RETEX §3, 2
+# occurrences en une soirée) ; un `git gc` ou un oubli aurait pu faire disparaître ces
+# commits. Démarrage DÉJÀ détaché → branche attendue inconnue : auto-guérison impossible
+# pour ce run (averti une fois ici, rien de touché automatiquement).
+EXPECTED_BRANCH="$(git symbolic-ref --short -q HEAD 2>/dev/null || true)"
+if [ -z "$EXPECTED_BRANCH" ]; then
+  echo "⚠ démarrage en HEAD DÉTACHÉ — branche attendue inconnue, auto-guérison désactivée pour ce run. Répare à la main (git checkout <branche>) si ce n'est pas voulu."
+fi
+while [ ! -f "$DONE_FILE" ] && [ ! -f "$PAUSE_FILE" ] && [ "$i" -lt "$MAX_ITERS" ] \
+      && { ! is_true "$GATE_HANDOFF" || [ ! -f "$HANDOFF_FILE" ] || [ "${handoff_wait_review:-0}" = 1 ]; }; do
+  # G24 : relecture des consignes à CHAQUE itération (mtime+taille par fichier) — un prompt
+  # modifié en vol est rechargé (signal « ↻ consigne rechargée »), un fichier ABSENT ou VIDÉ
+  # en vol est fail-closed (bye : on ne continue pas sur une consigne fantôme).
+  load_prompts reload
+  # PROTOCOLE AUTO-UPDATE : un sync-kit pendant le run dépose loop.sh.new → la boucle l'active
+  # ELLE-MÊME au point sûr (frontière d'itération, aucun agent en vol) et ré-exec : même PID donc
+  # même verrou (adopté au redémarrage), compteurs via LOOP_RESUME, jsonl préservés.
+  # auto_update=false dans loop.conf pour désactiver (forks à merge manuel notamment).
+  if is_true "${auto_update:-true}" && [ -f loop.sh.new ]; then
+    mv -f loop.sh.new loop.sh && { chmod +x loop.sh 2>/dev/null || true; }
+    echo "↻ auto-update : loop.sh.new détecté → activé à la frontière d'itération, bascule à chaud."
+    LOOP_RESUME="i=$i;fails=$fails;stale=$stale;turncap=$turncap;ctmo=$ctmo;net_retry=$net_retry;cr_streak=$cr_streak;review_retry=$review_retry;last_cr_head='$last_cr_head';handoff_wait_review=${handoff_wait_review:-0};VERIFY_STATE='$VERIFY_STATE';review_degraded=${review_degraded:-0};prof_i=${prof_i:-0};prof_retry=${prof_retry:-0}" exec "$0"
+  fi
+  i=$((i + 1))
+  echo; echo "========== itération $i/$MAX_ITERS ($(date '+%H:%M:%S')) =========="
+  # Heartbeat de boucle : touché à CHAQUE frontière d'itération, JAMAIS pendant un run — un
+  # harnais/CLI figé doit le laisser vieillir : c'est ce qui distingue « suspendu » de « entre
+  # deux itérations » pour une supervision à seuil court. Le watchdog (WD_STALL) reste calé sur
+  # les .jsonl/state.json — ce fichier n'entre PAS dans son calcul (hors *.jsonl).
+  touch "$MONITOR_DIR/heartbeat" 2>/dev/null || true
+  # Lot 2 — HEAD détaché : détection + auto-guérison en tout DÉBUT d'itération, AVANT la
+  # restitution de stash orphelin et la codeuse (toutes deux doivent opérer SUR la branche).
+  # Guérison = fast-forward PUR uniquement (HEAD descendant direct de la branche attendue,
+  # aucune divergence) : `git merge-base --is-ancestor <branche> HEAD`. Divergence réelle →
+  # RIEN n'est touché automatiquement : un script ne choisit pas à la place d'un humain.
+  _head_heal_note=""
+  if [ -n "$EXPECTED_BRANCH" ] && ! git symbolic-ref -q HEAD >/dev/null 2>&1; then
+    if git merge-base --is-ancestor "$EXPECTED_BRANCH" HEAD 2>/dev/null; then
+      _ahead="$(git rev-list --count "$EXPECTED_BRANCH..HEAD" 2>/dev/null || echo '?')"
+      _dsha="$(git rev-parse HEAD 2>/dev/null)"
+      # ATTENTION : `git checkout <branche>` seul NE ramène PAS les commits — il rattache
+      # HEAD à la pointe de la branche, qui n'a pas bougé (les commits détachés resteraient
+      # hors branche, dangling). Le fast-forward réel = checkout PUIS `merge --ff-only`
+      # du sha détaché (garanti possible par le is-ancestor ci-dessus).
+      if git checkout -q "$EXPECTED_BRANCH" 2>/dev/null && git merge -q --ff-only "$_dsha" >/dev/null 2>&1 \
+         && [ "$(git rev-parse HEAD 2>/dev/null)" = "$_dsha" ]; then
+        echo "🔧 HEAD détaché auto-réparé : $_ahead commit(s) ramené(s) sur $EXPECTED_BRANCH (fast-forward pur, rien perdu)."
+        _head_heal_note="NOTE FROM loop.sh (no action needed beyond recording it): a detached HEAD was auto-healed at the start of this iteration — $_ahead commit(s) fast-forwarded back onto $EXPECTED_BRANCH (pure fast-forward, nothing lost). Log one Journal line 'HEAD détaché auto-réparé par loop.sh : $_ahead commit(s) → $EXPECTED_BRANCH'. If the detached state came from YOUR side (a direct 'git checkout <sha>' to inspect a commit in your own working tree), do not do that again — use 'git worktree add' for any out-of-branch inspection.
+
+"
+      else
+        echo "   ⚠ auto-guérison ÉCHOUÉE (checkout refusé, modification locale en conflit ?) — HEAD toujours détaché, à réparer à la main."
+      fi
+    else
+      echo "⚠ HEAD DÉTACHÉ avec divergence réelle (fast-forward vers $EXPECTED_BRANCH impossible) — RIEN n'est touché automatiquement : à trancher par un humain (compare 'git log $EXPECTED_BRANCH..HEAD' et 'git log HEAD..$EXPECTED_BRANCH')."
+    fi
+  fi
+  # Mises de côté ORPHELINES de revue : une contrôleuse qui meurt en cours de revue laisse son
+  # stash (reviewer-temp-stash / wip-review-stash) JAMAIS restitué — l'itération suivante repart
+  # d'un arbre propre et le travail non commité semble s'être évaporé (pertes silencieuses
+  # observées en production, retrouvées à la main dans stash@{0}). À chaque frontière
+  # d'itération : stash de revue présent → restitution AVANT tout le reste. PAS de précondition
+  # « arbre propre » : `git stash pop` refuse DE LUI-MÊME d'écraser une modification locale en
+  # conflit (le stash reste alors sur la pile, RIEN n'est perdu), et une telle garde au sens des
+  # fichiers SUIVIS serait fausse en permanence ici — loop.conf (suivi) reste localement modifié
+  # pendant tout le run (règle du projet), donc le filet ne se déclencherait JAMAIS.
+  _sref=""
+  for _spat in reviewer-temp-stash wip-review-stash; do
+    _sref="$(git stash list 2>/dev/null | grep -m 1 "$_spat" | cut -d: -f1 || true)"
+    [ -n "$_sref" ] && break
+  done
+  if [ -n "$_sref" ]; then
+    echo "♻ stash de revue ORPHELIN ($_sref) → restitution du travail non commité."
+    if git stash pop "$_sref" >/dev/null 2>&1; then
+      echo "   ✓ restitué ($_sref retiré de la pile)."
+    else
+      # DEUX modes d'échec du pop : (a) « local changes would be overwritten » — git REFUSE
+      # avant de toucher quoi que ce soit, arbre intact, stash conservé ; (b) HEAD a AVANCÉ
+      # depuis la mise de côté (cas stationnaire ici : le stash orphelin survit à des commits
+      # de la codeuse) — git AUTO-MERGE et écrit des marqueurs de conflit DANS les fichiers
+      # suivis + index unmerged, rc=1. En (b) on remet l'arbre d'aplomb AVANT d'avertir, sinon
+      # la boucle enchaînerait la codeuse sur un merge non résolu.
+      if [ -n "$(git ls-files -u)" ]; then
+        # La commande de RÉPARATION a ses propres modes d'échec — énumérés comme ceux du
+        # pop : chemin avec espace (mot-splitting), chemin quoté par core.quotepath, chemin
+        # absent de HEAD (modify/delete). On itère donc chemin par chemin (IFS= read -r,
+        # quoting désactivé), avec repli `git rm` quand le chemin n'existe plus dans HEAD,
+        # et l'on RE-MESURE l'invariant (index unmerged) AVANT de choisir le message — un
+        # `|| true` suivi d'un message qui AFFIRME la remise d'aplomb serait un message
+        # mensonger posé sur un merge non résolu (mesuré : unmerged=3 sur `my file.md`).
+        git -c core.quotepath=false ls-files -u | cut -f2 | sort -u | while IFS= read -r _p; do
+          git checkout -f HEAD -- "$_p" >/dev/null 2>&1 || git rm -f -q -- "$_p" >/dev/null 2>&1 || true
+        done
+        if [ -z "$(git ls-files -u)" ]; then
+          echo "   ⚠ restitution impossible (le stash diverge de HEAD) — arbre remis d'aplomb, $_sref CONSERVÉ sur la pile : \`git stash show -p $_sref\` pour le récupérer à la main."
+        else
+          echo "   ⚠ restitution impossible ET arbre NON nettoyé (merge non résolu persistant) — $_sref CONSERVÉ sur la pile : \`git stash show -p $_sref\` ; résous à la main AVANT de relancer."
+        fi
+      else
+        echo "   ⚠ restitution impossible (modification locale en conflit) — $_sref CONSERVÉ sur la pile, RIEN n'est perdu."
+      fi
+    fi
+  fi
+  # Hygiène de contexte : au-delà des seuils, avertit ET injecte la consigne d'archivage à la
+  # codeuse (le canal ne doit contenir que de l'ACTIONNABLE ; le Journal ancien s'archive).
+  hygiene=""
+  if [ -s "$INJECT_FILE" ]; then
+    _il="$(wc -l < "$INJECT_FILE" | tr -d ' ')"
+    echo "📨 $INJECT_FILE détecté ($_il lignes)"
+    if [ "${_il:-0}" -gt "$INJECT_WARN_LINES" ] 2>/dev/null; then
+      echo "   ⚠ hygiène : $INJECT_FILE = $_il lignes (seuil $INJECT_WARN_LINES) — relu par les DEUX agents à CHAQUE tour ; consigne d'archivage injectée à la codeuse (→ .loop/inject-archive.md)."
+      hygiene="${hygiene}CONTEXT HYGIENE — $INJECT_FILE holds $_il lines (over the $INJECT_WARN_LINES-line threshold) and BOTH agents re-read it WHOLE every turn. FIRST move every already-processed or stale entry to .loop/inject-archive.md (append, keep order): the channel must hold ACTIONABLE requests only. Then handle what remains.
+
+"
+    fi
+  fi
+  if [ -f PROGRESS.md ]; then
+    # G07 : le seuil vise le JOURNAL seul (octets après la ligne « ## Journal ») — les cases,
+    # qui restent dans PROGRESS.md, ne doivent pas déclencher une consigne d'archivage.
+    _pb=0
+    if grep -q '^## Journal' PROGRESS.md 2>/dev/null; then
+      _pb="$(sed -n '/^## Journal$/,$p' PROGRESS.md | wc -c | tr -d ' ')"
+    else
+      _pb="$(wc -c < PROGRESS.md | tr -d ' ')"
+    fi
+    if [ "${_pb:-0}" -gt "$PROGRESS_WARN_BYTES" ] 2>/dev/null; then
+      echo "   ⚠ hygiène : Journal de PROGRESS.md = $(( _pb / 1024 )) Ko (seuil $(( PROGRESS_WARN_BYTES / 1024 )) Ko) — consigne d'archivage du Journal injectée à la codeuse (→ PROGRESS-archive.md, cases + entrées récentes conservées)."
+      hygiene="${hygiene}CONTEXT HYGIENE — the Journal section of PROGRESS.md weighs $(( _pb / 1024 )) KB (over the $(( PROGRESS_WARN_BYTES / 1024 )) KB threshold) and is re-read WHOLE every turn. FIRST archive the oldest Journal entries into PROGRESS-archive.md (append, chronological): PROGRESS.md keeps ALL the checkboxes and only the ~10 most recent Journal entries. Commit that move on its own ('chore: archive journal'), then continue the batch.
+
+"
+    fi
+  fi
+  # Marqueur d'itération pour le dashboard (compteur iter/max).
+  for _jf in "$MONITOR_DIR/coder-main.jsonl" "$MONITOR_DIR/reviewer.jsonl"; do
+    [ -f "$_jf" ] && printf '{"type":"loop","iter":%d,"max":%d}\n' "$i" "$MAX_ITERS" >> "$_jf"
+  done
+
+  # FAILOVER actif → sonde périodique du modèle PRIMAIRE ; s'il répond à nouveau (crédit revenu),
+  # on lui REND la main immédiatement (codeuse + contrôleuse).
+  if [ "$fb_i" -ge 1 ] && [ $(( i % PROBE_EVERY )) -eq 0 ]; then
+    # Cible de sonde = le primaire réellement EN PANNE : si la codeuse est restée sur son primaire
+    # (failover déclenché par la CONTRÔLEUSE seule, providers différents), sonder le primaire codeuse
+    # — sain — rendrait la main à un provider contrôleuse toujours mort (ping-pong de bascules).
+    _probe="$primary_coder_model"
+    [ "$coder_model" = "$primary_coder_model" ] && _probe="$primary_reviewer_model"
+    if probe_model "$_probe"; then
+      echo "🔀 FAILOVER : le primaire (${_probe:-défaut claude}) répond à nouveau → retour aux modèles primaires."
+      coder_model="$primary_coder_model"; reviewer_model="$primary_reviewer_model"; fb_i=-1; fb_cycles=0; fails=0
+    else
+      echo "   (sonde ${_probe:-défaut claude} : toujours indisponible — on reste sur secours)"
+    fi
+  fi
+
+  # Revue précédente sans verdict frais (contrôleuse morte/illisible) : la codeuse n'a RIEN à corriger
+  # — on saute son tour et on relance directement la contrôleuse sur la même plage. EXCEPTION mode
+  # DÉGRADÉ (review_degraded=1, après MAX_REVIEW_RETRY échecs) : la codeuse AVANCE quand même —
+  # la revue n'est plus un point de défaillance unique pour le progrès (commits « non relus »).
+  # G10 : relecture de la paire .gate-handoff.pass/.fail à CHAQUE début d'itération (l'humain
+  # peut déposer pendant que la boucle tourne) + ré-injection de la preuve archivée quand
+  # l'itération précédente est morte avant de la consommer. L'archive est (re)créée ICI, avant
+  # tout lancement codeuse ET avant le saut éventuel de la codeuse : la preuve survit à la mort
+  # de l'itération qui la reçoit.
+  if [ -z "$GATE_NOTE" ]; then   # pas de preuve en attente en mémoire → relit la paire sur disque
+    consume_gate_proof "$i" && echo "   🔁 preuve gate-handoff consommée à l'itération $i (archive : $CTL_DIR/gate-$i.*)"
+  fi
+  if { [ "$review_retry" -gt 0 ] || [ "${handoff_wait_review:-0}" = 1 ]; } && [ "$review_degraded" != 1 ] && is_true "$coder"; then
+    if [ "${handoff_wait_review:-0}" = 1 ]; then write_state handoff_suspended; else write_state wait_review; fi
+    if [ "$review_retry" -eq 0 ]; then
+      echo "⟲ gate-handoff SUSPENDU (verdict réel manquant) — codeuse SAUTÉE, la contrôleuse tranche d'abord."
+    else
+      echo "⟲ revue précédente sans verdict frais — codeuse SAUTÉE ce tour, la contrôleuse repasse directement (tentative $((review_retry+1))/$MAX_REVIEW_RETRY)."
+    fi
+  elif is_true "$coder"; then
+    pre="$hygiene$_head_heal_note$(next_box_note)
+"
+    [ "$VERIFY_STATE" = red ] && pre="${pre}LAST verify.sh FAILED (red) — see $CTL_DIR/verify.log. FIX the failing checks BEFORE checking any box or creating $DONE_FILE.
+
+"
+    # Lot 11 : budget de tours NUMÉRIQUE dans le prompt — la codeuse ne voit pas son compteur ;
+    # sans la valeur, la règle « commit avant la moitié » (prompts/coder.md) est inapplicable
+    # (RETEX §1 : ×4 lots surdimensionnés jetés au plafond, travail perdu). La mécanique
+    # (turn_watch, checkpoint auto à mi-parcours) est le filet ; la consigne reste la 1re ligne.
+    # Lot 4 : SEULEMENT si un plafond est configuré — défaut kit = aucun plafond, la consigne
+    # de budget est alors sans objet (le prompt de base garde la règle de commit incrémental).
+    if [ -n "$MAX_TURNS" ]; then
+      pre="${pre}TURN BUDGET: this run is HARD-CAPPED at $MAX_TURNS agent turns by the CLI — you cannot see the counter. Your FIRST green commit MUST land before turn $((MAX_TURNS / 2)) (half your budget), then one commit per increment. A run that dies at the cap with an uncommitted tree loses its work: when in doubt, checkpoint the green subset IMMEDIATELY.
+
+"
+    fi
+    # Itération précédente morte en plafond de tours SANS commit → consigne de reprise/checkpoint
+    # (sinon la codeuse repart de zéro à contexte neuf et re-meurt au même endroit : thrash max_turns).
+    [ "$turncap" -ge 1 ] && pre="${pre}PREVIOUS ITERATION DIED AT ITS TURN CAP (error_max_turns) WITHOUT COMMITTING — the batch is likely OVERSIZED. Do NOT restart from scratch: run git status / git diff FIRST, KEEP what is valid on disk, verify it, COMMIT it as a checkpoint ('wip: … — checkpoint', targeted staging) BEFORE anything else, then continue in SMALLER increments (commit by HALF your turn budget; split the batch: helper/dependency first, then the tool, then the test).
+
+"
+    # G09 : itération précédente arrêtée reads_cap → consigne de cadrage en tête du prochain tour
+    # (la mécanique seule ne recadre pas : la codeuse doit recevoir la méthode ET la sanction).
+    [ "${last_motif_reads:-0}" = 1 ] && pre="${pre}PREVIOUS ITERATION WAS STOPPED EARLY (reads_cap): it hit the max_reads_before_edit=$MAX_READS_BEFORE_EDIT ceiling with ZERO Edit/Write. Your batch is NOT scoped: go back to the CURRENT BOX reading list in the note above, split the batch (skeleton: signatures + insertion points + named tests), and START EDITING before reading anything beyond that list. Do NOT re-read files already read last turn.
+
+"
+    if is_true "$reviewer" && [ -f "$VERDICT_FILE" ]; then
+      pre="${pre}BEFORE ANYTHING — read $VERDICT_FILE (previous review verdict). While verdict==CHANGES_REQUESTED you may work ONLY on its 'blocking' items (commits 'fix: …'): do NOT check any new box, do NOT create $DONE_FILE. EXCEPTION: the CONTEXT HYGIENE archiving above (and its 'chore:' commit) and handling/archiving user injections remain REQUIRED even under CHANGES_REQUESTED — do them first, then work ONLY the blockers. For each blocker, paste PROOF (command + real output) that it now passes. NEVER write or edit anything under $CTL_DIR/ (reviewer channel — tampering = build failed).
+
+"
+    fi
+    # MODE DÉGRADÉ (revue en panne prolongée) : la consigne ci-dessous PREND LE PAS sur la
+    # restriction « blocking items only » quand le seul blocker est l'absence de revue.
+    if [ "${review_degraded:-0}" = 1 ]; then
+      pre="${pre}REVIEW DEGRADED MODE — the reviewer is DOWN ($MAX_REVIEW_RETRY consecutive reviews without a fresh verdict). You ADVANCE NORMALLY: next batches, box-checking with PROOF, injections — as usual. If the verdict file holds a synthetic stale CHANGES_REQUESTED whose only blocker is \"review not delivered\", that blocker is NOT yours to fix: ignore it and take the next box. MANDATORY: every commit you produce while this mode lasts is UNREVIEWED — mark it EXPLICITLY in the PROGRESS.md Journal (line '⚠ NON RELU (revue en panne) — à repasser quand la revue redevient opérante') — explicit debt: the next REAL review covers the whole unreviewed range (the .head anchor is preserved) and settles it. $DONE_FILE and the human gate stay FORBIDDEN until a REAL PASS verdict — fail-closed unchanged.
+
+"
+    fi
+    write_state coder
+    before="$(git rev-parse HEAD 2>/dev/null || echo none)"
+    coder_start_epoch=$(date +%s)
+    # Repère de début de run dans le jsonl CUMULATIF : seuls les événements écrits par CE run
+    # sont relus pour la classification d'erreur (client_timeout_of).
+    coder_jsonl_from="$(wc -l < "$MONITOR_DIR/coder-main.jsonl" 2>/dev/null | tr -d ' ' || echo 0)"
+    # Résidu éventuel entre deux runs (revue fba20a7) : un flag posé et non consommé requalifierait
+    # CE run en reads_cap dès sa 1re seconde. Purge préventive avant CHAQUE run codeuse.
+    rm -f "$MONITOR_DIR/READS_CAP.hit" "$MONITOR_DIR/.agent.rc.CODEUSE" 2>/dev/null
+    # G10 : la preuve lue plus haut (GATE_NOTE non vide) est APPENDUE au prompt codeuse —
+    # l'archive gate-<iter>.* existe déjà (créée avant le point de saut codeuse). Le flag
+    # _gate_delivered sert à consommer l'archive après un run achevé proprement (motif ok) :
+    # une preuve déjà servie n'est plus jamais re-servie (revue 4355647). La note va dans la
+    # variable LOCALE _gate_extra, JAMAIS dans le global CODER_EXTRA (construit au démarrage,
+    # jamais réinitialisé : l'appendir y laissait la note pour TOUTES les itérations suivantes).
+    _gate_delivered=0
+    _gate_extra="$CODER_EXTRA"
+    if [ -n "$GATE_NOTE" ]; then
+      _gate_extra="$_gate_extra
+$GATE_NOTE"
+      GATE_NOTE=""
+      _gate_delivered=1
+    fi
+    AGENT_EFFORT="${coder_effort:-}" run_agent "CODEUSE" "$WATCHDOG_NOTE$pre$CODER_PROMPT$_gate_extra" "$MONITOR_DIR/coder-main.jsonl" "$MAX_TURNS" "$coder_model" "${coder_jsonl_from:-}"; rc=$?
+    coder_end_epoch=$(date +%s)
+    # Extraire subtype du dernier result DE CE RUN pour toute la classification CODEUSE
+    coder_sub="$(subtype_of "$MONITOR_DIR/coder-main.jsonl" "${coder_jsonl_from:-0}")"
+    coder_ctmo_msg="$(client_timeout_of "$MONITOR_DIR/coder-main.jsonl" "${coder_jsonl_from:-0}")"
+    # G16 : classe réseau/429 du dernier événement error DE CE RUN (vide sans jq → provider_fail).
+    coder_net="$(net_class_of "$MONITOR_DIR/coder-main.jsonl" "${coder_jsonl_from:-0}")"
+    # Télémétrie Lot 1-2 : motif_arret de la CODEUSE — classification partagée
+    # classify_agent_stop (rc 143/137 → killed, cf. constat glm-feedback 150743 : SIGTERM
+    # classé provider_fail → FAILOVER à tort ; décision pilote 67182a4 : killed = le signal,
+    # jamais « sans result »).
+    coder_motif="$(classify_agent_stop "$rc" "$coder_sub" "$coder_ctmo_msg" "$coder_net")"
+    # G09 : le flag READS_CAP.hit (posé par reads_watch, consommé par run_agent) REQUALIFIE un
+    # rc 143 en reads_cap — sans lui, un SIGTERM du harnais externe (watchdog) et notre arrêt
+    # doux seraient indiscernables (tous deux rc 143 → killed). Le flag est NOTRE signature.
+    # Télémétrie TOUJOURS : le compte de lectures de CE run est publié même sur un run nominal
+    # (lectures_avant_premier_edit dans iterations.jsonl, utile bien au-delà du kill).
+    coder_reads=0
+    [ -n "$JQ" ] && coder_reads="$(reads_count_of "$MONITOR_DIR/coder-main.jsonl" "${coder_jsonl_from:-0}")"
+    case "$coder_reads" in ''|*[!0-9]*) coder_reads=0;; esac
+    if [ -f "$MONITOR_DIR/READS_CAP.hit" ]; then
+      # Le flag est posé UNIQUEMENT par reads_watch (notre watcher) : sa présence à la sortie
+      # du run SIGNATURE l'arrêt doux, quel que soit le rc observé (le SIGTERM au groupe peut
+      # tuer le sous-shell d'écriture rc avant lui-même — arc=0 lu, pas un 'ok' réel).
+      coder_motif=reads_cap
+      # Le compte mesuré par reads_watch fait FOI (publié dans le flag, déterministe — le
+      # recomptage après coup est racy : le CLI/le stub continue d'écrire dans le jsonl).
+      _flag_reads="$(cat "$MONITOR_DIR/READS_CAP.hit" 2>/dev/null | tr -dc '0-9')"
+      case "$_flag_reads" in ''|*[!0-9]*) ;; *) coder_reads="$_flag_reads";; esac
+      rm -f "$MONITOR_DIR/READS_CAP.hit" 2>/dev/null
+      reads_cap_diag "$coder_reads" "$MAX_READS_BEFORE_EDIT"
+    fi
+    # Consigne de cadrage au prochain tour (pre=) ssi CE tour a été arrêté reads_cap.
+    last_motif_reads=0; [ "$coder_motif" = reads_cap ] && last_motif_reads=1 && reads_cap_count=$((reads_cap_count+1))
+    # Diagnostic affiché même si le run a progressé (commit posé avant la coupure) : l'humain doit
+    # savoir que le plafond mord, sinon il ne le relèvera jamais.
+    [ "$coder_motif" = client_timeout ] && client_timeout_diag "CODEUSE" "$coder_ctmo_msg"
+    { [ "$coder_motif" = "$NETWORK_CLASS" ] || [ "$coder_motif" = "$RATELIMIT_CLASS" ]; } \
+      && network_diag "CODEUSE" "$coder_motif" "$(tail -n +"$(( ${coder_jsonl_from:-0} + 1 ))" "$MONITOR_DIR/coder-main.jsonl" 2>/dev/null | "$JQ" -r 'fromjson? | select(type=="object" and .type=="error") | .error // empty' 2>/dev/null | tail -1)"
+    [ "$coder_motif" = killed ] && killed_diag "CODEUSE" "$rc"
+    # G10 : itération morte (provider_fail/killed/client_timeout) AVANT d'avoir consommé la
+    # preuve gate-handoff → on la RÉ-INJECTE au tour suivant : l'archive gate-<iter>.pass est
+    # déjà sur disque (créée avant le lancement), on restaure la note au lieu de redemander
+    # à l'humain de refaire le gate (constat 212856 : 4 re-faits, 1 h perdues).
+    case "$coder_motif" in
+      provider_fail|killed|client_timeout)
+        # (GATE_NOTE non vide = la note de CE tour n'a pas pu être délivrée → conservée telle
+        # quelle pour le tour suivant ; sinon restauration depuis la dernière archive .pass.)
+        if [ -z "$GATE_NOTE" ]; then
+          for _ga in "$CTL_DIR"/gate-*.pass; do
+            [ -f "$_ga" ] || continue
+            GATE_NOTE="GATE RESOLVED (by loop.sh, not by you) — the human left this evidence in what was ${HANDOFF_FILE}.pass (re-delivered from archive ${_ga} after an interrupted iteration): \"$(cat "$_ga")\" — check off the matching box now (Journal 'GATE PASS (human)' quoting this evidence verbatim), don't redo the work. A visual/device gate resolves THIS WAY ONLY."
+            echo "   🔁 preuve gate-handoff restaurée depuis l'archive ($_ga) — itération précédente morte ($coder_motif)."
+          done
+        fi
+        ;;
+    esac
+    # G10 (revue 4355647) : preuve DÉLIVRÉE à un run codeuse achevé proprement (motif ok) →
+    # l'archive gate-<iter>.pass est CONSOMMÉE (mv → .delivered, trace conservée) : une preuve
+    # déjà servie n'est plus jamais re-servie par la boucle de restauration ci-dessus lors d'une
+    # mort ULTÉRIEURE sans gate en cours (mesure : 3 ré-injections parasites après résolution au
+    # tour 1). Si le run qui la reçoit meurt (provider_fail/killed/client_timeout) ou est coupé
+    # (reads_cap/max_turns), l'archive RESTE en place → ré-injection préservée (constat 212856).
+    if [ "${_gate_delivered:-0}" = 1 ] && [ "$coder_motif" = ok ]; then
+      for _ga in "$CTL_DIR"/gate-*.pass; do
+        [ -f "$_ga" ] || continue
+        mv -f "$_ga" "$_ga.delivered" 2>/dev/null
+      done
+    fi
+    # G05 : rc≠0 avec .err vide → le CLI n'a rien dit ; sans ce diagnostic, aucune piste ne
+    # subsistait (3× « CONTRÔLEUSE rc=1 » muettes, blackcat 052737).
+    [ "$rc" -ne 0 ] && [ ! -s "$MONITOR_DIR/CODEUSE.err" ] && err_empty_diag "CODEUSE" "$MONITOR_DIR/coder-main.jsonl" "${coder_jsonl_from:-0}"
+    after="$(git rev-parse HEAD 2>/dev/null || echo none)"
+    # PROGRÈS réel = nouveau commit OU .done OU handoff déposé. Le provider "marche" alors, quel que soit
+    # son code retour (certains CLI renvoient !=0 même après un travail utile, ex. « max turns reached »).
+    progress=0
+    { [ "$before" != "$after" ] || [ -f "$DONE_FILE" ] || { is_true "$GATE_HANDOFF" && [ -f "$HANDOFF_FILE" ]; }; } && progress=1
+    # G07 (king3d 222637) : un commit ne touchant que PROGRESS*.md / .loop/inject-archive.md fait
+    # bouger HEAD SANS produire — sinon N commits d'archivage docs-only masquent max_stale muet.
+    docs_only=0
+    if [ "$before" != "$after" ] && is_true "$DOCS_ONLY_STALE"; then
+      _dr="$(git diff --name-only "$before" "$after" 2>/dev/null)"
+      [ -z "$_dr" ] || {
+        _docs=1
+        while IFS= read -r _f; do
+          case "$_f" in
+            PROGRESS.md|PROGRESS-archive.md|.loop/inject-archive.md) ;;
+            *) _docs=0; break;;
+          esac
+        done <<EOF
+$_dr
+EOF
+        [ "$_docs" = 1 ] && docs_only=1
+      }
+    fi
+    [ "$docs_only" = 1 ] && progress=0
+    if [ "$progress" = 1 ]; then
+      fails=0; stale=0; turncap=0; ctmo=0; prof_retry=0
+    elif [ "$docs_only" = 1 ]; then
+      # G07 : docs-only = NON-progrès → stale++ (garde max_stale efficace), pas de fails.
+      stale=$((stale+1))
+      echo "   ⚠ itération docs-only (commit PROGRESS*.md/.loop/inject-archive.md uniquement) — comptée stale ($stale/$MAX_STALE)."
+      [ "$stale" -ge "$MAX_STALE" ] && stale_stop "$coder_motif" "iterations docs-only (archivage Journal sans commit produit)"
+    else
+      # G16 — panne RÉSEAU / 429 : branche DÉDIÉE avant tout comptage. Ni fails++ (basculer de
+      # provider est inutile : le réseau est en panne pour TOUS) ni stale++ (la boucle n'est pas
+      # bloquée : elle ATTEND) tant que la borne backoff_max_tries n'est pas atteinte. Attente
+      # backoff_base s doublée à chaque récidive consécutive, via loop_sleep (surchargeable par
+      # LOOP_SLEEP_CMD pour les tests). Un progrès quelconque (commit) remet net_retry à zéro.
+      PROF_MSG=""
+      if [ "$coder_motif" = "$RATELIMIT_CLASS" ] && claude_role "$coder_model" && prof_rotate; then
+        # claude_profiles : la fenêtre du COMPTE est épuisée, pas le provider → compte suivant,
+        # itération suivante tout de suite (ni backoff, ni fails, ni stale).
+        write_iteration "coder" "$coder_model" "$coder_start_epoch" "$coder_end_epoch" "$coder_motif" false null null "${coder_jsonl_from:-0}"
+        echo "$PROF_MSG"
+      elif [ "$coder_motif" = "$NETWORK_CLASS" ] || [ "$coder_motif" = "$RATELIMIT_CLASS" ]; then
+        [ -n "$PROF_MSG" ] && echo "$PROF_MSG"
+        net_retry=$((net_retry+1))
+        if [ "$net_retry" -ge "$BACKOFF_MAX_TRIES" ]; then
+          _cause="panne réseau"; [ "$coder_motif" = "$RATELIMIT_CLASS" ] && _cause="rate-limit (429)"
+          write_iteration "coder" "$coder_model" "$coder_start_epoch" "$coder_end_epoch" "$coder_motif" false null null "${coder_jsonl_from:-0}"
+          echo "⛔ $_cause : $net_retry récidives malgré le backoff ($BACKOFF_BASE s doublé, borne $BACKOFF_MAX_TRIES) → arrêt propre. Relance quand le réseau/le fournisseur est revenu — SANS changer de modèle."
+          bye stopped "arrêt propre : $_cause — $net_retry récidives malgré le backoff (borne $BACKOFF_MAX_TRIES). Relance quand le réseau/fournisseur revient — SANS changer de modèle." 0
+        fi
+        _wait=$(( BACKOFF_BASE * (1 << (net_retry - 1)) ))
+        write_iteration "coder" "$coder_model" "$coder_start_epoch" "$coder_end_epoch" "$coder_motif" false null null "${coder_jsonl_from:-0}"
+        echo "🌐 panne réseau/429 ($coder_motif), récidive #$net_retry/$BACKOFF_MAX_TRIES — backoff ${_wait}s AVANT l'itération suivante (ni fails ni stale)."
+        loop_sleep "$_wait"
+      else
+        net_retry=0
+        stale=$((stale+1))
+      # CAUSE du non-progrès : une codeuse morte en max_turns SANS commit n'est PAS un agent bloqué —
+      # c'est un lot SURDIMENSIONNÉ (elle relit tout à froid et épuise ses tours avant d'atteindre un
+      # commit). On lit le subtype du dernier result du jsonl pour distinguer les deux.
+      # Lot 4 : sans plafond configuré (défaut kit), --max-turns n'est jamais passé → ce subtype
+      # est INATTEIGNABLE, la branche reste en place pour les projets qui configurent un plafond.
+      # Réutilise coder_sub déjà extrait plus haut
+      case "$coder_sub" in
+        *max_turns*) turncap=$((turncap+1))
+          echo "   ⚠ codeuse plafonnée en tours (error_max_turns) sans commit (${turncap}x) — lot trop gros ? Consigne de checkpoint/découpe injectée au prochain tour.";;
+        *) turncap=0;;
+      esac
+      # Série de délais CÔTÉ CLIENT sans commit (même modèle que turncap : diagnostic à l'arrêt max_stale).
+      if [ "$coder_motif" = client_timeout ]; then ctmo=$((ctmo+1)); else ctmo=0; fi
+      # Un plafond de tours n'est pas un échec provider (le CLI a travaillé) → pas compté dans fails.
+      # Un délai CÔTÉ CLIENT non plus : compté dans fails, il déclencherait le failover et écarterait
+      # le modèle pour une faute qu'il n'a pas commise (directive 2026-09-08) ; max_stale reste le
+      # garde-fou — la boucle ne peut pas relever elle-même un plafond qui vit dans le config.env de yumi.
+      # Une INTERRUPTION (rc=143/137, fin sans result de CE run) non plus : le fournisseur n'y est
+      # pour rien, la qualité du modèle non plus — stale++ suffit (constat glm-feedback 150743).
+      # Une panne RÉSEAU/429 non plus : branche dédiée ci-dessus (backoff borné), jamais fails++.
+      # Un arrêt READS_CAP (G09) non plus : c'est NOTRE plafond de cadrage, pas une panne — le
+      # modèle n'y est pour rien ; consigne de cadrage injectée au prochain tour (pre=).
+      [ "$rc" -ne 0 ] && [ "$turncap" -eq 0 ] && [ "$ctmo" -eq 0 ] && [ "$coder_motif" != killed ] \
+        && [ "$coder_motif" != reads_cap ] \
+        && [ "$coder_motif" != "$NETWORK_CLASS" ] && [ "$coder_motif" != "$RATELIMIT_CLASS" ] \
+        && { fails=$((fails+1)); echo "⚠️  CODEUSE rc=$rc, aucun progrès (échec #$fails/$MAX_FAILS) — voir $MONITOR_DIR/CODEUSE.err"; }
+      if [ "$fails" -ge "$MAX_FAILS" ]; then
+        # FAILOVER (fallback_models) : crédit épuisé / provider mort ≠ fin de mission — rotation sur
+        # la liste de secours jusqu'à trouver un provider qui répond. La contrôleuse suit seulement
+        # si elle partage le provider du primaire en panne. Abort après 2 tours COMPLETS de liste.
+        if [ "$fb_count" -gt 0 ]; then
+          _dead="$(provider_of "$coder_model")"
+          if fb_advance "$_dead"; then
+            coder_model="$FB_RESULT"
+            [ "$(provider_of "$primary_reviewer_model")" = "$(provider_of "$primary_coder_model")" ] && reviewer_model="$coder_model"
+            echo "🔀 FAILOVER : provider en échec ${fails}x (crédit épuisé / binaire / token ?) → bascule sur $coder_model$([ "$reviewer_model" = "$coder_model" ] && printf ' (contrôleuse aussi)') ; sonde du primaire (${primary_coder_model:-défaut claude}) toutes les $PROBE_EVERY itérations."
+            fails=0; stale=0
+          else
+            write_iteration "coder" "$coder_model" "$coder_start_epoch" "$coder_end_epoch" "$coder_motif" false null null "${coder_jsonl_from:-0}"
+            echo "⛔ FAILOVER épuisé : aucun provider de « $FALLBACK_MODELS » distinct de $_dead ne répond ($fb_cycles tours de liste complets) → arrêt."; bye stopped "arrêt : FAILOVER épuisé — aucun provider de « $FALLBACK_MODELS » distinct de $_dead ne répond ($fb_cycles tours de liste complets)." 1
+          fi
+        else
+          write_iteration "coder" "$coder_model" "$coder_start_epoch" "$coder_end_epoch" "$coder_motif" false null null "${coder_jsonl_from:-0}"
+          echo "⛔ $fails échecs provider consécutifs sans progrès → abandon (binaire/modèle/token ?)."; bye stopped "arrêt : $fails échecs provider consécutifs sans progrès (binaire/modèle/token ?)." 1
+        fi
+      fi
+      if [ "$stale" -ge "$MAX_STALE" ]; then
+        stale_stop "$coder_motif"
+      fi
+      fi   # fi du else G16 (branche réseau/429 vs chemin d'échec historique)
+    fi
+
+    # Gate MÉCANIQUE optionnel : verify.sh à la racine DOIT passer (déterministe, ≠ un LLM qui hallucine).
+    # PLAFOND TEMPS (verify_time_cap, 0 = off) : un harnais FIGÉ (pnpm install sans réseau, DB
+    # injoignable, runner en mode watch) suspendait la boucle entre deux itérations SANS écrire
+    # dans .monitor/ (son log va dans $CTL_DIR) — incident réel 26/08 : 1h34 de lane à l'arrêt,
+    # boucle vivante mais muette, dernier signe console = le message turncap juste AVANT cet appel.
+    # Au cap : tout le groupe du harnais est tué (même mécanisme TIME_CAP_PREFIX que la revue,
+    # rc=142) et le gate est ROUGE — fail-closed : un gate qu'on n'a pas pu exécuter ne vaut pas vert.
+    VERIFY_STATE=""; _vrc=0
+    if [ -x ./verify.sh ]; then
+      _vcmd=(./verify.sh)
+      if [ "$VERIFY_TIME_CAP" -gt 0 ] 2>/dev/null; then
+        if command -v perl >/dev/null 2>&1; then
+          _vcmd=("${TIME_CAP_PREFIX[@]}" "$VERIFY_TIME_CAP" ./verify.sh)
+        else
+          echo "   (perl absent → plafond verify_time_cap ${VERIFY_TIME_CAP}s INACTIF pour verify.sh)" >&2
+        fi
+      fi
+      "${_vcmd[@]}" > "$CTL_DIR/verify.log" 2>&1 || _vrc=$?
+      [ "$_vrc" = 0 ] && VERIFY_STATE=green || VERIFY_STATE=red
+      echo "   ⚙️  verify.sh = $VERIFY_STATE (log: $CTL_DIR/verify.log)"
+      [ "$_vrc" = 142 ] && echo "   ⏱ verify.sh PLAFONNÉ en temps (${VERIFY_TIME_CAP}s) — harnais figé (réseau/DB ?), traité ROUGE : la boucle n'est plus suspendue par le gate mécanique."
+    fi
+    # Télémétrie Lot 3 : écrire la ligne iterations.jsonl pour la CODEUSE avec commit_produit/verify_ok
+    # commit_produit = un NOUVEAU COMMIT existe, PAS `progress` (qui vaut aussi 1 sur .done/handoff seuls, loop.sh:925)
+    coder_commit_produit=false
+    [ "$before" != "$after" ] && coder_commit_produit=true
+    coder_verify_ok=null
+    [ -n "$VERIFY_STATE" ] && { [ "$VERIFY_STATE" = green ] && coder_verify_ok=true; [ "$VERIFY_STATE" = red ] && coder_verify_ok=false; }
+    write_iteration "coder" "$coder_model" "$coder_start_epoch" "$coder_end_epoch" "$coder_motif" "$coder_commit_produit" "$coder_verify_ok" null "${coder_jsonl_from:-0}"
+
+    # .done ne doit PAS court-circuiter la revue ni survivre à un verify rouge.
+    if [ -f "$DONE_FILE" ] && [ "$VERIFY_STATE" = red ]; then
+      rm -f "$DONE_FILE"; echo "⚠ $DONE_FILE retiré : verify.sh rouge — pas de fin sur un test cassé."
+    fi
+    # Codeuse seule (pas de contrôleuse) : .done accepté seulement si verify ≠ rouge → fin.
+    if [ -f "$DONE_FILE" ] && ! is_true "$reviewer"; then STATE=done; break; fi
+
+    if is_true "$GATE_HANDOFF" && [ -f "$HANDOFF_FILE" ]; then
+      if is_true "$reviewer"; then
+        # REVUE AVANT LE GATE HUMAIN : un handoff n'est PAS un laissez-passer. La contrôleuse passe
+        # sur ce commit dans CETTE itération ; on ne cède la main à l'humain que sur verdict PASS
+        # (voir bloc contrôleuse) — sinon le handoff est retiré et le flux CR normal corrige d'abord.
+        echo "⏸ $HANDOFF_FILE déposé par la codeuse → la contrôleuse passe D'ABORD ; gate humain seulement si verdict PASS."
+      else
+        echo "⏸ $HANDOFF_FILE déposé par la codeuse → gate visuel/device requis (elle cède la main)."; STATE=handoff; break
+      fi
+    fi
+  fi
+
+  if is_true "$reviewer"; then
+    # Marqueur de FRAÎCHEUR : un verdict n'est valable que s'il est PLUS RÉCENT que ce fichier. Sans ça,
+    # une contrôleuse morte AVANT d'écrire (max-turns, crash, kill) laisse l'ANCIEN verdict en place —
+    # lisible, donc pris pour frais : des lots entiers passeraient « PASS » sans revue réelle.
+    # + SNAPSHOT de l'ancre .head AVANT la revue : si la contrôleuse écrit un provisoire avec le
+    # mauvais head (HEAD courant au lieu du dernier verdict réel) puis meurt, on peut la RÉTABLIR —
+    # sinon la plage à revoir s'effondre en HEAD..HEAD et des commits échappent à la revue.
+    prev_vhead=""
+    [ -n "$JQ" ] && [ -f "$VERDICT_FILE" ] && prev_vhead="$("$JQ" -r '.head // empty' "$VERDICT_FILE" 2>/dev/null || true)"
+    : > "$CTL_DIR/.review-started"
+    # PÉRIMÈTRE BORNÉ après 2 revues sans verdict (anti-divergence) — REMPLACE l'ancienne escalade
+    # du budget de tours (×1,5 par tentative, plafonné ×3), qui traitait un problème de PÉRIMÈTRE
+    # comme un problème de budget : la plage s'allonge à chaque échec → la revue est plus lourde →
+    # elle échoue plus sûrement, en sessions de plus en plus longues et interruptibles (4 h sans
+    # qu'une ligne avance, observé en production). Dès la 3e tentative, la contrôleuse ne relit QUE
+    # le dernier commit + l'essentiel et ÉCRIT TÔT : une revue partielle vaut infiniment mieux
+    # qu'une revue qui n'arrive jamais. (État dérivé de review_retry → survit à l'auto-update.)
+    rt_turns=$REVIEWER_MAX_TURNS
+    rscope=""
+    if [ "$review_retry" -ge 2 ]; then
+      rscope="BOUNDED SCOPE (anti-divergence) — the previous $review_retry reviews died WITHOUT delivering a verdict: the range to review keeps growing and the review keeps dying. Review ONLY the last commit (\`git show HEAD\`) plus the essentials (tests/verify green, DoD, hygiene) and WRITE THE VERDICT EARLY; everything you could not verify goes in 'blocking' as \"not verified: …\" — a partial verdict beats no verdict.
+
+"
+      echo "   ⊘ périmètre de revue BORNÉ au dernier commit (revues sans verdict : $review_retry — anti-divergence ; pas d'escalade de budget)."
+    fi
+    # Plafond TEMPS de la revue (review_time_cap, déf. 600 s — 0 = off) : une revue de 50 min est
+    # une revue qui sera interrompue ; le plafond horaire force à hiérarchiser (lire le diff, lancer
+    # le gate, rendre un verdict). Mécanisme dans run_agent (alarm perl) ; rc=142 = tuée par le cap.
+    write_state reviewer
+    reviewer_start_epoch=$(date +%s)
+    reviewer_jsonl_from="$(wc -l < "$MONITOR_DIR/reviewer.jsonl" 2>/dev/null | tr -d ' ' || echo 0)"
+    AGENT_TIME_CAP="$REVIEW_TIME_CAP" AGENT_EFFORT="${reviewer_effort:-}" run_agent "CONTRÔLEUSE" "$rscope$REVIEWER_PROMPT" "$MONITOR_DIR/reviewer.jsonl" "$rt_turns" "$reviewer_model"; rrc=$?
+    reviewer_end_epoch=$(date +%s)
+    # Extraire subtype du dernier result DE CE RUN pour toute la classification CONTRÔLEUSE
+    reviewer_sub="$(subtype_of "$MONITOR_DIR/reviewer.jsonl" "${reviewer_jsonl_from:-0}")"
+    reviewer_ctmo_msg="$(client_timeout_of "$MONITOR_DIR/reviewer.jsonl" "${reviewer_jsonl_from:-0}")"
+    # G16 : classe réseau/429 du dernier événement error DE CE RUN (vide sans jq → provider_fail).
+    reviewer_net="$(net_class_of "$MONITOR_DIR/reviewer.jsonl" "${reviewer_jsonl_from:-0}")"
+    # Télémétrie Lot 1-2 : motif_arret de la CONTRÔLEUSE — classification partagée
+    # classify_agent_stop (rc 143/137 → killed, cf. constat glm-feedback 150743 ; même règle
+    # que la codeuse ; décision pilote 67182a4 : killed = le signal, jamais « sans result »).
+    reviewer_motif="$(classify_agent_stop "$rrc" "$reviewer_sub" "$reviewer_ctmo_msg" "$reviewer_net")"
+    # rc=142 = tuée par le cap temps → sa propre classe, pas une panne provider (classify_agent_stop
+    # ne connaît pas le cap : branché ici, après classification générale).
+    [ "$rrc" -eq 142 ] && reviewer_motif="time_cap"
+    [ "$reviewer_motif" = client_timeout ] && client_timeout_diag "CONTRÔLEUSE" "$reviewer_ctmo_msg"
+    { [ "$reviewer_motif" = "$NETWORK_CLASS" ] || [ "$reviewer_motif" = "$RATELIMIT_CLASS" ]; } \
+      && network_diag "CONTRÔLEUSE" "$reviewer_motif" "$(tail -n +"$(( ${reviewer_jsonl_from:-0} + 1 ))" "$MONITOR_DIR/reviewer.jsonl" 2>/dev/null | "$JQ" -r 'fromjson? | select(type=="object" and .type=="error") | .error // empty' 2>/dev/null | tail -1)"
+    [ "$reviewer_motif" = killed ] && killed_diag "CONTRÔLEUSE" "$rrc"
+    # G05 : même diagnostic que la codeuse — rc≠0 avec .err vide → 3 derniers événements jsonl.
+    [ "$rrc" -ne 0 ] && [ ! -s "$MONITOR_DIR/CONTRÔLEUSE.err" ] && err_empty_diag "CONTRÔLEUSE" "$MONITOR_DIR/reviewer.jsonl" "${reviewer_jsonl_from:-0}"
+    # Télémétrie Lot 3 : extraire le verdict pour la CONTRÔLEUSE avant d'écrire la ligne
+    # Si le fichier de verdict existe et est frais (plus récent que .review-started), utiliser sa valeur
+    # Sinon, utiliser null (la ligne sera écrite, mais verdict=null pour cette itération)
+    reviewer_verdict=null
+    if [ -n "$JQ" ] && [ -f "$VERDICT_FILE" ] && [ "$VERDICT_FILE" -nt "$CTL_DIR/.review-started" ]; then
+      reviewer_verdict="$("$JQ" -r '.verdict // "null"' "$VERDICT_FILE" 2>/dev/null || echo null)"
+      # Si le verdict est "?" ou vide, le mettre à null
+      [ -z "$reviewer_verdict" ] || [ "$reviewer_verdict" = "?" ] && reviewer_verdict=null
+    fi
+    # Télémétrie Lot 1 : écrire la ligne iterations.jsonl pour la CONTRÔLEUSE avec verdict
+    write_iteration "reviewer" "$reviewer_model" "$reviewer_start_epoch" "$reviewer_end_epoch" "$reviewer_motif" null null "$reviewer_verdict" "${reviewer_jsonl_from:-0}"
+    [ "$rrc" -eq 142 ] && echo "⏱ contrôleuse PLAFONNÉE en temps (${REVIEW_TIME_CAP}s) — revue interrompue : traitée comme une NON-LIVRAISON (relance auto à périmètre borné), PAS comme une panne provider."
+    [ "$rrc" -ne 0 ] && echo "⚠️  CONTRÔLEUSE rc=$rrc — voir $MONITOR_DIR/CONTRÔLEUSE.err"
+    if [ -n "$JQ" ]; then
+      retry_reason=""
+      # Subtype du dernier result de la contrôleuse : distingue max-turns (elle a TRAVAILLÉ) d'une
+      # panne provider (rc≠0 sans max-turns) — utilisé par le diagnostic ET par le failover ci-dessous.
+      # Réutilise reviewer_sub déjà extrait plus haut
+      _diag=""; case "$reviewer_sub" in *max_turns*) _diag=" (max-turns $rt_turns atteint)";; esac
+      if [ -f "$VERDICT_FILE" ] && ! [ "$VERDICT_FILE" -nt "$CTL_DIR/.review-started" ]; then
+        # Fail-closed : verdict PÉRIMÉ — la contrôleuse s'est arrêtée sans écrire. On PRÉSERVE .head
+        # (ancrage de la plage à revoir : dernier verdict RÉEL → HEAD) et on synthétise un
+        # CHANGES_REQUESTED "stale" ; la revue est relancée au tour suivant SANS repasser par la codeuse.
+        vprev="$("$JQ" -r '.head // "?"' "$VERDICT_FILE" 2>/dev/null || echo '?')"
+        # Diagnostic : « revue faite, verdict non sérialisé » ≠ « contrôleuse muette » — si log.md a
+        # bien reçu sa section datée pendant CE run, le travail de revue a EU LIEU ; seul le JSON manque.
+        if [ -f "$CTL_DIR/log.md" ] && [ "$CTL_DIR/log.md" -nt "$CTL_DIR/.review-started" ]; then
+          retry_reason="revue FAITE (log.md mis à jour) mais verdict NON SÉRIALISÉ$_diag — la contrôleuse a travaillé puis est morte avant d'écrire le JSON"
+        else
+          retry_reason="verdict périmé (contrôleuse arrêtée sans écrire$_diag)"
+        fi
+        printf '{"head":"%s","verdict":"CHANGES_REQUESTED","stale":true,"blocking":["review not delivered: reviewer stopped before writing the verdict (max-turns?). Last REAL verdict: head=%s — every commit beyond it is UNREVIEWED. Do NOT code: the review is re-run automatically."]}\n' \
+          "$vprev" "$vprev" > "$VERDICT_FILE"
+      elif [ ! -f "$VERDICT_FILE" ] || ! "$JQ" -e '.verdict' "$VERDICT_FILE" >/dev/null 2>&1; then
+        # Fail-closed : verdict illisible/absent (modèle faible qui enveloppe le JSON) = CHANGES_REQUESTED.
+        printf '{"verdict":"CHANGES_REQUESTED","stale":true,"blocking":["review not delivered: verdict JSON unreadable or missing — the review will be re-run automatically; do NOT code"]}\n' > "$VERDICT_FILE"
+        # Même diagnostic que la branche « périmé » : log.md mis à jour pendant CE run = la revue a EU
+        # LIEU, seul le JSON manque (première revue d'une boucle neuve, ou JSON enveloppé de prose).
+        if [ -f "$CTL_DIR/log.md" ] && [ "$CTL_DIR/log.md" -nt "$CTL_DIR/.review-started" ]; then
+          retry_reason="revue FAITE (log.md mis à jour) mais verdict NON SÉRIALISÉ (JSON illisible/absent)"
+        else
+          retry_reason="verdict illisible/absent"
+        fi
+      elif [ "$("$JQ" -r '.provisional // false' "$VERDICT_FILE" 2>/dev/null)" = "true" ]; then
+        # Verdict PROVISOIRE (écrit en DÉBUT de revue, jamais raffiné) = contrôleuse morte À MI-REVUE.
+        # Le travail partiel est exploitable (log.md), le verdict final manque : relance (périmètre
+        # borné dès la 3e tentative), codeuse sautée. Fail-closed déjà en place (le provisoire est
+        # CHANGES_REQUESTED).
+        # ANCRE : si le provisoire porte un head ≠ dernier verdict réel (contrôleuse qui a mis HEAD
+        # courant malgré la consigne), on RÉTABLIT l'ancre snapshotée — la plage à revoir reste
+        # dernier-verdict-RÉEL → HEAD pour la relance et pour la branche « périmé » suivante.
+        if [ -n "${prev_vhead:-}" ] && [ "$("$JQ" -r '.head // ""' "$VERDICT_FILE" 2>/dev/null)" != "$prev_vhead" ]; then
+          "$JQ" --arg h "$prev_vhead" '.head=$h' "$VERDICT_FILE" > "$VERDICT_FILE.tmp" 2>/dev/null \
+            && mv -f "$VERDICT_FILE.tmp" "$VERDICT_FILE" \
+            && echo "   ↺ ancre .head du verdict provisoire rétablie sur le dernier verdict RÉEL ($prev_vhead)."
+        fi
+        retry_reason="verdict PROVISOIRE non raffiné (contrôleuse interrompue à mi-revue — travail partiel dans log.md)"
+      fi
+      verdict="$("$JQ" -r '.verdict // "?"' "$VERDICT_FILE" 2>/dev/null || echo '?')"
+      vhead="$("$JQ" -r '.head // "?"' "$VERDICT_FILE" 2>/dev/null || echo '?')"
+      if [ -n "$retry_reason" ]; then
+        # Pas de revue réelle ce tour : on relance la contrôleuse (codeuse sautée) au lieu de laisser la
+        # codeuse « corriger » un blocker qui n'en est pas un. Verdict synthétique = fail-closed quand même
+        # (.done refusé, verdict CHANGES_REQUESTED tant que la revue n'est pas rendue).
+        review_retry=$((review_retry+1))
+        echo "   ⚠ $retry_reason → fail-closed CHANGES_REQUESTED ; revue relancée au prochain tour ($review_retry/$MAX_REVIEW_RETRY)."
+        # claude_profiles : 429 de la contrôleuse sur provider claude → compte suivant (profil commun aux deux rôles).
+        if [ "$reviewer_motif" = "$RATELIMIT_CLASS" ] && claude_role "$reviewer_model"; then prof_rotate || true; [ -n "$PROF_MSG" ] && echo "$PROF_MSG"; fi
+        if [ "$review_retry" -ge "$MAX_REVIEW_RETRY" ]; then
+          # Panne PROVIDER de la contrôleuse (rc≠0 SANS max-turns, aucun verdict) + liste de secours
+          # → même FAILOVER que la codeuse au lieu d'un arrêt sec : crédit épuisé ≠ fin de mission.
+          # (Sans signature provider — contrôleuse qui répond mais n'écrit pas — l'arrêt reste juste.)
+          # Signature provider seulement si la CODEUSE échoue aussi (fails>0) : une contrôleuse qui
+          # meurt alors que la codeuse vient de tourner sans faute n'est PAS une panne provider —
+          # c'est un défaut de REVUE (crash, JSON illisible…) → MODE DÉGRADÉ ci-dessous, pas un
+          # failover inutile (incident réel 24/08 : trois lanes à l'arrêt 10 h, zéro ligne
+          # produite, providers pourtant sains — garde éprouvé sur blackcat).
+          # DIVERGENCE kit vs blackcat : le garde fails>0 ne s'applique QUE si la codeuse est
+          # ACTIVE (coder=true) — en boucle reviewer-only (coder=false), fails vaut 0 en permanence
+          # (aucune codeuse ne tourne pour fournir le signal de santé) et le garde y rendrait le
+          # failover contrôleuse INACCESSIBLE (une boucle de revue seule avec provider de revue mort
+          # tournerait à vide jusqu'à max_iters au lieu de basculer). Sans signal codeuse, la
+          # signature rrc≠0 hors max_turns/142 reste le meilleur indice disponible.
+          # Réutilise reviewer_sub déjà extrait plus haut
+          _psig=0; [ "$rrc" -ne 0 ] && { ! is_true "$coder" || [ "${fails:-0}" -gt 0 ]; } && case "$reviewer_sub" in *max_turns*) ;; *) [ "$rrc" -ne 142 ] && _psig=1;; esac
+          # Délai CÔTÉ CLIENT ≠ signature fournisseur (même règle que la codeuse : le plafond est
+          # NOTRE réglage) → mode dégradé, revue retentée à chaque tour, jamais de bascule de modèle.
+          [ "$reviewer_motif" = client_timeout ] && _psig=0
+          # Interruption (rc=143/137) ≠ signature fournisseur non plus : le harnais a tué la
+          # contrôleuse, le provider n'y est pour rien (glm-feedback 150743).
+          [ "$reviewer_motif" = killed ] && _psig=0
+          # G16 — panne RÉSEAU / 429 ≠ signature fournisseur : basculer de provider est inutile
+          # (le réseau est en panne pour TOUS), le backoff codeuse s'applique au rôle en cause.
+          { [ "$reviewer_motif" = "$NETWORK_CLASS" ] || [ "$reviewer_motif" = "$RATELIMIT_CLASS" ]; } && _psig=0
+          if [ "$_psig" = 1 ] && [ "$fb_count" -gt 0 ]; then
+            _dead="$(provider_of "$reviewer_model")"
+            if fb_advance "$_dead"; then
+              reviewer_model="$FB_RESULT"
+              [ "$(provider_of "$primary_coder_model")" = "$(provider_of "$primary_reviewer_model")" ] && coder_model="$reviewer_model"
+              echo "🔀 FAILOVER (contrôleuse) : $review_retry revues sans verdict avec échec provider → bascule sur $reviewer_model$([ "$coder_model" = "$reviewer_model" ] && printf ' (codeuse aussi)') ; sonde du primaire toutes les $PROBE_EVERY itérations."
+              review_retry=1   # pas 0 : la codeuse reste sautée, la revue repart DIRECT sur le NOUVEAU provider
+            else
+              echo "⛔ FAILOVER épuisé : aucun provider de « $FALLBACK_MODELS » distinct de $_dead ne répond ($fb_cycles tours de liste complets) → arrêt."; bye stopped "arrêt : FAILOVER contrôleuse épuisé — aucun provider de « $FALLBACK_MODELS » distinct de $_dead ne répond ($fb_cycles tours de liste complets)." 1
+            fi
+          else
+            # MODE DÉGRADÉ (anti-SPOF) : « pas de verdict frais → codeuse sautée » faisait de la
+            # contrôleuse un point de défaillance unique pour TOUT progrès (9 tours consécutifs
+            # sautés, zéro ligne produite, observé en production). Après MAX_REVIEW_RETRY revues
+            # sans verdict, la codeuse AVANCE quand même ; chaque commit est marqué « non relu »
+            # dans le Journal — dette EXPLICITE, soldée dès qu'une revue redevient opérante
+            # (l'ancre .head est préservée : la plage non relue est couverte par le prochain
+            # verdict réel). .done et le gate humain restent FAIL-CLOSED (seul un PASS RÉEL ancré
+            # HEAD les débloque) — avancer avec une dette explicite, jamais en confiance aveugle.
+            [ "$review_degraded" != 1 ] && echo "⚠ $MAX_REVIEW_RETRY revues sans verdict → MODE DÉGRADÉ : la codeuse AVANCE (commits marqués « non relus », dette explicite) ; la revue est retentée à chaque tour, .done/gate inchangés (fail-closed)."
+            review_degraded=1; review_retry=0
+          fi
+        fi
+        # Un handoff en attente ne part PAS chez l'humain sans verdict réel : gate suspendu, la
+        # relance de revue (codeuse sautée) tranchera PASS → gate / CR → correction d'abord.
+        if is_true "$GATE_HANDOFF" && [ -f "$HANDOFF_FILE" ]; then
+          handoff_wait_review=1
+          write_state handoff_suspended
+          echo "   ⏸ gate-handoff SUSPENDU en attente d'un verdict réel — l'humain ne recevra que du code revu."
+        fi
+      else
+        review_retry=0
+        # Dette soldée : une revue RÉELLE vient de couvrir toute la plage non relue (ancre .head
+        # préservée en mode dégradé) → les commits « non relus » sont relus par construction.
+        [ "$review_degraded" = 1 ] && { echo "   ✓ revue de nouveau opérante — les commits « non relus » sont couverts par ce verdict (ancre .head préservée) : dette SOLDÉE."; review_degraded=0; }
+        echo "   ⟲ verdict : $verdict"
+        vtests="$("$JQ" -r '.tests // "?"' "$VERDICT_FILE" 2>/dev/null || echo '?')"
+        # Défense en profondeur : PASS avec tests=harness-error est CONTRADICTOIRE (le test n'a pas
+        # TOURNÉ → rien n'a été validé) — rétrogradé en CHANGES_REQUESTED, fichier RÉÉCRIT (la codeuse
+        # lit ce fichier : il doit dire la même chose que la boucle). Sans ça, un tel PASS gardait
+        # .done et cédait un handoff à l'humain comme « code VALIDÉ » alors que rien n'a tourné.
+        if [ "$verdict" = PASS ] && [ "$vtests" = "harness-error" ]; then
+          "$JQ" '.verdict="CHANGES_REQUESTED" | .blocking=((.blocking // []) + ["PASS with tests:harness-error is contradictory — the test did NOT run, so nothing was validated: fix the HARNESS, re-run the tests, then re-review"])' \
+            "$VERDICT_FILE" > "$VERDICT_FILE.tmp" 2>/dev/null && mv -f "$VERDICT_FILE.tmp" "$VERDICT_FILE"
+          verdict=CHANGES_REQUESTED
+          echo "   ⚠ verdict PASS avec tests=harness-error : contradictoire (test jamais exécuté) → rétrogradé CHANGES_REQUESTED (réparer le harnais d'abord)."
+        fi
+        # Anti ping-pong : N CHANGES_REQUESTED d'affilée sur le même HEAD → arrêt (blocage stérile).
+        # (Les verdicts synthétiques "stale" n'alimentent PAS ce compteur : ce ne sont pas des revues.
+        #  tests=harness-error non plus : le test n'a pas TOURNÉ — échec du BANC, pas du produit ; le
+        #  blocker attendu est « réparer le harnais », et max_stale reste le garde-fou si rien ne bouge.)
+        if [ "$verdict" = CHANGES_REQUESTED ] && [ "$vtests" = "harness-error" ]; then
+          echo "   ⚠ tests=harness-error : le test n'a pas TOURNÉ (banc/outillage en panne) — AUCUNE conclusion produit possible ; réparer le HARNAIS puis rejouer. (non compté dans l'anti ping-pong)"
+        elif [ "$verdict" = CHANGES_REQUESTED ] && [ "$vhead" = "$last_cr_head" ]; then cr_streak=$((cr_streak+1))
+        elif [ "$verdict" = CHANGES_REQUESTED ]; then cr_streak=1; last_cr_head="$vhead"
+        else cr_streak=0; last_cr_head=""; fi
+        [ "$cr_streak" -ge "$MAX_CR" ] && { echo "⛔ $cr_streak revues CHANGES_REQUESTED d'affilée sur $vhead → arrêt (ping-pong)."; bye stopped "arrêt : $cr_streak revues CHANGES_REQUESTED d'affilée sur $vhead (ping-pong)." 1; }
+        # GATE-HANDOFF : la main n'est cédée à l'humain QUE sur verdict PASS RÉEL ancré sur le
+        # HEAD courant (M4 — un PASS sur un vieux sha ne valide pas les commits de tête non
+        # revus). Sinon : handoff RETIRÉ, flux CR normal — la codeuse corrige au tour suivant
+        # et re-déposera le handoff une fois la correction commitée.
+        handoff_wait_review=0
+        if is_true "$GATE_HANDOFF" && [ -f "$HANDOFF_FILE" ]; then
+          if verdict_real_pass "$verdict" "$vhead"; then
+            echo "⏸ verdict PASS ancré sur HEAD ($vhead) → gate humain (code VALIDÉ par la revue)."; STATE=handoff; break
+          else
+            rm -f "$HANDOFF_FILE"
+            if [ "$verdict" = PASS ]; then
+              echo "↩ verdict PASS ancré sur $vhead ≠ HEAD courant → verdict PÉRIMÉ (commits de tête non revus) : $HANDOFF_FILE RETIRÉ, la revue tranchera sur le HEAD réel."
+            else
+              echo "↩ verdict $verdict sur le commit du handoff → $HANDOFF_FILE RETIRÉ : correction d'abord (flux CR normal), le handoff sera re-déposé après."
+            fi
+          fi
+        fi
+      fi
+      # .done accepté seulement si la revue indépendante a validé (PASS RÉEL ancré sur HEAD — M4 :
+      # un PASS périmé ne couvre pas les commits de tête, la fin serait déclarée sur du non-revu).
+      if [ -f "$DONE_FILE" ] && ! verdict_real_pass "$verdict" "$vhead"; then
+        rm -f "$DONE_FILE"
+        if [ "$verdict" = PASS ]; then
+          echo "⚠ $DONE_FILE retiré : verdict PASS ancré sur $vhead ≠ HEAD — verdict PÉRIMÉ, pas de fin sur des commits de tête non revus."
+        else
+          echo "⚠ $DONE_FILE retiré : verdict=$verdict (≠ PASS) — pas de fin sans revue verte."
+        fi
+      fi
+    else
+      # Sans jq, impossible de valider le verdict → on ne se fie pas à un .done créé en mode contrôlé.
+      [ -f "$DONE_FILE" ] && { rm -f "$DONE_FILE"; echo "⚠ $DONE_FILE retiré : jq absent → verdict non validable en mode contrôlé."; }
+    fi
+  fi
+
+  # Plafond de coût (optionnel) : somme les 'result' des jsonl (claude émet la télémétrie ; kimi/vibe = 0).
+  # M1 : ne passer à jq que les jsonl EXISTANTS — en mode codeuse seule reviewer.jsonl n'existe
+  # pas, jq échouait sur le fichier absent → || echo 0 → spent=0 pour toujours (budget mort).
+  if [ -n "$JQ" ] && [ -n "${max_cost:-}" ]; then
+    _cost_jf=()
+    for _jf in "$MONITOR_DIR/coder-main.jsonl" "$MONITOR_DIR/reviewer.jsonl"; do
+      [ -f "$_jf" ] && _cost_jf+=("$_jf")
+    done
+    if [ "${#_cost_jf[@]}" -gt 0 ]; then
+      spent="$("$JQ" -rs 'map(select(type=="object" and .type=="result") | .total_cost_usd // 0) | add // 0' \
+        "${_cost_jf[@]}" 2>/dev/null || echo 0)"
+      if [ "$(awk -v a="$spent" -v b="$max_cost" 'BEGIN{print (a+0>=b+0)?1:0}')" = 1 ]; then
+        echo "⏹ budget atteint (\$$spent ≥ \$$max_cost) — arrêt propre."; STATE=budget; break
+      fi
+    fi
+  fi
+
+  echo; echo "---------- fin itération $i ----------"
+done
+
+# Statut final + notification passive (cloche + hook notify_cmd optionnel).
+[ -f "$DONE_FILE" ] && STATE=done
+# Un handoff SUSPENDU (pas de verdict réel) ne s'annonce PAS « cédé la main » : l'humain ne doit
+# pas gater du code non revu — la relance re-suspendra et fera trancher la contrôleuse d'abord.
+if [ "$STATE" != done ] && is_true "$GATE_HANDOFF" && [ -f "$HANDOFF_FILE" ] && [ "${handoff_wait_review:-0}" != 1 ]; then STATE=handoff; fi
+# La PAUSE l'emporte sur handoff/budget/stopped (jamais sur done) : décision HUMAINE explicite —
+# « en pause, rien à faire tant que le fichier existe ».
+[ "$STATE" != done ] && [ -f "$PAUSE_FILE" ] && STATE=paused
+# Dernier point sûr : l'état TERMINAL (done/handoff/budget/stopped) survit à la sortie — le verrou
+# est nettoyé par le trap EXIT, state.json reste la seule assertion lisible par scan/hub.
+# G05 : la raison finale est nommée (state.json.reason) — une fin max_iters/budget n'est plus muette.
+case "$STATE" in
+  done)    LOOP_EXIT_REASON="mission terminée ($DONE_FILE posé) en $i itérations";;
+  handoff) LOOP_EXIT_REASON="gate humain en attente ($HANDOFF_FILE) — cédé la main après $i itérations";;
+  paused)  LOOP_EXIT_REASON="en pause ($PAUSE_FILE) — arrêt propre à $i itérations";;
+  budget)  LOOP_EXIT_REASON="budget atteint (max_cost) après $i itérations";;
+  *)       LOOP_EXIT_REASON="arrêt à $i itérations (MAX_ITERS ou interruption)";;
+esac
+write_state "$STATE"
+case "$STATE" in
+  done)    echo "✅ terminé ($DONE_FILE) en $i itérations.";;
+  handoff) echo "⏸ CÉDÉ LA MAIN ($HANDOFF_FILE) — gate visuel/device requis. Contenu :"; cat "$HANDOFF_FILE" 2>/dev/null;;
+  paused)  echo "⏸ EN PAUSE ($PAUSE_FILE) — arrêt propre à $i itérations. Supprime le fichier puis relance pour reprendre.";;
+  budget)  echo "⏹ arrêté sur budget à $i itérations — relance (ou augmente max_cost) pour continuer.";;
+  *)       echo "⏹ arrêté à $i itérations (MAX_ITERS ou interruption) — relance pour continuer.";;
+esac
+echo "$LOOP_EXIT_REASON"
+printf '\a'   # cloche terminal : signal passif de fin
+[ -n "${notify_cmd:-}" ] && { export LOOP_STATE="$STATE" LOOP_ITERS="$i"; eval "$notify_cmd" >/dev/null 2>&1 || true; }
+# Fin NORMALE → rc=0 EXPLICITE. Sans lui, le `[ -n … ] && …` ci-dessus est la dernière commande :
+# notify_cmd absent → test faux → rc=1 — une fin saine (max_iters/budget/done) sortait « en erreur »,
+# indiscernable d'un vrai échec pour un supervisant qui lit le code de retour (cron, launchd, CI).
+# Toutes les sorties ANORMALES plus haut quittent par un exit non-zéro EXPLICITE : ce exit 0 ne
+# masque aucune erreur, il ne fait que rendre la fin normale identifiable.
+exit 0

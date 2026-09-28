@@ -25,7 +25,7 @@ import type { ImapAccountRow } from '../accounts'
 import { query } from '../db'
 import { decrypt } from '../encrypt'
 import {
-  ASSUMED_INPUT_TOKENS_PER_MAIL, EngineError, askEngine, buildState, costUsd,
+  EngineError, askEngine, assumedInputTokensPerMail, buildState, costUsd,
   type BulkState, type EngineResult, type EngineState, type MailForState, type PauseReason, type TagSource,
 } from './engine'
 import { alreadyTagged, messageIdOf, writeTags } from './store'
@@ -217,6 +217,7 @@ interface TaggingRow {
   sample_size: number | null
   sample_seed: string | null
   sample_cursor: SampleCursor | null
+  run_started_at: Date | null
 }
 
 /** Ce qu'un passage a fait. Rendu au planificateur, et lisible par le banc. */
@@ -305,6 +306,7 @@ export async function startBulk(accountId: string, opts: { restart?: boolean } =
             tagged = CASE WHEN $2 THEN 0 ELSE tagged END,
             skipped = CASE WHEN $2 THEN 0 ELSE skipped END,
             errors = CASE WHEN $2 THEN 0 ELSE errors END,
+            run_started_at = CASE WHEN $2 OR run_started_at IS NULL THEN NOW() ELSE run_started_at END,
             updated_at = NOW()
       WHERE account_id = $1`,
     [accountId, opts.restart === true]
@@ -327,7 +329,7 @@ export async function startSample(
     `UPDATE mailbox_tagging
         SET bulk_state = 'running', ${PAUSE_IF_NO_ENGINE}, locked_until = NULL,
             sample_size = $2, sample_seed = $3, sample_cursor = NULL, bulk_cursor = NULL,
-            tagged = 0, skipped = 0, errors = 0, updated_at = NOW()
+            tagged = 0, skipped = 0, errors = 0, run_started_at = NOW(), updated_at = NOW()
       WHERE account_id = $1`,
     [accountId, Math.max(Math.trunc(opts.size ?? SAMPLE_SIZE_DEFAULT), 1), Math.trunc(opts.seed ?? SAMPLE_SEED_DEFAULT)]
   )
@@ -435,7 +437,7 @@ const saveLiveCursor = (accountId: string, cursor: LiveCursor): Promise<unknown>
 export function estimateUsd(params: { mails: number; usdPerBillionInput: number; inputTokens?: number; tagged?: number }): number {
   const perMail = params.tagged && params.tagged > 0 && params.inputTokens
     ? params.inputTokens / params.tagged
-    : ASSUMED_INPUT_TOKENS_PER_MAIL
+    : assumedInputTokensPerMail()
   return costUsd(params.usdPerBillionInput, perMail * params.mails)
 }
 
@@ -512,23 +514,32 @@ type Advance = {
   paused?: { reason: PauseReason; detail: string }; finished?: boolean
 }
 
-/** Ce que les deux modes partagent : sauter le déjà-fait, taguer, compter, enregistrer. */
+/**
+ * Ce que les deux modes partagent : sauter le déjà-fait, taguer, compter, enregistrer.
+ *
+ * « Sauté » ne compte QUE ce qui est sauté pour de bon (lot T10c) : un mail tagué AVANT ce tri,
+ * ou un doublon de Message-ID dans ce lot même. Un mail tagué PAR ce tri est relu quand un lot
+ * coupé au délai laisse son curseur en place — il a déjà été compté en « tagué », le compter à
+ * nouveau en « sauté » gonflait les deux compteurs pour un seul mail.
+ */
 async function processBatch(params: {
   accountId: string; engine: TaggingEngine; mails: SourceMail[]; deadline: number; spent: number; budget: number
+  runStartedAt: Date | null
 }): Promise<Advance & { lastUid: number; complete: boolean }> {
   const { accountId, engine, mails, deadline } = params
   const ids = mails.map(m => messageIdOf(m))
-  const seen = await alreadyTagged(accountId, engine.source, ids)
+  const seen = await alreadyTagged(accountId, engine.source, ids, params.runStartedAt)
   // Le même mail peut être classé dans deux dossiers, ou deux fois dans le même : il porte alors
   // le MÊME Message-ID. `alreadyTagged` ne rattrape que ce qui est déjà en base, donc pas deux
   // exemplaires du même lot — d'où ce second filtre, sans quoi le mail serait payé deux fois.
   const withinBatch = new Set<string>()
+  let skipped = 0
   const todo = mails.filter((m, i) => {
-    if (seen.has(ids[i]) || withinBatch.has(ids[i])) return false
+    if (seen.during.has(ids[i])) return false
+    if (seen.before.has(ids[i]) || withinBatch.has(ids[i])) { skipped += 1; return false }
     withinBatch.add(ids[i])
     return true
   })
-  const skipped = mails.length - todo.length
   const lastUid = mails[mails.length - 1].uid
 
   if (!todo.length) {
@@ -601,7 +612,7 @@ async function advanceBulk(params: {
       continue
     }
 
-    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget })
+    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, runStartedAt: row.run_started_at })
     acc.tagged += res.tagged; acc.skipped += res.skipped; acc.errors += res.errors; acc.calls += res.calls
     acc.spent = res.spent
     if (res.complete) {
@@ -693,7 +704,7 @@ async function advanceSample(params: {
       continue
     }
 
-    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget })
+    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, runStartedAt: row.run_started_at })
     acc.tagged += res.tagged; acc.skipped += res.skipped + missing; acc.errors += res.errors; acc.calls += res.calls
     acc.spent = res.spent
     if (missing) {
@@ -737,7 +748,7 @@ async function advanceLive(params: {
       if (remaining(deadline) <= 0 || acc.spent >= params.budget) return acc
       const mails = await source.fetch(f.path, after, BATCH_SIZE)
       if (!mails.length) break
-      const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget })
+      const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, runStartedAt: row.run_started_at })
       acc.tagged += res.tagged; acc.skipped += res.skipped; acc.errors += res.errors; acc.calls += res.calls
       acc.spent = res.spent
       if (res.complete) {

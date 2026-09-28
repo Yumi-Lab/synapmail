@@ -76,7 +76,7 @@ const check = (label, ok, detail = '') => {
 
 const { initDb, query } = await import('../lib/db.ts')
 const runner = await import('../lib/tagging/runner.ts')
-const { ASSUMED_INPUT_TOKENS_PER_MAIL, EngineError } = await import('../lib/tagging/engine.ts')
+const { ASSUMED_INPUT_TOKENS_PER_QUESTION, assumedInputTokensPerMail, EngineError } = await import('../lib/tagging/engine.ts')
 const { QUESTIONS, valuesOf } = await import('../lib/tagging/questions.ts')
 const store = await import('../lib/tagging/store.ts')
 
@@ -213,7 +213,7 @@ const makeEngine = (opts = {}) => {
         const a = ANSWERS[q.id]
         const valeur = q.type === 'noul' ? 'oui' : valuesOf(q)[0]
         return { question: q.id, valeur, probabilites: a.probabilities ?? null, confiance: 0.8 }
-      }), rejected: [], inputTokens: opts.inputTokens ?? ASSUMED_INPUT_TOKENS_PER_MAIL }
+      }), rejected: [], inputTokens: opts.inputTokens ?? assumedInputTokensPerMail() }
     },
   }
 }
@@ -225,13 +225,13 @@ const setMailbox = async (accountId, engineId, patch = {}) => {
     paused_reason: null, paused_detail: null, locked_until: null,
     // Les colonnes d'échantillon sont remises comme les autres : sans ça, la section H laisserait
     // `sample_size` posé et les sections suivantes trieraient un échantillon sans le savoir.
-    sample_size: null, sample_seed: null, sample_cursor: null, ...patch }
+    sample_size: null, sample_seed: null, sample_cursor: null, run_started_at: null, ...patch }
   await pool.query(
     `INSERT INTO mailbox_tagging (account_id, engine_id, budget_usd, spent_usd, input_tokens, live,
                                   live_cursor, bulk_state, bulk_cursor, tagged, skipped, errors,
                                   total, paused_reason, paused_detail, locked_until,
-                                  sample_size, sample_seed, sample_cursor)
-     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
+                                  sample_size, sample_seed, sample_cursor, run_started_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20)
      ON CONFLICT (account_id) DO UPDATE SET
        engine_id = EXCLUDED.engine_id, budget_usd = EXCLUDED.budget_usd, spent_usd = EXCLUDED.spent_usd,
        input_tokens = EXCLUDED.input_tokens, live = EXCLUDED.live, live_cursor = EXCLUDED.live_cursor,
@@ -239,12 +239,14 @@ const setMailbox = async (accountId, engineId, patch = {}) => {
        skipped = EXCLUDED.skipped, errors = EXCLUDED.errors, total = EXCLUDED.total,
        paused_reason = EXCLUDED.paused_reason, paused_detail = EXCLUDED.paused_detail,
        locked_until = EXCLUDED.locked_until, sample_size = EXCLUDED.sample_size,
-       sample_seed = EXCLUDED.sample_seed, sample_cursor = EXCLUDED.sample_cursor`,
+       sample_seed = EXCLUDED.sample_seed, sample_cursor = EXCLUDED.sample_cursor,
+       run_started_at = EXCLUDED.run_started_at`,
     [accountId, engineId, cols.budget_usd, cols.spent_usd, cols.input_tokens, cols.live,
       cols.live_cursor ? JSON.stringify(cols.live_cursor) : null, cols.bulk_state,
       cols.bulk_cursor ? JSON.stringify(cols.bulk_cursor) : null, cols.tagged, cols.skipped,
       cols.errors, cols.total, cols.paused_reason, cols.paused_detail, cols.locked_until,
-      cols.sample_size, cols.sample_seed, cols.sample_cursor ? JSON.stringify(cols.sample_cursor) : null])
+      cols.sample_size, cols.sample_seed, cols.sample_cursor ? JSON.stringify(cols.sample_cursor) : null,
+      cols.run_started_at])
 }
 
 /**

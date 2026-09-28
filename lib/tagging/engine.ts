@@ -22,7 +22,7 @@
  * fermeture — pas un filtre sur le texte — qui rend l'injection inoffensive.
  */
 import { messageText } from '../html'
-import { NOUL_NO, NOUL_YES, engineQuestionsFor, isValidTag, posedQuestions, valuesOf, type TagQuestion } from './questions'
+import { NOUL_NO, NOUL_YES, QUESTIONS, engineQuestionsFor, isValidTag, posedQuestions, valuesOf, type TagQuestion } from './questions'
 
 /**
  * Les sources d'une étiquette : le TYPE du moteur qui l'a produite (décision 13, donc `autre`
@@ -73,14 +73,24 @@ export const costUsd = (usdPerBillionInput: number, inputTokens: number): number
 export const STATE_BODY_CHARS = 1500
 
 /**
- * Le coût supposé d'un mail tant qu'AUCUNE moyenne n'a été mesurée sur la boîte. Constante
- * documentée comme telle, et remplacée dès la première mesure : 5 018 jetons d'entrée en
- * moyenne, relevés sur 20 mails réels de nicolas@yumi-lab.com le 28/09/2026 avec les
- * 41 questions d'aujourd'hui (jev-1.13.0, lot T8, `.loop/t8-measure.out`), arrondis à
- * 5 000. La moyenne précédente (~1 600) portait sur 7 questions et sous-estimait d'un
- * facteur 3 l'estimation affichée avant le premier tri.
+ * Le coût supposé d'un mail tant qu'AUCUNE moyenne n'a été mesurée sur la boîte, exprimé PAR
+ * QUESTION : une estimation figée par mail devient fausse dès qu'une question est ajoutée, ce
+ * qu'a montré la mesure réelle (l'écran annonçait 0,21 $ mesurés à 41 questions, la taxonomie
+ * en comptait 49, la dépense réelle a été 0,30 $).
+ *
+ * 147 jetons d'entrée par question et par mail : relevé sur les 995 mails réellement tagués de
+ * l'échantillon de nicolas@yumi-lab.com le 28/09/2026 (jev-1.13.0, gate T10b 3e passage,
+ * `.loop/gate-t10b-3.out` + `.loop/control/gate-0.pass.delivered`) — 0,3009 $ à 42 $ le
+ * milliard de jetons, soit 7,164 M jetons pour 995 mails et 49 questions.
  */
-export const ASSUMED_INPUT_TOKENS_PER_MAIL = 5000
+export const ASSUMED_INPUT_TOKENS_PER_QUESTION = 147
+
+/**
+ * Ce même coût ramené au mail, pour la taxonomie TELLE QU'ELLE EST. Une fonction et non une
+ * constante : les questions deviennent modifiables (lot T-Q), donc un nombre figé au chargement
+ * du module serait faux dès la première question ajoutée.
+ */
+export const assumedInputTokensPerMail = (): number => ASSUMED_INPUT_TOKENS_PER_QUESTION * QUESTIONS.length
 
 export interface MailForState {
   fromName?: string
