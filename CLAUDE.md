@@ -628,3 +628,4 @@ REGISTRATION_ENABLED=true   # set to false after setup
 - **Types**: define interfaces in `types/` directory, import from there
 - **Components**: Client components use `'use client'`, server by default
 - **Skills**: `/deploy` rebuilds and tails Docker logs; `/i18n` adds keys to both locale files atomically; `/new-api-route` scaffolds a route; `/check-types` runs tsc; `/review` checks conventions before deploy
+- **Personal data sent to a third party**: any feature that sends personal data (an IP, an email address, a name…) to an external service outside this instance (e.g. `ip-api.com` in `lib/ipLocation.ts`) must (a) say so in plain language at the top of the module — what leaves, where, why, and what the answer is actually worth — and (b) ship an env var kill switch, default enabled, same convention as `REGISTRATION_ENABLED` (e.g. `IP_GEOLOCATION_ENABLED`), documented in `.env.example` and `README.md`, that a self-hosted operator can flip without touching code.

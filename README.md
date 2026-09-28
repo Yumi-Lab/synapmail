@@ -218,6 +218,7 @@ After setup, set `REGISTRATION_ENABLED=false` in `.env` and restart to prevent n
 | `NEXT_PUBLIC_APP_URL` | Yes | Same as `NEXTAUTH_URL`, exposed to client |
 | `POSTGRES_PASSWORD` | Yes | Password for the PostgreSQL container (must match `DATABASE_URL`) |
 | `REGISTRATION_ENABLED` | No | `true` to allow new registrations (default: `true`) |
+| `IP_GEOLOCATION_ENABLED` | No | `true` to look up the city/country of API-key caller IPs via `ip-api.com` (default: `true`); set `false` to send nothing outbound |
 
 ---
 

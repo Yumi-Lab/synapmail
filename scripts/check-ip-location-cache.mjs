@@ -20,6 +20,7 @@
  *   E. le service INDISPONIBLE (transport en échec) n'écrit RIEN : l'adresse reste sans
  *      position, et la prochaine ouverture réessaie — un échec de transport n'est pas
  *      un verdict.
+ *   F. `IP_GEOLOCATION_ENABLED=false` : ZÉRO appel sortant, pour une adresse jamais vue.
  *
  * CONTRÔLE NÉGATIF (`--negative`) : la lecture du cache est court-circuitée, comme si
  * le lot n'avait pas de table `ip_locations`. Le banc DOIT alors virer au rouge sur B
@@ -67,7 +68,8 @@ const IP_PARIS = '192.0.2.10'
 const IP_TOKYO = '198.51.100.20'
 const IP_PRIVATE = '203.0.113.30'
 const IP_OFFLINE = '192.0.2.99'
-const BENCH_IPS = [IP_PARIS, IP_TOKYO, IP_PRIVATE, IP_OFFLINE]
+const IP_KILLSWITCH = '192.0.2.42'
+const BENCH_IPS = [IP_PARIS, IP_TOKYO, IP_PRIVATE, IP_OFFLINE, IP_KILLSWITCH]
 
 /** Ce que le faux service répond, par adresse. `null` = transport en échec. */
 const SERVICE = {
@@ -75,6 +77,7 @@ const SERVICE = {
   [IP_TOKYO]: { status: 'success', country: 'Japon', countryCode: 'JP', regionName: 'Tokyo', city: 'Tokyo', lat: 35.68, lon: 139.69 },
   [IP_PRIVATE]: { status: 'fail', message: 'reserved range' },
   [IP_OFFLINE]: null,
+  [IP_KILLSWITCH]: { status: 'success', country: 'Test', countryCode: 'XX', regionName: 'Test', city: 'Killswitch', lat: 0, lon: 0 },
 }
 
 /** LE compteur : combien de fois le module est sorti, et pour quelle adresse. */
@@ -162,6 +165,20 @@ try {
   const reopenCalls = calls.length - callsBeforeReopen
   check('B3 au total, la 2ᵉ ouverture n\'a coûté QUE le réessai de l\'adresse sans réponse',
     reopenCalls === 1, `${reopenCalls} appel(s) sortant(s) à la 2ᵉ ouverture`)
+
+  // ---- F. IP_GEOLOCATION_ENABLED=false : coupe-circuit, zéro appel ----
+  const callsBeforeKillswitch = calls.length
+  process.env.IP_GEOLOCATION_ENABLED = 'false'
+  const killswitchResult = await locateIps([IP_KILLSWITCH])
+  process.env.IP_GEOLOCATION_ENABLED = ''
+
+  check('F1 coupé, une adresse jamais vue ne déclenche AUCUN appel sortant',
+    calls.length === callsBeforeKillswitch, `${calls.length - callsBeforeKillswitch} appel(s) sortant(s)`)
+  check('F2 et elle n\'a AUCUNE position, comme un échec de transport',
+    !killswitchResult.has(IP_KILLSWITCH), `reçu ${JSON.stringify(killswitchResult.get(IP_KILLSWITCH))}`)
+  const killswitchRows = await pool.query('SELECT COUNT(*)::int AS n FROM ip_locations WHERE ip_address = $1', [IP_KILLSWITCH])
+  check('F3 et RIEN n\'est écrit en base',
+    killswitchRows.rows[0].n === 0, `${killswitchRows.rows[0].n} ligne(s)`)
 } finally {
   await clean().catch(() => {})
   await pool.end()
