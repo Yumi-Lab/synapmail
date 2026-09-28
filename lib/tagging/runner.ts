@@ -546,7 +546,6 @@ async function processBatch(params: {
   const lastUid = mails[mails.length - 1].uid
 
   if (!todo.length) {
-    if (process.env.T10C_DEBUG && skipped) console.error(`CHARGE path=empty charged=${skipped} lastUid=${lastUid} folder=${mails[0].folder}`)
     const spent = await chargeMailbox(accountId, 0, engine.usdPerBillionInput, { tagged: 0, skipped, errors: 0 })
     return { tagged: 0, skipped, errors: 0, calls: 0, spent, lastUid, complete: true }
   }
@@ -561,11 +560,6 @@ async function processBatch(params: {
   // qu'au lot MENÉ À TERME — celui-là n'est plus jamais relu. `tagged` n'a pas ce problème : un
   // mail tagué n'est pas retagué à la relecture, il tombe dans `during`.
   const charged = complete ? skipped : 0
-  if (process.env.T10C_DEBUG && charged) {
-    const one = Array.from(seen.before)[0]
-    const probe = one ? await query(`SELECT message_id, MIN(cree_le) AS mn, MAX(cree_le) AS mx FROM message_tags WHERE account_id=$1 AND message_id=$2 GROUP BY message_id`, [accountId, one]) : []
-    console.error(`CHARGE charged=${charged} folder=${mails[0].folder} before=${seen.before.size} during=${seen.during.size} run=${params.runStartedAt ? new Date(params.runStartedAt).toISOString() : 'NULL'} probe=${JSON.stringify(probe)}`)
-  }
   const spent = await chargeMailbox(accountId, res.inputTokens, engine.usdPerBillionInput,
     { tagged: res.tagged, skipped: charged, errors: res.errors })
   const out: Advance & { lastUid: number; complete: boolean } = {

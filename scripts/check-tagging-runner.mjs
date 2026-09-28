@@ -337,7 +337,6 @@ try {
   // en « sautés » gonflait les deux compteurs pour un seul mail (mesuré en vrai : 86 sautés pour
   // 995 tagués sur 1 000 tirés). Seuls les VRAIS sautés comptent : ici, les doublons de
   // Message-ID. Le nombre de passages coupés (A1 en exige ≥ 3) ne doit RIEN y changer.
-  if (process.env.T10C_DEBUG) console.error('--- A ENDS ---')
   const DUPS = duplicateMails()
   check(`A6 « sautés » ne compte que les vrais sautés : ${DUPS} doublon(s), pas les mails relus après une coupure`,
     afterA.skipped === DUPS, `sautés=${afterA.skipped}, attendu=${DUPS}, passages coupés=${passes.length}`)
