@@ -6,13 +6,26 @@
  * `POST`, `PUT` et le contrat d'API disent la MÊME chose.
  */
 
+import { UID_PATTERN } from './forward'
+
 /** Codes d'erreur — le serveur les renvoie, l'appelant les lit. */
 export const DRAFT_ERROR = {
   /** La boîte n'expose aucun dossier de brouillons : rien n'a été écrit. */
   noDraftsFolder: 'draft_no_drafts_folder',
   /** L'UID visé n'existe plus dans ce dossier : rien n'a été remplacé ni supprimé. */
   notFound: 'draft_not_found',
+  /** L'uid dans l'URL n'est pas un entier décimal : refusé AVANT toute connexion IMAP. */
+  invalidUid: 'draft_invalid_uid',
 } as const
+
+/**
+ * L'uid de l'URL est refusé s'il n'est pas un entier décimal, AVANT toute connexion
+ * IMAP — même forme que `parseForwardedMessages` (`lib/forward.ts`), réutilisée plutôt
+ * que recopiée.
+ */
+export function isValidUid(uid: string): boolean {
+  return UID_PATTERN.test(uid)
+}
 
 /**
  * L'identifiant que le message PORTE, lu dans son propre en-tête.

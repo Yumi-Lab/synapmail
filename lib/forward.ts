@@ -23,8 +23,12 @@ export const FORWARD_MAX_MESSAGES = 25
  */
 export const FORWARD_MAX_TOTAL_BYTES = 25 * 1024 * 1024
 
-/** Un uid IMAP est un entier décimal. `1:*` est un JEU de séquences valide : il est donc refusé ici. */
-const UID_PATTERN = /^\d+$/
+/**
+ * Un uid IMAP est un entier décimal. `1:*` est un JEU de séquences valide : il est donc
+ * refusé ici. Exporté : la même forme sert à toute route qui reçoit un uid dans son URL
+ * (`/api/messages/draft/[uid]`), pas seulement le transfert.
+ */
+export const UID_PATTERN = /^\d+$/
 
 /** Codes d'erreur — le serveur les renvoie, la fenêtre de rédaction les traduit. */
 export const FORWARD_ERROR = {

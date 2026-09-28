@@ -5,7 +5,7 @@ import { toImapConfig } from '@/lib/accounts'
 import { appendDraft, deleteMessagesBulk, messageExists } from '@/lib/imap'
 import { composeMail } from '@/lib/smtp'
 import { prepareOutgoing } from '@/lib/outgoing'
-import { DRAFT_ERROR, messageIdOf } from '@/lib/draft'
+import { DRAFT_ERROR, isValidUid, messageIdOf } from '@/lib/draft'
 import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
@@ -33,6 +33,9 @@ async function putHandler(req: Request, { params }: { params: { uid: string } })
   const { accountId, folder } = target(req)
   if (!accountId || !folder) {
     return NextResponse.json({ error: 'account and folder params are required' }, { status: 400 })
+  }
+  if (!isValidUid(params.uid)) {
+    return NextResponse.json({ error: DRAFT_ERROR.invalidUid }, { status: 400 })
   }
 
   try {
@@ -68,6 +71,9 @@ async function deleteHandler(req: Request, { params }: { params: { uid: string }
   const { accountId, folder } = target(req)
   if (!accountId || !folder) {
     return NextResponse.json({ error: 'account and folder params are required' }, { status: 400 })
+  }
+  if (!isValidUid(params.uid)) {
+    return NextResponse.json({ error: DRAFT_ERROR.invalidUid }, { status: 400 })
   }
 
   try {
