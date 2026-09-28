@@ -14,7 +14,8 @@
  *   B. deux brouillons COEXISTENT — le second n'écrase pas le premier ;
  *   C. `PUT` remplace sans perte : le nouveau est écrit AVANT que l'ancien uid disparaisse,
  *      et un `?account=` contredit par le corps est refusé plutôt qu'arbitré en silence ;
- *   D. `DELETE` supprime, et un uid déjà parti rend 404 plutôt que « supprimé » ;
+ *   D. `DELETE` supprime, et un uid déjà parti rend 404 plutôt que « supprimé » ; un uid non
+ *      numérique dans l'URL (PUT ou DELETE) rend 400 nommé AVANT toute connexion IMAP ;
  *   E. la barrière : sans `messages:draft`, 403 qui NOMME la portée ; sans la boîte, 403
  *      qui NOMME la boîte ; une clé `messages:send` seule ne peut pas écrire de brouillon ;
  *   F. RIEN N'EST ENVOYÉ : aucun chemin SMTP n'existe dans ce lot — mesuré sur les sources
@@ -298,6 +299,19 @@ try {
   check('D2 un uid déjà parti rend 404 « draft_not_found », jamais « supprimé »',
     twice.status === 404 && twice.body?.error === 'draft_not_found',
     `HTTP ${twice.status} — ${twice.text.slice(0, 200)}`)
+
+  // Un uid non numérique n'atteint JAMAIS IMAP : 400 nommé, pas un 500 qui fuit
+  // « Invalid sequence set value » (constaté par l'orchestrateur avant ce lot).
+  const badPut = await call('PUT', `/api/messages/draft/undefined${place}`, {
+    key: goodKey.raw, body: draftBody(openId),
+  })
+  check('D3 PUT avec un uid non numérique rend 400 « draft_invalid_uid », jamais 500',
+    badPut.status === 400 && badPut.body?.error === 'draft_invalid_uid',
+    `HTTP ${badPut.status} — ${badPut.text.slice(0, 200)}`)
+  const badDelete = await call('DELETE', `/api/messages/draft/abc123${place}`, { key: goodKey.raw })
+  check('D4 DELETE avec un uid non numérique rend 400 « draft_invalid_uid », jamais 500',
+    badDelete.status === 400 && badDelete.body?.error === 'draft_invalid_uid',
+    `HTTP ${badDelete.status} — ${badDelete.text.slice(0, 200)}`)
 
   // ---- E. la barrière ----
   const noScope = await call('POST', '/api/messages/draft', { key: noScopeKey.raw, body: draftBody(openId) })
