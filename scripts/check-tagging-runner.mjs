@@ -23,12 +23,20 @@
  *   F. deux passages SIMULTANÉS sur la même boîte → un seul travaille (verrou) ;
  *   G. la sélection du planificateur (`mailboxesToSort`) ne retient QUE les boîtes à travailler :
  *      une boîte en pause, sans moteur ou verrouillée n'y figure pas. Mesurée sur la VRAIE requête
- *      SQL — celle que `processTagging` utilise — sans ouvrir aucune connexion IMAP.
+ *      SQL — celle que `processTagging` utilise — sans ouvrir aucune connexion IMAP ;
+ *   H. l'ÉCHANTILLON (lot T10b) : le tirage est reproductible à graine égale, différent à graine
+ *      différente, indépendant de l'ordre d'énumération des dossiers et réparti sur plusieurs
+ *      dossiers ; le tri s'ARRÊTE à N (critère = nombre d'appels au moteur) ; le tirage est
+ *      ENREGISTRÉ et non refait ; `total` vaut la taille du tirage ; le plafond et les pauses sont
+ *      ceux du tri complet ; un mail supprimé entre le tirage et son tour est compté sauté sans
+ *      bloquer le curseur ; la répartition par question totalise les mails tagués ; « lancer le
+ *      tri complet » efface le mode échantillon.
  *
- * CONTRÔLE NÉGATIF (`--negative`) : entre deux passages de A, la MÉMOIRE DE LA REPRISE est effacée
- * dans la base (curseur remis à NULL, et les étiquettes déjà écrites supprimées) — le trieur ne
- * peut donc plus savoir où il en était. Le banc DOIT alors virer au rouge sur A2, le nombre
- * d'appels au moteur. Rien n'est modifié dans le produit : l'effacement est fait par le banc, en
+ * CONTRÔLE NÉGATIF (`--negative`) : entre deux passages de A (et de H), la MÉMOIRE DE LA REPRISE
+ * est effacée dans la base (curseurs de masse ET d'échantillon remis à NULL, et les étiquettes
+ * déjà écrites supprimées) — le trieur ne peut donc plus savoir où il en était. Le banc DOIT alors
+ * virer au rouge sur A2 (le nombre d'appels au moteur) et sur H5 (l'arrêt à N : un tirage refait à
+ * chaque passage ne s'arrête pas où il faut). Rien n'est modifié dans le produit : l'effacement est fait par le banc, en
  * SQL, sur ses propres lignes.
  * Ce qu'il démontre : le critère de A (le nombre d'appels) est bien SENSIBLE à l'état de reprise —
  * il ne se contente pas de constater que le jeu de banc n'a pas de doublons. Ce qu'il ne démontre
@@ -116,7 +124,12 @@ const DERIVED = store.messageIdOf(mailOf('INBOX', NO_ID_UID))
 const MINE = 'message_id LIKE $1 OR message_id = $2'
 const MINE_ARGS = [MID_LIKE, DERIVED]
 
-const makeSource = (folders = FOLDERS) => ({
+/**
+ * `holes` est une liste VIVE de `dossier|uid` disparus. Une vraie boîte en a : un mail supprimé
+ * entre le moment où on l'a listé et celui où on le relit. La source ne le rend plus, et rend le
+ * SUIVANT — c'est ce qu'un `FETCH` d'un UID absent fait, et ce que H6 mesure.
+ */
+const makeSource = (folders = FOLDERS, holes = new Set()) => ({
   async folders() {
     return folders.map(f => ({ path: f.path, uidValidity: f.uidValidity, total: f.count }))
   },
@@ -124,7 +137,10 @@ const makeSource = (folders = FOLDERS) => ({
     const f = folders.find(x => x.path === folder)
     if (!f) return []
     const out = []
-    for (let i = afterUid + 1; i <= f.count && out.length < limit; i += 1) out.push(mailOf(folder, i))
+    for (let i = afterUid + 1; i <= f.count && out.length < limit; i += 1) {
+      if (holes.has(`${folder}|${i}`)) continue
+      out.push(mailOf(folder, i))
+    }
     return out
   },
 })
@@ -183,23 +199,29 @@ const makeEngine = (opts = {}) => {
 const setMailbox = async (accountId, engineId, patch = {}) => {
   const cols = { budget_usd: 1000, spent_usd: 0, input_tokens: 0, live: false, live_cursor: null,
     bulk_state: 'idle', bulk_cursor: null, tagged: 0, skipped: 0, errors: 0, total: 0,
-    paused_reason: null, paused_detail: null, locked_until: null, ...patch }
+    paused_reason: null, paused_detail: null, locked_until: null,
+    // Les colonnes d'échantillon sont remises comme les autres : sans ça, la section H laisserait
+    // `sample_size` posé et les sections suivantes trieraient un échantillon sans le savoir.
+    sample_size: null, sample_seed: null, sample_cursor: null, ...patch }
   await pool.query(
     `INSERT INTO mailbox_tagging (account_id, engine_id, budget_usd, spent_usd, input_tokens, live,
                                   live_cursor, bulk_state, bulk_cursor, tagged, skipped, errors,
-                                  total, paused_reason, paused_detail, locked_until)
-     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16)
+                                  total, paused_reason, paused_detail, locked_until,
+                                  sample_size, sample_seed, sample_cursor)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
      ON CONFLICT (account_id) DO UPDATE SET
        engine_id = EXCLUDED.engine_id, budget_usd = EXCLUDED.budget_usd, spent_usd = EXCLUDED.spent_usd,
        input_tokens = EXCLUDED.input_tokens, live = EXCLUDED.live, live_cursor = EXCLUDED.live_cursor,
        bulk_state = EXCLUDED.bulk_state, bulk_cursor = EXCLUDED.bulk_cursor, tagged = EXCLUDED.tagged,
        skipped = EXCLUDED.skipped, errors = EXCLUDED.errors, total = EXCLUDED.total,
        paused_reason = EXCLUDED.paused_reason, paused_detail = EXCLUDED.paused_detail,
-       locked_until = EXCLUDED.locked_until`,
+       locked_until = EXCLUDED.locked_until, sample_size = EXCLUDED.sample_size,
+       sample_seed = EXCLUDED.sample_seed, sample_cursor = EXCLUDED.sample_cursor`,
     [accountId, engineId, cols.budget_usd, cols.spent_usd, cols.input_tokens, cols.live,
       cols.live_cursor ? JSON.stringify(cols.live_cursor) : null, cols.bulk_state,
       cols.bulk_cursor ? JSON.stringify(cols.bulk_cursor) : null, cols.tagged, cols.skipped,
-      cols.errors, cols.total, cols.paused_reason, cols.paused_detail, cols.locked_until])
+      cols.errors, cols.total, cols.paused_reason, cols.paused_detail, cols.locked_until,
+      cols.sample_size, cols.sample_seed, cols.sample_cursor ? JSON.stringify(cols.sample_cursor) : null])
 }
 
 /**
@@ -207,7 +229,7 @@ const setMailbox = async (accountId, engineId, patch = {}) => {
  * les étiquettes ne disent plus ce qui est déjà payé — un passage repart donc du premier mail.
  */
 const forgetResume = async accountId => {
-  await pool.query('UPDATE mailbox_tagging SET bulk_cursor = NULL WHERE account_id = $1', [accountId])
+  await pool.query('UPDATE mailbox_tagging SET bulk_cursor = NULL, sample_cursor = NULL WHERE account_id = $1', [accountId])
   await pool.query(`DELETE FROM message_tags WHERE account_id = $3 AND (${MINE})`, [...MINE_ARGS, accountId])
 }
 
@@ -387,6 +409,130 @@ try {
   check('G8 la clé du moteur n’est PAS en clair dans ce que la requête rend',
     selected?.engine_key === null || !/^sk-|^syn_/.test(String(selected?.engine_key)),
     String(selected?.engine_key))
+
+  // ---- H. l'échantillon (lot T10b) ----
+  console.log('\nH. un échantillon tire le même hasard, s’arrête à N, et obéit au plafond')
+  // PLUS GRAND qu'un lot : sinon un seul passage tire ET finit tout, et ni la coupure ni
+  // l'effacement du contrôle négatif ne changeraient quoi que ce soit — H5 serait vert sans rien
+  // mesurer, et H11 n'aurait aucun mail « pas encore traité » à faire disparaître.
+  const SAMPLE_N = runner.BATCH_SIZE + 10
+  const SEED_A = 20260926
+  const SEED_B = 777
+
+  // H1/H2 : le TIRAGE lui-même, sans rien taguer — `drawSample` est pur vis-à-vis de la base.
+  const drawA1 = await runner.drawSample(source, { seed: SEED_A, size: SAMPLE_N })
+  const drawA2 = await runner.drawSample(source, { seed: SEED_A, size: SAMPLE_N })
+  const drawB = await runner.drawSample(source, { seed: SEED_B, size: SAMPLE_N })
+  const key = picks => picks.map(p => `${p.folder}|${p.uid}`).join(',')
+  check(`H1 à graine égale, le tirage est le MÊME (${SAMPLE_N} mails)`,
+    drawA1.length === SAMPLE_N && key(drawA1) === key(drawA2), `${key(drawA1)}\n       vs ${key(drawA2)}`)
+  check('H2 à graine DIFFÉRENTE, le tirage est autre', key(drawA1) !== key(drawB),
+    `${key(drawA1)}\n       vs ${key(drawB)}`)
+  // Un tirage qui ne sortirait que d'un seul dossier ne serait pas « au hasard dans TOUS les
+  // dossiers » : c'est la propriété que le besoin demande, donc elle se mesure.
+  check('H3 le tirage puise dans PLUSIEURS dossiers, pas seulement le premier',
+    new Set(drawA1.map(p => p.folder)).size > 1, JSON.stringify([...new Set(drawA1.map(p => p.folder))]))
+  // L'ordre d'énumération ne doit RIEN changer : c'est la raison d'être du rang par hachage.
+  const reversedSource = makeSource([...FOLDERS].reverse())
+  check('H4 l’ordre dans lequel les dossiers sont parcourus ne change pas le tirage',
+    key(await runner.drawSample(reversedSource, { seed: SEED_A, size: SAMPLE_N })) === key(drawA1))
+
+  // H5 : le tri d'un échantillon, de bout en bout, en passages COURTS (donc coupés).
+  await clean(ACCOUNT)
+  await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'idle', budget_usd: 1000 })
+  await runner.startSample(ACCOUNT, { size: SAMPLE_N, seed: SEED_A })
+  const engineH = makeEngine()
+  const passesH = []
+  for (let n = 0; n < 40; n += 1) {
+    const before = await mailboxOf(ACCOUNT)
+    if (before.bulk_state === 'done' || before.paused_reason) break
+    passesH.push(await runner.runPass({ accountId: ACCOUNT, source, engine: engineH, budgetMs: 250 }))
+    if (NEGATIVE) await forgetResume(ACCOUNT)
+  }
+  const rowH = await mailboxOf(ACCOUNT)
+  // Les doublons de Message-ID du jeu de banc peuvent tomber dans le tirage : le nombre d'APPELS
+  // est alors le nombre de mails DISTINCTS tirés, pas N. C'est calculé depuis le tirage, jamais
+  // supposé — un critère deviné ne mesure rien.
+  const drawnDistinct = new Set(drawA1.map(p => store.messageIdOf(mailOf(p.folder, p.uid)))).size
+  check(`H5 l’échantillon s’arrête à N : ${drawnDistinct} appel(s) pour ${SAMPLE_N} mails tirés, et le tri est « done »`,
+    engineH.calls === drawnDistinct && rowH.bulk_state === 'done',
+    `${engineH.calls} appel(s) (${drawnDistinct} attendu(s)), état=${rowH.bulk_state}, pause=${rowH.paused_reason}`)
+  check('H6 le tirage est ENREGISTRÉ (il n’est pas refait à chaque passage), et il est allé au bout',
+    rowH.sample_cursor?.picks?.length === SAMPLE_N && rowH.sample_cursor?.done === SAMPLE_N,
+    JSON.stringify({ picks: rowH.sample_cursor?.picks?.length, done: rowH.sample_cursor?.done }))
+  check(`H7 « total » vaut la taille du TIRAGE (${SAMPLE_N}), pas celle de la boîte (${DISTINCT})`,
+    rowH.total === SAMPLE_N, `total=${rowH.total}`)
+  check('H8 le tirage enregistré est exactement celui que drawSample rend à la même graine',
+    key(rowH.sample_cursor?.picks ?? []) === key(drawA1))
+
+  // H9 : le plafond, sur un échantillon. Même pause, même code que le tri complet — ce qui se
+  // mesure ici, c'est qu'il soit bien ATTEINT par ce chemin-là.
+  await clean(ACCOUNT)
+  await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'idle', budget_usd: 0.0001 })
+  await runner.startSample(ACCOUNT, { size: SAMPLE_N, seed: SEED_A })
+  const engineH2 = makeEngine()
+  await runner.runPass({ accountId: ACCOUNT, source, engine: engineH2, budgetMs: 5_000 })
+  const rowH2 = await mailboxOf(ACCOUNT)
+  check('H9 un échantillon au plafond passe en pause « budget »', rowH2.paused_reason === 'budget',
+    `${rowH2.paused_reason} / ${rowH2.paused_detail}`)
+  const callsH2 = engineH2.calls
+  const passH2 = await runner.runPass({ accountId: ACCOUNT, source, engine: engineH2, budgetMs: 5_000 })
+  check('H10 et le passage suivant n’appelle plus le moteur', engineH2.calls === callsH2 && passH2.reason === 'paused',
+    `${callsH2} → ${engineH2.calls}, ${passH2.reason}`)
+
+  // H11 : un mail SUPPRIMÉ entre le tirage et son tour. Il est compté sauté, et le curseur avance
+  // quand même — sinon l'échantillon ne finirait jamais. Le trou est posé APRÈS le tirage.
+  await clean(ACCOUNT)
+  const holes = new Set()
+  const holedSource = makeSource(FOLDERS, holes)
+  await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'idle', budget_usd: 1000 })
+  await runner.startSample(ACCOUNT, { size: SAMPLE_N, seed: SEED_A })
+  const engineH3 = makeEngine()
+  // Premier passage, COURT : le tirage est fait et enregistré sur la boîte ENTIÈRE, et il reste
+  // des mails tirés non traités derrière.
+  await runner.runPass({ accountId: ACCOUNT, source: holedSource, engine: engineH3, budgetMs: 250 })
+  const rowH3a = await mailboxOf(ACCOUNT)
+  const drawnH3 = rowH3a.sample_cursor?.picks ?? []
+  const pending = drawnH3.slice(rowH3a.sample_cursor?.done ?? 0)
+  // Trois mails tirés mais PAS encore traités disparaissent de la boîte.
+  const vanished = pending.slice(-3)
+  for (const p of vanished) holes.add(`${p.folder}|${p.uid}`)
+  check(`H11a le montage tient : ${pending.length} mail(s) tiré(s) restent à traiter, ${vanished.length} vont disparaître`,
+    vanished.length === 3, `tirés=${drawnH3.length} done=${rowH3a.sample_cursor?.done} restants=${pending.length}`)
+  for (let n = 0; n < 40; n += 1) {
+    const before = await mailboxOf(ACCOUNT)
+    if (before.bulk_state === 'done' || before.paused_reason) break
+    await runner.runPass({ accountId: ACCOUNT, source: holedSource, engine: engineH3, budgetMs: 250 })
+  }
+  const rowH3 = await mailboxOf(ACCOUNT)
+  check(`H11 ${vanished.length} mail(s) disparu(s) après le tirage n’empêchent PAS l’échantillon de finir`,
+    rowH3.bulk_state === 'done' && rowH3.sample_cursor?.done === SAMPLE_N,
+    `état=${rowH3.bulk_state} done=${rowH3.sample_cursor?.done}/${SAMPLE_N} pause=${rowH3.paused_reason}`)
+  check(`H12 ils sont COMPTÉS comme sautés, jamais tus (≥ ${vanished.length})`,
+    rowH3.skipped >= vanished.length, `sautés=${rowH3.skipped}, disparus=${vanished.length}`)
+  check('H13 ils ne sont pas payés : le moteur n’a pas été appelé pour eux',
+    engineH3.calls <= SAMPLE_N - vanished.length,
+    `${engineH3.calls} appel(s), ${SAMPLE_N - vanished.length} au plus attendu(s)`)
+
+  // H14 : la répartition, ce qu'on LIT après un échantillon pour décider de lancer le reste.
+  const dist = await store.tagDistribution(ACCOUNT)
+  const distOf = id => dist.find(d => d.question === id)
+  const totalOf = id => (distOf(id)?.values ?? []).reduce((n, v) => n + v.count, 0)
+  const someQuestion = QUESTIONS.find(q => distOf(q.id))
+  check('H14 la répartition rend des valeurs PAR QUESTION', dist.length > 0 && !!someQuestion,
+    `${dist.length} question(s)`)
+  check('H15 chaque question totalise exactement les mails tagués de l’échantillon',
+    !!someQuestion && dist.every(d => totalOf(d.question) === rowH3.tagged),
+    JSON.stringify({ tagged: rowH3.tagged, totaux: dist.map(d => [d.question, totalOf(d.question)]).slice(0, 4) }))
+
+  // H16 : démarrer un échantillon ne laisse pas un curseur de tri complet traîner, et inversement
+  // `start` efface le mode échantillon — sinon un « lancer le reste » après un échantillon
+  // relancerait l'échantillon.
+  await runner.startBulk(ACCOUNT)
+  const rowH4 = await mailboxOf(ACCOUNT)
+  check('H16 « lancer le tri complet » après un échantillon EFFACE le mode échantillon',
+    rowH4.sample_size === null && rowH4.sample_cursor === null,
+    JSON.stringify({ size: rowH4.sample_size, cursor: rowH4.sample_cursor === null }))
 } finally {
   await clean(ACCOUNT).catch(() => {})
   if (ENGINE_ID) await pool.query('DELETE FROM decision_engines WHERE id = $1', [ENGINE_ID]).catch(() => {})
