@@ -532,30 +532,44 @@ async function processBatch(params: {
   // Le même mail peut être classé dans deux dossiers, ou deux fois dans le même : il porte alors
   // le MÊME Message-ID. `alreadyTagged` ne rattrape que ce qui est déjà en base, donc pas deux
   // exemplaires du même lot — d'où ce second filtre, sans quoi le mail serait payé deux fois.
+  // Il compte les POSITIONS, pas les étiquettes : un exemplaire reste un doublon même quand son
+  // jumeau a été tagué par un lot précédent de CE tri, sinon le compte dépendrait de l'endroit
+  // où la coupure est tombée.
   const withinBatch = new Set<string>()
   let skipped = 0
   const todo = mails.filter((m, i) => {
-    if (seen.during.has(ids[i])) return false
-    if (seen.before.has(ids[i]) || withinBatch.has(ids[i])) { skipped += 1; return false }
+    const duplicate = withinBatch.has(ids[i])
     withinBatch.add(ids[i])
-    return true
+    if (duplicate || seen.before.has(ids[i])) { skipped += 1; return false }
+    return !seen.during.has(ids[i])
   })
   const lastUid = mails[mails.length - 1].uid
 
   if (!todo.length) {
+    if (process.env.T10C_DEBUG && skipped) console.error(`CHARGE path=empty charged=${skipped} lastUid=${lastUid} folder=${mails[0].folder}`)
     const spent = await chargeMailbox(accountId, 0, engine.usdPerBillionInput, { tagged: 0, skipped, errors: 0 })
     return { tagged: 0, skipped, errors: 0, calls: 0, spent, lastUid, complete: true }
   }
 
   const res = await tagBatch({ accountId, engine, mails: todo, deadline })
-  const spent = await chargeMailbox(accountId, res.inputTokens, engine.usdPerBillionInput,
-    { tagged: res.tagged, skipped, errors: res.errors })
   // Un lot INTERROMPU (délai épuisé, refus du moteur) laisse des mails non traités : l'appelant
   // ne doit alors PAS avancer son curseur, sinon ces mails ne seraient jamais redemandés. Les
   // reprendre au passage suivant ne coûte rien — ceux qui sont faits sont sautés par leur étiquette.
   const complete = res.tagged + res.errors === todo.length
+  // Les COMPTEURS suivent le curseur : un lot qui ne fait pas avancer le curseur sera relu, donc
+  // ses « sautés » seraient comptés une fois de plus à chaque relecture. On ne les enregistre
+  // qu'au lot MENÉ À TERME — celui-là n'est plus jamais relu. `tagged` n'a pas ce problème : un
+  // mail tagué n'est pas retagué à la relecture, il tombe dans `during`.
+  const charged = complete ? skipped : 0
+  if (process.env.T10C_DEBUG && charged) {
+    const one = Array.from(seen.before)[0]
+    const probe = one ? await query(`SELECT message_id, MIN(cree_le) AS mn, MAX(cree_le) AS mx FROM message_tags WHERE account_id=$1 AND message_id=$2 GROUP BY message_id`, [accountId, one]) : []
+    console.error(`CHARGE charged=${charged} folder=${mails[0].folder} before=${seen.before.size} during=${seen.during.size} run=${params.runStartedAt ? new Date(params.runStartedAt).toISOString() : 'NULL'} probe=${JSON.stringify(probe)}`)
+  }
+  const spent = await chargeMailbox(accountId, res.inputTokens, engine.usdPerBillionInput,
+    { tagged: res.tagged, skipped: charged, errors: res.errors })
   const out: Advance & { lastUid: number; complete: boolean } = {
-    tagged: res.tagged, skipped, errors: res.errors, calls: res.calls, spent, lastUid, complete }
+    tagged: res.tagged, skipped: charged, errors: res.errors, calls: res.calls, spent, lastUid, complete }
   if (res.stop) out.paused = { reason: res.stop.kind === 'credit' ? 'credit' : 'auth', detail: res.stop.message }
   else if (spent >= params.budget) out.paused = { reason: 'budget', detail: `plafond de ${params.budget} $ atteint (dépensé ${spent.toFixed(4)} $)` }
   return out

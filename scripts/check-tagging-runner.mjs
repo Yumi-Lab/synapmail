@@ -175,6 +175,22 @@ const distinctMails = (folders = FOLDERS) => {
   return ids.size
 }
 
+/**
+ * Combien de mails de la fausse source portent un Message-ID DÉJÀ porté par un mail précédent :
+ * le même mail classé deux fois. Ce sont les SEULS « sautés » qu'un tri complet doit compter —
+ * calculé depuis la source, jamais recopié à la main.
+ */
+const duplicateMails = (folders = FOLDERS) => {
+  const ids = new Set()
+  let dups = 0
+  for (const f of folders) for (let i = 1; i <= f.count; i += 1) {
+    const id = store.messageIdOf(mailOf(f.path, i))
+    if (ids.has(id)) dups += 1
+    else ids.add(id)
+  }
+  return dups
+}
+
 /** Une réponse plausible du moteur : une valeur PRÉVUE pour chaque question posée. */
 const ANSWERS = Object.fromEntries(QUESTIONS.map(q => {
   const value = valuesOf(q)[0]
@@ -288,7 +304,8 @@ try {
 
   // ---- A. coupure au milieu, puis reprise ----
   console.log('A. une coupure ne fait pas payer deux fois le même mail')
-  await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'running' })
+  await setMailbox(ACCOUNT, ENGINE_ID)
+  await runner.startBulk(ACCOUNT)
   const engineA = makeEngine()
   const source = makeSource()
   // Des passages COURTS : le délai s'épuise au milieu d'un dossier, exactement comme une coupure.
@@ -314,6 +331,19 @@ try {
     Number((await pool.query(
       `SELECT COUNT(*) AS n FROM message_tags WHERE account_id = $1 AND message_id LIKE '%@synapmail.local>'`,
       [ACCOUNT])).rows[0].n) > 0)
+
+  // A6 : LE point du lot T10c. Un lot coupé au délai ne fait pas avancer son curseur, donc le
+  // passage suivant RELIT ses mails. Ceux-là sont déjà comptés en « tagués » — les compter aussi
+  // en « sautés » gonflait les deux compteurs pour un seul mail (mesuré en vrai : 86 sautés pour
+  // 995 tagués sur 1 000 tirés). Seuls les VRAIS sautés comptent : ici, les doublons de
+  // Message-ID. Le nombre de passages coupés (A1 en exige ≥ 3) ne doit RIEN y changer.
+  if (process.env.T10C_DEBUG) console.error('--- A ENDS ---')
+  const DUPS = duplicateMails()
+  check(`A6 « sautés » ne compte que les vrais sautés : ${DUPS} doublon(s), pas les mails relus après une coupure`,
+    afterA.skipped === DUPS, `sautés=${afterA.skipped}, attendu=${DUPS}, passages coupés=${passes.length}`)
+  check('A7 tagués + sautés = les mails demandés : aucun mail compté deux fois',
+    afterA.tagged + afterA.skipped === DISTINCT + DUPS,
+    `tagués=${afterA.tagged} + sautés=${afterA.skipped} = ${afterA.tagged + afterA.skipped}, attendu=${DISTINCT + DUPS}`)
 
   // ---- B. relancer un tri terminé ----
   console.log('\nB. relancer un tri TERMINÉ ne coûte rien')
@@ -636,6 +666,35 @@ try {
   check('H16 « lancer le tri complet » après un échantillon EFFACE le mode échantillon',
     rowH4.sample_size === null && rowH4.sample_cursor === null,
     JSON.stringify({ size: rowH4.sample_size, cursor: rowH4.sample_cursor === null }))
+
+  // ---- I. l'estimation d'une boîte JAMAIS triée suit le nombre de questions ----
+  // Elle partait d'un nombre de jetons PAR MAIL figé, mesuré à 41 questions alors que la
+  // taxonomie en comptait 49 : l'écran annonçait 0,21 $ et la dépense réelle a été 0,30 $.
+  // Elle part maintenant d'un coût PAR QUESTION, donc elle reste juste quand la taxonomie bouge
+  // — ce que le lot T-Q rendra courant en laissant modifier les questions.
+  console.log('\nI. l’estimation d’une boîte jamais triée suit le nombre de questions')
+  const MAILS_I = 1_000, PRICE_I = 42
+  const estI = n => runner.estimateUsd({ mails: MAILS_I, usdPerBillionInput: PRICE_I, inputTokens: 0, tagged: 0 })
+  const estNow = estI()
+  check('I1 elle vaut coût-par-question × nombre de questions × mails, au tarif du moteur',
+    Math.abs(estNow - (ASSUMED_INPUT_TOKENS_PER_QUESTION * QUESTIONS.length * MAILS_I * PRICE_I) / 1e9) < 1e-12,
+    `estimée=${estNow}`)
+  // Le discriminant : à 41 questions (ce que mesurait T8) elle ne doit PAS rendre la même chose
+  // qu'à 49. Une constante figée par mail rendrait le même nombre dans les deux cas.
+  const estAt = q => (ASSUMED_INPUT_TOKENS_PER_QUESTION * q * MAILS_I * PRICE_I) / 1e9
+  check(`I2 elle CHANGE avec le nombre de questions (41 → ${QUESTIONS.length})`,
+    Math.abs(estAt(41) - estAt(QUESTIONS.length)) > 1e-9 && Math.abs(estNow - estAt(QUESTIONS.length)) < 1e-12,
+    `41 questions=${estAt(41)}, ${QUESTIONS.length} questions=${estAt(QUESTIONS.length)}`)
+  // Et elle reste ancrée sur la mesure réelle : 995 mails tagués pour 0,3009 $ à 42 $/milliard
+  // (gate T10b, 28/09/2026). Une estimation de 1 000 mails doit tomber à ±20 % de ce coût-là.
+  const MESURE_USD_POUR_1000 = (0.3009 / 995) * 1_000
+  check('I3 elle tombe à ±20 % de la dépense RÉELLE mesurée sur 1 000 mails (0,3024 $)',
+    Math.abs(estNow - MESURE_USD_POUR_1000) / MESURE_USD_POUR_1000 < 0.2,
+    `estimée=${estNow.toFixed(4)} $, mesurée=${MESURE_USD_POUR_1000.toFixed(4)} $, écart=${((estNow - MESURE_USD_POUR_1000) / MESURE_USD_POUR_1000 * 100).toFixed(1)} %`)
+  // Et une boîte qui a DÉJÀ une moyenne mesurée l'utilise, elle : la constante n'est qu'un défaut.
+  const estMesure = runner.estimateUsd({ mails: MAILS_I, usdPerBillionInput: PRICE_I, inputTokens: 1_000_000, tagged: 100 })
+  check('I4 une boîte qui a une moyenne MESURÉE s’en sert, et ignore le défaut',
+    Math.abs(estMesure - (10_000 * MAILS_I * PRICE_I) / 1e9) < 1e-12, `estimée=${estMesure}`)
 } finally {
   await clean(ACCOUNT).catch(() => {})
   if (ENGINE_ID) await pool.query('DELETE FROM decision_engines WHERE id = $1', [ENGINE_ID]).catch(() => {})
