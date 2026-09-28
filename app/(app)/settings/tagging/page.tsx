@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { useTranslations } from 'next-intl'
-import { Tags, Play, Pause, RotateCcw } from 'lucide-react'
+import { Tags, Play, Pause, RotateCcw, FlaskConical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AccountAvatar } from '@/components/layout/AccountAvatar'
@@ -12,14 +12,19 @@ import {
 } from '@/components/settings/primitives'
 import { ENGINES_ENDPOINT } from '@/components/settings/DecisionEnginesSection'
 import type { TaggingStatus } from '@/lib/tagging/mailbox'
+import type { tagDistribution } from '@/lib/tagging/store'
 import type { DecisionEngine } from '@/lib/tagging/engines'
 import type { EmailAccount } from '@/types/account'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
+/** La forme de la répartition est celle que le produit rend : elle n'est pas réécrite ici. */
+type TagDistribution = Awaited<ReturnType<typeof tagDistribution>>
+
 /** Les routes de l'écran, écrites une fois. */
 const SETTINGS_ENDPOINT = '/api/tagging/settings'
 const RUN_ENDPOINT = '/api/tagging/run'
+const STATUS_ENDPOINT = '/api/tagging/status'
 
 /**
  * Pendant un tri, l'état vient du planificateur, pas de cet écran : on le redemande. Le pas est
@@ -101,9 +106,10 @@ export default function TaggingSettingsPage() {
     }
   }
 
-  async function run(action: 'start' | 'pause' | 'resume' | 'restart') {
+  async function run(action: 'start' | 'sample' | 'pause' | 'resume' | 'restart') {
     if (!accountId) return
     if (action === 'restart' && !window.confirm(t('restartConfirm'))) return
+    if (action === 'sample' && !window.confirm(t('sampleConfirm', { size: sampleSize }))) return
     setBusy(true); setRunError(null)
     try {
       // Un refus du serveur se DIT : sans cela, un bouton pressé qui ne change rien se lit
@@ -111,7 +117,11 @@ export default function TaggingSettingsPage() {
       const res = await fetch(RUN_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId, action }),
+        // La taille et la graine ne sont pas écrites ici : elles viennent du serveur
+        // (`sampleDefaults`), qui est le seul à les nommer — cf. lib/tagging/runner.ts.
+        body: JSON.stringify(action === 'sample'
+          ? { accountId, action, sampleSize: sampleSize, sampleSeed: status?.sampleDefaults.seed }
+          : { accountId, action }),
       })
       const json = await res.json().catch(() => null) as { error?: string } | null
       if (!res.ok) setRunError(json?.error ?? String(res.status))
@@ -123,6 +133,17 @@ export default function TaggingSettingsPage() {
 
   const engine = status?.engine ?? null
   const remaining = status ? Math.max(status.total - status.tagged - status.skipped, 0) : 0
+  const sampleSize = status?.sampleDefaults.size ?? 0
+
+  // La répartition ne se demande QUE quand il y a un échantillon tagué à lire : c'est un GROUP BY
+  // sur toutes les étiquettes de la boîte, et elle n'a rien à dire avant le premier mail trié.
+  // Elle est hors du rafraîchissement de l'état (20 s pendant un tri) pour cette raison.
+  const showDistribution = !!status?.sample && status.tagged > 0
+  const { data: distData } = useSWR<{ data: TaggingStatus & { distribution?: TagDistribution } }>(
+    showDistribution && accountId ? `${STATUS_ENDPOINT}?account=${accountId}&distribution=1` : null,
+    fetcher,
+  )
+  const distribution = distData?.data?.distribution ?? []
 
   return (
     <SettingsPage>
@@ -224,6 +245,31 @@ export default function TaggingSettingsPage() {
                   </div>
                 </SettingsRow>
 
+                {/*
+                  L'échantillon d'abord : on essaie sur 1 000 mails, on LIT la répartition, puis on
+                  décide de payer le reste. Le prix est annoncé SUR le bouton — c'est ce qu'il va
+                  coûter, pas une estimation à chercher ailleurs.
+                */}
+                <SettingsRow
+                  title={t('sample', { size: sampleSize })}
+                  description={status.sampleEstimateUsd === null
+                    ? t('sampleDescUnknown', { size: sampleSize })
+                    : t('sampleDesc', { size: sampleSize, cost: usd(status.sampleEstimateUsd) })}
+                >
+                  <Button
+                    type="button" variant="ghost" disabled={busy || status.bulkState === 'running'}
+                    onClick={() => run('sample')}
+                  >
+                    <FlaskConical className="mr-1.5 h-4 w-4" />{t('sampleAction')}
+                  </Button>
+                </SettingsRow>
+
+                {status.sample && (
+                  <p className="text-xs text-muted-foreground">
+                    {t('sampleState', { size: status.sample.size, done: status.sample.done, seed: status.sample.seed })}
+                  </p>
+                )}
+
                 {runError && <p className="text-xs text-red-600 dark:text-red-400">{runError}</p>}
 
                 <SettingsDivider />
@@ -243,12 +289,63 @@ export default function TaggingSettingsPage() {
                     </div>
                   ))}
                 </dl>
+
+                {showDistribution && (
+                  <>
+                    <SettingsDivider />
+                    <p className="text-sm font-medium">{t('distribution')}</p>
+                    <p className="text-xs text-muted-foreground">{t('distributionDesc')}</p>
+                    {distribution.length === 0
+                      ? <p className="text-xs text-muted-foreground">{t('distributionEmpty')}</p>
+                      : <Distribution distribution={distribution} />}
+                  </>
+                )}
               </SettingsSection>
             </>
           )}
         </div>
       )}
     </SettingsPage>
+  )
+}
+
+/**
+ * La répartition des valeurs, PAR QUESTION : ce qu'on lit après un échantillon pour décider de
+ * lancer le reste. Une barre proportionnelle plutôt qu'un camembert — on compare des longueurs,
+ * ce qu'un œil fait bien, et c'est du CSS, pas une bibliothèque de graphiques.
+ *
+ * Les libellés viennent de `tags.q.<question>` et `tags.v.<valeur>`, les mêmes que les pastilles
+ * du courrier (`components/mail/MessageTags.tsx`) : aucune chaîne n'est écrite ici.
+ */
+function Distribution({ distribution }: { distribution: TagDistribution }) {
+  const t = useTranslations('tags')
+  return (
+    <dl className="space-y-3">
+      {distribution.map(q => {
+        const total = q.values.reduce((n, v) => n + v.count, 0)
+        return (
+          <div key={q.question} data-distribution-question={q.question}>
+            <dt className="text-xs font-medium">{t(`q.${q.question}`)}</dt>
+            <dd className="mt-1 space-y-1">
+              {q.values.map(v => (
+                <div key={v.valeur} className="flex items-center gap-2" data-distribution-value={v.valeur}>
+                  <span className="w-40 shrink-0 truncate text-xs text-muted-foreground">{t(`v.${v.valeur}`)}</span>
+                  <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+                    <span
+                      className="block h-full rounded-full bg-violet-500"
+                      style={{ width: `${total ? Math.round((v.count / total) * 100) : 0}%` }}
+                    />
+                  </span>
+                  <span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                    {v.count} · {total ? Math.round((v.count / total) * 100) : 0}%
+                  </span>
+                </div>
+              ))}
+            </dd>
+          </div>
+        )
+      })}
+    </dl>
   )
 }
 

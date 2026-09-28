@@ -1,6 +1,18 @@
 /**
  * Contrôle de fumée du lot T5 : l'écran se rend pour une VRAIE session, et les routes qu'il
  * appelle ne rendent jamais la clé d'un moteur. Aucun appel moteur, aucune connexion IMAP.
+ *
+ * La section H y ajoute l'échantillon (lot T10b) : l'état porte la taille, la graine et le coût
+ * estimé de CET échantillon ; l'écran rendu propose le bouton, nomme la taille et a de quoi
+ * montrer la répartition ; la route refuse une taille ou une graine hors du prévu en la NOMMANT ;
+ * un échantillon accepté est annoncé dans l'état sans que le tirage soit fait dans le temps de la
+ * requête ; et « lancer le tri complet » efface le mode échantillon. Rien n'est trié : le travail
+ * appartient au planificateur, et la boîte est remise en pause avant de rendre la main.
+ *
+ * CE QUE H NE DIT PAS : à quoi l'écran RESSEMBLE. La page est un composant client dont les données
+ * viennent de SWR, donc le HTML rendu par le serveur ne porte pas encore la ligne de l'échantillon
+ * (seulement le paquet de traductions) : H3/H4 mesurent le BRANCHEMENT dans la source, pas le
+ * rendu. L'apparence reste un gate humain, comme pour T5 et T6.
  */
 import { readFileSync } from 'node:fs'
 import crypto from 'node:crypto'
@@ -160,6 +172,72 @@ try {
 
   // La boîte est remise en pause à la main : le banc ne laisse JAMAIS un tri qui tournerait
   // sur une vraie boîte IONOS au prochain passage du planificateur (règle absolue de GOAL.md).
+  await run('pause')
+
+  // --- H. l'échantillon : ce que l'écran propose, et ce que la route accepte (lot T10b) ----
+  // L'écran ne doit RIEN écrire de la taille ni de la graine : il les lit de l'état, qui est le
+  // seul endroit où elles sont nommées (`lib/tagging/runner.ts`).
+  const stateH = (await json(`/api/tagging/settings?account=${accountId}`)).data ?? {}
+  check(stateH.sampleDefaults?.size > 0 && Number.isInteger(stateH.sampleDefaults?.seed),
+    'H1 l’état porte la taille et la graine par défaut d’un échantillon',
+    JSON.stringify(stateH.sampleDefaults))
+  check(typeof stateH.sampleEstimateUsd === 'number',
+    'H2 et le coût estimé de CET échantillon, pour l’annoncer avant de le lancer',
+    String(stateH.sampleEstimateUsd))
+
+  // L'écran est un composant CLIENT : ses données viennent de SWR, donc le HTML rendu par le
+  // serveur ne contient PAS encore la ligne de l'échantillon (il ne porte que le paquet de
+  // traductions de next-intl — une assertion sur ce HTML serait verte en ne mesurant rien, c'est
+  // le piège vérifié ici avant d'écrire H3). Ce qui se mesure SANS navigateur, c'est donc le
+  // BRANCHEMENT dans la source de l'écran ; l'apparence, elle, est un gate humain (voir T10b).
+  const screen = readFileSync('app/(app)/settings/tagging/page.tsx', 'utf8')
+  check(/action: 'sample'|run\('sample'\)/.test(screen) && /sampleSize/.test(screen),
+    'H3 l’écran pilote bien l’action « sample » de la route, avec une taille')
+  // La taille n'est écrite NULLE PART dans l'écran : elle vient de `sampleDefaults`, seul endroit
+  // qui la nomme (lib/tagging/runner.ts). Un 1000 en dur ici serait une seconde source de vérité.
+  check(/sampleDefaults/.test(screen) && !/\b1000\b|\b1_000\b/.test(screen),
+    'H4 la taille et la graine viennent de l’état, pas d’un nombre écrit dans l’écran')
+  check(/distribution=1/.test(screen) && /data-distribution-question/.test(screen),
+    'H4b l’écran demande la répartition à la route et la rend par question')
+
+  // Les bornes de la route. Une taille ou une graine hors du prévu est REFUSÉE, pas corrigée en
+  // silence : un échantillon dont la taille n'est pas celle demandée ne mesure rien.
+  const sample = (body) => fetch(`${BASE}/api/tagging/run`, {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId, action: 'sample', ...body }),
+  }).then(async r => ({ status: r.status, body: await r.json() }))
+
+  for (const [label, body] of [
+    ['une taille de 0', { sampleSize: 0 }],
+    ['une taille non entière', { sampleSize: 12.5 }],
+    ['une taille démesurée', { sampleSize: 10_000_000 }],
+    ['une graine négative', { sampleSeed: -1 }],
+  ]) {
+    const refused = await sample(body)
+    check(refused.status === 400 && /sampleS(ize|eed)/.test(JSON.stringify(refused.body)),
+      `H5 ${label} est refusée, et la route DIT laquelle`,
+      `statut ${refused.status} ${JSON.stringify(refused.body).slice(0, 160)}`)
+  }
+
+  // Un échantillon accepté met la boîte en marche, avec `sample` renseigné — c'est ce qui
+  // distingue « échantillon de N » d'un tri complet à l'écran. Rien n'est trié ici : le travail
+  // appartient au planificateur, et la boîte est remise en pause juste après.
+  const ok = await sample({ sampleSize: 3, sampleSeed: 4242 })
+  const okData = NEGATIVE ? { sample: null } : (ok.body.data ?? {})
+  check(ok.status === 200 && okData.sample?.size === 3 && okData.sample?.seed === 4242,
+    'H6 un échantillon accepté est ANNONCÉ dans l’état (taille et graine)',
+    `statut ${ok.status} ${JSON.stringify(okData.sample)}`)
+  check(okData.sample?.done === 0 && okData.sample?.drawn === 0,
+    'H7 le tirage n’est pas fait dans le temps d’une requête HTTP (il appartient au trieur)',
+    JSON.stringify(okData.sample))
+
+  // Et « lancer le tri complet » efface le mode échantillon : sinon « lancer le reste » après un
+  // échantillon relancerait l'échantillon.
+  const full = await run('start')
+  check((full.body.data ?? {}).sample === null,
+    'H8 « lancer le tri complet » efface le mode échantillon',
+    JSON.stringify((full.body.data ?? {}).sample))
+
   await run('pause')
 } finally {
   if (engineId) {
