@@ -218,11 +218,11 @@ try {
   // ferait tomber F5 ; un `alreadyTagged` qui ne rendrait jamais rien ferait tomber F4. Aucune
   // implémentation ne peut les rendre vertes toutes les deux sans lire vraiment la version.
   check('F4 un mail tagué sous la taxonomie courante est bien SAUTÉ',
-    (await alreadyTagged(ACCOUNT, 'jev', [MID(1)])).has(MID(1)))
+    (await alreadyTagged(ACCOUNT, 'jev', [MID(1)])).before.has(MID(1)))
   await pool.query(
     `UPDATE message_tags SET taxonomy_version = 'perime00000' WHERE message_id = $1 AND source = 'jev'`, [MID(1)])
   check('F5 le MÊME mail, tagué sous une AUTRE version, n’est PLUS sauté (la boîte se rejoue)',
-    !(await alreadyTagged(ACCOUNT, 'jev', [MID(1)])).has(MID(1)))
+    !(await alreadyTagged(ACCOUNT, 'jev', [MID(1)])).before.has(MID(1)))
   const perime = await pool.query(
     `SELECT DISTINCT taxonomy_version FROM message_tags WHERE message_id = $1 AND source = 'jev'`, [MID(1)])
   check('F6 et ce n’est pas la ligne qui a disparu : elle est là, sous son ancienne version',

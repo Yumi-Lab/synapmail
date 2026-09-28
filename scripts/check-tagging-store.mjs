@@ -194,9 +194,10 @@ try {
   console.log('\nH. ce que le trieur sautera')
   const seen = await store.alreadyTagged(ACCOUNT, 'jev', [MID(1), MID(2), MID(8)])
   check('H1 les mails déjà tagués PAR CETTE SOURCE sont reconnus',
-    seen.has(MID(1)) && seen.has(MID(2)) && !seen.has(MID(8)), [...seen].join(' '))
+    seen.before.has(MID(1)) && seen.before.has(MID(2)) && !seen.before.has(MID(8)), [...seen.before].join(' '))
   const seenHuman = await store.alreadyTagged(ACCOUNT, 'one', [MID(1), MID(2)])
-  check('H2 une AUTRE source n’a rien tagué : changer de moteur retague', seenHuman.size === 0, [...seenHuman].join(' '))
+  check('H2 une AUTRE source n’a rien tagué : changer de moteur retague',
+    seenHuman.before.size === 0 && seenHuman.during.size === 0, [...seenHuman.before].join(' '))
 } finally {
   await clean().catch(() => {})
   await pool.end()
