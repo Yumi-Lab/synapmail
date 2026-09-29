@@ -684,7 +684,7 @@ export async function initDb(): Promise<void> {
       sample_size INTEGER,
       sample_seed BIGINT,
       sample_cursor JSONB,
-      run_started_at TIMESTAMPTZ,
+      run_started_tag_id BIGINT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)
@@ -698,12 +698,18 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_seed BIGINT`)
   await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_cursor JSONB`)
 
-  // L'instant où le tri COURANT a été lancé (lot T10c). Il sépare « déjà tagué avant ce tri »
-  // — un mail sauté pour de bon — de « tagué par ce tri même », relu au passage suivant parce
-  // qu'un lot coupé au délai ne fait pas avancer son curseur. Sans cette date, le second cas
-  // était compté en « sautés » alors qu'il avait déjà été compté en « tagués » : d'où
-  // `skipped=86` pour 995 mails tagués sur 1 000 tirés (gate T10b, 28/09/2026).
-  await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS run_started_at TIMESTAMPTZ`)
+  // Le dernier `message_tags.id` qui existait quand le tri COURANT a été lancé (lot T10c). Il
+  // sépare « déjà tagué avant ce tri » — un mail sauté pour de bon — de « tagué par ce tri
+  // même », relu au passage suivant parce qu'un lot coupé au délai ne fait pas avancer son
+  // curseur. Sans cette borne, le second cas était compté en « sautés » alors qu'il avait déjà
+  // été compté en « tagués » : d'où `skipped=86` pour 995 mails tagués sur 1 000 tirés (gate
+  // T10b, 28/09/2026). Une borne par IDENTIFIANT et non par date (`run_started_at`, retiré) :
+  // l'horloge de Postgres sous Docker Desktop recule de 300 à 500 ms toutes les ~10 s (mesuré
+  // le 29/09/2026 : 6 fois sur 400, un `NOW()` lu 150 ms APRÈS un autre lui était antérieur),
+  // et un `cree_le` antérieur au lancement reclassait le premier lot du tri en « sautés ».
+  // La séquence, elle, ne recule jamais.
+  await query(`ALTER TABLE mailbox_tagging DROP COLUMN IF EXISTS run_started_at`)
+  await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS run_started_tag_id BIGINT`)
 
   // Les CHECK ci-dessus ne sont posées qu'à la CRÉATION de la table : sur une base qui existe
   // déjà, élargir une liste dans le code ne changerait rien. On les repose donc à chaque

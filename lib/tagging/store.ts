@@ -424,10 +424,12 @@ export async function tagDistribution(accountId: string): Promise<Array<{ questi
  * = tagué AVANT ce tri, donc sauté pour de bon et à compter comme tel ; `during` = tagué PAR ce
  * tri, donc déjà compté en « tagués » et relu seulement parce qu'un lot coupé au délai ne fait
  * pas avancer son curseur — le compter en « sautés » serait un double compte (lot T10c). Sans
- * `since`, tout tombe dans `before` : un appelant qui ne trie pas n'a rien à distinguer.
+ * `sinceTagId`, tout tombe dans `before` : un appelant qui ne trie pas n'a rien à distinguer.
+ * La borne est un IDENTIFIANT (`message_tags.id`, séquence monotone), pas une date : `cree_le`
+ * suit l'horloge de Postgres, qui recule sous Docker Desktop (voir `lib/db.ts`).
  */
 export async function alreadyTagged(
-  accountId: string, by: { source: TagSource; auteurId: string }, messageIds: string[], since?: Date | null
+  accountId: string, by: { source: TagSource; auteurId: string }, messageIds: string[], sinceTagId?: string | number | null
 ): Promise<{ before: Set<string>; during: Set<string> }> {
   if (!messageIds.length) return { before: new Set(), during: new Set() }
   // Le MÊME auteur sous la MÊME taxonomie (décision 23) : un autre moteur du même type ne fait
@@ -437,12 +439,12 @@ export async function alreadyTagged(
   // Retaguer sous une nouvelle version se fait en AJOUTANT un moteur (nouvel `auteur_id`). Voie
   // d'amélioration : retenir sur `decision_engines` le dernier modèle annoncé et le comparer ici.
   const rows = await query<{ message_id: string; during: boolean }>(
-    `SELECT message_id, bool_or($5::timestamptz IS NOT NULL AND cree_le >= $5::timestamptz) AS during
+    `SELECT message_id, bool_or($5::bigint IS NOT NULL AND id > $5::bigint) AS during
        FROM message_tags
       WHERE account_id = $1 AND source = $2 AND auteur_id = $6
         AND taxonomy_version = $3 AND message_id = ANY($4::text[])
       GROUP BY message_id`,
-    [accountId, by.source, TAXONOMY_VERSION, messageIds, since ?? null, by.auteurId]
+    [accountId, by.source, TAXONOMY_VERSION, messageIds, sinceTagId ?? null, by.auteurId]
   )
   const before = new Set<string>(), during = new Set<string>()
   for (const r of rows) (r.during ? during : before).add(r.message_id)

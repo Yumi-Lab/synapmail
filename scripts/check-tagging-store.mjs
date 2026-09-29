@@ -243,6 +243,15 @@ try {
   const seenHuman = await store.alreadyTagged(ACCOUNT, { source: 'one', auteurId: MOTEUR_A.id }, [MID(1), MID(2)])
   check('H2 une AUTRE source n’a rien tagué : changer de moteur retague',
     seenHuman.before.size === 0 && seenHuman.during.size === 0, [...seenHuman.before].join(' '))
+  // La borne « avant / pendant ce tri » est un IDENTIFIANT d'étiquette, pas une date : l'horloge
+  // de Postgres sous Docker Desktop recule (mesuré le 29/09/2026), la séquence jamais.
+  const [{ last }] = await query('SELECT COALESCE(MAX(id), 0)::text AS last FROM message_tags')
+  await store.writeTags({ accountId: ACCOUNT, messageId: MID(8), source: 'jev', auteur: MOTEUR_A, modele: 'jev-1.13.0',
+    tags: [{ question: 'categorie', valeur: CATEGORIE }] })
+  const split = await store.alreadyTagged(ACCOUNT, { source: 'jev', auteurId: MOTEUR_A.id }, [MID(1), MID(8)], last)
+  check('H3 la borne par identifiant : tagué AVANT = `before`, tagué APRÈS = `during`, quelle que soit l’horloge',
+    split.before.has(MID(1)) && !split.during.has(MID(1)) && split.during.has(MID(8)) && !split.before.has(MID(8)),
+    `before=${[...split.before].join(' ')} during=${[...split.during].join(' ')}`)
 
   // ---- I. l'origine est conservée (décision 23) ----
   console.log(`\nI. l’origine de chaque étiquette est conservée${NEGATIVE ? ' — CONTRÔLE NÉGATIF (ancienne clé)' : ''}`)
