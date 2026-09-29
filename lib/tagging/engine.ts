@@ -16,13 +16,14 @@
  * you might not need is close to free »).
  *
  * LE MAIL EST UNE DONNÉE, JAMAIS UNE CONSIGNE. Son contenu ne va que dans `state` ; les
- * consignes viennent toutes de `./questions.ts`, qui n'en contient aucun octet. Et une réponse
- * n'est retenue que si elle nomme une valeur PRÉVUE (`isValidTag`) : un mail qui ferait
+ * consignes viennent toutes du jeu de questions de l'utilisateur (`tag_questions`, défauts dans
+ * `./questions.ts`), qui n'en contient aucun octet. Et une réponse n'est retenue que si elle
+ * nomme une valeur PRÉVUE (`valuesOf`) : un mail qui ferait
  * « répondre » autre chose au moteur produit un rejet, pas une étiquette. C'est cette
  * fermeture — pas un filtre sur le texte — qui rend l'injection inoffensive.
  */
 import { messageText } from '../html'
-import { NOUL_NO, NOUL_YES, QUESTIONS, engineQuestionsFor, isValidTag, posedQuestions, valuesOf, type TagQuestion } from './questions'
+import { NOUL_NO, NOUL_YES, engineBodyFor, valuesOf, type TagQuestion } from './questions'
 
 /**
  * Les sources d'une étiquette : le TYPE du moteur qui l'a produite (décision 13, donc `autre`
@@ -86,11 +87,10 @@ export const STATE_BODY_CHARS = 1500
 export const ASSUMED_INPUT_TOKENS_PER_QUESTION = 147
 
 /**
- * Ce même coût ramené au mail, pour la taxonomie TELLE QU'ELLE EST. Une fonction et non une
- * constante : les questions deviennent modifiables (lot T-Q), donc un nombre figé au chargement
- * du module serait faux dès la première question ajoutée.
+ * Ce même coût ramené au mail, pour le NOMBRE de questions réellement posées à cet utilisateur
+ * (lot T-Q : les questions sont modifiables, le nombre est celui de son jeu, pas une constante).
  */
-export const assumedInputTokensPerMail = (): number => ASSUMED_INPUT_TOKENS_PER_QUESTION * QUESTIONS.length
+export const assumedInputTokensPerMail = (questions: number): number => ASSUMED_INPUT_TOKENS_PER_QUESTION * questions
 
 export interface MailForState {
   fromName?: string
@@ -239,8 +239,8 @@ export function parseAnswer(q: TagQuestion, a: RawAnswer | undefined): ParsedTag
     return { question: q.id, valeur: best, probabilites: Object.keys(byValue).length ? byValue : null, confiance: num(a.confidence) }
   }
 
-  // `choice` : la SEULE porte d'entrée est `isValidTag`. Une valeur inventée est rejetée.
-  if (!isValidTag(q.id, a.choice)) return null
+  // `choice` : la SEULE porte d'entrée est la liste des valeurs PRÉVUES. Une valeur inventée est rejetée.
+  if (typeof a.choice !== 'string' || !values.includes(a.choice)) return null
   const byValue: Record<string, number> = {}
   for (const [k, p] of Object.entries(probs ?? {})) {
     const weight = num(p)
@@ -250,16 +250,16 @@ export function parseAnswer(q: TagQuestion, a: RawAnswer | undefined): ParsedTag
 }
 
 /**
- * Ce qu'on retient d'une réponse, pour les questions POSÉES seulement : une question qu'on n'a
- * pas posée n'est ni rejetée ni stockée — la compter en rejet ferait lire un échec là où il n'y
- * a pas eu de demande.
+ * Ce qu'on retient d'une réponse, pour les questions POSÉES seulement (la liste même qui a bâti
+ * la requête) : une question qu'on n'a pas posée n'est ni rejetée ni stockée — la compter en
+ * rejet ferait lire un échec là où il n'y a pas eu de demande.
  */
-export function parseResponse(body: unknown, questionIds?: readonly string[]): EngineResult {
+export function parseResponse(body: unknown, posed: readonly TagQuestion[]): EngineResult {
   const b = (body ?? {}) as { model?: unknown; answers?: Record<string, RawAnswer>; usage?: { input_tokens?: unknown } }
   const answers = b.answers && typeof b.answers === 'object' ? b.answers : {}
   const tags: ParsedTag[] = []
   const rejected: string[] = []
-  for (const q of posedQuestions(questionIds)) {
+  for (const q of posed) {
     const tag = parseAnswer(q, answers[q.id])
     if (tag) tags.push(tag)
     else rejected.push(q.id)
@@ -278,11 +278,13 @@ const retryAfterOf = (res: Response): number | null => {
 }
 
 /**
- * UNE requête, toutes les questions — ou le sous-ensemble `questionIds`. Jette une
- * `EngineError` typée, jamais autre chose.
+ * UNE requête, pour les questions `posed` — le jeu actif de l'utilisateur, ou le sous-ensemble
+ * qu'un appelant a résolu (`QuestionSet.posed`). UN SEUL endroit reçoit cette liste, pour que le
+ * corps `questions` envoyé et les réponses relues portent exactement sur les mêmes questions.
+ * Jette une `EngineError` typée, jamais autre chose.
  */
-export async function askEngine(cfg: EngineConfig, state: EngineState, questionIds?: readonly string[]): Promise<EngineResult> {
-  const questions = engineQuestionsFor(questionIds)
+export async function askEngine(cfg: EngineConfig, state: EngineState, posed: readonly TagQuestion[]): Promise<EngineResult> {
+  const questions = engineBodyFor(posed)
   let res: Response
   try {
     res = await fetch(cfg.url, {
@@ -304,6 +306,6 @@ export async function askEngine(cfg: EngineConfig, state: EngineState, questionI
   } catch {
     throw new EngineError('rejected', res.status, 'unreadable engine response')
   }
-  const parsed = parseResponse(body, questionIds)
+  const parsed = parseResponse(body, posed)
   return { ...parsed, model: parsed.model || cfg.model }
 }

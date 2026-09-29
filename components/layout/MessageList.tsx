@@ -28,7 +28,9 @@ import { accountColor, accountInitials, readableInk, useAccountAccent } from './
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
 import { TagPills } from '@/components/mail/MessageTags'
-import { QUESTIONS, valuesOf } from '@/lib/tagging/questions'
+import { valuesOf } from '@/lib/tagging/questions'
+import { useQuestionSet } from '@/hooks/useQuestionSet'
+import { useTagLabels } from '@/hooks/useTagLabels'
 import { HUMAN_SOURCE } from '@/lib/tagging/engine'
 import { TAGS_ENDPOINT, taggedRows } from '@/lib/tagging/view'
 import type { StoredTag, TaggedMessage } from '@/lib/tagging/store'
@@ -164,6 +166,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const perms = permissions ?? DEFAULT_PERMISSIONS
   const t = useTranslations('mail')
   const tTags = useTranslations('tags')
+  const { set: questionSet } = useQuestionSet()
+  const { q: labelQ, v: labelV } = useTagLabels()
   const locale = useLocale()
   // État partagé : la liste est la SEULE à publier et à enregistrer des actions.
   const { publish, register } = useMailSelection()
@@ -1286,10 +1290,10 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             )}
           >
             <option value="">{tTags('filterAll')}</option>
-            {QUESTIONS.map(q => (
-              <optgroup key={q.id} label={tTags(`q.${q.id}`)}>
+            {questionSet.all.map(q => (
+              <optgroup key={q.id} label={labelQ(q.id)}>
                 {valuesOf(q).map(v => (
-                  <option key={v} value={`${q.id}|${v}`}>{tTags(`v.${v}`)}</option>
+                  <option key={v} value={`${q.id}|${v}`}>{labelV(v)}</option>
                 ))}
               </optgroup>
             ))}

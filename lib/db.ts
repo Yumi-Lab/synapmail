@@ -643,6 +643,30 @@ export async function initDb(): Promise<void> {
     `)
   }
 
+  // Les QUESTIONS de tri d'un utilisateur (lot T-Q, décision 22) : la source unique de sa
+  // taxonomie. `lib/tagging/questions.ts` ne garde que les défauts, copiés ici à la première
+  // lecture (`lib/tagging/userQuestions.ts`). `criteria` porte les options telles que le code les
+  // lit (`TagOption[]` : valeur, définition, frontière, exemples ; NULL pour un `noul`) ;
+  // `list_badge` dit quand la pastille monte dans la liste (true, un niveau, ou NULL). `version`
+  // est le compteur AFFICHÉ (+1 à chaque changement de consigne ou de critères) ; la version que
+  // portent les étiquettes reste le hachage du corps envoyé au moteur (`questionVersion`).
+  await query(`
+    CREATE TABLE IF NOT EXISTS tag_questions (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      id VARCHAR(40) NOT NULL,
+      type VARCHAR(10) NOT NULL CHECK (type IN ('choice', 'score', 'noul')),
+      instructions TEXT NOT NULL,
+      criteria JSONB,
+      list_badge JSONB,
+      groupe VARCHAR(40) NOT NULL DEFAULT 'general',
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      position INTEGER NOT NULL DEFAULT 0,
+      version INTEGER NOT NULL DEFAULT 1,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, id)
+    )
+  `)
+
   // La dernière position CONNUE d'un mail tagué, pour que le filtre par étiquette montre des
   // mails absents de la page chargée. `messages_cache` ne suffit pas : il ne garde qu'une
   // fenêtre, et un mail tagué il y a un mois en est sorti.

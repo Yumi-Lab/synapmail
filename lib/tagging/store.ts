@@ -3,7 +3,8 @@
  *
  * Une règle commande tout ce fichier :
  *
- *  1. **Une étiquette n'entre que si sa valeur est PRÉVUE** (`isValidTag`). C'est la même porte
+ *  1. **Une étiquette n'entre que si sa valeur est PRÉVUE** par le jeu de questions du
+ *     PROPRIÉTAIRE de la boîte (`QuestionSet.isValidTag`, lot T-Q). C'est la même porte
  *     que pour le moteur : ni un agent, ni un clic, ni un INSERT applicatif ne peuvent ranger
  *     une valeur inventée. Une écriture qui en contient une échoue ENTIÈREMENT (transaction),
  *     avec le nom de la question et de la valeur fautives — une route en fait un 422 qui NOMME.
@@ -18,7 +19,8 @@
 import { createHash } from 'crypto'
 import { query } from '../db'
 import { HUMAN_SOURCE, isEngineKind, TAG_SOURCES, type TagSource } from './engine'
-import { engineQuestionsFor, isValidTag, posedQuestions } from './questions'
+import { engineBodyOf, type QuestionSet, type TagQuestion } from './questions'
+import { questionSetForAccount } from './userQuestions'
 
 /**
  * Un mail sans `Message-ID` (ils existent) a tout de même besoin d'un identifiant STABLE, sinon
@@ -37,34 +39,34 @@ export function messageIdOf(m: { messageId?: string | null; fromAddress?: string
 
 /**
  * La VERSION d'une question : les 12 premiers hex du SHA-256 du corps EXACT envoyé au moteur
- * (consigne + critères, `engineQuestionsFor` — la même fonction que la requête, donc rien à
- * tenir en accord à la main). Elle change dès qu'une définition change, et c'est tout son
- * intérêt : un export ne mélange plus jamais deux définitions d'une même question dans un seul
- * jeu d'entraînement.
+ * (consigne + critères, `engineBodyOf` — la même fonction que la requête, donc rien à tenir en
+ * accord à la main). Elle change dès qu'une définition change, et c'est tout son intérêt : un
+ * export ne mélange plus jamais deux définitions d'une même question dans un seul jeu
+ * d'entraînement. Depuis le lot T-Q elle est indépendante du compteur `version` affiché à
+ * l'écran : deux utilisateurs qui écrivent la même consigne obtiennent la même version.
  *
  * Calculée ICI et nulle part ailleurs, et pour TOUTES les sources : une correction humaine
  * porte la version de la question telle qu'elle a été posée, sinon la ligne `humain` et la
  * ligne du moteur qu'elle corrige passeraient pour deux réponses à deux questions différentes.
  *
- * Pas de cache : 41 hachages de quelques centaines d'octets par mail, hors de toute mesure
+ * Pas de cache : 49 hachages de quelques centaines d'octets par mail, hors de toute mesure
  * devant l'aller-retour à la base qui suit.
  */
 const VERSION_CHARS = 12
 
-export const questionVersion = (question: string): string =>
-  createHash('sha256').update(JSON.stringify(engineQuestionsFor([question]))).digest('hex').slice(0, VERSION_CHARS)
+export const questionVersion = (q: TagQuestion): string =>
+  createHash('sha256').update(JSON.stringify(engineBodyOf(q))).digest('hex').slice(0, VERSION_CHARS)
 
 /**
- * La version de la TAXONOMIE ENTIÈRE : le même hachage, sur le corps de TOUTES les questions
- * posées. `questionVersion` dit à quelle définition UNE étiquette répond ; celle-ci dit avec quel
- * JEU de questions un mail a été traité — c'est ce que le trieur compare pour décider de rejouer
- * une boîte (une question AJOUTÉE laisse les autres inchangées, donc aucune `questionVersion` ne
- * bouge, et sans cette version globale le mail serait sauté sans jamais recevoir la nouvelle).
- *
- * Constante et non fonction : la taxonomie ne change pas en cours de processus.
+ * La version de la TAXONOMIE ENTIÈRE d'un jeu : le même hachage, sur le corps de TOUTES les
+ * questions ACTIVES. `questionVersion` dit à quelle définition UNE étiquette répond ; celle-ci
+ * dit avec quel JEU de questions un mail a été traité — c'est ce que le trieur compare pour
+ * décider de rejouer une boîte (une question AJOUTÉE laisse les autres inchangées, donc aucune
+ * `questionVersion` ne bouge, et sans cette version globale le mail serait sauté sans jamais
+ * recevoir la nouvelle). Une question DÉSACTIVÉE la change aussi : le jeu posé n'est plus le même.
  */
-export const TAXONOMY_VERSION: string =
-  createHash('sha256').update(JSON.stringify(engineQuestionsFor())).digest('hex').slice(0, VERSION_CHARS)
+export const taxonomyVersion = (set: QuestionSet): string =>
+  createHash('sha256').update(JSON.stringify(set.enabled.map(q => [q.id, engineBodyOf(q)]))).digest('hex').slice(0, VERSION_CHARS)
 
 export interface TagToWrite {
   question: string
@@ -200,10 +202,14 @@ export async function writeTags(params: {
   modele?: string | null
   validePar?: string | null
   position?: TaggedMessagePosition | null
+  /** Le jeu de questions de la boîte, quand l'appelant l'a déjà chargé (le trieur) ; sinon relu ici. */
+  questions?: QuestionSet
 }): Promise<number> {
   const { accountId, messageId, source, auteur, tags } = params
-  for (const t of tags) if (!isValidTag(t.question, t.valeur)) throw new InvalidTagError(t.question, t.valeur)
+  const set = params.questions ?? await questionSetForAccount(accountId)
+  for (const t of tags) if (!set.isValidTag(t.question, t.valeur)) throw new InvalidTagError(t.question, t.valeur)
   if (!tags.length) return 0
+  const versionOf = (question: string) => questionVersion(set.questionById(question)!)
 
   if (params.position) await upsertPosition(accountId, messageId, params.position)
   await query(
@@ -221,8 +227,8 @@ export async function writeTags(params: {
     [accountId, messageId, source, params.modele ?? '', params.validePar ?? null,
       tags.map(t => t.question), tags.map(t => t.valeur),
       tags.map(t => (t.probabilites ? JSON.stringify(t.probabilites) : null)),
-      tags.map(t => t.confiance ?? null), tags.map(t => questionVersion(t.question)),
-      TAXONOMY_VERSION, auteur.id, auteur.nom]
+      tags.map(t => t.confiance ?? null), tags.map(t => versionOf(t.question)),
+      taxonomyVersion(set), auteur.id, auteur.nom]
   )
   return tags.length
 }
@@ -387,13 +393,14 @@ export async function exportTags(params: {
  * donnerait des totaux par question qui ne s'additionnent pas.
  */
 export async function tagDistribution(accountId: string): Promise<Array<{ question: string; values: Array<{ valeur: string; count: number }> }>> {
+  const set = await questionSetForAccount(accountId)
   const rows = await query<{ question: string; valeur: string; n: string }>(
     `SELECT question, valeur, COUNT(*) AS n FROM (
        SELECT question, valeur, ${EFFECTIVE_RANK} AS rang
          FROM message_tags WHERE account_id = $1 AND taxonomy_version = $2
      ) r WHERE rang = 1
       GROUP BY question, valeur`,
-    [accountId, TAXONOMY_VERSION]
+    [accountId, taxonomyVersion(set)]
   )
   const byQuestion = new Map<string, Array<{ valeur: string; count: number }>>()
   for (const r of rows) {
@@ -401,9 +408,9 @@ export async function tagDistribution(accountId: string): Promise<Array<{ questi
     list.push({ valeur: r.valeur, count: Number(r.n) })
     byQuestion.set(r.question, list)
   }
-  // L'ordre des questions est celui de `questions.ts`, et celui des valeurs le plus fréquent
+  // L'ordre des questions est celui du jeu de l'utilisateur, et celui des valeurs le plus fréquent
   // d'abord : c'est ce qu'on lit dans une répartition, pas un ordre alphabétique.
-  return posedQuestions()
+  return set.posed()
     .filter(q => byQuestion.has(q.id))
     .map(q => ({
       question: q.id,
@@ -429,9 +436,10 @@ export async function tagDistribution(accountId: string): Promise<Array<{ questi
  * suit l'horloge de Postgres, qui recule sous Docker Desktop (voir `lib/db.ts`).
  */
 export async function alreadyTagged(
-  accountId: string, by: { source: TagSource; auteurId: string }, messageIds: string[], sinceTagId?: string | number | null
+  accountId: string, by: { source: TagSource; auteurId: string; questions?: QuestionSet }, messageIds: string[], sinceTagId?: string | number | null
 ): Promise<{ before: Set<string>; during: Set<string> }> {
   if (!messageIds.length) return { before: new Set(), during: new Set() }
+  const set = by.questions ?? await questionSetForAccount(accountId)
   // Le MÊME auteur sous la MÊME taxonomie (décision 23) : un autre moteur du même type ne fait
   // sauter aucun mail. ponytail: le modèle ANNONCÉ n'est connu qu'APRÈS avoir payé l'appel
   // (`jev-latest` configuré → `jev-1.13.0` annoncé), donc il n'entre pas dans le saut — le
@@ -444,7 +452,7 @@ export async function alreadyTagged(
       WHERE account_id = $1 AND source = $2 AND auteur_id = $6
         AND taxonomy_version = $3 AND message_id = ANY($4::text[])
       GROUP BY message_id`,
-    [accountId, by.source, TAXONOMY_VERSION, messageIds, sinceTagId ?? null, by.auteurId]
+    [accountId, by.source, taxonomyVersion(set), messageIds, sinceTagId ?? null, by.auteurId]
   )
   const before = new Set<string>(), during = new Set<string>()
   for (const r of rows) (r.during ? during : before).add(r.message_id)

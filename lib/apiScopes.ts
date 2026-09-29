@@ -140,6 +140,14 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'GET /api/tags/export': 'tags:read',
   'GET /api/tagging/status': 'tags:read',
   'POST /api/tagging/run': 'tags:write',
+  // Les questions de tri de l'utilisateur (lot T-Q) : un jeu par utilisateur, aucune boîte
+  // nommée, sauf le test qui interroge le moteur d'UNE boîte sur UN de ses mails.
+  'GET /api/tags/questions': 'tags:read',
+  'POST /api/tags/questions': 'tags:write',
+  'PATCH /api/tags/questions/[id]': 'tags:write',
+  'DELETE /api/tags/questions/[id]': 'tags:write',
+  'POST /api/tags/questions/reset': 'tags:write',
+  'POST /api/tags/questions/[id]/test': 'tags:write',
 }
 
 /**
@@ -180,6 +188,7 @@ export const ROUTE_ACCOUNT_PERMISSION: Record<string, AccountPermission> = {
   // La lecture n'en exige aucune — un partage actif EST l'accès en lecture.
   'PUT /api/messages/[id]/tags': 'organize',
   'POST /api/tagging/run': 'organize',
+  'POST /api/tags/questions/[id]/test': 'organize',
 }
 
 export const isApiScope = (value: unknown): value is ApiScope =>

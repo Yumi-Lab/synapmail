@@ -1,10 +1,13 @@
 /**
- * LES questions posées à chaque mail — la SOURCE UNIQUE de la taxonomie.
+ * LES questions posées à chaque mail — les VALEURS PAR DÉFAUT de la taxonomie (lot T-Q).
  *
- * Lue par le client du moteur (`engine.ts`, qui en fait le corps `questions` de la requête
- * `/v1/systemone`), par la validation des écritures (une valeur absente d'ici est refusée),
- * par l'interface (pastilles, filtre, correction) et par les bancs. Un libellé AFFICHÉ vit
- * dans `locales/{en,fr,zh}.json` (`tagging.q.<id>`, `tagging.v.<id>.<valeur>`) ; ce qui vit
+ * Depuis le lot T-Q la source unique est la BASE : `tag_questions`, un jeu PAR UTILISATEUR
+ * (`lib/tagging/userQuestions.ts`), copié d'ici à la première lecture puis modifiable à l'écran
+ * et par l'API. Ce fichier ne garde que ces défauts et les FONCTIONS PURES qui font d'une liste
+ * de questions un jeu utilisable (`questionSet`) : le corps `questions` de la requête
+ * `/v1/systemone`, la validation des écritures (une valeur absente du jeu est refusée), les
+ * pastilles, le filtre, la correction et les bancs passent tous par un `QuestionSet`. Un libellé
+ * AFFICHÉ vit dans `locales/{en,fr,zh}.json` (`tags.q.<id>`, `tags.v.<valeur>`) ; ce qui vit
  * ici est ce que lit le MOTEUR.
  *
  * Trois formes, qui sont celles du protocole System One (JEV comme Yumi One) :
@@ -50,7 +53,8 @@ export type QuestionGroup = 'general' | 'support' | 'prospection' | 'security' |
 
 export interface TagQuestion {
   id: string
-  group: QuestionGroup
+  /** Le groupe : l'un des cinq d'origine, ou un nom libre posé à l'écran (lot T-Q). */
+  group: QuestionGroup | string
   type: QuestionType
   instructions: string
   /** `choice` : les options ; `score` : les niveaux, du plus faible au plus fort. Absent pour `noul`. */
@@ -61,7 +65,34 @@ export interface TagQuestion {
    * jamais dans la liste, seulement dans le panneau du mail et l'infobulle.
    */
   listBadge?: true | string
+  /**
+   * Une question DÉSACTIVÉE (lot T-Q) n'est plus posée au moteur ni comptée dans le coût, mais
+   * ses étiquettes déjà posées restent lisibles et valides. Absent = active.
+   */
+  enabled?: boolean
+  /** Le compteur de version affiché : +1 à chaque changement de consigne ou de critères. Absent = 1. */
+  version?: number
 }
+
+/**
+ * Les identifiants RÉSERVÉS aux détecteurs par programme du lot T11b (source `regle`, calculés
+ * par notre code, jamais posés à un moteur). Aucune question de moteur ne peut les porter — ni
+ * ici (vérifié au chargement du module), ni une question modifiable (400 qui nomme l'id).
+ */
+export const RULE_QUESTION_IDS = ['telephone', 'email_tiers', 'iban', 'carte_bancaire', 'secret_technique'] as const
+
+/**
+ * `reset` est le segment de la route `POST /api/tags/questions/reset` : une question qui porterait
+ * cet id serait injoignable par `PATCH/DELETE /api/tags/questions/[id]`.
+ */
+export const RESERVED_QUESTION_IDS: readonly string[] = [...RULE_QUESTION_IDS, 'reset']
+
+/** Le contrat JEV d'un identifiant (question comme valeur) : `[a-z0-9_]{2,40}`. */
+export const SLUG_RE = /^[a-z0-9_]{2,40}$/
+
+/** Les bornes documentées du protocole : 255 options par `choice`, 2 à 10 niveaux par `score`. */
+export const CHOICE_MAX_OPTIONS = 255
+export const SCORE_LEVELS = { min: 2, max: 10 } as const
 
 export const NOUL_YES = 'oui'
 export const NOUL_NO = 'non'
@@ -70,7 +101,7 @@ export const NOUL_VALUES = [NOUL_YES, NOUL_NO] as const
 /** Les domaines du groupe : ce qui distingue un échange `interne` d'une `correspondance`. */
 const GROUP_DOMAINS = '3d-expert.fr, yumi-lab.com'
 
-export const QUESTIONS: TagQuestion[] = [
+export const DEFAULT_QUESTIONS: TagQuestion[] = [
   // ── Tri général ────────────────────────────────────────────────────────────
   {
     id: 'categorie', group: 'general', type: 'choice', listBadge: true,
@@ -621,31 +652,9 @@ export const QUESTIONS: TagQuestion[] = [
 
 export const QUESTION_GROUPS: QuestionGroup[] = ['general', 'support', 'prospection', 'security', 'finance']
 
-const BY_ID = new Map(QUESTIONS.map(q => [q.id, q]))
-
-export const questionById = (id: string): TagQuestion | undefined => BY_ID.get(id)
-
 /** Les valeurs qu'une question admet, dans l'ordre (l'ordre d'un `score` est son échelle). */
 export function valuesOf(q: TagQuestion): string[] {
   return q.type === 'noul' ? [...NOUL_VALUES] : (q.options ?? []).map(o => o.value)
-}
-
-/** La seule porte d'entrée d'une valeur, qu'elle vienne du moteur, d'un agent ou d'un clic. */
-export function isValidTag(question: string, value: unknown): boolean {
-  const q = questionById(question)
-  return !!q && typeof value === 'string' && valuesOf(q).includes(value)
-}
-
-/** La pastille de cette valeur a-t-elle sa place dans la liste des mails ? */
-export function showsInList(question: string, value: string): boolean {
-  const q = questionById(question)
-  if (!q?.listBadge || !isValidTag(question, value)) return false
-  if (q.type === 'noul') return value === NOUL_YES
-  if (q.type === 'score' && typeof q.listBadge === 'string') {
-    const levels = valuesOf(q)
-    return levels.indexOf(value) >= levels.indexOf(q.listBadge)
-  }
-  return true
 }
 
 /**
@@ -654,44 +663,95 @@ export function showsInList(question: string, value: string): boolean {
  * Les noms des champs sont libres (`primitives_choice.md`) ; ceux-ci sont ceux de la doc.
  */
 function criterionOf(o: TagOption): string | Record<string, unknown> {
-  if (!o.notFor && !o.examples) return o.definition
+  if (!o.notFor && !o.examples?.length) return o.definition
   return {
     what: o.definition,
     ...(o.notFor ? { not_for: o.notFor } : {}),
-    ...(o.examples ? { examples: o.examples } : {}),
+    ...(o.examples?.length ? { examples: o.examples } : {}),
   }
 }
 
 /**
- * Le corps `questions` de `/v1/systemone`, construit UNE fois. `choice` : objet
- * {option: critère} ; `score` : LISTE ordonnée du plus faible au plus fort (un objet y est
- * refusé en 422) ; `noul` : sans critères. AUCUN contenu de mail n'entre ici — ni ici, ni
- * dans aucune constante de ce fichier : le mail ne va que dans `state`.
+ * Le corps d'UNE question tel qu'il part à `/v1/systemone`. `choice` : objet {option: critère} ;
+ * `score` : LISTE ordonnée du plus faible au plus fort (un objet y est refusé en 422) ; `noul` :
+ * sans critères. AUCUN contenu de mail n'entre ici : le mail ne va que dans `state`.
  */
-function engineBodyOf(q: TagQuestion): Record<string, unknown> {
+export function engineBodyOf(q: TagQuestion): Record<string, unknown> {
   if (q.type === 'noul') return { type: q.type, instructions: q.instructions }
   if (q.type === 'score') return { type: q.type, instructions: q.instructions, criteria: q.options!.map(o => o.definition) }
   return { type: q.type, instructions: q.instructions, criteria: Object.fromEntries(q.options!.map(o => [o.value, criterionOf(o)])) }
 }
 
-export const ENGINE_QUESTIONS: Record<string, unknown> = Object.fromEntries(QUESTIONS.map(q => [q.id, engineBodyOf(q)]))
+/** Le corps `questions` de la requête, pour une liste de questions déjà résolue. */
+export const engineBodyFor = (questions: readonly TagQuestion[]): Record<string, unknown> =>
+  Object.fromEntries(questions.map(q => [q.id, engineBodyOf(q)]))
+
+export const isEnabled = (q: TagQuestion): boolean => q.enabled !== false
 
 /**
- * Les questions POSÉES par une requête : toutes par défaut, ou le sous-ensemble demandé.
- * UN SEUL endroit résout cette liste, pour que le corps `questions` envoyé et les réponses
- * relues portent exactement sur les mêmes questions — une question non posée n'est ni rejetée
- * ni stockée. Un identifiant inconnu est une erreur de programmation, pas un cas à ignorer en
- * silence : il ferait poser moins de questions que le code croit.
+ * UN jeu de questions, et tout ce qu'on en tire. C'est l'objet que toute la chaîne se passe
+ * (trieur, stockage, routes, écran) : ce qui était des fonctions sur une constante de module
+ * devient des fonctions sur LE jeu de l'utilisateur, sans en changer une règle.
  */
-export function posedQuestions(ids?: readonly string[]): TagQuestion[] {
-  if (!ids) return QUESTIONS
-  return ids.map(id => {
-    const q = questionById(id)
-    if (!q) throw new Error(`question inconnue: ${id}`)
-    return q
-  })
+export interface QuestionSet {
+  /** Toutes les questions, actives ou non, dans l'ordre d'affichage. */
+  readonly all: readonly TagQuestion[]
+  /** Les questions POSÉES au moteur : les actives, dans l'ordre. */
+  readonly enabled: readonly TagQuestion[]
+  questionById(id: string): TagQuestion | undefined
+  /** La seule porte d'entrée d'une valeur, qu'elle vienne du moteur, d'un agent ou d'un clic. */
+  isValidTag(question: string, value: unknown): boolean
+  /** La pastille de cette valeur a-t-elle sa place dans la liste des mails ? */
+  showsInList(question: string, value: string): boolean
+  /**
+   * Les questions POSÉES par une requête : les actives par défaut, ou le sous-ensemble demandé.
+   * Un identifiant inconnu est une erreur de programmation, pas un cas à ignorer en silence :
+   * il ferait poser moins de questions que le code croit.
+   */
+  posed(ids?: readonly string[]): TagQuestion[]
+  /** L'ordre d'affichage d'une question : son rang dans le jeu, jamais celui du SQL. */
+  rankOf(question: string): number
 }
 
-/** Le corps `questions` de la requête, pour les questions posées. */
-export const engineQuestionsFor = (ids?: readonly string[]): Record<string, unknown> =>
-  ids ? Object.fromEntries(posedQuestions(ids).map(q => [q.id, engineBodyOf(q)])) : ENGINE_QUESTIONS
+export function questionSet(questions: readonly TagQuestion[]): QuestionSet {
+  const all = [...questions]
+  const byId = new Map(all.map(q => [q.id, q]))
+  const rank = new Map(all.map((q, i) => [q.id, i]))
+  const enabled = all.filter(isEnabled)
+  const questionById = (id: string) => byId.get(id)
+  const isValidTag = (question: string, value: unknown): boolean => {
+    const q = byId.get(question)
+    return !!q && typeof value === 'string' && valuesOf(q).includes(value)
+  }
+  return {
+    all, enabled, questionById, isValidTag,
+    showsInList(question, value) {
+      const q = byId.get(question)
+      if (!q?.listBadge || !isValidTag(question, value)) return false
+      if (q.type === 'noul') return value === NOUL_YES
+      if (q.type === 'score' && typeof q.listBadge === 'string') {
+        const levels = valuesOf(q)
+        return levels.indexOf(value) >= levels.indexOf(q.listBadge)
+      }
+      return true
+    },
+    posed(ids) {
+      if (!ids) return enabled
+      return ids.map(id => {
+        const q = byId.get(id)
+        if (!q) throw new Error(`question inconnue: ${id}`)
+        return q
+      })
+    },
+    rankOf: question => rank.get(question) ?? Number.MAX_SAFE_INTEGER,
+  }
+}
+
+/** Le jeu par défaut, tel qu'un utilisateur sans ligne le reçoit. */
+export const DEFAULT_SET: QuestionSet = questionSet(DEFAULT_QUESTIONS)
+
+// Un défaut qui porterait un id réservé serait refusé à l'insertion : autant le dire ici, une
+// fois, au chargement — le banc du lot T-Q le vérifie aussi.
+for (const q of DEFAULT_QUESTIONS) {
+  if (RESERVED_QUESTION_IDS.includes(q.id)) throw new Error(`questions.ts: identifiant réservé ${q.id}`)
+}
