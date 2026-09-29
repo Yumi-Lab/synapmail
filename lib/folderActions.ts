@@ -95,9 +95,14 @@ export function renamedPath(path: string, name: string, delimiter: string): stri
   return cut < 0 ? name : `${path.slice(0, cut)}${delimiter}${name}`
 }
 
-/** True if `child` is filed under `parent`: never true for the folder itself. */
+/**
+ * True if `child` is filed under `parent`: never true for the folder itself. Same
+ * Unicode normalisation as `samePath()`: a server may list the child in NFD while the
+ * parent came from the keyboard in NFC, and a child missed here lets its parent be
+ * deleted (orphan) or skips its cache rewrite on rename.
+ */
 export function isDescendant(child: string, parent: string, delimiter: string): boolean {
-  return child.startsWith(`${parent}${delimiter}`)
+  return child.normalize('NFC').startsWith(`${parent}${delimiter}`.normalize('NFC'))
 }
 
 /**
@@ -107,8 +112,10 @@ export function isDescendant(child: string, parent: string, delimiter: string): 
  * counters, then dead rows. A path outside the subtree comes back intact.
  */
 export function rewritePath(path: string, from: string, to: string, delimiter: string): string {
-  if (path === from) return to
-  return isDescendant(path, from, delimiter) ? to + path.slice(from.length) : path
+  if (samePath(path, from)) return to
+  if (!isDescendant(path, from, delimiter)) return path
+  // Slice on the normalised form: `from` and `path` may differ in length before it.
+  return to + path.normalize('NFC').slice(from.normalize('NFC').length)
 }
 
 /**
