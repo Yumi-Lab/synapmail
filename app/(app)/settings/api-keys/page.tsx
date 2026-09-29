@@ -39,9 +39,9 @@ type ScopedApiKey = ApiKey & {
 /**
  * Restreindre une clé à des adresses. Vide = aucune restriction, comme aujourd'hui.
  * La saisie est une ligne par entrée : une adresse (`198.51.100.4`) ou une plage
- * (`198.51.100.0/24`). Les entrées illisibles sont écartées à l'enregistrement plutôt
- * que de bloquer silencieusement toute la clé — c'est `sanitizeIpRules` qui tranche,
- * côté serveur, et rien n'est retapé ici.
+ * (`198.51.100.0/24`). Une entrée illisible fait REFUSER l'enregistrement (400 qui la
+ * nomme, affiché tel quel) — c'est `validateIpRules` qui tranche, côté serveur, et rien
+ * n'est retapé ici : l'écarter en silence viderait la liste, donc lèverait la restriction.
  */
 function IpRuleEditor({ value, onChange }: { value: string[]; onChange: (next: string[]) => void }) {
   return (
