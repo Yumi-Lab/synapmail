@@ -475,7 +475,16 @@ type LookupOneCallback = (err: Error | null, address: string, family: number) =>
 type LookupAllCallback = (err: Error | null, addresses: ResolvedAddress[]) => void
 type LookupCallback = LookupOneCallback | LookupAllCallback
 
-const defaultRequester: HttpsRequester = ({ url, address, body, contentType, timeoutMs }) =>
+const timeoutError = () => Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })
+
+/**
+ * The shipped HTTPS client. Its deadline is a wall clock, not an inactivity
+ * timer: `AbortSignal.timeout` destroys the socket when it fires, whatever the
+ * server is doing. An inactivity `timeout` alone let a server that drips one
+ * byte every couple of seconds keep the connection open long after the
+ * caller had given up on it (the socket stayed, only the promise was lost).
+ */
+export const defaultRequester: HttpsRequester = ({ url, address, body, contentType, timeoutMs }) =>
   new Promise((resolve, reject) => {
     const req = https.request(
       {
@@ -485,7 +494,7 @@ const defaultRequester: HttpsRequester = ({ url, address, body, contentType, tim
         path: `${url.pathname}${url.search}`,
         method: 'POST',
         headers: { 'Content-Type': contentType, 'Content-Length': Buffer.byteLength(body) },
-        timeout: timeoutMs,
+        signal: AbortSignal.timeout(timeoutMs),
         // Connect to the address that was VERIFIED, without a second
         // resolution: between the check and the connection, DNS could
         // otherwise answer a private address (rebinding).
@@ -507,22 +516,22 @@ const defaultRequester: HttpsRequester = ({ url, address, body, contentType, tim
         resolve({ status: res.statusCode ?? 0 })
       }
     )
-    req.on('timeout', () => req.destroy(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })))
-    req.on('error', reject)
+    req.on('error', err => reject((err as { code?: string }).code === 'ABORT_ERR' ? timeoutError() : err))
     req.end(body)
   })
 
 /**
  * The deadline of one call, held HERE and not only in the socket: the socket's
- * own timeout belongs to `defaultRequester`, so a client that stops answering
- * at another layer would otherwise hang this call — and with it the whole batch
- * and the agent's request — forever. Rejects as `ETIMEDOUT`, the same code the
- * socket uses, so both read as `timeout`.
+ * own deadline belongs to `defaultRequester`, so a requester that stops
+ * answering at another layer would otherwise hang this call — and with it the
+ * whole batch and the agent's request — forever. Rejects as `ETIMEDOUT`, the
+ * same code the socket uses, so both read as `timeout`. It only drops the
+ * promise: freeing the socket is the requester's job (see above).
  */
 function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout>
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })), ms)
+    timer = setTimeout(() => reject(timeoutError()), ms)
   })
   return Promise.race([promise, deadline]).finally(() => clearTimeout(timer)) as Promise<T>
 }
