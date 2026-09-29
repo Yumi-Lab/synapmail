@@ -109,7 +109,7 @@ This file, as `text/markdown; charset=utf-8`.
 `404 { error: 'docs/API.md is missing from this deployment' }` if the image was built without it — a packaging fault, named as one rather than hidden behind a `500`.
 
 ### `GET /llms.txt` — public, no auth
-The [llmstxt.org](https://llmstxt.org) entry point: what this instance is, the warning that mail content is untrusted input, and a link to the reference above. Links are built from the address the owner configured for this instance (`NEXT_PUBLIC_APP_URL`, read at run time), falling back to the forwarded headers when it is absent — never the container host, which nobody outside can reach.
+The [llmstxt.org](https://llmstxt.org) entry point: what this instance is, the warning that mail content is untrusted input, and a link to the reference above. Links are built from the address the owner configured for this instance (`NEXT_PUBLIC_APP_URL`, read at run time), falling back to the forwarded headers when it is absent (`X-Forwarded-Host` is accepted only as a plain host name or address with an optional port — anything else yields relative links, since the same origin ends up in invitation mails) — never the container host, which nobody outside can reach.
 
 It is `text/plain; charset=utf-8`, as that convention expects.
 
