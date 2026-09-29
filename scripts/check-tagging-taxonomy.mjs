@@ -61,6 +61,8 @@ const store = await import('../lib/tagging/store.ts')
 const { ENGINE_QUESTIONS, QUESTIONS, engineQuestionsFor, isValidTag, questionById, valuesOf } =
   await import('../lib/tagging/questions.ts')
 const { alreadyTagged } = store
+/** L'auteur du banc (décision 23) : un id de moteur qui n'existe pas en base, ce qui suffit à signer. */
+const MOTEUR = { id: '00000000-0000-4000-8000-0000000000a1', nom: 'JEV banc T10' }
 
 /** Les 12 hex : la longueur du produit, relue sur lui plutôt que recopiée ici. */
 const VERSION_LEN = store.questionVersion('categorie').length
@@ -167,7 +169,7 @@ try {
   // ---- D. la base la retient, pour toutes les sources ----
   console.log('\nD. la base retient la version, moteur comme humain')
   await store.writeTags({
-    accountId: ACCOUNT, messageId: MID(1), source: 'jev', modele: 'jev-1.13.0',
+    accountId: ACCOUNT, messageId: MID(1), source: 'jev', auteur: MOTEUR, modele: 'jev-1.13.0',
     tags: [
       { question: 'categorie', valeur: NOUVELLE_CATEGORIE, confiance: 0.77 },
       { question: ACTION, valeur: 'archiver', confiance: 0.9 },
@@ -182,7 +184,7 @@ try {
   check('D2 chaque question porte SA version, pas une version de lot',
     lu.tags.find(t => t.question === ACTION)?.questionVersion === store.questionVersion(ACTION))
   await store.writeTags({
-    accountId: ACCOUNT, messageId: MID(1), source: 'humain', validePar: USER,
+    accountId: ACCOUNT, messageId: MID(1), source: 'humain', auteur: { id: USER, nom: 'Banc T10' }, validePar: USER,
     tags: [{ question: 'categorie', valeur: 'marketing' }],
   })
   const corrige = await store.readTags(ACCOUNT, MID(1))
@@ -218,11 +220,11 @@ try {
   // ferait tomber F5 ; un `alreadyTagged` qui ne rendrait jamais rien ferait tomber F4. Aucune
   // implémentation ne peut les rendre vertes toutes les deux sans lire vraiment la version.
   check('F4 un mail tagué sous la taxonomie courante est bien SAUTÉ',
-    (await alreadyTagged(ACCOUNT, 'jev', [MID(1)])).before.has(MID(1)))
+    (await alreadyTagged(ACCOUNT, { source: 'jev', auteurId: MOTEUR.id }, [MID(1)])).before.has(MID(1)))
   await pool.query(
     `UPDATE message_tags SET taxonomy_version = 'perime00000' WHERE message_id = $1 AND source = 'jev'`, [MID(1)])
   check('F5 le MÊME mail, tagué sous une AUTRE version, n’est PLUS sauté (la boîte se rejoue)',
-    !(await alreadyTagged(ACCOUNT, 'jev', [MID(1)])).before.has(MID(1)))
+    !(await alreadyTagged(ACCOUNT, { source: 'jev', auteurId: MOTEUR.id }, [MID(1)])).before.has(MID(1)))
   const perime = await pool.query(
     `SELECT DISTINCT taxonomy_version FROM message_tags WHERE message_id = $1 AND source = 'jev'`, [MID(1)])
   check('F6 et ce n’est pas la ligne qui a disparu : elle est là, sous son ancienne version',

@@ -28,7 +28,7 @@ import {
   EngineError, askEngine, assumedInputTokensPerMail, buildState, costUsd,
   type BulkState, type EngineResult, type EngineState, type MailForState, type PauseReason, type TagSource,
 } from './engine'
-import { alreadyTagged, messageIdOf, writeTags } from './store'
+import { alreadyTagged, messageIdOf, writeTags, type TagAuthor } from './store'
 
 /** Un mail tel que la source le rend : de quoi bâtir l'état ET le situer. */
 export interface SourceMail extends MailForState {
@@ -71,6 +71,8 @@ export interface TaggingEngine {
   ask(state: EngineState): Promise<EngineResult>
   /** La source à écrire pour les étiquettes de CE moteur (`kind` du moteur, décision 13). */
   readonly source: TagSource
+  /** QUI signe les étiquettes : l'id du moteur et son nom du moment (décision 23). */
+  readonly auteur: TagAuthor
   /** Le tarif du moteur, en dollars par milliard de jetons d'entrée (0 pour Yumi One). */
   readonly usdPerBillionInput: number
 }
@@ -395,7 +397,7 @@ async function tagBatch(
       inputTokens += result.inputTokens
       if (!result.tags.length) { errors += 1; continue }
       await writeTags({
-        accountId, messageId: messageIdOf(mail), source: engine.source, modele: result.model,
+        accountId, messageId: messageIdOf(mail), source: engine.source, auteur: engine.auteur, modele: result.model,
         tags: result.tags,
         position: { folder: mail.folder, uid: mail.uid, fromName: mail.fromName, fromAddress: mail.fromAddress, subject: mail.subject, date: mail.date },
       })
@@ -528,7 +530,7 @@ async function processBatch(params: {
 }): Promise<Advance & { lastUid: number; complete: boolean }> {
   const { accountId, engine, mails, deadline } = params
   const ids = mails.map(m => messageIdOf(m))
-  const seen = await alreadyTagged(accountId, engine.source, ids, params.runStartedAt)
+  const seen = await alreadyTagged(accountId, { source: engine.source, auteurId: engine.auteur.id }, ids, params.runStartedAt)
   // Le même mail peut être classé dans deux dossiers, ou deux fois dans le même : il porte alors
   // le MÊME Message-ID. `alreadyTagged` ne rattrape que ce qui est déjà en base, donc pas deux
   // exemplaires du même lot — d'où ce second filtre, sans quoi le mail serait payé deux fois.
@@ -774,6 +776,7 @@ async function advanceLive(params: {
 /** Une ligne `decision_engines`, telle que le trieur a besoin de la lire. */
 export interface DecisionEngineRow {
   id: string
+  name: string
   kind: TagSource
   url: string
   key_encrypted: string | null
@@ -794,6 +797,7 @@ export function engineFromRow(row: DecisionEngineRow): TaggingEngine {
   const cfg = { url: row.url, apiKey: row.key_encrypted ? decrypt(row.key_encrypted) : '', model: row.model }
   return {
     source: row.kind,
+    auteur: { id: row.id, nom: row.name },
     usdPerBillionInput: row.usd_per_billion_input,
     ask: state => askEngine(cfg, state),
   }
@@ -802,6 +806,7 @@ export function engineFromRow(row: DecisionEngineRow): TaggingEngine {
 type MailboxToSort = ImapAccountRow & {
   account_id: string
   engine_id: string
+  engine_name: string
   engine_kind: TagSource
   engine_url: string
   engine_key: string | null
@@ -822,7 +827,7 @@ export async function mailboxesToSort(): Promise<MailboxToSort[]> {
   return query<MailboxToSort>(`
     SELECT a.id, a.imap_host, a.imap_port, a.imap_secure, a.username, a.password_encrypted,
            a.oauth_provider, a.oauth_access_token, a.oauth_refresh_token, a.oauth_expires_at,
-           m.account_id, e.id AS engine_id, e.kind AS engine_kind, e.url AS engine_url,
+           m.account_id, e.id AS engine_id, e.name AS engine_name, e.kind AS engine_kind, e.url AS engine_url,
            e.key_encrypted AS engine_key, e.model AS engine_model,
            e.usd_per_billion_input AS engine_price
       FROM mailbox_tagging m

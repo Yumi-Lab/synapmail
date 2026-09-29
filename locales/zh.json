@@ -967,8 +967,8 @@
     "none": "尚未分类",
     "more": "另 {count} 项",
     "confidence": "置信度 {percent}%",
-    "sourceHuman": "由你确认",
-    "sourceEngine": "来自 {engine}",
+    "sourceHuman": "由 {name} 确认",
+    "sourceEngine": "来自 {name} · {model}",
     "engineSaid": "引擎判定为 {value}",
     "confirm": "确认",
     "change": "更改",
@@ -1163,6 +1163,10 @@
       "royaume_uni": "英国",
       "chine": "中国",
       "hong_kong": "香港"
-    }
+    },
+    "history": "{count} 条回答",
+    "filterOrigin": "来源",
+    "filterOriginAll": "全部来源",
+    "filterOriginHuman": "人工确认"
   }
 }

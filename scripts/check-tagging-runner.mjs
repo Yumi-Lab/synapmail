@@ -210,6 +210,9 @@ const makeEngine = (opts = {}) => {
   const seen = []
   return {
     source: 'jev',
+    // Le faux moteur signe du moteur de banc inséré en base (décision 23) : c'est la même
+    // identité d'un passage à l'autre, sans quoi rien ne serait jamais sauté.
+    auteur: { id: ENGINE_ID, nom: 'banc T3 (faux moteur)' },
     usdPerBillionInput: opts.usdPerBillionInput ?? 42,
     get calls() { return seen.length },
     get seen() { return seen },
@@ -456,10 +459,10 @@ try {
   await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'running', locked_until: new Date(Date.now() + 60_000) })
   check('G6 une boîte VERROUILLÉE (passage en cours) n’est pas reprise', (await mine()).length === 0)
   const selected = (await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'running' }), (await mine())[0])
-  check('G7 la boîte sélectionnée porte le moteur ET ses identifiants IMAP, en une requête',
+  check('G7 la boîte sélectionnée porte le moteur (id, nom, type, modèle) ET ses identifiants IMAP, en une requête',
     selected?.engine_kind === 'jev' && selected?.engine_model === 'banc-latest' && !!selected?.imap_host
-      && Number(selected?.engine_price) === 42,
-    JSON.stringify({ kind: selected?.engine_kind, model: selected?.engine_model, price: selected?.engine_price, host: !!selected?.imap_host }))
+      && Number(selected?.engine_price) === 42 && selected?.engine_name === 'banc T3 (faux moteur)' && selected?.engine_id === ENGINE_ID,
+    JSON.stringify({ kind: selected?.engine_kind, name: selected?.engine_name, model: selected?.engine_model, price: selected?.engine_price, host: !!selected?.imap_host }))
   check('G8 la clé du moteur n’est PAS en clair dans ce que la requête rend',
     selected?.engine_key === null || !/^sk-|^syn_/.test(String(selected?.engine_key)),
     String(selected?.engine_key))

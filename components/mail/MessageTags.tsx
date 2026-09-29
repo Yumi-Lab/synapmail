@@ -12,7 +12,7 @@
 
 import { useMemo, useState } from 'react'
 import useSWR from 'swr'
-import { useTranslations } from 'next-intl'
+import { useFormatter, useTranslations } from 'next-intl'
 import { Tags } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { questionById, valuesOf } from '@/lib/tagging/questions'
@@ -21,13 +21,31 @@ import { listPills, tagsByGroup } from '@/lib/tagging/view'
 import type { StoredTag } from '@/lib/tagging/store'
 import type { Message } from '@/types/email'
 
-/** Ce qu'une étiquette dit d'elle-même quand on s'arrête dessus : valeur, confiance, source. */
+/**
+ * L'ORIGINE d'une étiquette, en clair (décision 23) : qui l'a écrite (le nom instantané), ce
+ * qu'il a annoncé comme modèle, et quand. Une ligne migrée sans auteur nommable rend son modèle
+ * ou sa source à la place du nom — jamais une chaîne vide.
+ */
+function useOriginText() {
+  const t = useTranslations('tags')
+  const format = useFormatter()
+  return (tag: StoredTag): string => {
+    const name = tag.auteurNom || tag.modele || tag.source
+    const who = tag.source === HUMAN_SOURCE
+      ? t('sourceHuman', { name })
+      : t('sourceEngine', { name, model: tag.modele ?? tag.source })
+    return `${who} · ${format.dateTime(new Date(tag.creeLe), { dateStyle: 'short', timeStyle: 'short' })}`
+  }
+}
+
+/** Ce qu'une étiquette dit d'elle-même quand on s'arrête dessus : valeur, confiance, origine. */
 function useTagText() {
   const t = useTranslations('tags')
+  const origin = useOriginText()
   return (tag: StoredTag): string => {
     const parts = [`${t(`q.${tag.question}`)} : ${t(`v.${tag.valeur}`)}`]
     if (tag.confiance !== null) parts.push(t('confidence', { percent: Math.round(tag.confiance * 100) }))
-    parts.push(tag.source === HUMAN_SOURCE ? t('sourceHuman') : t('sourceEngine', { engine: tag.modele ?? tag.source }))
+    parts.push(origin(tag))
     return parts.join(' · ')
   }
 }
@@ -86,11 +104,12 @@ type Correct = (question: string, valeur: string) => Promise<void>
  * Choisir une autre valeur en écrit une différente — dans les deux cas, la ligne du moteur reste
  * en base et reste LISIBLE en infobulle (décision 5).
  */
-function TagRow({ tag, engine, correct, disabled }: {
-  tag: StoredTag; engine: StoredTag | undefined; correct: Correct; disabled: boolean
+function TagRow({ tag, engine, history, correct, disabled }: {
+  tag: StoredTag; engine: StoredTag | undefined; history: readonly StoredTag[]; correct: Correct; disabled: boolean
 }) {
   const t = useTranslations('tags')
   const describe = useTagText()
+  const origin = useOriginText()
   const [busy, setBusy] = useState(false)
   const question = questionById(tag.question)
   if (!question) return null
@@ -103,7 +122,8 @@ function TagRow({ tag, engine, correct, disabled }: {
   }
 
   return (
-    <div className="flex items-center gap-2 py-1 text-xs" data-tag-row={tag.question}>
+    <div className="py-1 text-xs" data-tag-row={tag.question}>
+    <div className="flex items-center gap-2">
       <span className="min-w-0 flex-1 truncate text-muted-foreground" title={describe(tag)}>
         {t(`q.${tag.question}`)}
       </span>
@@ -149,6 +169,26 @@ function TagRow({ tag, engine, correct, disabled }: {
         </>
       )}
     </div>
+    {/* L'HISTORIQUE des réponses à cette question (décision 23), replié : une ligne par
+        origine, la plus récente en tête, la valeur et la date. `<details>` natif, comme le
+        panneau lui-même. Une seule réponse n'a pas d'historique à montrer. */}
+    {history.length > 1 && (
+      <details className="ml-2 mt-0.5" data-tag-history={tag.question}>
+        <summary className="cursor-pointer list-none text-[10px] text-muted-foreground/70 hover:text-foreground">
+          {t('history', { count: history.length })}
+        </summary>
+        <ul className="mt-0.5 space-y-0.5">
+          {history.map(h => (
+            <li key={`${h.source}|${h.auteurId}|${h.modele}|${h.questionVersion}`}
+              className="flex items-baseline gap-2 text-[10px] text-muted-foreground" data-tag-history-row={h.auteurId}>
+              <span className="min-w-0 flex-1 truncate" title={describe(h)}>{origin(h)}</span>
+              <span className={cn('shrink-0', h.source === HUMAN_SOURCE && 'font-semibold text-foreground/80')}>{t(`v.${h.valeur}`)}</span>
+            </li>
+          ))}
+        </ul>
+      </details>
+    )}
+    </div>
   )
 }
 
@@ -185,6 +225,13 @@ export function TagsPanel({ message, accountId, canOrganize }: {
     () => new Map((data?.data.tags ?? []).filter(tag => tag.source !== HUMAN_SOURCE).map(tag => [tag.question, tag])),
     [data],
   )
+  // Toutes les lignes, par question, dans l'ordre du serveur (l'effective d'abord, puis par
+  // date) : c'est l'historique que chaque ligne du panneau replie sous elle.
+  const historyByQuestion = useMemo(() => {
+    const map = new Map<string, StoredTag[]>()
+    for (const tag of data?.data.tags ?? []) map.set(tag.question, [...(map.get(tag.question) ?? []), tag])
+    return map
+  }, [data])
 
   // Un mail SANS `Message-ID` n'a pas d'identifiant côté client : le repli dérivé de la
   // décision 6 est un sha256 calculé par `store.ts`, côté serveur, et le recalculer ici en
@@ -226,6 +273,7 @@ export function TagsPanel({ message, accountId, canOrganize }: {
                   key={tag.question}
                   tag={tag}
                   engine={engineByQuestion.get(tag.question)}
+                  history={historyByQuestion.get(tag.question) ?? []}
                   correct={correct}
                   disabled={!canOrganize || !message.messageId}
                 />

@@ -1,7 +1,7 @@
 import { Pool } from 'pg'
 import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
 import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
-import { BULK_STATES, ENGINES, PAUSE_REASONS, TAG_SOURCES } from '@/lib/tagging/engine'
+import { BULK_STATES, ENGINES, HUMAN_SOURCE, PAUSE_REASONS, TAG_SOURCES } from '@/lib/tagging/engine'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -557,9 +557,12 @@ export async function initDb(): Promise<void> {
   `)
   await query(`CREATE INDEX IF NOT EXISTS decision_engines_user_idx ON decision_engines(user_id)`)
 
-  // Une étiquette = une réponse à UNE question, par UNE source. La clé primaire porte `source` :
-  // la ligne du moteur et celle de l'humain coexistent (décision 5), et une seconde correction
-  // humaine remplace la précédente. `id` sert uniquement à paginer l'export.
+  // Une étiquette = une réponse à UNE question, par UN auteur, sous UN modèle annoncé et UNE
+  // version de question (décision 23). La clé primaire porte tout cela : rejouer EXACTEMENT le
+  // même auteur + modèle + version remplace la ligne (idempotent) ; un autre moteur du même type,
+  // une nouvelle version annoncée ou une seconde main AJOUTENT une ligne, l'ancienne est gardée.
+  // `auteur_nom` est un INSTANTANÉ, sans clé étrangère : l'origine reste lisible après la
+  // suppression du moteur. `id` sert uniquement à paginer l'export.
   await query(`
     CREATE TABLE IF NOT EXISTS message_tags (
       id BIGSERIAL UNIQUE,
@@ -570,12 +573,14 @@ export async function initDb(): Promise<void> {
       probabilites JSONB,
       confiance REAL,
       source VARCHAR(20) NOT NULL CHECK (source IN (${sqlList(TAG_SOURCES)})),
-      modele VARCHAR(100),
+      modele VARCHAR(100) NOT NULL DEFAULT '',
       cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       valide_par UUID REFERENCES users(id) ON DELETE SET NULL,
       question_version VARCHAR(12) NOT NULL DEFAULT '',
       taxonomy_version VARCHAR(12) NOT NULL DEFAULT '',
-      PRIMARY KEY (account_id, message_id, question, source)
+      auteur_id TEXT NOT NULL DEFAULT '',
+      auteur_nom TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (account_id, message_id, question, source, auteur_id, modele, question_version)
     )
   `)
   await query(`CREATE INDEX IF NOT EXISTS message_tags_filter_idx ON message_tags(account_id, question, valeur)`)
@@ -596,6 +601,44 @@ export async function initDb(): Promise<void> {
   // (lane, staging) migre seule au prochain démarrage sans migration écrite à la main.
   await query(`ALTER TABLE message_tags DROP CONSTRAINT IF EXISTS message_tags_training_sources`)
   await query(`ALTER TABLE message_tags DROP COLUMN IF EXISTS entrainement_autorise`)
+
+  // L'ORIGINE de chaque ligne (décision 23, lot T-S). Sur une base antérieure, les lignes
+  // existantes reçoivent l'auteur qu'on peut encore leur attribuer : l'utilisateur qui a validé
+  // pour `humain` ; le moteur choisi par la boîte pour une source de moteur. Une boîte SANS
+  // moteur au moment de la migration (mesuré le 29/09/2026 : les 3 boîtes de la lane, moteur du
+  // gate T10b détaché) ne peut nommer personne : `auteur_id` reste vide et `auteur_nom` reprend
+  // le modèle annoncé — dire « jev-1.13.0 » vaut mieux que prêter ces lignes à un moteur créé
+  // depuis. `modele` passe NOT NULL (une colonne de clé primaire ne peut pas être NULL) : la
+  // chaîne vide dit « aucun modèle » et la lecture la rend `null` comme avant.
+  await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS auteur_id TEXT NOT NULL DEFAULT ''`)
+  await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS auteur_nom TEXT NOT NULL DEFAULT ''`)
+  await query(`UPDATE message_tags SET modele = '' WHERE modele IS NULL`)
+  await query(`ALTER TABLE message_tags ALTER COLUMN modele SET DEFAULT '', ALTER COLUMN modele SET NOT NULL`)
+  await query(`
+    UPDATE message_tags t SET auteur_id = u.id::text, auteur_nom = u.name
+      FROM users u
+     WHERE t.auteur_id = '' AND t.source = '${HUMAN_SOURCE}' AND t.valide_par = u.id
+  `)
+  await query(`
+    UPDATE message_tags t SET auteur_id = e.id::text, auteur_nom = e.name
+      FROM mailbox_tagging m JOIN decision_engines e ON e.id = m.engine_id
+     WHERE t.auteur_id = '' AND t.source <> '${HUMAN_SOURCE}' AND m.account_id = t.account_id AND e.kind = t.source
+  `)
+  await query(`UPDATE message_tags SET auteur_nom = COALESCE(NULLIF(modele, ''), source) WHERE auteur_id = '' AND auteur_nom = ''`)
+  // La clé primaire n'est remplacée que si elle ne porte pas encore l'auteur : lue dans le
+  // catalogue plutôt que supposée, pour qu'un redémarrage sur une base déjà migrée ne touche à
+  // rien. Les lignes existantes étaient uniques sous l'ancienne clé, donc le sont sous la
+  // nouvelle, plus large : aucun dédoublonnage à faire avant.
+  const [pk] = await query<{ def: string }>(
+    `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'message_tags'::regclass AND contype = 'p'`
+  )
+  if (!pk?.def.includes('auteur_id')) {
+    await query(`
+      ALTER TABLE message_tags
+        DROP CONSTRAINT IF EXISTS message_tags_pkey,
+        ADD PRIMARY KEY (account_id, message_id, question, source, auteur_id, modele, question_version)
+    `)
+  }
 
   // La dernière position CONNUE d'un mail tagué, pour que le filtre par étiquette montre des
   // mails absents de la page chargée. `messages_cache` ne suffit pas : il ne garde qu'une

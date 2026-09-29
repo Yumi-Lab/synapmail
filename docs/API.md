@@ -1171,9 +1171,9 @@ Fetches recent GitHub Releases for the "new version available" banner (`gh relea
 
 ## Tags (automatic sorting)
 
-Tags answer the questions of `lib/tagging/questions.ts` — the one source both the engine and these routes read. A tag is one answer, by one **source**: the `kind` of the decision engine that produced it (`jev`, `one`, `autre`) or the hand that wrote it (`humain`). The engine's row and the human's row coexist, so what the engine said stays readable next to what the operator corrected; the **effective** tag is the human one when it exists, else the most recent engine one.
+Tags answer the questions of `lib/tagging/questions.ts` — the one source both the engine and these routes read. A tag is one answer, by one **source** (the `kind` of the decision engine that produced it — `jev`, `one`, `autre` — or the hand that wrote it, `humain`) and one **author** (`auteurId`/`auteurNom`: the engine, the user, or the API key that signed it — the name is a snapshot taken at write time, so it stays readable after the engine is renamed or deleted). Every row keeps its origin: a second engine of the same kind, a new announced `modele`, a new `questionVersion` or a second person each **add** a row; only replaying the exact same author + model + question version replaces one. The **effective** tag is the most recent human one when it exists, else the most recent engine one, computed over all rows.
 
-**Who may write which source** is decided by the caller, never by the body: a session writes `humain` (and `valide_par` records who), a key writes an engine kind. A key can therefore never launder an engine answer into a trainable label — which matters because only `humain` and `dossier` may train a model, and the database enforces that same whitelist with a `CHECK` of its own.
+**Who may write which source** is decided by the caller, never by the body: a session writes `humain` (and `valide_par` records who), a key writes an engine kind. A key can therefore never launder an engine answer into a trainable label — which matters because only `humain` and `dossier` may train a model, and the database enforces that same whitelist with a `CHECK` of its own. The **author** is never a free string either: a session signs as its user; a key signs as the decision engine it names with `engineId` (which must belong to the same user — `403` names the id otherwise), or as the key itself when no engine is named.
 
 `[id]` in these routes is the message's **RFC Message-ID, URL-encoded** (angle brackets included), not its IMAP UID — a UID changes the moment the message moves folder. A message with no Message-ID gets a stable derived one (`<sha256(from|date|subject)@synapmail.local>`).
 
@@ -1183,8 +1183,10 @@ interface StoredTag {
   probabilites: Record<string, number> | null   // the engine's distribution, when it gave one
   confiance: number | null
   source: 'jev' | 'one' | 'autre' | 'humain' | 'dossier'
-  modele: string | null; creeLe: string
+  modele: string | null; creeLe: string         // the model the engine ANNOUNCED (e.g. `jev-1.13.0`)
   validePar: string | null                      // the user who validated, for `humain`
+  questionVersion: string                       // hash of the question's exact wording this row answered
+  auteurId: string; auteurNom: string           // who signed: engine id / user id / API key id, and its name then ('' id on rows migrated with no nameable author)
 }
 ```
 
@@ -1192,12 +1194,12 @@ interface StoredTag {
 Every row this message carries, all sources, plus the effective one per question. **Response** `{ data: { messageId: string; tags: StoredTag[]; effective: StoredTag[] } }`.
 
 ### `PUT /api/messages/[id]/tags` 🔑 Bearer (`tags:write`)
-**Body** `{ accountId: string; source?: string; model?: string; tags: { question, valeur, probabilites?, confiance? }[]; folder?, uid?, fromName?, fromAddress?, subject?, date? }` — the position fields, when given, record where the message was last seen so a tag filter can show it even once it leaves the loaded page.
+**Body** `{ accountId: string; source?: string; model?: string; engineId?: string; tags: { question, valeur, probabilites?, confiance? }[]; folder?, uid?, fromName?, fromAddress?, subject?, date? }` — `engineId` (key callers only) names the decision engine that signs the rows; the position fields, when given, record where the message was last seen so a tag filter can show it even once it leaves the loaded page.
 
 Requires the `organize` share permission (tagging is filing). `422` names the offending `question` and `valeur` when a value is not one this question allows; `403` names the `source` when the caller may not write it (a key asking for `humain`, a session asking for anything else). **Response** `{ data: { messageId, written: number, source, tags: StoredTag[], effective: StoredTag[] } }`.
 
-### `GET /api/tags?account=&question=&valeur=&page=` 🔑 Bearer (`tags:read`)
-The messages whose **effective** tag for `question` is `valeur`, with their last known position — so a message corrected by hand no longer answers under the engine's old value. `422` names an unknown `question` or a value the question does not allow (an empty page would be indistinguishable from "nothing carries this"). **Response** `{ data: { messages: { messageId, folder, uid, fromName, fromAddress, subject, date }[]; total: number; page: number } }`.
+### `GET /api/tags?account=&question=&valeur=&page=&origine=` 🔑 Bearer (`tags:read`)
+The messages whose **effective** tag for `question` is `valeur`, with their last known position — so a message corrected by hand no longer answers under the engine's old value. `origine` narrows to one origin — a source (`humain`) or an author id (one engine) — and the effective tag is then computed among that origin's rows only. `422` names an unknown `question` or a value the question does not allow (an empty page would be indistinguishable from "nothing carries this"). **Response** `{ data: { messages: { messageId, folder, uid, fromName, fromAddress, subject, date }[]; total: number; page: number } }`.
 
 ### `GET /api/tags?account=&id=<mid>&id=<mid>` 🔑 Bearer (`tags:read`)
 The effective tags of a **list** of messages — what the message list paints as chips, in one request per page and never one per row. **Response** `{ data: { effective: Record<string, StoredTag[]> } }`, keyed by Message-ID.

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
 import { getAccessibleAccount } from '@/lib/accountAccess'
-import { readTags, sourceForWriter, writeTags,
+import { authorForWriter, readTags, sourceForWriter, writeTags,
   ForbiddenSourceError, InvalidTagError,
   type TagToWrite, type TaggedMessagePosition } from '@/lib/tagging/store'
 
@@ -51,8 +51,9 @@ async function getHandler(req: Request, { params }: { params: { id: string } }) 
 /**
  * Écrit les étiquettes d'UNE source sur ce message. La source n'est PAS libre : elle se
  * déduit de l'appelant (`sourceForWriter`, décision 7) — une session écrit `humain`, une clé
- * écrit le type d'un moteur. `valide_par` n'est renseigné que pour un humain : c'est lui qui
- * valide.
+ * écrit le type d'un moteur. L'AUTEUR non plus (`authorForWriter`, décision 23) : l'utilisateur
+ * de la session, ou le moteur que la clé nomme par `engineId` (sinon la clé elle-même).
+ * `valide_par` n'est renseigné que pour un humain : c'est lui qui valide.
  */
 async function putHandler(req: Request, { params }: { params: { id: string } }) {
   const gate = await authorize(req)
@@ -60,7 +61,7 @@ async function putHandler(req: Request, { params }: { params: { id: string } }) 
 
   try {
     const body = await req.json() as {
-      accountId?: string; source?: unknown; model?: string | null
+      accountId?: string; source?: unknown; model?: string | null; engineId?: unknown
       tags?: TagToWrite[]
     } & TaggedMessagePosition
 
@@ -73,13 +74,14 @@ async function putHandler(req: Request, { params }: { params: { id: string } }) 
 
     const session = gate.ctx.apiKeyId === null
     const source = sourceForWriter({ session, requested: body.source })
+    const auteur = await authorForWriter({ userId: gate.ctx.id, apiKeyId: gate.ctx.apiKeyId, engineId: body.engineId })
     const messageId = messageIdFrom(params)
     const position: TaggedMessagePosition = {
       folder: body.folder, uid: body.uid, fromName: body.fromName,
       fromAddress: body.fromAddress, subject: body.subject, date: body.date,
     }
     const written = await writeTags({
-      accountId: accountId!, messageId, source, tags: body.tags,
+      accountId: accountId!, messageId, source, auteur, tags: body.tags,
       modele: body.model ?? null,
       validePar: session ? gate.ctx.id : null,
       position: Object.values(position).some(v => v !== undefined && v !== null) ? position : null,
@@ -94,6 +96,8 @@ async function putHandler(req: Request, { params }: { params: { id: string } }) 
       return NextResponse.json({ error: err.message, question: err.question, valeur: err.valeur }, { status: 422 })
     }
     if (err instanceof ForbiddenSourceError) {
+      // Une source interdite ET un `engineId` qui n'est pas à l'appelant tombent ici : les deux
+      // sont un « tu ne signes pas de ce nom-là », et la réponse nomme ce qui a été refusé.
       return NextResponse.json({ error: err.message, source: err.source }, { status: 403 })
     }
     return NextResponse.json({ error: String(err) }, { status: 500 })

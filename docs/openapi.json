@@ -2944,6 +2944,11 @@
                     "type": "string",
                     "nullable": true
                   },
+                  "engineId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Key callers only: the decision engine that signs these rows (must belong to the caller — 403 naming it otherwise). Without it the key signs as itself. Sessions always sign as their user."
+                  },
                   "tags": {
                     "type": "array",
                     "minItems": 1,
@@ -3128,6 +3133,14 @@
               "type": "integer",
               "default": 1
             }
+          },
+          {
+            "name": "origine",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Narrow to one origin: a source (`humain`) or an author id (one engine). The effective tag is then computed among that origin's rows only."
           },
           {
             "name": "id",
@@ -3660,7 +3673,10 @@
           "source",
           "modele",
           "creeLe",
-          "validePar"
+          "validePar",
+          "questionVersion",
+          "auteurId",
+          "auteurNom"
         ],
         "properties": {
           "question": {
@@ -3696,7 +3712,8 @@
           },
           "modele": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The model the engine announced (e.g. `jev-1.13.0`); null when none."
           },
           "creeLe": {
             "type": "string",
@@ -3707,6 +3724,18 @@
             "format": "uuid",
             "nullable": true,
             "description": "The user who validated, for `humain`."
+          },
+          "questionVersion": {
+            "type": "string",
+            "description": "Hash of the exact wording of the question this row answered. Two rows with different versions answered two different definitions."
+          },
+          "auteurId": {
+            "type": "string",
+            "description": "Who signed: the decision engine id, the user id, or the API key id. Empty on rows migrated with no nameable author."
+          },
+          "auteurNom": {
+            "type": "string",
+            "description": "The author's name as it was at write time — a snapshot, readable after the engine is renamed or deleted."
           }
         }
       },

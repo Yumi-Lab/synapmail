@@ -967,8 +967,8 @@
     "none": "Not sorted yet",
     "more": "+{count}",
     "confidence": "{percent}% confident",
-    "sourceHuman": "confirmed by you",
-    "sourceEngine": "from {engine}",
+    "sourceHuman": "confirmed by {name}",
+    "sourceEngine": "by {name} · {model}",
     "engineSaid": "the engine said {value}",
     "confirm": "Confirm",
     "change": "Change",
@@ -1163,6 +1163,10 @@
       "royaume_uni": "United Kingdom",
       "chine": "China",
       "hong_kong": "Hong Kong"
-    }
+    },
+    "history": "{count, plural, one {# answer} other {# answers}}",
+    "filterOrigin": "Origin",
+    "filterOriginAll": "Any origin",
+    "filterOriginHuman": "Confirmed by hand"
   }
 }

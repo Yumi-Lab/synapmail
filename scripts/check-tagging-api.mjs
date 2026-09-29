@@ -18,7 +18,11 @@
  *      LISTE d'identifiants rend les effectives de plusieurs mails en UNE requête ;
  *   H. `GET /api/tagging/settings` et `/api/tagging/status` ne rendent JAMAIS la clé du
  *      moteur, ni en clair ni chiffrée ; et un Message-ID contenant `/ + % =` fait
- *      l'aller-retour intact (décision 6, mesure exigée par le lot).
+ *      l'aller-retour intact (décision 6, mesure exigée par le lot) ;
+ *   I. l'ORIGINE (décision 23) : une clé sans moteur nommé signe de la clé ; avec `engineId`,
+ *      du moteur — jamais d'un moteur d'autrui (403) ; une session signe de l'utilisateur ;
+ *      chaque ligne rendue porte `auteurId`, `auteurNom`, `modele`, `questionVersion`, `creeLe` ;
+ *      le filtre `origine=` rend ce que CE moteur a dit.
  *
  * DANGER, respecté ici : la boîte d'essai vise un hôte VOLONTAIREMENT injoignable
  * (`.invalid`, jamais résolu — RFC 2606) et elle est supprimée dans le `finally`. Aucune
@@ -302,6 +306,52 @@ try {
     listed.status === 200 && Array.isArray(byId[PLAIN_ID]) && Array.isArray(byId[TRICKY_ID])
       && byId[PLAIN_ID].some(t => t.question === CHOICE.id && t.valeur === corrected),
     `reçu ${listed.status} — clés ${JSON.stringify(Object.keys(byId)).slice(0, 200)}`)
+
+  // ---- I. l'origine de chaque ligne (décision 23) -----------------------------------
+  const allRows = (await call(tagsPath(PLAIN_ID, `?account=${accountId}`), { key: readerKey })).body?.data?.tags ?? []
+  const ORIGIN_FIELDS = ['source', 'auteurId', 'auteurNom', 'modele', 'questionVersion', 'creeLe']
+  check('I1 chaque ligne rendue par GET porte source, auteurId, auteurNom, modele, questionVersion, creeLe',
+    allRows.length > 0 && allRows.every(r => ORIGIN_FIELDS.every(f => f in r)),
+    JSON.stringify(allRows[0] ?? null).slice(0, 240))
+  const writerKeyRow = await pool.query('SELECT id, name FROM api_keys WHERE key_hash = $1', [crypto.createHash('sha256').update(writerKey).digest('hex')])
+  const byKey = allRows.find(r => r.source === 'jev' && r.question === CHOICE.id)
+  check('I2 une clé SANS moteur nommé signe de la clé elle-même (id + nom de la clé)',
+    byKey?.auteurId === writerKeyRow.rows[0].id && byKey?.auteurNom === writerKeyRow.rows[0].name,
+    `auteur ${byKey?.auteurId} « ${byKey?.auteurNom} » — clé ${writerKeyRow.rows[0].id} « ${writerKeyRow.rows[0].name} »`)
+  const byHand = allRows.find(r => r.source === HUMAN_SOURCE && r.question === CHOICE.id)
+  check('I3 une session signe de l’utilisateur', byHand?.auteurId === userId && typeof byHand?.auteurNom === 'string',
+    `auteur ${byHand?.auteurId} « ${byHand?.auteurNom} »`)
+
+  const signed = await call(tagsPath(PLAIN_ID), {
+    method: 'PUT', key: writerKey,
+    body: { accountId, source: 'jev', model: 'jev-bench-2', engineId, tags: [{ question: CHOICE.id, valeur: CHOICE.values[0], confiance: 0.5 }] },
+  })
+  const engineRows = (signed.body?.data?.tags ?? []).filter(t => t.source === 'jev' && t.question === CHOICE.id)
+  check('I4 avec `engineId`, la clé signe du MOTEUR nommé, et la ligne de la clé reste à côté (2 lignes)',
+    signed.status === 200 && engineRows.length === 2 && engineRows.some(t => t.auteurId === engineId && t.auteurNom === 'bench engine' && t.modele === 'jev-bench-2'),
+    `reçu ${signed.status} — ${engineRows.map(t => `${t.auteurNom}/${t.modele}`).join(' ')}`)
+
+  const foreignEngine = await pool.query(
+    `INSERT INTO decision_engines (user_id, name, kind, url, model, usd_per_billion_input)
+     SELECT id, 'moteur d''autrui', 'jev', 'https://other.bench.invalid/v1/systemone', 'x', 0 FROM users WHERE id <> $1 LIMIT 1 RETURNING id`, [userId])
+  if (foreignEngine.rows.length) {
+    created.engines.push(foreignEngine.rows[0].id)
+    const usurped = await call(tagsPath(PLAIN_ID), {
+      method: 'PUT', key: writerKey,
+      body: { accountId, source: 'jev', engineId: foreignEngine.rows[0].id, tags: [{ question: CHOICE.id, valeur: CHOICE.values[0] }] },
+    })
+    check('I5 un `engineId` qui n’appartient pas à l’appelant est refusé par un 403 qui le nomme',
+      usurped.status === 403 && usurped.body?.source === foreignEngine.rows[0].id,
+      `reçu ${usurped.status} — ${usurped.text.slice(0, 160)}`)
+  } else {
+    console.log('  --   I5 sauté : un seul utilisateur dans cette base, aucun moteur d’autrui à usurper')
+  }
+
+  const byOrigin = await call(`/api/tags?account=${accountId}&question=${CHOICE.id}&valeur=${CHOICE.values[0]}&origine=${engineId}`, { key: readerKey })
+  const byHuman = await call(`/api/tags?account=${accountId}&question=${CHOICE.id}&valeur=${CHOICE.values[0]}&origine=${HUMAN_SOURCE}`, { key: readerKey })
+  check('I6 `origine=<moteur>` rend le mail sous ce que CE moteur a dit ; `origine=humain` ne le rend pas sous cette valeur',
+    byOrigin.status === 200 && ids(byOrigin).includes(PLAIN_ID) && byHuman.status === 200 && !ids(byHuman).includes(PLAIN_ID),
+    `moteur ${byOrigin.status}:${JSON.stringify(ids(byOrigin)).slice(0, 80)} — humain ${byHuman.status}:${JSON.stringify(ids(byHuman)).slice(0, 80)}`)
 
   // ---- H. la clé du moteur, et l'aller-retour du Message-ID -------------------------
   await call('/api/tagging/settings', { method: 'PUT', cookie, body: { accountId, engineId, budgetUsd: 3 } })

@@ -322,7 +322,7 @@ export async function processTagging(): Promise<void> {
         accountId: box.account_id,
         source,
         engine: engineFromRow({
-          id: box.engine_id, kind: box.engine_kind, url: box.engine_url,
+          id: box.engine_id, name: box.engine_name, kind: box.engine_kind, url: box.engine_url,
           key_encrypted: box.engine_key, model: box.engine_model,
           usd_per_billion_input: box.engine_price,
         }),

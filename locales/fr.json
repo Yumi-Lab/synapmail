@@ -967,8 +967,8 @@
     "none": "Pas encore trié",
     "more": "+{count}",
     "confidence": "confiance {percent} %",
-    "sourceHuman": "confirmé par vous",
-    "sourceEngine": "par {engine}",
+    "sourceHuman": "confirmé par {name}",
+    "sourceEngine": "par {name} · {model}",
     "engineSaid": "le moteur a répondu {value}",
     "confirm": "Confirmer",
     "change": "Corriger",
@@ -1163,6 +1163,10 @@
       "royaume_uni": "Royaume-Uni",
       "chine": "Chine",
       "hong_kong": "Hong Kong"
-    }
+    },
+    "history": "{count, plural, one {# réponse} other {# réponses}}",
+    "filterOrigin": "Origine",
+    "filterOriginAll": "Toute origine",
+    "filterOriginHuman": "Confirmé à la main"
   }
 }

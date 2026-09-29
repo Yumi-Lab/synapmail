@@ -29,8 +29,11 @@ import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
 import { TagPills } from '@/components/mail/MessageTags'
 import { QUESTIONS, valuesOf } from '@/lib/tagging/questions'
+import { HUMAN_SOURCE } from '@/lib/tagging/engine'
 import { TAGS_ENDPOINT, taggedRows } from '@/lib/tagging/view'
 import type { StoredTag, TaggedMessage } from '@/lib/tagging/store'
+import type { DecisionEngine } from '@/lib/tagging/engines'
+import { ENGINES_ENDPOINT } from '@/components/settings/DecisionEnginesSection'
 
 const fetcher = async (url: string) => {
   const res = await fetch(url)
@@ -173,6 +176,9 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   // Filtre par étiquette : `question|valeur`, l'unique valeur que le sélecteur porte. Une seule
   // chaîne d'état plutôt que deux, parce qu'une question sans valeur ne filtre rien.
   const [tagFilter, setTagFilter] = useState('')
+  // L'ORIGINE du filtre (décision 23) : `''` = toute origine, `humain` = ce qu'une main a
+  // confirmé, sinon l'id d'un moteur. Il n'a de sens qu'avec une étiquette choisie.
+  const [tagOrigin, setTagOrigin] = useState('')
 
   // Les boîtes de l'utilisateur, prises à la MÊME source que la barre latérale
   // (mêmes clés SWR, donc aucune requête de plus) : la pastille d'un résultat doit
@@ -422,10 +428,15 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const { data: tagHits } = useSWR<{ data: { messages: TaggedMessage[]; total: number } }>(
     isTagMode
       ? `${TAGS_ENDPOINT}?account=${encodeURIComponent(activeAccountId!)}` +
-        `&question=${encodeURIComponent(tagQuestion)}&valeur=${encodeURIComponent(tagValue)}`
+        `&question=${encodeURIComponent(tagQuestion)}&valeur=${encodeURIComponent(tagValue)}` +
+        (tagOrigin ? `&origine=${encodeURIComponent(tagOrigin)}` : '')
       : null,
     fetcher,
   )
+  // Les moteurs de l'utilisateur, pour nommer les origines possibles — même clé SWR que l'écran
+  // de tri, donc aucune requête de plus quand il est ouvert. Demandés seulement en mode étiquette.
+  const { data: engineData } = useSWR<{ data: DecisionEngine[] }>(isTagMode ? ENGINES_ENDPOINT : null, fetcher)
+  const engines = engineData?.data ?? []
 
   const searchMessages = isStreamingScope ? streamed.messages : (searchData?.messages ?? NO_MESSAGES)
   // Un mail retrouvé par son étiquette est décrit par la page chargée quand elle le contient
@@ -1284,10 +1295,28 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             ))}
           </select>
           {isTagMode && (
+            <select
+              value={tagOrigin}
+              onChange={e => setTagOrigin(e.target.value)}
+              aria-label={tTags('filterOrigin')}
+              data-tag-origin
+              className={cn(
+                'max-w-[10rem] rounded-lg border border-border bg-transparent px-2 py-1.5 text-xs font-medium transition-colors',
+                tagOrigin ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <option value="">{tTags('filterOriginAll')}</option>
+              <option value={HUMAN_SOURCE}>{tTags('filterOriginHuman')}</option>
+              {engines.map(e => (
+                <option key={e.id} value={e.id}>{e.name}</option>
+              ))}
+            </select>
+          )}
+          {isTagMode && (
             <span className="flex items-center gap-1.5 text-xs text-muted-foreground" data-tag-filter-count>
               <span className="tabular-nums">{tTags('filterCount', { count: tagHits?.data.total ?? 0 })}</span>
               <button
-                onClick={() => setTagFilter('')}
+                onClick={() => { setTagFilter(''); setTagOrigin('') }}
                 title={tTags('filterClear')}
                 className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
