@@ -228,7 +228,7 @@ Invites someone by email address.
 
 If that address already has an account, the share is **active at once** and a notice goes out. If not, a `pending` user and a `pending` share are created together, and the invitation carries a single-use token by mail; only its hash is stored. Either way the mail leaves through **the shared mailbox's own SMTP** — this instance has no system-wide sender.
 
-Re-inviting someone who already holds a pending or active share updates that share's permissions in place rather than making a second one. `400` on a missing address, on your own address, or on an unreadable `expiresAt`; `404` if the mailbox is not yours.
+Re-inviting someone who already holds a pending or active share updates that share's permissions in place rather than making a second one. `400` on a missing address, on your own address, or on an unreadable `expiresAt`; `404` if the mailbox is not yours; `409` when several accounts differ from that address only by case (rows older than address normalisation) — the invitee would be a guess, so nothing is written, the same rule login applies.
 
 ### `DELETE /api/accounts/[id]/shares/[shareId]` — session only
 Revokes a share. Soft: the row stays, `revoked_at` is set, and access stops on the next request. → `{ success: true }` ⚠ non-standard envelope.
