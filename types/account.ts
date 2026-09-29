@@ -125,6 +125,15 @@ export interface ApiKeyIpLocation {
  */
 export const API_KEY_REVEAL_METHOD = 'REVEAL'
 
+/**
+ * How many wrong passwords a user may present to the reveal route before it stops
+ * answering, and for how long. A stolen session could otherwise try the account
+ * password without limit. Same home as the method above, for the same reason: the
+ * bench reads them, and it cannot load the route.
+ */
+export const API_KEY_REVEAL_MAX_ATTEMPTS = 5
+export const API_KEY_REVEAL_WINDOW_MS = 15 * 60 * 1000
+
 /** One row from GET /api/api-keys/[id]/logs — a single logged Bearer request. */
 export interface ApiKeyRequestLog {
   id: string

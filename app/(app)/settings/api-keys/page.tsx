@@ -258,6 +258,8 @@ function denialLabel(log: ApiKeyRequestLog): string | null {
   // Le partage donne bien accès à la boîte, mais pas à ce geste-là : dire « boîte non
   // autorisée » enverrait le propriétaire cocher une boîte déjà cochée.
   if (log.denialReason === 'share') return 'Partage insuffisant pour cette action'
+  // Une révélation refusée : mot de passe faux, ou trop d'essais (le statut le dit).
+  if (log.denialReason === 'password') return 'Mot de passe refusé'
   return 'Clé non reconnue'
 }
 
