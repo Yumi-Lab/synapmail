@@ -508,6 +508,7 @@ same array that carries forwarded `.eml` messages, so both kinds share one ceili
 | Attachments per message | 20 | `400 { error: "attachment_too_many", limit: 20 }` |
 | Bytes per attachment (decoded) | the ceiling in force (below) | `413 { error: "attachment_too_large", limit, filename, limitSource, announcedSize }` |
 | Bytes per message (decoded, forwarded messages included) | the ceiling in force (below) | `413 { error: "attachment_message_too_large", limit, limitSource, announcedSize }` |
+| Forwarded messages (`forwardedMessages`), on their IMAP-announced size, before any is fetched | the same ceiling | `413 { error: "forward_too_large", limit, limitSource, announcedSize }` |
 | `content` is valid base64 | — | `400 { error: "attachment_bad_base64", filename }` |
 | Shape of the list or of one entry | — | `400 { error: "attachment_invalid" }` |
 

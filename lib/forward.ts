@@ -14,14 +14,6 @@
  */
 export const FORWARD_MAX_MESSAGES = 25
 
-/**
- * Ceiling on the total size of the re-read sources, measured BEFORE loading a
- * single byte into memory. 25 MiB is the most widespread attachment limit among
- * consumer SMTP servers: beyond it the send would be refused anyway, after having
- * inflated the process.
- */
-export const FORWARD_MAX_TOTAL_BYTES = 25 * 1024 * 1024
-
 /** An IMAP uid is a decimal integer. `1:*` is a valid sequence SET, so it is rejected here. */
 const UID_PATTERN = /^\d+$/
 
@@ -29,6 +21,13 @@ const UID_PATTERN = /^\d+$/
 export const FORWARD_ERROR = {
   invalid: 'forward_invalid',
   tooMany: 'forward_too_many',
+  /**
+   * The re-read sources, measured on their announced size BEFORE loading a
+   * single byte, exceed the message ceiling — the one the SMTP server announced
+   * (`lib/smtpSize.ts`), the same that bounds every other attachment. There is
+   * no separate forward ceiling: a second number would either waste an IMAP
+   * fetch or let through what the final check refuses.
+   */
   tooLarge: 'forward_too_large',
   missing: 'forward_missing',
   originDenied: 'forward_origin_denied',

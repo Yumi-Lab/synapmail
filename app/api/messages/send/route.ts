@@ -5,12 +5,7 @@ import { getAccessibleAccount } from '@/lib/accountAccess'
 import { sendMail } from '@/lib/smtp'
 import { appendToSentFolder, getMessageSources } from '@/lib/imap'
 import { EML_CONTENT_TYPE, emlFilename } from '@/lib/eml'
-import {
-  FORWARD_ERROR,
-  FORWARD_MAX_TOTAL_BYTES,
-  parseForwardedMessages,
-  resolveForwardOrigin,
-} from '@/lib/forward'
+import { FORWARD_ERROR, parseForwardedMessages, resolveForwardOrigin } from '@/lib/forward'
 import {
   MESSAGE_MAX_TOTAL_BYTES,
   checkTotalSize,
@@ -99,6 +94,14 @@ async function postHandler(req: Request) {
       trackedHtml = injectTrackingPixel(html, `${appUrl}/api/track/${token}`)
     }
 
+    // Le plafond vient du SERVEUR (lot M10) : c'est la taille qu'il a annoncée à
+    // la dernière connexion, enregistrée sur la boîte. Rien n'est écrit en dur —
+    // quand il n'a rien annoncé, `resolveSendCeiling` rend le plafond prudent et
+    // le DIT, pour que le refus n'ait pas l'air d'une limite du serveur. Résolu
+    // AVANT toute lecture IMAP : c'est le seul plafond, et les messages
+    // transférés y sont mesurés sur leur taille annoncée, sans être chargés.
+    const ceiling = resolveSendCeiling(account.smtp_max_size, MESSAGE_MAX_TOTAL_BYTES)
+
     // Transfert de messages entiers. Le compte d'ORIGINE de la sélection n'est
     // pas celui de l'expéditeur : l'utilisateur peut changer « De » après avoir
     // coché ses messages. Relire dans la boîte de l'expéditeur joindrait les
@@ -132,11 +135,11 @@ async function postHandler(req: Request) {
         },
         parsed.value.folder,
         parsed.value.uids,
-        FORWARD_MAX_TOTAL_BYTES
+        ceiling.limit
       )
       if (result.oversized) {
         return NextResponse.json(
-          { error: FORWARD_ERROR.tooLarge, limit: FORWARD_MAX_TOTAL_BYTES },
+          { error: FORWARD_ERROR.tooLarge, limit: ceiling.limit, ...ceilingOrigin(ceiling) },
           { status: 413 }
         )
       }
@@ -154,12 +157,6 @@ async function postHandler(req: Request) {
         contentType: EML_CONTENT_TYPE,
       }))
     }
-
-    // Le plafond vient du SERVEUR (lot M10) : c'est la taille qu'il a annoncée à
-    // la dernière connexion, enregistrée sur la boîte. Rien n'est écrit en dur —
-    // quand il n'a rien annoncé, `resolveSendCeiling` rend le plafond prudent et
-    // le DIT, pour que le refus n'ait pas l'air d'une limite du serveur.
-    const ceiling = resolveSendCeiling(account.smtp_max_size, MESSAGE_MAX_TOTAL_BYTES)
 
     // Fichiers joints par l'appelant. Ils rejoignent le MÊME tableau que les
     // messages transférés — un seul chemin jusqu'à `sendMail`, donc un seul
