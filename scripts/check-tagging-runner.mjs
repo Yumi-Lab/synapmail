@@ -699,7 +699,9 @@ try {
     Math.abs(estMesure - (10_000 * MAILS_I * PRICE_I) / 1e9) < 1e-12, `estimée=${estMesure}`)
 } finally {
   await clean(ACCOUNT).catch(() => {})
-  if (ENGINE_ID) await pool.query('DELETE FROM decision_engines WHERE id = $1', [ENGINE_ID]).catch(() => {})
+  // Par URL et pas seulement par id : un passage tué avant ce `finally` (plafond de tours) laisse
+  // sa ligne, le passage suivant la balaie. `.invalid` ne désigne jamais un vrai moteur (RFC 2606).
+  await pool.query("DELETE FROM decision_engines WHERE id = $1 OR url LIKE 'http://banc.invalid/%'", [ENGINE_ID]).catch(() => {})
   await pool.end()
 }
 

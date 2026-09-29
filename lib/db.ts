@@ -614,25 +614,28 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS auteur_nom TEXT NOT NULL DEFAULT ''`)
   await query(`UPDATE message_tags SET modele = '' WHERE modele IS NULL`)
   await query(`ALTER TABLE message_tags ALTER COLUMN modele SET DEFAULT '', ALTER COLUMN modele SET NOT NULL`)
-  await query(`
-    UPDATE message_tags t SET auteur_id = u.id::text, auteur_nom = u.name
-      FROM users u
-     WHERE t.auteur_id = '' AND t.source = '${HUMAN_SOURCE}' AND t.valide_par = u.id
-  `)
-  await query(`
-    UPDATE message_tags t SET auteur_id = e.id::text, auteur_nom = e.name
-      FROM mailbox_tagging m JOIN decision_engines e ON e.id = m.engine_id
-     WHERE t.auteur_id = '' AND t.source <> '${HUMAN_SOURCE}' AND m.account_id = t.account_id AND e.kind = t.source
-  `)
-  await query(`UPDATE message_tags SET auteur_nom = COALESCE(NULLIF(modele, ''), source) WHERE auteur_id = '' AND auteur_nom = ''`)
-  // La clé primaire n'est remplacée que si elle ne porte pas encore l'auteur : lue dans le
-  // catalogue plutôt que supposée, pour qu'un redémarrage sur une base déjà migrée ne touche à
-  // rien. Les lignes existantes étaient uniques sous l'ancienne clé, donc le sont sous la
-  // nouvelle, plus large : aucun dédoublonnage à faire avant.
+  // Le rétro-remplissage ne tourne qu'UNE fois, au passage de l'ancienne clé à la nouvelle (lue
+  // dans le catalogue plutôt que supposée). Après, `auteur_id = ''` est un état LÉGITIME (« on ne
+  // sait pas qui ») : le rejouer à chaque démarrage prêterait ces lignes au moteur rattaché
+  // DEPUIS, et entrerait en collision avec les lignes que ce moteur a écrites lui-même
+  // (mesuré le 29/09/2026 : duplicate key sur message_tags_pkey au boot, après le retag du gate).
+  // Les lignes existantes étaient uniques sous l'ancienne clé, donc le sont sous la nouvelle,
+  // plus large : aucun dédoublonnage à faire avant.
   const [pk] = await query<{ def: string }>(
     `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'message_tags'::regclass AND contype = 'p'`
   )
   if (!pk?.def.includes('auteur_id')) {
+    await query(`
+      UPDATE message_tags t SET auteur_id = u.id::text, auteur_nom = u.name
+        FROM users u
+       WHERE t.auteur_id = '' AND t.source = '${HUMAN_SOURCE}' AND t.valide_par = u.id
+    `)
+    await query(`
+      UPDATE message_tags t SET auteur_id = e.id::text, auteur_nom = e.name
+        FROM mailbox_tagging m JOIN decision_engines e ON e.id = m.engine_id
+       WHERE t.auteur_id = '' AND t.source <> '${HUMAN_SOURCE}' AND m.account_id = t.account_id AND e.kind = t.source
+    `)
+    await query(`UPDATE message_tags SET auteur_nom = COALESCE(NULLIF(modele, ''), source) WHERE auteur_id = '' AND auteur_nom = ''`)
     await query(`
       ALTER TABLE message_tags
         DROP CONSTRAINT IF EXISTS message_tags_pkey,

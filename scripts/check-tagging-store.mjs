@@ -93,6 +93,8 @@ const USER = account.user_id
 const MOTEUR_A = { id: '00000000-0000-4000-8000-00000000b2a1', nom: 'JEV banc A' }
 const MOTEUR_B = { id: '00000000-0000-4000-8000-00000000b2b2', nom: 'JEV banc B' }
 const HUMAIN = (userId, nom = 'Banc T2') => ({ id: userId, nom })
+let BENCH_ENGINE = null
+let PREV_MAILBOX
 
 /**
  * Le contrôle négatif remplace `message_tags` par une copie SOUS L'ANCIENNE CLÉ, dans un schéma
@@ -308,12 +310,41 @@ try {
   check('I7 le filtre par ORIGINE rend ce que CE moteur a dit, et rien de ce qu’une main a dit',
     parOrigine.messages.some(m => m.messageId === MID(9)) && !parHumain.messages.some(m => m.messageId === MID(9)),
     `moteur A: ${parOrigine.total}, humain: ${parHumain.total}`)
+
+  // Un redémarrage sur une base DÉJÀ migrée, avec un moteur rattaché DEPUIS : les lignes
+  // d'origine inconnue (`auteur_id = ''`) restent inconnues, et `initDb()` ne tombe pas sur la
+  // clé (mesuré le 29/09/2026 : le rétro-remplissage rejoué prêtait la ligne au moteur et entrait
+  // en collision avec la ligne que ce moteur avait écrite lui-même). Sauté sous `--negative` : la
+  // copie sous l'ancienne clé serait migrée par `initDb()`, ce qui n'est pas ce que I mesure.
+  if (!NEGATIVE) {
+    const [engine] = await query(
+      `INSERT INTO decision_engines (user_id, name, kind, url, model, usd_per_billion_input)
+       VALUES ($1, 'banc T2 (rattaché après migration)', 'jev', 'http://banc-t2.invalid/v1/systemone', 'jev-1.13.0', 42) RETURNING id`, [USER])
+    BENCH_ENGINE = engine.id
+    const [prev] = await query('SELECT engine_id FROM mailbox_tagging WHERE account_id = $1', [ACCOUNT])
+    PREV_MAILBOX = prev === undefined ? null : { engineId: prev.engine_id }
+    await query(`INSERT INTO mailbox_tagging (account_id, engine_id) VALUES ($1, $2)
+                 ON CONFLICT (account_id) DO UPDATE SET engine_id = EXCLUDED.engine_id`, [ACCOUNT, BENCH_ENGINE])
+    await query(`INSERT INTO message_tags (account_id, message_id, question, valeur, source, modele, question_version, taxonomy_version, auteur_id, auteur_nom)
+                 SELECT account_id, message_id, question, valeur, source, modele, question_version, taxonomy_version, $2, modele
+                   FROM message_tags WHERE account_id = $1 AND message_id = $3 AND auteur_id = $4 AND modele = 'jev-1.13.0'`,
+      [ACCOUNT, BENCH_ENGINE, MID(9), MOTEUR_A.id])
+    await query(`UPDATE message_tags SET auteur_id = '', auteur_nom = modele WHERE account_id = $1 AND message_id = $2 AND auteur_id = $3 AND modele = 'jev-1.13.0'`, [ACCOUNT, MID(9), MOTEUR_A.id])
+    let boot = null
+    try { await initDb() } catch (e) { boot = e }
+    const [inconnue] = await query(`SELECT COUNT(*)::int AS n FROM message_tags WHERE account_id = $1 AND message_id = $2 AND auteur_id = ''`, [ACCOUNT, MID(9)])
+    check('I8 un redémarrage sur une base déjà migrée, moteur rattaché depuis : `initDb()` passe et ne prête rien à ce moteur',
+      boot === null && inconnue.n === 1, boot ? `initDb : ${String(boot).split('\n')[0]}` : `${inconnue.n} ligne(s) restée(s) d'origine inconnue`)
+  }
 } catch (e) {
   if (!NEGATIVE) throw e
   console.log(`  --   ${e.message}`)
 } finally {
   await clean().catch(() => {})
   if (NEGATIVE) await disarmNegative().catch(() => {})
+  if (PREV_MAILBOX === null) await pool.query('DELETE FROM mailbox_tagging WHERE account_id = $1', [ACCOUNT]).catch(() => {})
+  else if (PREV_MAILBOX) await pool.query('UPDATE mailbox_tagging SET engine_id = $2 WHERE account_id = $1', [ACCOUNT, PREV_MAILBOX.engineId]).catch(() => {})
+  await pool.query("DELETE FROM decision_engines WHERE url LIKE 'http://banc-t2.invalid/%'").catch(() => {})
   await pool.end()
 }
 

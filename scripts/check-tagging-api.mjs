@@ -385,6 +385,7 @@ try {
   for (const id of created.accounts) await pool.query('DELETE FROM email_accounts WHERE id = $1', [id]).catch(() => {})
   await pool.query('DELETE FROM email_accounts WHERE email LIKE $1', ['tagbench-%@bench.invalid']).catch(() => {})
   for (const id of created.engines) await pool.query('DELETE FROM decision_engines WHERE id = $1', [id]).catch(() => {})
+  await pool.query("DELETE FROM decision_engines WHERE url LIKE '%.bench.invalid/%'").catch(() => {})
   for (const id of created.keys) await pool.query('DELETE FROM api_keys WHERE id = $1', [id]).catch(() => {})
   await pool.end()
 }
