@@ -117,7 +117,9 @@ Classé par sévérité. Cocher au fur et à mesure.
   toujours `unread={0}` au lieu du vrai compteur.
 - `lib/imap.ts` : `search()` appelé sans `{uid:true}` dans la branche filtrée (cohérent avec le `fetch`
   qui suit, mais fragile — un futur correctif qui ajoute `{uid:true}` à un seul des deux appels casserait
-  silencieusement la pagination filtrée).
+  silencieusement la pagination filtrée). — Settled: the range cannot become UIDs (the `all` branch derives
+  sequence numbers from `mailbox.exists` without any SEARCH), so the misleading `pageUids` alias is gone and
+  the fetch names the coupling in one comment. No behaviour change.
 - `lib/forward.ts` : `UID_PATTERN = /^\d+$/` accepte les uid avec zéros en tête (`"007"`), jamais générés
   par l'app aujourd'hui mais pas garanti pour un futur appelant de `parseForwardedMessages`.
 - `app/layout.tsx` : `readBranding()` appelé deux fois par requête (une fois par `generateMetadata()`,
