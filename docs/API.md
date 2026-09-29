@@ -1223,11 +1223,46 @@ interface TaggingStatus {
   tagged: number; skipped: number; errors: number; total: number
   estimateUsd: number | null                      // cost of what is LEFT, at the engine's price
   questions: number                               // how many are asked of each message
+  distribution?: …                                // only with `?distribution=1`: value counts per question
+  staleCounts?: Record<string, number>            // only with `?stale=1`: per question id, messages tagged under an OLDER version
 }
 ```
 
 ### `POST /api/tagging/run` 🔑 Bearer (`tags:write`)
 **Body** `{ accountId: string; action: 'start' | 'pause' | 'resume' | 'restart' }`. These are **state orders, not a synchronous sort**: the work itself stays with the scheduler, which holds the per-mailbox lock and a budget per pass. `start` resumes from the saved cursor (so re-running a finished sort costs nothing); `restart` clears it and the counters. `pause` records the reason `user`, which is what distinguishes it on screen from a budget cap or exhausted credit. Requires the `organize` share permission. **Response** `{ data: TaggingStatus }`.
+
+### `GET /api/tags/questions` 🔑 Bearer (`tags:read`)
+The caller's **sorting questions** — the taxonomy every engine call asks of each message. One set per user, not per mailbox; a user who never edited anything receives the default set of `lib/tagging/questions.ts`, inserted once on first read. **Response** `{ data: TagQuestion[] }`, in display order.
+
+```ts
+interface TagQuestion {
+  id: string                                   // slug [a-z0-9_]{2,40}
+  type: 'choice' | 'score' | 'noul'
+  instructions: string                         // the question, as sent to the engine
+  options?: { value: string; definition: string; notFor?: string; examples?: string[] }[]
+                                               // choice: up to 255, unordered; score: 2 to 10 ORDERED levels; noul: none
+  listBadge?: boolean | string                 // shown as a chip in the message list (score: from this level up)
+  group: string                                // display group slug
+  enabled: boolean                             // a disabled question is not asked
+  version: number                              // bumped when instructions or options change
+  updatedAt: string
+}
+```
+
+### `POST /api/tags/questions` 🔑 Bearer (`tags:write`)
+**Body** `TagQuestion` minus `version`/`updatedAt` (`position?: number` optional). The JEV contract is checked server-side — `400` names the offending `field` (`id`, `type`, `instructions`, `options[n].value`, …). The ids of the rule detectors (`RULE_QUESTION_IDS`) and `reset` are **reserved**: `400` naming the id. `409` when the id is already in the set. **Response** `{ data: TagQuestion }`, `201`.
+
+### `PATCH /api/tags/questions/[id]` 🔑 Bearer (`tags:write`)
+Same body, every field optional; the body is merged into the stored question and the **whole** question is revalidated, so a partial patch cannot leave it inconsistent. `version` advances only when `instructions` or `options` change what is sent to the engine — toggling `enabled`, moving or regrouping does not. `404` names an unknown `id`; `400` refuses a change of `id`. **Response** `{ data: TagQuestion }`.
+
+### `DELETE /api/tags/questions/[id]` 🔑 Bearer (`tags:write`)
+Removes the question from the caller's set. Tags already written stay in the database — they are history. `404` names an unknown `id`. **Response** `{ data: { id } }`.
+
+### `POST /api/tags/questions/reset` 🔑 Bearer (`tags:write`)
+Replaces the caller's **whole** set (added questions included) with the defaults of `lib/tagging/questions.ts`. Tags already written stay. **Response** `{ data: TagQuestion[] }`.
+
+### `POST /api/tags/questions/[id]/test` 🔑 Bearer (`tags:write`)
+**Body** `{ accountId: string; folder: string; uid: number | string }`. **One** engine call for **one** question on **one** message — what the engine answers before paying for a mailbox. The engine is the one chosen for `accountId` (`409` when none), the message is read from IMAP; requires the `organize` share permission. `404` names an unknown question or message; `502` carries the engine `failure` kind (`credit`, `auth`, `rate`, `unavailable`). **Response** `{ data: { question, ms, model, inputTokens, answer: StoredTag | null, rejected: boolean } }` — `rejected` is `true` when the engine answered outside the question's values.
 
 ### `GET /api/tagging/settings?account=` — session only
 Same `TaggingStatus` body as above. **Session only, owner only**: these settings point at an engine, therefore at a key, so a delegate does not read them and no API key reaches them.

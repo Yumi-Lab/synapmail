@@ -46,6 +46,7 @@ export function TagQuestionsSection({ accountId, staleCounts }: {
 }) {
   const t = useTranslations('settings.tagging.questions')
   const tCommon = useTranslations('settings.common')
+  const tApp = useTranslations('common')
   const tRow = useTranslations('settings.rowActions')
   const { q: labelQ, g: labelG } = useTagLabels()
   const { questions, loaded, mutate } = useQuestionSet()
@@ -111,7 +112,7 @@ export function TagQuestionsSection({ accountId, staleCounts }: {
 
   return (
     <SettingsSection title={t('title')} description={t('description', { enabled: enabledCount, total: questions.length })}>
-      {!loaded && <p className="text-sm text-muted-foreground">{tCommon('loading')}</p>}
+      {!loaded && <p className="text-sm text-muted-foreground">{tApp('loading')}</p>}
 
       <div className="space-y-1.5" data-tag-questions={questions.length}>
         {questions.map(q => {
@@ -156,7 +157,7 @@ export function TagQuestionsSection({ accountId, staleCounts }: {
           {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
           <div className="mt-3 flex gap-2">
             <Button type="button" onClick={save} disabled={saving || !SLUG_RE.test(draft.id) || !draft.instructions.trim()}>{t('add')}</Button>
-            <Button type="button" variant="ghost" onClick={() => { setAdding(false); setDraft(null); setError(null) }}>{tCommon('cancel')}</Button>
+            <Button type="button" variant="ghost" onClick={() => { setAdding(false); setDraft(null); setError(null) }}>{tApp('cancel')}</Button>
           </div>
         </div>
       ) : (

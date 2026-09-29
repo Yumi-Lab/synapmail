@@ -3354,9 +3354,9 @@
         "summary": "Read where a mailbox's sorting stands",
         "description": "Counters, spend, estimate and the chosen engine — never its key, only `hasKey`. Requires the `tags:read` scope; a key without it gets 403 naming it.",
         "parameters": [
-          {
-            "$ref": "#/components/parameters/AccountQueryRequired"
-          }
+          {"$ref": "#/components/parameters/AccountQueryRequired"},
+          {"name": "distribution", "in": "query", "required": false, "schema": {"type": "string", "enum": ["1"]}, "description": "Add `distribution` (value counts per question) — a GROUP BY over every tag of the mailbox, so opt-in only."},
+          {"name": "stale", "in": "query", "required": false, "schema": {"type": "string", "enum": ["1"]}, "description": "Add `staleCounts`: per question id, how many messages carry a tag written under an OLDER version of that question than the caller’s current one. Human (`humain`) tags never count. Opt-in for the same reason as `distribution`."}
         ],
         "responses": {
           "200": {
@@ -3462,6 +3462,411 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tags/questions": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "listTagQuestions",
+        "summary": "The caller's sorting questions",
+        "description": "One set per user, not per mailbox. A user who never edited anything receives the default set, inserted once on first read. Requires the `tags:read` scope.",
+        "responses": {
+          "200": {
+            "description": "The set, in display order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TagQuestion"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "createTagQuestion",
+        "summary": "Add a sorting question",
+        "description": "Checked against the JEV contract server-side; `400` names the offending `field`. Reserved ids (rule detectors, `reset`) are refused with `400` naming the id; `409` when the id is already in the set. Requires the `tags:write` scope.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagQuestionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The stored question.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TagQuestion"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tags/questions/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,40}$"
+          }
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "updateTagQuestion",
+        "summary": "Change a sorting question",
+        "description": "Every field optional; the body is merged into the stored question and the whole question is revalidated. `version` advances only when `instructions` or `options` change what is sent to the engine. `400` refuses a change of `id`. Requires the `tags:write` scope.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagQuestionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The question after the change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TagQuestion"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "deleteTagQuestion",
+        "summary": "Remove a sorting question",
+        "description": "Tags already written stay in the database. Requires the `tags:write` scope.",
+        "responses": {
+          "200": {
+            "description": "The removed id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tags/questions/reset": {
+      "post": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "resetTagQuestions",
+        "summary": "Back to the default questions",
+        "description": "Replaces the caller's whole set, added questions included. Tags already written stay. Requires the `tags:write` scope.",
+        "responses": {
+          "200": {
+            "description": "The default set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TagQuestion"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tags/questions/{id}/test": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,40}$"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "testTagQuestion",
+        "summary": "Ask the engine one question about one message",
+        "description": "One engine call, for one question, on one message of the named mailbox — what the engine answers before paying for a mailbox. Uses the engine chosen for the mailbox (`409` when none). Requires the `tags:write` scope and the `organize` share permission.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "folder",
+                  "uid"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "folder": {
+                    "type": "string"
+                  },
+                  "uid": {
+                    "oneOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What the engine answered.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "question",
+                        "ms",
+                        "model",
+                        "inputTokens",
+                        "answer",
+                        "rejected"
+                      ],
+                      "properties": {
+                        "question": {
+                          "type": "string"
+                        },
+                        "ms": {
+                          "type": "integer"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "inputTokens": {
+                          "type": "integer"
+                        },
+                        "answer": {
+                          "oneOf": [
+                            {
+                              "$ref": "#/components/schemas/StoredTag"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "rejected": {
+                          "type": "boolean",
+                          "description": "The engine answered outside the question's values."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "502": {
+            "description": "The engine refused or failed; `failure` names the kind (`credit`, `auth`, `rate`, `unavailable`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "failure"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "failure": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           },
           "500": {
             "$ref": "#/components/responses/ServerError"
@@ -4810,6 +5215,107 @@
               "null"
             ],
             "format": "uuid"
+          }
+        }
+      },
+      "TagQuestion": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TagQuestionInput"
+          },
+          {
+            "type": "object",
+            "required": [
+              "group",
+              "enabled",
+              "version",
+              "updatedAt"
+            ],
+            "properties": {
+              "version": {
+                "type": "integer",
+                "description": "Bumped when `instructions` or `options` change what is sent to the engine."
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ]
+      },
+      "TagQuestionInput": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "instructions"
+        ],
+        "description": "A sorting question under the JEV contract: `choice` carries up to 255 unordered options, `score` an ORDERED list of 2 to 10 levels, `noul` no options at all. `id` is a slug; the ids of the rule detectors and `reset` are reserved.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,40}$"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "choice",
+              "score",
+              "noul"
+            ]
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "value",
+                "definition"
+              ],
+              "properties": {
+                "value": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9_]{2,40}$"
+                },
+                "definition": {
+                  "type": "string"
+                },
+                "notFor": {
+                  "type": "string"
+                },
+                "examples": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "listBadge": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "group": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,40}$"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }

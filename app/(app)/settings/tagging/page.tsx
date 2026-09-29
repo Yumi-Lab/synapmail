@@ -11,6 +11,7 @@ import {
   SettingsPage, SettingsHeader, SettingsSection, SettingsRow, SettingsDivider, Toggle, SaveBar,
 } from '@/components/settings/primitives'
 import { ENGINES_ENDPOINT } from '@/components/settings/DecisionEnginesSection'
+import { TagQuestionsSection } from '@/components/settings/TagQuestionsSection'
 import type { TaggingStatus } from '@/lib/tagging/mailbox'
 import type { tagDistribution } from '@/lib/tagging/store'
 import type { DecisionEngine } from '@/lib/tagging/engines'
@@ -148,6 +149,13 @@ export default function TaggingSettingsPage() {
     fetcher,
   )
   const distribution = distData?.data?.distribution ?? []
+
+  // Les « anciennes versions » par question (lot T-Q) : un GROUP BY sur les étiquettes de la
+  // boîte, demandé une fois par boîte affichée, hors du rafraîchissement de l'état.
+  const { data: staleData } = useSWR<{ data: TaggingStatus & { staleCounts?: Record<string, number> } }>(
+    accountId ? `${STATUS_ENDPOINT}?account=${accountId}&stale=1` : null,
+    fetcher,
+  )
 
   return (
     <SettingsPage>
@@ -313,6 +321,11 @@ export default function TaggingSettingsPage() {
           )}
         </div>
       )}
+
+      {/* Les questions sont celles de l'UTILISATEUR, pas d'une boîte : la section se rend même sans boîte. */}
+      <div className="mt-5">
+        <TagQuestionsSection accountId={accountId} staleCounts={staleData?.data?.staleCounts ?? {}} />
+      </div>
     </SettingsPage>
   )
 }

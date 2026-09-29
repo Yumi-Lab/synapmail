@@ -62,7 +62,8 @@ const check = (label, ok, detail = '') => {
 
 const { initDb, query } = await import('../lib/db.ts')
 const store = await import('../lib/tagging/store.ts')
-const { questionById, valuesOf } = await import('../lib/tagging/questions.ts')
+const { DEFAULT_SET, valuesOf } = await import('../lib/tagging/questions.ts')
+const questionById = id => DEFAULT_SET.questionById(id)
 
 /**
  * Les Message-ID du banc portent un domaine de test réservé (RFC 2606, `.invalid` n'est jamais

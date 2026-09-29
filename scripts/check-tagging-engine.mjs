@@ -52,7 +52,11 @@ const {
   ENGINES, ENGINE_PRESETS, EngineError, STATE_BODY_CHARS, askEngine, buildState, costUsd,
   failureOf, isEngineKind, parseAnswer, parseResponse, TAG_SOURCES,
 } = await import('../lib/tagging/engine.ts')
-const { ENGINE_QUESTIONS, QUESTIONS, questionById, valuesOf } = await import('../lib/tagging/questions.ts')
+const { DEFAULT_SET, engineBodyFor, valuesOf } = await import('../lib/tagging/questions.ts')
+// Le banc mesure le JEU PAR DÉFAUT (lot T-Q : le jeu est par utilisateur ; ici, personne n'a rien changé).
+const QUESTIONS = DEFAULT_SET.enabled
+const questionById = id => DEFAULT_SET.questionById(id)
+const ENGINE_QUESTIONS = engineBodyFor(QUESTIONS)
 
 /** LA fonction mesurée : celle du produit, ou celle du contrôle négatif. */
 const parse = NEGATIVE ? parseAnyValue : parseAnswer
@@ -117,7 +121,7 @@ console.log(`\nbanc du moteur de tri${NEGATIVE ? ' — CONTRÔLE NÉGATIF (le pa
 console.log('A. une seule requête, toutes les questions')
 serve(200, fullAnswers())
 const state = buildState(MAIL_HOSTILE)
-const res = await askEngine(CFG, state)
+const res = await askEngine(CFG, state, QUESTIONS)
 ok('un mail = UNE requête sortante', calls.length === 1, `${calls.length} requête(s)`)
 const sent = calls[0]?.body ?? {}
 ok(`les ${QUESTIONS.length} questions partent ensemble`,
@@ -204,7 +208,7 @@ serve(200, FORGED)
 // En mesure, c'est bien `askEngine` qui répond — le chemin complet, réseau simulé compris.
 // En contrôle négatif, le même corps relu par le parseur permissif : un module ES ne se
 // remplace pas de l'extérieur, et c'est la DÉCISION qu'on compare, pas le binaire.
-const forged = NEGATIVE ? readAll(FORGED) : await askEngine(CFG, state)
+const forged = NEGATIVE ? readAll(FORGED) : await askEngine(CFG, state, QUESTIONS)
 ok('une réponse entièrement forgée ne produit AUCUNE étiquette',
   forged.tags.length === 0 && forged.rejected.length === QUESTIONS.length,
   `${forged.tags.length} étiquette(s)`)
@@ -226,7 +230,7 @@ ok('les probabilités d’un score sont traduites en valeurs, pas en indices',
 const scoreSansProbas = parseAnswer(questionById('urgence'), { score: 3 })
 ok('sans probabilités, un score retombe sur son indice', scoreSansProbas?.valeur === niveaux[3], scoreSansProbas?.valeur)
 
-const full = parseResponse(fullAnswers())
+const full = parseResponse(fullAnswers(), QUESTIONS)
 ok('une réponse complète et légale donne une étiquette par question',
   full.tags.length === QUESTIONS.length && full.rejected.length === 0,
   `${full.tags.length} étiquette(s), ${full.rejected.length} rejet(s)`)
@@ -244,18 +248,18 @@ ok('422 → rejected', failureOf(422, '{"detail":"criteria must be a list"}') ==
 
 serve(402, '{"error":"credit balance exhausted"}')
 let thrown = null
-try { await askEngine(CFG, state) } catch (e) { thrown = e }
+try { await askEngine(CFG, state, QUESTIONS) } catch (e) { thrown = e }
 ok('un 402 jette une EngineError `credit`', thrown instanceof EngineError && thrown.kind === 'credit', String(thrown?.kind))
 ok('le message du service est recopié tel quel', String(thrown?.message).includes('credit balance exhausted'))
 
 serve(429, '{"error":"rate limited"}', { 'retry-after': '7' })
 thrown = null
-try { await askEngine(CFG, state) } catch (e) { thrown = e }
+try { await askEngine(CFG, state, QUESTIONS) } catch (e) { thrown = e }
 ok('un 429 rend le `retry-after` annoncé', thrown?.kind === 'rate' && thrown?.retryAfter === 7, String(thrown?.retryAfter))
 
 globalThis.fetch = async () => { throw new Error('ECONNREFUSED de banc') }
 thrown = null
-try { await askEngine(CFG, state) } catch (e) { thrown = e }
+try { await askEngine(CFG, state, QUESTIONS) } catch (e) { thrown = e }
 ok('une panne réseau devient `unavailable`, pas une exception nue',
   thrown instanceof EngineError && thrown.kind === 'unavailable', String(thrown?.kind))
 
@@ -289,7 +293,7 @@ const subsetAnswers = { model: 'jev-1.13.0', usage: { input_tokens: 457 }, answe
   })) }
 calls.length = 0
 serve(200, subsetAnswers)
-const subset = await askEngine(CFG, state, TROIS)
+const subset = await askEngine(CFG, state, DEFAULT_SET.posed(TROIS))
 const subsetSent = calls[0]?.body ?? {}
 ok('la requête ne porte QUE les 3 questions demandées',
   Object.keys(subsetSent.questions ?? {}).join('|') === TROIS.join('|'),
@@ -302,14 +306,14 @@ ok('les 3 étiquettes sont bien celles demandées',
   subset.tags.map(t => t.question).join('|'))
 // Une réponse peut contenir des questions qu'on n'a pas posées : elles ne deviennent pas
 // des étiquettes, parce qu'on ne relit que ce qu'on a demandé.
-const bavard = parseResponse({ ...fullAnswers(), usage: { input_tokens: 9 } }, TROIS)
+const bavard = parseResponse({ ...fullAnswers(), usage: { input_tokens: 9 } }, DEFAULT_SET.posed(TROIS))
 ok('une réponse bavarde ne rend que les étiquettes des questions posées',
   bavard.tags.length === 3 && bavard.rejected.length === 0,
   `${bavard.tags.length} étiquette(s)`)
-ok('sans liste, toutes les questions sont posées',
-  Object.keys(ENGINE_QUESTIONS).length === QUESTIONS.length)
+ok('sans liste, toutes les questions ACTIVES sont posées',
+  DEFAULT_SET.posed().length === QUESTIONS.length)
 let unknownThrown = null
-try { parseResponse(fullAnswers(), ['question_qui_nexiste_pas']) } catch (e) { unknownThrown = e }
+try { DEFAULT_SET.posed(['question_qui_nexiste_pas']) } catch (e) { unknownThrown = e }
 ok('une question inconnue est une erreur, pas un silence', unknownThrown !== null, String(unknownThrown))
 
 // ─── verdict ──────────────────────────────────────────────────────────────────

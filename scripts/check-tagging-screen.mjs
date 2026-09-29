@@ -61,6 +61,9 @@ try {
   check(pageRes.status === 200, 'B1 /settings/tagging se rend pour une session', `statut ${pageRes.status}`)
   check(/Tri automatique|Automatic sorting|自动分类/.test(html), 'B2 le titre de l’écran est rendu')
   check(/Réglages|Settings|设置/.test(html), 'B3 l’écran est bien dans le cadre des réglages')
+  // La section « Questions » (lot T-Q) est montée dans CET écran : la liste se remplit côté
+  // client (SWR), mais le conteneur et son bouton d'ajout sont dans le HTML servi.
+  check(/data-tag-questions=/.test(html) && /data-tag-question-add/.test(html), 'B4 la section « Questions » est montée dans l’écran (conteneur + bouton d’ajout rendus)')
 
   // --- C. un moteur se crée, se lit, et sa clé ne ressort jamais ---------------------
   const created = await fetch(`${BASE}/api/decision-engines`, {
