@@ -179,7 +179,9 @@ Classé par sévérité. Cocher au fur et à mesure.
   toujours `unread={0}` au lieu du vrai compteur. — Done in `19bb4ec` (`unread={acc.unreadCount ?? 0}`).
 - `lib/imap.ts` : `search()` appelé sans `{uid:true}` dans la branche filtrée (cohérent avec le `fetch`
   qui suit, mais fragile — un futur correctif qui ajoute `{uid:true}` à un seul des deux appels casserait
-  silencieusement la pagination filtrée).
+  silencieusement la pagination filtrée). — Settled: the range cannot become UIDs (the `all` branch derives
+  sequence numbers from `mailbox.exists` without any SEARCH), so the misleading `pageUids` alias is gone and
+  the fetch names the coupling in one comment. No behaviour change.
 - `lib/forward.ts` : `UID_PATTERN = /^\d+$/` accepte les uid avec zéros en tête (`"007"`), jamais générés
   par l'app aujourd'hui mais pas garanti pour un futur appelant de `parseForwardedMessages`. — Fixed:
   `/^[1-9]\d*$/` (no `0`, no leading zero); `scripts/check-forward-decision.mjs` refuses `0` and `007`
