@@ -56,7 +56,11 @@ type SweepState = {
   folders: number
   sweptIds: Set<string>
   unreachable: string[]
-  /** Vrai dès qu'UNE boîte balayée demande la garde d'invite (`bool_or`). */
+  /**
+   * Vrai dès qu'UNE boîte balayée demande la garde d'invite (`bool_or`) — pour
+   * la réponse d'un SEUL tenant, qui mêle toutes les boîtes. Le flux, lui, ne
+   * lit pas ce cumul : chaque morceau porte la garde de SA boîte (`guarded`).
+   */
   guarded: boolean
 }
 
@@ -80,6 +84,8 @@ type SweepChunk = {
   searched: number
   folders: number
   accounts: number
+  /** La garde d'invite de la boîte de CE morceau — pas celle des boîtes déjà balayées. */
+  guarded: boolean
 }
 
 /**
@@ -125,6 +131,7 @@ async function* sweepAccounts(
         folder: chunk.folder,
         accountId: row.id,
         accountEmail: row.email,
+        guarded: row.prompt_guard,
         searched: state.searched,
         folders: state.folders,
         // Le nombre de boîtes est connu dès le départ (celles qui sont accessibles) :
@@ -230,21 +237,22 @@ async function getHandler(req: Request) {
       const sweep = new AbortController()
       req.signal.addEventListener('abort', () => sweep.abort(), { once: true })
       // La garde d'invite est celle des boîtes BALAYÉES, jamais celle de la boîte
-      // courante : le balayage en traverse plusieurs, aux réglages différents, et
-      // `state.guarded` est vrai dès que l'UNE d'elles la demande (`bool_or`, comme
-      // `promptGuardApplies` sans boîte nommée). Lu à chaque appel, donc après que le
-      // morceau l'a mis à jour.
-      const guard = () => ({ enabled: machine && state.guarded })
-
+      // courante : le balayage en traverse plusieurs, aux réglages différents.
+      // En flux, chaque morceau vient d'UNE boîte et porte SA garde (`chunk.guarded`)
+      // — pas le cumul, qui collerait au premier `true` rencontré et marquerait
+      // ensuite les boîtes qui ne la demandent pas (défaut #10 de la revue amont).
+      // D'un seul tenant, la réponse mêle toutes les boîtes : elle porte la garde
+      // dès que l'UNE d'elles la demande (`state.guarded`, `bool_or` comme
+      // `promptGuardApplies` sans boîte nommée), lue APRÈS le balayage.
       if (searchParams.get(STREAM_PARAM)) {
         const encoder = new TextEncoder()
         const stream = new ReadableStream<Uint8Array>({
           async start(controller) {
             const send = (payload: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`))
             try {
-              for await (const chunk of sweepAccounts(accounts, terms, sweep.signal, state)) {
+              for await (const { guarded, ...chunk } of sweepAccounts(accounts, terms, sweep.signal, state)) {
                 if (sweep.signal.aborted) break
-                send(guardApiPayload(chunk, guard()))
+                send(guardApiPayload(chunk, { enabled: machine && guarded }))
               }
               // Les boîtes injoignables sont signalées en FIN de flux : le client les
               // affiche quand il sait qu'il n'en viendra plus.
@@ -297,7 +305,7 @@ async function getHandler(req: Request) {
         unreachable: state.unreachable,
         complete: coverage.complete,
         ...(coverage.complete ? {} : { stoppedBecause: coverage.reasons }),
-      }, guard()))
+      }, { enabled: machine && state.guarded }))
     }
 
 
