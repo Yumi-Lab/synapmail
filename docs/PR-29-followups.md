@@ -172,7 +172,9 @@ Classé par sévérité. Cocher au fur et à mesure.
   longer exists anywhere (`git grep`).
 - Recherche : logique de tri/plafond dupliquée entre branche streaming et branche single-shot ; la
   branche `scope=all` non-streamée utilise `listFolders()` au lieu de `listFoldersRanked()` (ne filtre
-  pas les dossiers `\Noselect`/vides — gaspille des allers-retours IMAP).
+  pas les dossiers `\Noselect`/vides — gaspille des allers-retours IMAP). — Fixed: the one-shot branch
+  now sweeps `listFoldersRanked()` and renders through the same `streamedMessages()` helper as the stream
+  (one sort, one cap); `scripts/check-search-single-shot.mjs` (`--negative` replays the old source).
 - `components/settings/AccountColorPicker.tsx` : double commit (blur puis clic "Automatique") — deux
   PATCH pour un seul geste utilisateur, sans conséquence visible autre qu'un flash de couleur.
 - `components/layout/Omnibar.tsx` : les comptes dans la palette de commandes (Cmd/Ctrl+K) affichent
