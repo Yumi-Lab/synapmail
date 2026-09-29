@@ -93,11 +93,19 @@ Classé par sévérité. Cocher au fur et à mesure.
   two-step write and must go red) and `scripts/check-settings-race-browser.mjs` (real click, PATCH held
   on the wire, forced focus revalidation; `--negative` replays the bare-fetch switch).
 
-- [ ] **`app/api/messages/search/route.ts`** — la branche de streaming NDJSON (`scope=all&stream=1`) n'a
+- [x] **`app/api/messages/search/route.ts`** — la branche de streaming NDJSON (`scope=all&stream=1`) n'a
   aucune garde contre les appels Bearer/machine, alors que le commentaire du fichier et `docs/API.md`
   promettent un contrat JSON unique inchangé pour les appels machine. Un client Bearer qui suit la doc
   reçoit du NDJSON brut au lieu d'un objet JSON (`res.json()` plante), et le préfixe `aiSafety` se répète
-  par ligne.
+  par ligne. — Fixed by making the promise true rather than by gating: the stream was never forced on a
+  key (a machine caller only meets NDJSON after sending `stream=1` itself, measured: five Bearer calls,
+  the three without the parameter answer one `application/json` object), so the stale "unchanged contract"
+  comments in the route and `lib/search.ts` now say the stream is the caller's opt-in, `docs/API.md` says
+  it in the `stream=1` paragraph, and `docs/openapi.json` finally names `scope`, `stream` and the
+  `application/x-ndjson` answer — a generated client no longer discovers the stream by crashing on
+  `json()`. The per-line `aiSafety` is by design (each line is its own mailbox's guard, defect #10).
+  The media type lives once, `STREAM_CONTENT_TYPE`. Bench: `scripts/check-api-docs.mjs` (5 new checks;
+  `--break=stream` hides the parameter and the NDJSON answer from a copy of the contract and must go red).
 
 - [ ] **`lib/idle.ts`** — le watcher IMAP IDLE retente une connexion en échec indéfiniment (délai plafonné
   à 60s mais pas de plafond de tentatives). Un mot de passe expiré/changé fait retenter un login IMAP

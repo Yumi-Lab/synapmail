@@ -9,8 +9,8 @@ import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import {
   ACCOUNT_CONCURRENCY, ACCOUNTS_SWEEP_BUDGET_MS, EMPTY_SEARCH_STREAM, MIN_QUERY_LENGTH,
   SCOPE_ACCOUNTS, SCOPE_ALL, SCOPE_PARAM, SEARCH_FIELDS, SEARCH_PARAM, SEARCH_RESULT_LIMIT,
-  STREAM_PARAM, accumulateSearchStream, mergeGenerators, orderAccountsForSearch, parseQuery,
-  readScope, sweepCompleteness,
+  STREAM_CONTENT_TYPE, STREAM_PARAM, accumulateSearchStream, mergeGenerators, orderAccountsForSearch,
+  parseQuery, readScope, sweepCompleteness,
 } from '@/lib/search'
 import type { SearchStreamState, SweepProgress } from '@/lib/search'
 import { withApiLog } from '@/lib/apiLog'
@@ -267,7 +267,7 @@ async function getHandler(req: Request) {
         })
         return new Response(stream, {
           headers: {
-            'Content-Type': 'application/x-ndjson; charset=utf-8',
+            'Content-Type': STREAM_CONTENT_TYPE,
             'Cache-Control': 'no-store, no-transform',
           },
         })
@@ -355,14 +355,15 @@ async function getHandler(req: Request) {
       })
       return new Response(stream, {
         headers: {
-          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Content-Type': STREAM_CONTENT_TYPE,
           'Cache-Control': 'no-store, no-transform',
         },
       })
     }
 
     // Réponse d'un seul tenant : la portée « ce dossier » (un seul dossier, donc
-    // rien à étaler) et tout appel machine, dont le contrat ne change pas.
+    // rien à étaler) et tout appel qui n'a pas demandé le flux — le flux est un
+    // opt-in de l'appelant, clé Bearer comprise, jamais un choix fait pour lui.
     const folders = scope === SCOPE_ALL
       ? (await listFolders(config)).map(f => f.path)
       : [folder]
