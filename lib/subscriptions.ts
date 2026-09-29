@@ -256,11 +256,20 @@ export function mailtoAddress(uri: string): string | null {
   return /^[^\s@,<>"]+@[^\s@,<>"]+\.[^\s@,<>"]+$/.test(decoded) ? decoded.toLowerCase() : null
 }
 
-/** The `subject=` parameter of a mailto URI, when the list asks for one. */
+// eslint-disable-next-line no-control-regex -- that is precisely what we strip
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]+/g
+
+/**
+ * The `subject=` parameter of a mailto URI, when the list asks for one. The URI
+ * comes from a header the SENDER wrote, and the subject goes out as a header of a
+ * message sent with the reader's own SMTP credentials: a `%0d%0a` that survived
+ * decoding would end the Subject line and start a header of the sender's choosing.
+ * Control characters are folded to one space, the way `mailtoAddress()` refuses them.
+ */
 export function mailtoSubject(uri: string): string | undefined {
   const qs = uri.split('?')[1]
   if (!qs) return undefined
-  const value = new URLSearchParams(qs).get('subject')?.trim()
+  const value = new URLSearchParams(qs).get('subject')?.replace(CONTROL_CHARS, ' ').trim()
   return value || undefined
 }
 
