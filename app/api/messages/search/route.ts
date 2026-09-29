@@ -4,7 +4,7 @@ import { query } from '@/lib/db'
 import { getAccessibleAccount, listAccessibleAccounts } from '@/lib/accountAccess'
 import type { DbEmailAccount } from '@/lib/accounts'
 import type { Message } from '@/types/email'
-import { listFolderPasses, listFolders, listFoldersRanked, searchMessagesByFolder, searchMessagesIn } from '@/lib/imap'
+import { listFolderPasses, listFoldersRanked, searchMessagesByFolder, searchMessagesIn } from '@/lib/imap'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import {
   ACCOUNT_CONCURRENCY, ACCOUNTS_SWEEP_BUDGET_MS, EMPTY_SEARCH_STREAM, MIN_QUERY_LENGTH,
@@ -364,16 +364,15 @@ async function getHandler(req: Request) {
     // Réponse d'un seul tenant : la portée « ce dossier » (un seul dossier, donc
     // rien à étaler) et tout appel qui n'a pas demandé le flux — le flux est un
     // opt-in de l'appelant, clé Bearer comprise, jamais un choix fait pour lui.
-    const folders = scope === SCOPE_ALL
-      ? (await listFolders(config)).map(f => f.path)
-      : [folder]
+    // Same ranked list as the streamed branch: it already drops `\\Noselect` and
+    // measured-empty folders, which `listFolders()` would have opened for nothing.
+    const folders = scope === SCOPE_ALL ? await listFoldersRanked(config) : [folder]
     const { messages, total } = await searchMessagesIn(config, folders, terms)
-    messages.sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
 
     // `total` = correspondances RÉELLES (compte des identifiants), `messages` = ce
     // qui a été rendu. L'interface dit « les 200 premiers sur 1 340 » à partir des deux.
     return NextResponse.json(guardApiPayload({
-      messages: messages.slice(0, SEARCH_RESULT_LIMIT).map(m => ({ ...m, accountId: account.id })),
+      messages: streamedMessages(messages, account.id),
       total,
       fields: SEARCH_FIELDS,
     }, { enabled: isMachineRequest(req) && account.prompt_guard }))
