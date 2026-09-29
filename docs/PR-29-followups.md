@@ -8,11 +8,14 @@ Classé par sévérité. Cocher au fur et à mesure.
 
 ## 🔴 Sécurité — à traiter en priorité
 
-- [ ] **`lib/folderActions.ts` — `sanitizeFolderName()`** n'exclut pas les segments `.` / `..`.
+- [x] **`lib/folderActions.ts` — `sanitizeFolderName()`** n'exclut pas les segments `.` / `..`.
   Un nom de dossier `..` part tel quel vers `client.mailboxCreate()`/`mailboxRename()` — sur un serveur
   IMAP Maildir (Dovecot/Courier) qui mappe les noms de boîtes sur de vrais chemins fichiers, c'est un nom
   de mailbox en forme de traversée de répertoire. Fix : rejeter tout segment de path égal à `.` ou `..`
-  (et par prudence tout chemin résolu qui sortirait de la racine du compte).
+  (et par prudence tout chemin résolu qui sortirait de la racine du compte). — Fixed: a bare `.` or `..`
+  (trimmed) is refused as a name; since the account delimiter is already refused inside a name, a name is
+  exactly one path segment, so no resolved path can leave the root. Bench: `scripts/check-folder-actions.mjs`
+  (`--negative` replays the old rule and must go red).
 
 - [ ] **`app/api/ai/action/route.ts`** accepte désormais l'auth Bearer (`authenticate()` au lieu de
   `auth()`) alors que cette route n'est pas dans la liste documentée des routes Bearer de `CLAUDE.md`

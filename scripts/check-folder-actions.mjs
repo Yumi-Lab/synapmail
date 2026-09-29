@@ -1,11 +1,25 @@
 #!/usr/bin/env node
 // Self-check of lib/folderActions.ts — la règle que la route ET le menu appliquent.
-// node --experimental-strip-types scripts/check-folder-actions.mjs
+//   node --experimental-strip-types scripts/check-folder-actions.mjs
+//   node --experimental-strip-types scripts/check-folder-actions.mjs --negative
+// NEGATIVE CONTROL (`--negative`): names are judged the OLD way, without the `.` / `..`
+// refusal (PR-29 follow-up, security). The traversal assertions MUST then go red: they
+// measure the refusal itself, not merely that a string came back.
 import assert from 'node:assert/strict'
 import {
   folderCapabilities, offeredActions, sanitizeFolderName, joinFolderPath, renamedPath,
   isDescendant, rewritePath, samePath, accountDelimiter, FOLDER_ACTIONS,
 } from '../lib/folderActions.ts'
+
+const NEGATIVE = process.argv.includes('--negative')
+/** The old rule: everything the shipped one does, minus the traversal refusal. */
+const sanitizeOld = (raw, delimiter) => {
+  const name = sanitizeFolderName(raw, delimiter)
+  if (name !== null) return name
+  const trimmed = typeof raw === 'string' ? raw.trim() : ''
+  return trimmed === '.' || trimmed === '..' ? trimmed : null
+}
+const sanitize = NEGATIVE ? sanitizeOld : sanitizeFolderName
 
 const owner = { canOrganize: true, canDelete: true }
 const caps = (over) => folderCapabilities({ special: null, hasChildren: false, ...owner, ...over })
@@ -53,6 +67,25 @@ assert.equal(sanitizeFolderName(null, '/'), null)
 assert.equal(sanitizeFolderName('x'.repeat(256), '/'), null)
 assert.equal(sanitizeFolderName('x'.repeat(255), '/').length, 255)
 assert.equal(sanitizeFolderName('Élodie 王小明 (2026)', '/'), 'Élodie 王小明 (2026)')
+
+// `.` / `..` are directory traversal on a Maildir server (Dovecot, Courier) that maps
+// mailbox names onto real paths: refused as a name, whatever the delimiter. A dot
+// INSIDE a name stays legal — only the two bare traversal segments are refused.
+const traversal = []
+for (const delimiter of ['/', '.']) {
+  for (const raw of ['.', '..', ' .. ', ' . ']) {
+    try { assert.equal(sanitize(raw, delimiter), null, `${JSON.stringify(raw)} with delimiter ${delimiter}`) } catch (e) { traversal.push(e.message) }
+  }
+}
+assert.equal(sanitize('...', '/'), '...')
+assert.equal(sanitize('.hidden', '/'), '.hidden')
+assert.equal(sanitize('a..b', '/'), 'a..b')
+if (NEGATIVE) {
+  assert.equal(traversal.length, 8, `SILENT NEGATIVE CONTROL: only ${traversal.length} of 8 traversal assertions fell — the bench measures nothing`)
+  console.log(`negative control: ${traversal.length} assertion(s) fell, as expected`)
+  process.exit(0)
+}
+assert.deepEqual(traversal, [], traversal.join('\n'))
 
 // Chemins : créer sous un parent, renommer sur place, reconnaître un descendant.
 assert.equal(joinFolderPath('', 'Tests', '/'), 'Tests')
