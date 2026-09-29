@@ -51,12 +51,14 @@ Classé par sévérité. Cocher au fur et à mesure.
   `sameOrigin()` and addresses the request through `messageHref()`. Bench: `scripts/check-thread-origin.mjs`
   (`--negative` re-injects the uid-keyed lines and must go red).
 
-- [ ] **`lib/folderActions.ts` — `isDescendant()`** ne fait pas la normalisation Unicode NFC que
+- [x] **`lib/folderActions.ts` — `isDescendant()`** ne fait pas la normalisation Unicode NFC que
   `samePath()` a justement été écrite pour ajouter (commentaire de `samePath()` : un serveur IMAP peut
   renvoyer un nom en NFD). Utilisée pour `hasChildren` (règle "un parent ne peut pas être supprimé") et
   pour la réécriture de chemin au renommage — un dossier enfant dont le chemin diffère du parent
   uniquement par la forme de normalisation Unicode n'est pas détecté comme enfant : le parent peut être
-  supprimé et orpheline l'enfant, et le renommage saute la réécriture de cet enfant.
+  supprimé et orpheline l'enfant, et le renommage saute la réécriture de cet enfant. — Fixed: `isDescendant()`
+  compares NFC forms like `samePath()`, and `rewritePath()` slices on the normalised prefix (the two forms can
+  differ in length). Bench: `scripts/check-folder-actions.mjs` (`--negative` replays the raw-string rule and must go red).
 
 - [ ] **`components/theme/ThemeProvider.tsx`** — flash encore présent (dark→light→dark) au montage pour
   `theme='system'` avec OS en mode sombre : `systemDark` démarre à `useState(false)` au lieu de lire

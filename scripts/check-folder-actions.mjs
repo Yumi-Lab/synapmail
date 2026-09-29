@@ -3,8 +3,8 @@
 //   node --experimental-strip-types scripts/check-folder-actions.mjs
 //   node --experimental-strip-types scripts/check-folder-actions.mjs --negative
 // NEGATIVE CONTROL (`--negative`): names are judged the OLD way, without the `.` / `..`
-// refusal (PR-29 follow-up, security). The traversal assertions MUST then go red: they
-// measure the refusal itself, not merely that a string came back.
+// refusal, and descendants the OLD way, on raw strings without NFC (two PR-29 follow-ups).
+// The traversal and Unicode assertions MUST then go red: they measure the rule itself.
 import assert from 'node:assert/strict'
 import {
   folderCapabilities, offeredActions, sanitizeFolderName, joinFolderPath, renamedPath,
@@ -82,10 +82,10 @@ assert.equal(sanitize('.hidden', '/'), '.hidden')
 assert.equal(sanitize('a..b', '/'), 'a..b')
 if (NEGATIVE) {
   assert.equal(traversal.length, 8, `SILENT NEGATIVE CONTROL: only ${traversal.length} of 8 traversal assertions fell — the bench measures nothing`)
-  console.log(`negative control: ${traversal.length} assertion(s) fell, as expected`)
-  process.exit(0)
+  console.log(`negative control: ${traversal.length} traversal assertion(s) fell, as expected`)
+} else {
+  assert.deepEqual(traversal, [], traversal.join('\n'))
 }
-assert.deepEqual(traversal, [], traversal.join('\n'))
 
 // Chemins : créer sous un parent, renommer sur place, reconnaître un descendant.
 assert.equal(joinFolderPath('', 'Tests', '/'), 'Tests')
@@ -132,9 +132,32 @@ assert.notEqual(nfd, nfc, 'le banc doit bien comparer deux encodages DIFFÉRENTS
 assert.equal(samePath(nfd, nfc), true, 'NFD et NFC désignent le même dossier')
 assert.equal(samePath('Archive', 'Archives'), false)
 
+// `isDescendant()` applies the SAME normalisation: a child listed in NFD under a parent
+// typed in NFC is still its child — else the parent could be deleted (orphaning it) and
+// a rename would skip its cache rewrite. NEGATIVE (`--negative`): the raw-string rule.
+const isDesc = NEGATIVE ? (child, parent, d) => child.startsWith(`${parent}${d}`) : isDescendant
+const rewrite = NEGATIVE
+  ? (path, from, to, d) => path === from ? to : isDesc(path, from, d) ? to + path.slice(from.length) : path
+  : rewritePath
+const unicode = []
+const soft = (label, fn) => { try { fn() } catch (e) { unicode.push(`${label}: ${e.message}`) } }
+soft('NFD child of NFC parent', () => assert.equal(isDesc(`${nfd}/2025`, nfc, '/'), true))
+soft('NFC child of NFD parent', () => assert.equal(isDesc(`${nfc}/2025`, nfd, '/'), true))
+soft('rename rewrites the NFD child', () => assert.equal(rewrite(`${nfd}/2025`, nfc, 'Admin', '/'), 'Admin/2025'))
+soft('rename rewrites the folder itself across forms', () => assert.equal(rewrite(nfd, nfc, 'Admin', '/'), 'Admin'))
+assert.equal(isDesc(`${nfc}Bis/2025`, nfc, '/'), false, 'a prefix alone is still not a child')
+assert.equal(rewrite('Elsewhere/2025', nfc, 'Admin', '/'), 'Elsewhere/2025', 'a path outside the subtree is intact')
+if (NEGATIVE) {
+  assert.equal(unicode.length, 4, `SILENT NEGATIVE CONTROL: only ${unicode.length} of 4 Unicode assertions fell`)
+  console.log(`negative control: ${unicode.length} Unicode assertion(s) fell, as expected`)
+} else {
+  assert.deepEqual(unicode, [], unicode.join('\n'))
+}
+
 // Le délimiteur vient des dossiers eux-mêmes, jamais supposé « / ».
 assert.equal(accountDelimiter([{ delimiter: '.' }, { delimiter: '.' }]), '.')
 assert.equal(accountDelimiter([{ delimiter: null }, { delimiter: '/' }]), '/')
 assert.equal(accountDelimiter([]), '/')
 
+if (NEGATIVE) process.exit(0)
 console.log('check-folder-actions: OK')
