@@ -18,8 +18,11 @@
  *   node --experimental-strip-types scripts/check-subscriptions.mjs
  *   node --experimental-strip-types scripts/check-subscriptions.mjs --break-boundary
  *   node --experimental-strip-types scripts/check-subscriptions.mjs --transport
+ *   node --experimental-strip-types scripts/check-subscriptions.mjs --negative
  * The second form makes the boundary accept private addresses in a COPY of the
  * decision and EXPECTS the run to fail — a battery that cannot fail proves nothing.
+ * The last form judges the mailto subject the OLD way (trim only, no control-character
+ * filtering) and EXPECTS the header-injection assertion to fall.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -56,6 +59,7 @@ const ok = label => console.log(`  ok  ${label}`)
 /** Header separator, so a fixture never has to escape it inline. */
 const CRLF = '\r\n'
 const BREAK_BOUNDARY = process.argv.includes('--break-boundary')
+const NEGATIVE = process.argv.includes('--negative')
 
 /** A resolver that answers from a table — no DNS, no network. */
 const resolverFor = table => async hostname => {
@@ -116,6 +120,24 @@ assert.equal(mailtoSubject(uris.mailto[0]), 'unsubscribe abc')
 assert.equal(mailtoAddress('mailto:not-an-address'), null)
 assert.equal(mailtoAddress('mailto:a@b.com,c@d.com'), null)
 ok('a mailto target is one validated address, its subject decoded')
+
+// The subject is sender-controlled and becomes a header of a message sent with the
+// READER's SMTP credentials: an encoded CRLF must never survive into it. NEGATIVE
+// (`--negative`): the subject is judged the OLD way, `.trim()` only — MUST go red.
+const subjectOf = NEGATIVE
+  ? uri => new URLSearchParams(uri.split('?')[1] ?? '').get('subject')?.trim() || undefined
+  : mailtoSubject
+const injected = 'mailto:leave@example.com?subject=unsubscribe%0d%0aBcc:%20victim@example.net%0aX-Evil:%201'
+const subject = subjectOf(injected)
+assert.doesNotMatch(subject, /[\r\n\u0000-\u001f\u007f]/, `control characters survived into the subject: ${JSON.stringify(subject)}`)
+assert.equal(subject, 'unsubscribe Bcc: victim@example.net X-Evil: 1')
+assert.equal(subjectOf('mailto:leave@example.com?subject=%0d%0a'), undefined, 'a subject made only of control characters is no subject')
+assert.equal(subjectOf('mailto:leave@example.com?subject=unsubscribe'), 'unsubscribe')
+ok('a mailto subject carries no control character, so it cannot end the Subject header')
+if (NEGATIVE) {
+  console.error('SILENT NEGATIVE CONTROL: the trim-only subject kept the bench green — it measures nothing')
+  process.exit(1)
+}
 
 assert.deepEqual(parseAddress('Example News <News@Example.com>'), {
   name: 'Example News',

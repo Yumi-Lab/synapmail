@@ -24,12 +24,15 @@ Classé par sévérité. Cocher au fur et à mesure.
   gros et répété — épuisement de quota / coût, sans rate-limiting existant. Fix : soit repasser la route
   en session-only, soit l'ajouter explicitement à la liste documentée + plafonner la taille de `content`.
 
-- [ ] **`lib/subscriptions.ts` — `mailtoSubject()`** ne fait qu'un `.trim()` sur le `subject=` d'un lien
+- [x] **`lib/subscriptions.ts` — `mailtoSubject()`** ne fait qu'un `.trim()` sur le `subject=` d'un lien
   `mailto:` extrait d'un header `List-Unsubscribe` **contrôlé par l'expéditeur du mail**, avant de le
   passer à `sendMail()` avec les identifiants SMTP **du compte de la victime**. `mailtoAddress()` valide
   strictement l'adresse par regex mais pas le subject. Risque d'injection d'en-tête SMTP si une séquence
   CRLF encodée survit à l'encodage nodemailer. Fix : filtrer les caractères de contrôle (CR/LF) sur
-  `mailtoSubject()` comme c'est fait pour `mailtoAddress()`.
+  `mailtoSubject()` comme c'est fait pour `mailtoAddress()`. — Fixed: every control character
+  (`\u0000-\u001f`, `\u007f`, CR/LF included) is folded to one space after URL decoding, so the subject can
+  never end the `Subject:` line. Bench: `scripts/check-subscriptions.mjs` (`--negative` replays the trim-only
+  rule and must go red).
 
 ## 🟠 Bugs qui contredisent des corrections annoncées par le PR
 
