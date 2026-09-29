@@ -19,6 +19,7 @@
  *   node --experimental-strip-types scripts/check-send-attachments.mjs --break=path
  *   node --experimental-strip-types scripts/check-send-attachments.mjs --break=base64
  *   node --experimental-strip-types scripts/check-send-attachments.mjs --break=total
+ *   node --experimental-strip-types scripts/check-send-attachments.mjs --break=aggregate
  *   node --experimental-strip-types scripts/check-send-attachments.mjs --break=wiring
  * The `--break` forms damage ONE expectation and EXPECT the run to fail: a
  * battery that cannot fail proves nothing.
@@ -171,6 +172,39 @@ assert.equal(base64DecodedSize(b64('hello')), 5, 'the announced size matches the
 assert.equal(base64DecodedSize(b64('hell')), 4, 'the announced size matches the real one (2 pads)')
 assert.equal(base64DecodedSize(b64('hel')), 3, 'the announced size matches the real one (no pad)')
 ok('the announced size equals the decoded size, with 0, 1 and 2 padding characters')
+
+console.log('parseAttachments — the TOTAL is refused before a single byte is decoded')
+
+// Twenty files, each just under the ceiling, together twenty times over it.
+// The refusal must come from the announced sizes alone: `Buffer.from` is
+// counted, and must not have decoded more than what one ceiling admits.
+{
+  const each = Math.floor(CEILING / 2) + 1
+  const chunk = 'A'.repeat(Math.ceil(each / 3) * 4)
+  const many = Array.from({ length: ATTACHMENT_MAX_COUNT }, (_, i) => ({ filename: `part-${i}.bin`, content: chunk }))
+  const realFrom = Buffer.from
+  let decodedBytes = 0
+  Buffer.from = function (value, encoding, ...rest) {
+    if (encoding === 'base64') decodedBytes += base64DecodedSize(value)
+    return realFrom.call(Buffer, value, encoding, ...rest)
+  }
+  let aggregate
+  try {
+    aggregate = parseAttachments(many, CEILING)
+    if (BREAK === 'aggregate') for (const a of many) realFrom.call(Buffer, a.content, 'base64'), (decodedBytes += each)
+  } finally {
+    Buffer.from = realFrom
+  }
+  assert.equal(aggregate.ok, false, 'twenty files over the ceiling together must be refused')
+  assert.equal(aggregate.code, ATTACHMENT_ERROR.messageTooLarge)
+  assert.equal(aggregate.status, 413)
+  assert.equal(aggregate.limit, CEILING, 'the total ceiling travels with the refusal')
+  assert.ok(
+    decodedBytes <= CEILING,
+    `${decodedBytes} bytes were decoded before the refusal, more than the ${CEILING} the ceiling admits`,
+  )
+  ok(`${many.length} files of ${each} bytes refused as a whole after decoding ${decodedBytes} bytes (≤ ${CEILING})`)
+}
 
 console.log('checkTotalSize — the ceiling of the MESSAGE, forwarded messages included')
 

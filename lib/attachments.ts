@@ -127,6 +127,10 @@ export function parseAttachments(
   }
 
   const parsed: OutgoingAttachment[] = []
+  // Announced sizes are summed as they come: the message ceiling is enforced on
+  // the base64 BEFORE any decoding, for the total as for each file, so at most
+  // one ceiling's worth of bytes is ever allocated before a refusal.
+  let total = 0
   for (const item of raw) {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) {
       return deny(ATTACHMENT_ERROR.invalid)
@@ -149,6 +153,10 @@ export function parseAttachments(
         limit: ceiling,
         detail: safeAttachmentName(filename),
       })
+    }
+    total += size
+    if (total > ceiling) {
+      return deny(ATTACHMENT_ERROR.messageTooLarge, 413, { limit: ceiling })
     }
 
     parsed.push({
