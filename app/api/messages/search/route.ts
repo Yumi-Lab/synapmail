@@ -57,9 +57,9 @@ type SweepState = {
   sweptIds: Set<string>
   unreachable: string[]
   /**
-   * Vrai dès qu'UNE boîte balayée demande la garde d'invite (`bool_or`) — pour
-   * la réponse d'un SEUL tenant, qui mêle toutes les boîtes. Le flux, lui, ne
-   * lit pas ce cumul : chaque morceau porte la garde de SA boîte (`guarded`).
+   * True as soon as ONE swept account asks for the prompt guard (`bool_or`) — for
+   * the single-shot response, which blends every account. The stream never reads
+   * this aggregate: each chunk carries its OWN account's guard (`guarded`).
    */
   guarded: boolean
 }
@@ -84,7 +84,7 @@ type SweepChunk = {
   searched: number
   folders: number
   accounts: number
-  /** La garde d'invite de la boîte de CE morceau — pas celle des boîtes déjà balayées. */
+  /** The prompt guard of THIS chunk's account — not of the accounts swept so far. */
   guarded: boolean
 }
 
@@ -236,14 +236,14 @@ async function getHandler(req: Request) {
       const state = newSweepState()
       const sweep = new AbortController()
       req.signal.addEventListener('abort', () => sweep.abort(), { once: true })
-      // La garde d'invite est celle des boîtes BALAYÉES, jamais celle de la boîte
-      // courante : le balayage en traverse plusieurs, aux réglages différents.
-      // En flux, chaque morceau vient d'UNE boîte et porte SA garde (`chunk.guarded`)
-      // — pas le cumul, qui collerait au premier `true` rencontré et marquerait
-      // ensuite les boîtes qui ne la demandent pas (défaut #10 de la revue amont).
-      // D'un seul tenant, la réponse mêle toutes les boîtes : elle porte la garde
-      // dès que l'UNE d'elles la demande (`state.guarded`, `bool_or` comme
-      // `promptGuardApplies` sans boîte nommée), lue APRÈS le balayage.
+      // The prompt guard is that of the SWEPT accounts, never of the current one:
+      // the sweep crosses several accounts with different settings.
+      // In the stream, each chunk comes from ONE account and carries ITS guard
+      // (`chunk.guarded`) — not the aggregate, which would stick at the first `true`
+      // and then flag accounts that do not ask for it (upstream review defect #10).
+      // The single-shot response blends every account: it carries the guard as soon
+      // as ONE of them asks for it (`state.guarded`, `bool_or` like
+      // `promptGuardApplies` with no named account), read AFTER the sweep.
       if (searchParams.get(STREAM_PARAM)) {
         const encoder = new TextEncoder()
         const stream = new ReadableStream<Uint8Array>({
