@@ -437,9 +437,11 @@ async function tagBatch(
 /** La dépense enregistrée après un lot. Un seul endroit l'écrit, pour qu'elle ne dérive pas. */
 async function chargeMailbox(accountId: string, inputTokens: number, usdPerBillionInput: number,
   counters: { tagged: number; skipped: number; errors: number }): Promise<number> {
+  // `input_mails` compte les mails DERRIÈRE `input_tokens` et suit la même vie : cumulé, jamais
+  // remis à zéro — contrairement à `tagged`, que chaque tri repart de zéro (lot T-Q2b).
   const rows = await query<{ spent_usd: number }>(
     `UPDATE mailbox_tagging
-        SET input_tokens = input_tokens + $2, spent_usd = spent_usd + $3,
+        SET input_tokens = input_tokens + $2, spent_usd = spent_usd + $3, input_mails = input_mails + $4,
             tagged = tagged + $4, skipped = skipped + $5, errors = errors + $6, updated_at = NOW()
       WHERE account_id = $1 RETURNING spent_usd`,
     [accountId, inputTokens, costUsd(usdPerBillionInput, inputTokens),
@@ -460,10 +462,14 @@ const saveLiveCursor = (accountId: string, cursor: LiveCursor): Promise<unknown>
  * L'estimation de ce que coûterait le tri d'une boîte : la moyenne MESURÉE de ses jetons
  * d'entrée si elle en a une, sinon la constante documentée. Rendu par l'écran de réglages
  * (lot T5) et par `GET /api/tagging/status`.
+ *
+ * `measuredMails` est `input_mails`, le compteur qui vit aussi longtemps que `input_tokens` —
+ * jamais `tagged`, remis à zéro à chaque tri : le quotient de deux compteurs de durées de vie
+ * différentes rendait 572,86 $ après un échantillon d'1 mail (lot T-Q2b).
  */
-export function estimateUsd(params: { mails: number; questions: number; usdPerBillionInput: number; inputTokens?: number; tagged?: number }): number {
-  const perMail = params.tagged && params.tagged > 0 && params.inputTokens
-    ? params.inputTokens / params.tagged
+export function estimateUsd(params: { mails: number; questions: number; usdPerBillionInput: number; inputTokens?: number; measuredMails?: number }): number {
+  const perMail = params.measuredMails && params.measuredMails > 0 && params.inputTokens
+    ? params.inputTokens / params.measuredMails
     : assumedInputTokensPerMail(params.questions)
   return costUsd(params.usdPerBillionInput, perMail * params.mails)
 }

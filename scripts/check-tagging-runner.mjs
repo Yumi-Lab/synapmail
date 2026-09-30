@@ -32,14 +32,17 @@
  *      critère est le nombre de mails transmis, pas le nombre d'appels) ;
  *      un mail supprimé entre le tirage et son tour est compté sauté sans
  *      bloquer le curseur ; la répartition par question totalise les mails tagués ; « lancer le
- *      tri complet » efface le mode échantillon.
+ *      tri complet » efface le mode échantillon ;
+ *   I. l'ESTIMATION suit le nombre de questions, se sert de la moyenne mesurée, et ne saute PAS
+ *      après un échantillon d'1 mail (lot T-Q2b : 0,30 $ → 572,86 $ au gate T-Q2).
  *
  * CONTRÔLE NÉGATIF (`--negative`) : entre deux passages de A (et de H), la MÉMOIRE DE LA REPRISE
  * est effacée dans la base (curseurs de masse ET d'échantillon remis à NULL, et les étiquettes
  * déjà écrites supprimées) — le trieur ne peut donc plus savoir où il en était. Le banc DOIT alors
  * virer au rouge sur A2 (le nombre d'appels au moteur) et sur H5 (l'arrêt à N : un tirage refait à
  * chaque passage ne s'arrête pas où il faut), ET sur H21 (la relecture repasse par la plage
- * ouverte `N:*` : elle transmet alors la fin du dossier au lieu des 20 mails tirés). Rien n'est modifié dans le produit : l'effacement est fait par le banc, en
+ * ouverte `N:*` : elle transmet alors la fin du dossier au lieu des 20 mails tirés), ET sur I5b
+ * (le diviseur de l'estimation redevient `tagged`, remis à zéro par chaque tri : 13,6 M ÷ 1). Rien n'est modifié dans le produit : l'effacement est fait par le banc, en
  * SQL, sur ses propres lignes.
  * Ce qu'il démontre : le critère de A (le nombre d'appels) est bien SENSIBLE à l'état de reprise —
  * il ne se contente pas de constater que le jeu de banc n'a pas de doublons. Ce qu'il ne démontre
@@ -241,7 +244,7 @@ const makeEngine = (opts = {}) => {
 
 /** La ligne `mailbox_tagging` de la boîte du banc, remise à l'état demandé. */
 const setMailbox = async (accountId, engineId, patch = {}) => {
-  const cols = { budget_usd: 1000, spent_usd: 0, input_tokens: 0, live: false, live_cursor: null,
+  const cols = { budget_usd: 1000, spent_usd: 0, input_tokens: 0, input_mails: 0, live: false, live_cursor: null,
     bulk_state: 'idle', bulk_cursor: null, tagged: 0, skipped: 0, errors: 0, total: 0,
     paused_reason: null, paused_detail: null, locked_until: null,
     // Les colonnes d'échantillon sont remises comme les autres : sans ça, la section H laisserait
@@ -251,11 +254,11 @@ const setMailbox = async (accountId, engineId, patch = {}) => {
     `INSERT INTO mailbox_tagging (account_id, engine_id, budget_usd, spent_usd, input_tokens, live,
                                   live_cursor, bulk_state, bulk_cursor, tagged, skipped, errors,
                                   total, paused_reason, paused_detail, locked_until,
-                                  sample_size, sample_seed, sample_cursor, run_started_tag_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20)
+                                  sample_size, sample_seed, sample_cursor, run_started_tag_id, input_mails)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21)
      ON CONFLICT (account_id) DO UPDATE SET
        engine_id = EXCLUDED.engine_id, budget_usd = EXCLUDED.budget_usd, spent_usd = EXCLUDED.spent_usd,
-       input_tokens = EXCLUDED.input_tokens, live = EXCLUDED.live, live_cursor = EXCLUDED.live_cursor,
+       input_tokens = EXCLUDED.input_tokens, input_mails = EXCLUDED.input_mails, live = EXCLUDED.live, live_cursor = EXCLUDED.live_cursor,
        bulk_state = EXCLUDED.bulk_state, bulk_cursor = EXCLUDED.bulk_cursor, tagged = EXCLUDED.tagged,
        skipped = EXCLUDED.skipped, errors = EXCLUDED.errors, total = EXCLUDED.total,
        paused_reason = EXCLUDED.paused_reason, paused_detail = EXCLUDED.paused_detail,
@@ -267,7 +270,7 @@ const setMailbox = async (accountId, engineId, patch = {}) => {
       cols.bulk_cursor ? JSON.stringify(cols.bulk_cursor) : null, cols.tagged, cols.skipped,
       cols.errors, cols.total, cols.paused_reason, cols.paused_detail, cols.locked_until,
       cols.sample_size, cols.sample_seed, cols.sample_cursor ? JSON.stringify(cols.sample_cursor) : null,
-      cols.run_started_tag_id])
+      cols.run_started_tag_id, cols.input_mails])
 }
 
 /**
@@ -695,9 +698,40 @@ try {
     Math.abs(estNow - MESURE_USD_POUR_1000) / MESURE_USD_POUR_1000 < 0.2,
     `estimée=${estNow.toFixed(4)} $, mesurée=${MESURE_USD_POUR_1000.toFixed(4)} $, écart=${((estNow - MESURE_USD_POUR_1000) / MESURE_USD_POUR_1000 * 100).toFixed(1)} %`)
   // Et une boîte qui a DÉJÀ une moyenne mesurée l'utilise, elle : la constante n'est qu'un défaut.
-  const estMesure = runner.estimateUsd({ mails: MAILS_I, questions: QUESTIONS.length, usdPerBillionInput: PRICE_I, inputTokens: 1_000_000, tagged: 100 })
+  const estMesure = runner.estimateUsd({ mails: MAILS_I, questions: QUESTIONS.length, usdPerBillionInput: PRICE_I, inputTokens: 1_000_000, measuredMails: 100 })
   check('I4 une boîte qui a une moyenne MESURÉE s’en sert, et ignore le défaut',
     Math.abs(estMesure - (10_000 * MAILS_I * PRICE_I) / 1e9) < 1e-12, `estimée=${estMesure}`)
+
+  // I5 : le scénario du gate T-Q2 (01/10/2026). Une boîte a trié 1 000 mails (13,6 M de jetons
+  // cumulés), l'écran annonce 0,30 $ pour un échantillon ; on lance un échantillon d'1 mail, et
+  // l'écran passe à 572,86 $. Cause : la moyenne divisait `input_tokens` (cumulé, jamais remis à
+  // zéro) par `tagged` (remis à zéro à CHAQUE tri) — 13,6 M ÷ 1. Le diviseur est maintenant
+  // `input_mails`, qui vit aussi longtemps que le dividende. Mesuré sur la VRAIE lecture de
+  // l'écran (`readTaggingStatus`), pas sur la fonction seule.
+  console.log('\nI5. après un échantillon d’1 mail, l’estimation d’un échantillon ne saute pas')
+  const { readTaggingStatus } = await import('../lib/tagging/mailbox.ts')
+  const GATE_TOKENS = 13_639_408, GATE_MAILS = 1_000
+  await clean(ACCOUNT)
+  await setMailbox(ACCOUNT, ENGINE_ID, { bulk_state: 'done', input_tokens: GATE_TOKENS, input_mails: GATE_MAILS, tagged: GATE_MAILS, total: GATE_MAILS })
+  const before5 = (await readTaggingStatus(ACCOUNT)).sampleEstimateUsd
+  await runner.startSample(ACCOUNT, { size: 1, seed: SEED_A })
+  const engineI5 = makeEngine({ inputTokens: Math.round(GATE_TOKENS / GATE_MAILS) })
+  for (let n = 0; n < 10; n += 1) {
+    const row = await mailboxOf(ACCOUNT)
+    if (row.bulk_state === 'done' || row.paused_reason) break
+    await runner.runPass({ accountId: ACCOUNT, source, engine: engineI5, budgetMs: 5_000 })
+  }
+  // CONTRÔLE NÉGATIF : on remet le diviseur d'avant le correctif — le compteur remis à zéro par
+  // `startSample`, donc à 1 après ce tri d'1 mail. L'estimation DOIT alors sauter, et I5b virer.
+  if (NEGATIVE) await pool.query('UPDATE mailbox_tagging SET input_mails = tagged WHERE account_id = $1', [ACCOUNT])
+  const row5 = await mailboxOf(ACCOUNT)
+  const after5 = (await readTaggingStatus(ACCOUNT)).sampleEstimateUsd
+  check('I5a le montage tient : 1 appel au moteur, tri « done », `tagged` remis à 1 par ce tri',
+    engineI5.calls === 1 && row5.bulk_state === 'done' && row5.tagged === 1,
+    `${engineI5.calls} appel(s), état=${row5.bulk_state}, tagged=${row5.tagged}`)
+  check(`I5b l’estimation d’un échantillon reste à ±1 % de sa valeur d’avant (${before5.toFixed(4)} $), pas ×${Math.round(GATE_MAILS)}`,
+    Math.abs(after5 - before5) / before5 < 0.01,
+    `avant=${before5.toFixed(4)} $, après=${after5.toFixed(4)} $ (input_tokens=${row5.input_tokens}, input_mails=${row5.input_mails}, tagged=${row5.tagged})`)
 } finally {
   await clean(ACCOUNT).catch(() => {})
   // Par URL et pas seulement par id : un passage tué avant ce `finally` (plafond de tours) laisse

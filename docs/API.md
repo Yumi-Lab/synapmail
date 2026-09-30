@@ -1215,7 +1215,7 @@ Where a mailbox's sorting stands: counters, spend, estimate, and the chosen engi
 interface TaggingStatus {
   accountId: string; engineId: string | null
   engine: { id, name, kind, model, hasKey: boolean, usdPerBillionInput: number } | null
-  budgetUsd: number; spentUsd: number; inputTokens: number
+  budgetUsd: number; spentUsd: number; inputTokens: number   // spend and tokens are cumulative across runs (never reset)
   live: boolean                                   // sorting new mail as it arrives
   bulkState: 'idle' | 'running' | 'done'
   pausedReason: 'user' | 'budget' | 'credit' | 'auth' | 'no_engine' | null

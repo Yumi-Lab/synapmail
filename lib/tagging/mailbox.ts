@@ -63,6 +63,7 @@ interface StatusRow {
   budget_usd: number
   spent_usd: number
   input_tokens: string
+  input_mails: string
   live: boolean
   bulk_state: BulkState
   paused_reason: PauseReason | null
@@ -93,7 +94,7 @@ export async function ensureMailboxTagging(accountId: string): Promise<void> {
 export async function readTaggingStatus(accountId: string): Promise<TaggingStatus> {
   await ensureMailboxTagging(accountId)
   const rows = await query<StatusRow>(
-    `SELECT m.account_id, m.engine_id, m.budget_usd, m.spent_usd, m.input_tokens, m.live,
+    `SELECT m.account_id, m.engine_id, m.budget_usd, m.spent_usd, m.input_tokens, m.input_mails, m.live,
             m.bulk_state, m.paused_reason, m.paused_detail, m.tagged, m.skipped, m.errors, m.total,
             m.sample_size, m.sample_seed,
             jsonb_array_length(COALESCE(m.sample_cursor -> 'picks', '[]'::jsonb)) AS sample_drawn,
@@ -112,6 +113,7 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
   const questions = set.enabled.length
 
   const inputTokens = Number(r.input_tokens)
+  const measuredMails = Number(r.input_mails)
   const remaining = Math.max(r.total - r.tagged - r.skipped, 0)
   return {
     accountId: r.account_id,
@@ -136,7 +138,7 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
     total: r.total,
     estimateUsd: r.engine_price === null || r.engine_price === undefined
       ? null
-      : estimateUsd({ mails: remaining, questions, usdPerBillionInput: Number(r.engine_price), inputTokens, tagged: r.tagged }),
+      : estimateUsd({ mails: remaining, questions, usdPerBillionInput: Number(r.engine_price), inputTokens, measuredMails }),
     questions,
     taxonomyVersion: taxonomyVersion(set),
     sample: r.sample_size === null ? null : {
@@ -149,7 +151,7 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
     // défaut, pas sur le reste d'un tirage en cours — c'est le prix du bouton, pas de l'état.
     sampleEstimateUsd: r.engine_price === null || r.engine_price === undefined
       ? null
-      : estimateUsd({ mails: SAMPLE_SIZE_DEFAULT, questions, usdPerBillionInput: Number(r.engine_price), inputTokens, tagged: r.tagged }),
+      : estimateUsd({ mails: SAMPLE_SIZE_DEFAULT, questions, usdPerBillionInput: Number(r.engine_price), inputTokens, measuredMails }),
     sampleDefaults: { size: SAMPLE_SIZE_DEFAULT, seed: SAMPLE_SEED_DEFAULT },
   }
 }

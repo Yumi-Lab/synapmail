@@ -716,6 +716,7 @@ export async function initDb(): Promise<void> {
       budget_usd REAL NOT NULL DEFAULT ${TAGGING_BUDGET_USD_DEFAULT},
       spent_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
       input_tokens BIGINT NOT NULL DEFAULT 0,
+      input_mails BIGINT NOT NULL DEFAULT 0,
       live BOOLEAN NOT NULL DEFAULT false,
       live_cursor JSONB,
       bulk_state VARCHAR(20) NOT NULL DEFAULT 'idle' CHECK (bulk_state IN (${sqlList(BULK_STATES)})),
@@ -743,6 +744,14 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_size INTEGER`)
   await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_seed BIGINT`)
   await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_cursor JSONB`)
+
+  // Le nombre de mails DERRIÈRE `input_tokens` (lot T-Q2b). L'estimation divise les jetons cumulés
+  // par un nombre de mails : `tagged` ne convient pas, il est remis à zéro à chaque tri alors que
+  // `input_tokens` ne l'est jamais — après un échantillon d'1 mail, 13,6 M de jetons ÷ 1 donnait
+  // 572,86 $ pour 1 000 mails au lieu de 0,30 $ (gate T-Q2, 01/10/2026). Ce compteur suit la même
+  // vie que `input_tokens` : cumulé, jamais remis à zéro. Les lignes d'avant restent à 0 : elles
+  // retombent sur la constante par défaut jusqu'à leur prochain passage.
+  await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS input_mails BIGINT NOT NULL DEFAULT 0`)
 
   // Le dernier `message_tags.id` qui existait quand le tri COURANT a été lancé (lot T10c). Il
   // sépare « déjà tagué avant ce tri » — un mail sauté pour de bon — de « tagué par ce tri
