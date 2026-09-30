@@ -18,6 +18,7 @@ import { messageHref, originOfMessage } from '@/lib/mailOrigin'
 import { unreadRefresh, unreadShift } from '@/lib/unreadSignal'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { FlagPicker } from '@/components/mail/FlagPicker'
+import { TagsPanel } from '@/components/mail/MessageTags'
 import { ThinScroll } from './ThinScroll'
 
 const fetcher = async (url: string) => {
@@ -1056,6 +1057,11 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
 
       {/* Security banner */}
       <SecurityBanner message={message} />
+
+      {/* Étiquettes — replié, sous les bannières : information de tri, pas d'alerte */}
+      {accountId && (
+        <TagsPanel message={message} accountId={accountId} canOrganize={perms.canOrganize} />
+      )}
 
       {/* Unsubscribe banner */}
       {message.listUnsubscribe && accountId && (

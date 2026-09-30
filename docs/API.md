@@ -55,6 +55,7 @@ A key that is valid but too narrow gets **`403`**, naming what it lacks — neve
 | `subscriptions:read` / `subscriptions:write` | list newsletters / unsubscribe |
 | `subscriptions:purge` | move a newsletter's whole history to the trash — destructive, never granted by unsubscribing |
 | `ai:use` | the assistance actions |
+| `tags:read` / `tags:write` | read the tags a message carries / write tags and drive the automatic sorter |
 
 A **human session is never limited by a scope**: scopes apply to keys only. Keys created before scopes existed keep exactly the routes they could already call; writing to mailboxes is granted to nobody by default and has to be ticked.
 
@@ -1166,6 +1167,89 @@ Same job as `POST /api/messages/send` (SMTP send, forwarded-attachment resolutio
 
 ### `GET /api/updates` — public, no auth
 Fetches recent GitHub Releases for the "new version available" banner (`gh release create` on this repo — see the project's release memory). Server-cached 1h. **Response** `{ data: { releases: GitHubRelease[]; current: string } }` where `current` comes from `NEXT_PUBLIC_APP_VERSION`. `502` if the GitHub API is unreachable.
+
+---
+
+## Tags (automatic sorting)
+
+Tags answer the questions of `lib/tagging/questions.ts` — the one source both the engine and these routes read. A tag is one answer, by one **source** (the `kind` of the decision engine that produced it — `jev`, `one`, `autre` — or the hand that wrote it, `humain`) and one **author** (`auteurId`/`auteurNom`: the engine, the user, or the API key that signed it — the name is a snapshot taken at write time, so it stays readable after the engine is renamed or deleted). Every row keeps its origin: a second engine of the same kind, a new announced `modele`, a new `questionVersion` or a second person each **add** a row; only replaying the exact same author + model + question version replaces one. The **effective** tag is the most recent human one when it exists, else the most recent engine one, computed over all rows.
+
+**Who may write which source** is decided by the caller, never by the body: a session writes `humain` (and `valide_par` records who), a key writes an engine kind. A key can therefore never launder an engine answer into a trainable label — which matters because only `humain` and `dossier` may train a model, and the database enforces that same whitelist with a `CHECK` of its own. The **author** is never a free string either: a session signs as its user; a key signs as the decision engine it names with `engineId` (which must belong to the same user — `403` names the id otherwise), or as the key itself when no engine is named.
+
+`[id]` in these routes is the message's **RFC Message-ID, URL-encoded** (angle brackets included), not its IMAP UID — a UID changes the moment the message moves folder. A message with no Message-ID gets a stable derived one (`<sha256(from|date|subject)@synapmail.local>`).
+
+```ts
+interface StoredTag {
+  question: string; valeur: string
+  probabilites: Record<string, number> | null   // the engine's distribution, when it gave one
+  confiance: number | null
+  source: 'jev' | 'one' | 'autre' | 'humain' | 'dossier'
+  modele: string | null; creeLe: string         // the model the engine ANNOUNCED (e.g. `jev-1.13.0`)
+  validePar: string | null                      // the user who validated, for `humain`
+  questionVersion: string                       // hash of the question's exact wording this row answered
+  auteurId: string; auteurNom: string           // who signed: engine id / user id / API key id, and its name then ('' id on rows migrated with no nameable author)
+}
+```
+
+### `GET /api/messages/[id]/tags?account=` 🔑 Bearer (`tags:read`)
+Every row this message carries, all sources, plus the effective one per question. **Response** `{ data: { messageId: string; tags: StoredTag[]; effective: StoredTag[] } }`.
+
+### `PUT /api/messages/[id]/tags` 🔑 Bearer (`tags:write`)
+**Body** `{ accountId: string; source?: string; model?: string; engineId?: string; tags: { question, valeur, probabilites?, confiance? }[]; folder?, uid?, fromName?, fromAddress?, subject?, date? }` — `engineId` (key callers only) names the decision engine that signs the rows; the position fields, when given, record where the message was last seen so a tag filter can show it even once it leaves the loaded page.
+
+Requires the `organize` share permission (tagging is filing). `422` names the offending `question` and `valeur` when a value is not one this question allows; `403` names the `source` when the caller may not write it (a key asking for `humain`, a session asking for anything else). **Response** `{ data: { messageId, written: number, source, tags: StoredTag[], effective: StoredTag[] } }`.
+
+### `GET /api/tags?account=&question=&valeur=&page=&origine=` 🔑 Bearer (`tags:read`)
+The messages whose **effective** tag for `question` is `valeur`, with their last known position — so a message corrected by hand no longer answers under the engine's old value. `origine` narrows to one origin — a source (`humain`) or an author id (one engine) — and the effective tag is then computed among that origin's rows only. `422` names an unknown `question` or a value the question does not allow (an empty page would be indistinguishable from "nothing carries this"). **Response** `{ data: { messages: { messageId, folder, uid, fromName, fromAddress, subject, date }[]; total: number; page: number } }`.
+
+### `GET /api/tags?account=&id=<mid>&id=<mid>` 🔑 Bearer (`tags:read`)
+The effective tags of a **list** of messages — what the message list paints as chips, in one request per page and never one per row. **Response** `{ data: { effective: Record<string, StoredTag[]> } }`, keyed by Message-ID.
+
+### `GET /api/tags/export?account=&after=&limit=` 🔑 Bearer (`tags:read`)
+Every stored tag of one mailbox, all sources, paginated by `id` (`after` = the last id read, `limit` default 500, capped 5000). **Response** `{ data: { tags: (StoredTag & { id: number; messageId: string })[]; nextAfter: number | null } }`.
+
+### `GET /api/tagging/status?account=` 🔑 Bearer (`tags:read`)
+Where a mailbox's sorting stands: counters, spend, estimate, and the chosen engine — **never its key**, only `hasKey`.
+
+**Response** `{ data: TaggingStatus }`
+```ts
+interface TaggingStatus {
+  accountId: string; engineId: string | null
+  engine: { id, name, kind, model, hasKey: boolean, usdPerBillionInput: number } | null
+  budgetUsd: number; spentUsd: number; inputTokens: number
+  live: boolean                                   // sorting new mail as it arrives
+  bulkState: 'idle' | 'running' | 'done'
+  pausedReason: 'user' | 'budget' | 'credit' | 'auth' | 'no_engine' | null
+  pausedDetail: string | null
+  tagged: number; skipped: number; errors: number; total: number
+  estimateUsd: number | null                      // cost of what is LEFT, at the engine's price
+  questions: number                               // how many are asked of each message
+}
+```
+
+### `POST /api/tagging/run` 🔑 Bearer (`tags:write`)
+**Body** `{ accountId: string; action: 'start' | 'pause' | 'resume' | 'restart' }`. These are **state orders, not a synchronous sort**: the work itself stays with the scheduler, which holds the per-mailbox lock and a budget per pass. `start` resumes from the saved cursor (so re-running a finished sort costs nothing); `restart` clears it and the counters. `pause` records the reason `user`, which is what distinguishes it on screen from a budget cap or exhausted credit. Requires the `organize` share permission. **Response** `{ data: TaggingStatus }`.
+
+### `GET /api/tagging/settings?account=` — session only
+Same `TaggingStatus` body as above. **Session only, owner only**: these settings point at an engine, therefore at a key, so a delegate does not read them and no API key reaches them.
+
+### `PUT /api/tagging/settings` — session only
+**Body** `{ accountId: string; engineId?: string | null; budgetUsd?: number; live?: boolean }`. The engine must belong to the caller — `404` naming `engineId` otherwise. Enabling `live` sets no cursor here: the sorter places it on its first pass, so switching it on never back-fills history (and never opens an IMAP connection inside an HTTP request). **Response** `{ data: TaggingStatus }`.
+
+### `GET /api/decision-engines` — session only
+The caller's decision engines, oldest first. A **decision engine** is a tool you add (`jev`, `one`, `autre`), not a fixed choice: each mailbox then picks one in Settings → Automatic sorting. **Session only, owner only** — an engine carries a key, like a mailbox's credentials, so no API key reads or writes these routes. The key is **never** returned, in any form: only `hasKey`. **Response** `{ data: DecisionEngine[] }` where `DecisionEngine` is `{ id, name, kind, url, model, usdPerBillionInput, hasKey, createdAt }`.
+
+### `POST /api/decision-engines` — session only
+**Body** `{ name: string; kind: 'jev' | 'one' | 'autre'; url?: string; model?: string; usdPerBillionInput?: number; apiKey?: string }`. Omitted fields take their kind's preset (`lib/tagging/engine.ts` — the one table of presets; they prefill the form, they are not the configuration). `400` names the offending `field`. **Response** `{ data: DecisionEngine }`, `201`.
+
+### `PATCH /api/decision-engines/[id]` — session only
+Same body, every field optional; an absent field is left alone. An absent `apiKey` does **not** clear the stored key — changing a model would otherwise mean retyping a key nobody can read any more; send `apiKey: ""` to remove it. `404` when the engine is not the caller's. **Response** `{ data: DecisionEngine }`.
+
+### `DELETE /api/decision-engines/[id]` — session only
+Removes the engine. Mailboxes that had chosen it keep their sorting row (`ON DELETE SET NULL`) and pause with the reason `no_engine`, said in plain words on screen, rather than failing silently. **Response** `{ data: { id } }`.
+
+### `POST /api/decision-engines/[id]/test` — session only
+Sends **one** minimal request to the engine — a dummy state and a single question, not the 41 — to check a key before relying on it. This is the only place in the app where a human click spends an engine call. A refusal is relayed as-is (`502` with `failure`: `credit` / `auth` / `rate` / `unavailable` / `rejected`), which is what tells "wrong key" from "out of credit". **Response** `{ data: { ms, inputTokens, model } }`.
 
 ---
 

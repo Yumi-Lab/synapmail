@@ -33,6 +33,24 @@ const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/
 const PROTOCOL_LITERAL = /^-{5}(BEGIN|END) /
 
 /**
+ * Proper nouns are not untranslated strings. A brand wordmark (DHL, Shopify, Colissimo) is
+ * written the same way in every language, so the "value still equals English" test flags it
+ * wrongly. Rather than keep a list of brands here, we READ the answer off the locales we already
+ * have: a value identical in two DIFFERENT Latin-script locales is a name, not a missing
+ * translation — a real English leftover would have differed in the other Latin locale.
+ */
+function properNouns(reference, codes) {
+  const names = new Set()
+  for (const code of codes) {
+    if (code === REFERENCE) continue
+    const other = flatten(readLocale(code))
+    if ([...other.values()].some(v => typeof v === 'string' && CJK.test(v))) continue
+    for (const [key, value] of reference) if (other.get(key) === value) names.add(key)
+  }
+  return names
+}
+
+/**
  * House rule: no em dash in any displayed string, in any
  * locale. Use a comma or two sentences instead. Checked here so the rule holds
  * on its own instead of depending on a reviewer spotting it.
@@ -79,7 +97,7 @@ function emDashProblems(entries) {
 }
 
 /** Reports gathered for one locale; each entry is one human-readable line. */
-function checkLocale(code, reference) {
+function checkLocale(code, reference, properNames) {
   const target = flatten(readLocale(code))
   const problems = []
   const nonLatin = [...target.values()].some(v => typeof v === 'string' && CJK.test(v))
@@ -104,7 +122,7 @@ function checkLocale(code, reference) {
       problems.push(`placeholder mismatch  ${key} (expected {${want}}, got {${got}})`)
       continue
     }
-    if (nonLatin && actual === expected && !PROTOCOL_LITERAL.test(expected)) {
+    if (nonLatin && actual === expected && !PROTOCOL_LITERAL.test(expected) && !properNames.has(key)) {
       problems.push(`untranslated          ${key} = ${JSON.stringify(expected)}`)
     }
   }
@@ -128,6 +146,7 @@ function main() {
   const reference = flatten(readLocale(REFERENCE))
   console.log(`reference ${REFERENCE}.json — ${reference.size} keys`)
 
+  const properNames = properNouns(reference, codes)
   let failed = 0
   const referenceProblems = emDashProblems(reference)
   if (referenceProblems.length > 0) {
@@ -137,7 +156,7 @@ function main() {
   }
   for (const code of codes) {
     if (code === REFERENCE) continue
-    const { problems, total, nonLatin } = checkLocale(code, reference)
+    const { problems, total, nonLatin } = checkLocale(code, reference, properNames)
     const script = nonLatin ? ', non-Latin script' : ''
     if (problems.length === 0) {
       console.log(`  ${code}.json — ${total} keys, parity OK${script}`)

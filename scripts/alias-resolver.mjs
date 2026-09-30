@@ -12,6 +12,11 @@
  *
  *   import './alias-resolver.mjs'   // AVANT tout import de `lib/…` qui utilise l'alias
  */
+// Résoudre `@/lib/x` ne suffit pas : le module ainsi atteint importe SES dépendances comme le
+// code produit les écrit, sans extension (`'../html'`), ce que le résolveur de Node refuse. Les
+// deux crochets vont donc ensemble — un banc qui demande l'alias demande forcément la chaîne
+// qu'il ouvre. Les charger ici évite qu'un banc doive connaître ce détail.
+import './lib/ts-resolve.mjs'
 import { registerHooks } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'

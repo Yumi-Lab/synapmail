@@ -61,6 +61,10 @@
     {
       "name": "Settings",
       "description": "The user's own preferences."
+    },
+    {
+      "name": "Tags",
+      "description": "The tags a decision engine or a human puts on mail, and the sorter that produces them."
     }
   ],
   "paths": {
@@ -2851,6 +2855,647 @@
           }
         }
       }
+    },
+    "/api/messages/{id}/tags": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "readMessageTags",
+        "summary": "Read the tags a message carries",
+        "description": "Every row and the effective one per question. Requires the `tags:read` scope; a key without it gets 403 naming it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MessageIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tags of that message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "messageId",
+                        "tags",
+                        "effective"
+                      ],
+                      "properties": {
+                        "messageId": {
+                          "type": "string"
+                        },
+                        "tags": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/StoredTag"
+                          },
+                          "description": "Every row, all sources: what the engine said stays next to what the human corrected."
+                        },
+                        "effective": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/StoredTag"
+                          },
+                          "description": "One per question: the human row when it exists, else the most recent engine row."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "writeMessageTags",
+        "summary": "Write the tags of one source on a message",
+        "description": "The source is NOT chosen by the body: a session writes `humain`, a key writes an engine kind — so a key can never launder an engine answer into a trainable label. Requires the `tags:write` scope and the `organize` share permission; 422 names an unexpected value, 403 names a forbidden source.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MessageIdPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "tags"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "jev",
+                      "one",
+                      "autre"
+                    ],
+                    "description": "For a key: which engine it speaks for. A session must omit it or pass `humain`."
+                  },
+                  "model": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "engineId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Key callers only: the decision engine that signs these rows (must belong to the caller — 403 naming it otherwise). Without it the key signs as itself. Sessions always sign as their user."
+                  },
+                  "tags": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "question",
+                        "valeur"
+                      ],
+                      "properties": {
+                        "question": {
+                          "type": "string"
+                        },
+                        "valeur": {
+                          "type": "string"
+                        },
+                        "probabilites": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        },
+                        "confiance": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  },
+                  "folder": {
+                    "type": "string"
+                  },
+                  "uid": {
+                    "type": "integer"
+                  },
+                  "fromName": {
+                    "type": "string"
+                  },
+                  "fromAddress": {
+                    "type": "string"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "date": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was written, and the rows as they now stand.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "allOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "messageId",
+                            "tags",
+                            "effective"
+                          ],
+                          "properties": {
+                            "messageId": {
+                              "type": "string"
+                            },
+                            "tags": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/StoredTag"
+                              },
+                              "description": "Every row, all sources: what the engine said stays next to what the human corrected."
+                            },
+                            "effective": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/StoredTag"
+                              },
+                              "description": "One per question: the human row when it exists, else the most recent engine row."
+                            }
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "required": [
+                            "written",
+                            "source"
+                          ],
+                          "properties": {
+                            "written": {
+                              "type": "integer"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "jev",
+                                "one",
+                                "autre",
+                                "humain",
+                                "dossier"
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "A value this question does not allow. The body names the question and the value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tags": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "listTaggedMessages",
+        "summary": "Filter by tag, or read the tags of a list of messages",
+        "description": "With `question` and `valeur`: the messages whose EFFECTIVE tag matches, with their last known position, so one corrected by hand no longer answers under the old value. With `id` repeated: the effective tags of those messages — what a list paints as chips, in one request per page. Requires the `tags:read` scope; a key without it gets 403 naming it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          },
+          {
+            "name": "question",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "The question to filter on. 422 if unknown."
+          },
+          {
+            "name": "valeur",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "The value to filter on. 422 if this question does not allow it."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "origine",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Narrow to one origin: a source (`humain`) or an author id (one engine). The effective tag is then computed among that origin's rows only."
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "description": "A Message-ID, repeatable. Takes precedence over the filter.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The matching messages, or the effective tags keyed by Message-ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "messages",
+                            "total",
+                            "page"
+                          ],
+                          "properties": {
+                            "messages": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/TaggedMessagePosition"
+                              }
+                            },
+                            "total": {
+                              "type": "integer"
+                            },
+                            "page": {
+                              "type": "integer"
+                            }
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "required": [
+                            "effective"
+                          ],
+                          "properties": {
+                            "effective": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                  "$ref": "#/components/schemas/StoredTag"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "An unknown question, or a value it does not allow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tags/export": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "exportTags",
+        "summary": "Export the tags, paginated by id",
+        "description": "Every stored tag of one mailbox, all sources. Requires the `tags:read` scope; a key without it gets 403 naming it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            },
+            "description": "The last id already read."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 500,
+              "maximum": 5000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of tags, and where to resume.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "tags",
+                        "nextAfter"
+                      ],
+                      "properties": {
+                        "tags": {
+                          "type": "array",
+                          "items": {
+                            "allOf": [
+                              {
+                                "$ref": "#/components/schemas/StoredTag"
+                              },
+                              {
+                                "type": "object",
+                                "required": [
+                                  "id",
+                                  "messageId"
+                                ],
+                                "properties": {
+                                  "id": {
+                                    "type": "integer"
+                                  },
+                                  "messageId": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "nextAfter": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "`null` when the last page was served."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tagging/status": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "readTaggingStatus",
+        "summary": "Read where a mailbox's sorting stands",
+        "description": "Counters, spend, estimate and the chosen engine — never its key, only `hasKey`. Requires the `tags:read` scope; a key without it gets 403 naming it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The state of that mailbox’s sorting.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TaggingStatus"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tagging/run": {
+      "post": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "driveTagging",
+        "summary": "Start, pause, resume or restart the sorting of a mailbox",
+        "description": "State orders, not a synchronous sort: the work stays with the scheduler, which holds the per-mailbox lock and a budget per pass. `start` resumes from the saved cursor, so re-running a finished sort costs nothing; `restart` clears it. Requires the `tags:write` scope and the `organize` share permission.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "action"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "start",
+                      "pause",
+                      "resume",
+                      "restart"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The state after the order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TaggingStatus"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2862,6 +3507,15 @@
       }
     },
     "parameters": {
+      "MessageIdPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The message's RFC Message-ID, URL-encoded, angle brackets included — not its IMAP uid, which changes the moment the message moves folder.",
+        "schema": {
+          "type": "string"
+        }
+      },
       "AccountQuery": {
         "name": "account",
         "in": "query",
@@ -3098,6 +3752,253 @@
       }
     },
     "schemas": {
+      "StoredTag": {
+        "type": "object",
+        "required": [
+          "question",
+          "valeur",
+          "probabilites",
+          "confiance",
+          "source",
+          "modele",
+          "creeLe",
+          "validePar",
+          "questionVersion",
+          "auteurId",
+          "auteurNom"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "The question answered, as named by lib/tagging/questions.ts."
+          },
+          "valeur": {
+            "type": "string",
+            "description": "One of the values that question allows. Anything else is refused, never stored."
+          },
+          "probabilites": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "The engine's distribution when it gave one."
+          },
+          "confiance": {
+            "type": "number",
+            "nullable": true
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "jev",
+              "one",
+              "autre",
+              "humain",
+              "dossier"
+            ],
+            "description": "The engine kind that produced it, or the hand that wrote it."
+          },
+          "modele": {
+            "type": "string",
+            "nullable": true,
+            "description": "The model the engine announced (e.g. `jev-1.13.0`); null when none."
+          },
+          "creeLe": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validePar": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "The user who validated, for `humain`."
+          },
+          "questionVersion": {
+            "type": "string",
+            "description": "Hash of the exact wording of the question this row answered. Two rows with different versions answered two different definitions."
+          },
+          "auteurId": {
+            "type": "string",
+            "description": "Who signed: the decision engine id, the user id, or the API key id. Empty on rows migrated with no nameable author."
+          },
+          "auteurNom": {
+            "type": "string",
+            "description": "The author's name as it was at write time — a snapshot, readable after the engine is renamed or deleted."
+          }
+        }
+      },
+      "TaggedMessagePosition": {
+        "type": "object",
+        "required": [
+          "messageId",
+          "folder",
+          "uid",
+          "fromName",
+          "fromAddress",
+          "subject",
+          "date"
+        ],
+        "properties": {
+          "messageId": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string",
+            "nullable": true
+          },
+          "uid": {
+            "type": "integer",
+            "nullable": true
+          },
+          "fromName": {
+            "type": "string",
+            "nullable": true
+          },
+          "fromAddress": {
+            "type": "string",
+            "nullable": true
+          },
+          "subject": {
+            "type": "string",
+            "nullable": true
+          },
+          "date": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "TaggingStatus": {
+        "type": "object",
+        "required": [
+          "accountId",
+          "engineId",
+          "engine",
+          "budgetUsd",
+          "spentUsd",
+          "inputTokens",
+          "live",
+          "bulkState",
+          "pausedReason",
+          "pausedDetail",
+          "tagged",
+          "skipped",
+          "errors",
+          "total",
+          "estimateUsd",
+          "questions"
+        ],
+        "properties": {
+          "accountId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "engineId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "engine": {
+            "type": "object",
+            "nullable": true,
+            "description": "The chosen engine, WITHOUT its key: only whether one is stored.",
+            "required": [
+              "id",
+              "name",
+              "kind",
+              "model",
+              "hasKey",
+              "usdPerBillionInput"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "jev",
+                  "one",
+                  "autre"
+                ]
+              },
+              "model": {
+                "type": "string"
+              },
+              "hasKey": {
+                "type": "boolean"
+              },
+              "usdPerBillionInput": {
+                "type": "number"
+              }
+            }
+          },
+          "budgetUsd": {
+            "type": "number",
+            "description": "The ceiling. Reaching it pauses the mailbox instead of spending more."
+          },
+          "spentUsd": {
+            "type": "number"
+          },
+          "inputTokens": {
+            "type": "integer"
+          },
+          "live": {
+            "type": "boolean",
+            "description": "Sorting new mail as it arrives."
+          },
+          "bulkState": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "running",
+              "done"
+            ]
+          },
+          "pausedReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "user",
+              "budget",
+              "credit",
+              "auth",
+              "no_engine"
+            ]
+          },
+          "pausedDetail": {
+            "type": "string",
+            "nullable": true
+          },
+          "tagged": {
+            "type": "integer"
+          },
+          "skipped": {
+            "type": "integer"
+          },
+          "errors": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "estimateUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "Cost of what is LEFT, at the engine's price."
+          },
+          "questions": {
+            "type": "integer",
+            "description": "How many questions each message is asked."
+          }
+        }
+      },
       "Error": {
         "type": "object",
         "required": [

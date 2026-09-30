@@ -7,7 +7,7 @@ import { useTranslations } from 'next-intl'
 import {
   User, Palette, BookOpen, Bell, PenSquare,
   Mail, FileSignature, ArrowLeft, ShieldCheck, Users, Filter, LayoutTemplate, Bot, KeyRound, Terminal,
-  Image as ImageIcon,
+  Image as ImageIcon, Tags,
 } from 'lucide-react'
 import { BRANDING_ANCHOR } from '@/components/admin/BrandingSection'
 import { cn } from '@/lib/utils'
@@ -44,6 +44,7 @@ export const SETTINGS_NAV = [
   { href: '/settings/contacts',      key: 'contacts',      icon: Users },
   { href: '/settings/rules',         key: 'rules',         icon: Filter },
   { href: '/settings/ai',            key: 'ai',            icon: Bot },
+  { href: '/settings/tagging',       key: 'tagging',       icon: Tags },
   { href: '/settings/pgp',           key: 'pgp',           icon: KeyRound },
   { href: '/settings/api-keys',      key: 'apiKeys',       icon: Terminal },
 ] as const

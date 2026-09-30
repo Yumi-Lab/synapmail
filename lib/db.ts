@@ -2,6 +2,7 @@ import { Pool } from 'pg'
 import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
 import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
 import { ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
+import { BULK_STATES, ENGINES, HUMAN_SOURCE, PAUSE_REASONS, TAG_SOURCES } from '@/lib/tagging/engine'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -14,6 +15,16 @@ export async function query<T = Record<string, unknown>>(
   const { rows } = await pool.query(sql, values)
   return rows as T[]
 }
+
+/** Une liste de valeurs du code, telle qu'un CHECK SQL l'attend. Les valeurs sont des
+ * identifiants du code (pas des entrées d'utilisateur) ; le doublement des quotes garde
+ * la fonction correcte même si l'une d'elles en contenait une. */
+const sqlList = (values: readonly string[]): string =>
+  values.map(v => `'${v.replace(/'/g, "''")}'`).join(', ')
+
+/** Le plafond de dépense d'une boîte, tant que personne ne l'a relevé à l'écran : prudent
+ * par défaut, parce qu'un tri complet d'une grosse boîte coûte plus que ça. */
+export const TAGGING_BUDGET_USD_DEFAULT = 1
 
 export async function initDb(): Promise<void> {
   await query(`
@@ -533,6 +544,197 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS sender_address TEXT`)
   await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS sender_name TEXT`)
   await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS list_id TEXT`)
+
+  // ── Tagging : étiquettes d'un mail, décidées par un moteur System One ou par un humain ──
+  //
+  // Les listes de valeurs des CHECK ci-dessous sont dérivées des constantes de
+  // `lib/tagging/engine.ts` : `TAG_SOURCES`, `ENGINES`, `PAUSE_REASONS`,
+  // `BULK_STATES`. Aucun vocabulaire n'est recopié à la main ici — ajouter un type de moteur
+  // dans le code met la base d'accord au prochain démarrage (les CHECK sont remplacées plus bas).
+
+  // Un moteur de décision est un OUTIL que l'utilisateur AJOUTE (décision 13), pas un choix
+  // entre deux valeurs figées : N moteurs par utilisateur, chacun avec sa clé et son tarif.
+  // La clé est chiffrée comme un mot de passe IMAP et ne ressort JAMAIS d'une API (`hasKey`).
+  await query(`
+    CREATE TABLE IF NOT EXISTS decision_engines (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name VARCHAR(80) NOT NULL,
+      kind VARCHAR(20) NOT NULL CHECK (kind IN (${sqlList(ENGINES)})),
+      url TEXT NOT NULL DEFAULT '',
+      key_encrypted TEXT,
+      model VARCHAR(100) NOT NULL DEFAULT '',
+      usd_per_billion_input REAL NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS decision_engines_user_idx ON decision_engines(user_id)`)
+
+  // Une étiquette = une réponse à UNE question, par UN auteur, sous UN modèle annoncé et UNE
+  // version de question (décision 23). La clé primaire porte tout cela : rejouer EXACTEMENT le
+  // même auteur + modèle + version remplace la ligne (idempotent) ; un autre moteur du même type,
+  // une nouvelle version annoncée ou une seconde main AJOUTENT une ligne, l'ancienne est gardée.
+  // `auteur_nom` est un INSTANTANÉ, sans clé étrangère : l'origine reste lisible après la
+  // suppression du moteur. `id` sert uniquement à paginer l'export.
+  await query(`
+    CREATE TABLE IF NOT EXISTS message_tags (
+      id BIGSERIAL UNIQUE,
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      question VARCHAR(60) NOT NULL,
+      valeur VARCHAR(60) NOT NULL,
+      probabilites JSONB,
+      confiance REAL,
+      source VARCHAR(20) NOT NULL CHECK (source IN (${sqlList(TAG_SOURCES)})),
+      modele VARCHAR(100) NOT NULL DEFAULT '',
+      cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      valide_par UUID REFERENCES users(id) ON DELETE SET NULL,
+      question_version VARCHAR(12) NOT NULL DEFAULT '',
+      taxonomy_version VARCHAR(12) NOT NULL DEFAULT '',
+      auteur_id TEXT NOT NULL DEFAULT '',
+      auteur_nom TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (account_id, message_id, question, source, auteur_id, modele, question_version)
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS message_tags_filter_idx ON message_tags(account_id, question, valeur)`)
+  // La VERSION de la question à laquelle chaque ligne répond (`lib/tagging/store.ts`
+  // `questionVersion`). Sur une base antérieure au lot T10, les lignes existantes gardent la
+  // chaîne vide : elles ont bien été écrites, mais sous une définition qu'on ne peut plus
+  // nommer — les dire « inconnues » vaut mieux que leur prêter la version d'aujourd'hui.
+  await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS question_version VARCHAR(12) NOT NULL DEFAULT ''`)
+  // Le JEU de questions sous lequel la ligne a été écrite (`TAXONOMY_VERSION`). Le trieur ne saute
+  // un mail que s'il porte la version COURANTE : une question AJOUTÉE ne change la
+  // `question_version` d'aucune autre, donc sans cette colonne le mail serait sauté et ne
+  // recevrait jamais la question neuve. Les lignes antérieures gardent la chaîne vide, donc une
+  // boîte déjà triée SE REJOUE une fois après cette migration — voulu, et facturé au plafond.
+  await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS taxonomy_version VARCHAR(12) NOT NULL DEFAULT ''`)
+  // Retrait de la notion « entraînable » : la contrainte PUIS la colonne, dans cet ordre (une
+  // CHECK qui nomme la colonne empêcherait son DROP). Les deux `IF EXISTS` rendent le passage
+  // idempotent, donc une base déjà nettoyée redémarre sans rien faire, et une base antérieure
+  // (lane, staging) migre seule au prochain démarrage sans migration écrite à la main.
+  await query(`ALTER TABLE message_tags DROP CONSTRAINT IF EXISTS message_tags_training_sources`)
+  await query(`ALTER TABLE message_tags DROP COLUMN IF EXISTS entrainement_autorise`)
+
+  // L'ORIGINE de chaque ligne (décision 23, lot T-S). Sur une base antérieure, les lignes
+  // existantes reçoivent l'auteur qu'on peut encore leur attribuer : l'utilisateur qui a validé
+  // pour `humain` ; le moteur choisi par la boîte pour une source de moteur. Une boîte SANS
+  // moteur au moment de la migration (mesuré le 29/09/2026 : les 3 boîtes de la lane, moteur du
+  // gate T10b détaché) ne peut nommer personne : `auteur_id` reste vide et `auteur_nom` reprend
+  // le modèle annoncé — dire « jev-1.13.0 » vaut mieux que prêter ces lignes à un moteur créé
+  // depuis. `modele` passe NOT NULL (une colonne de clé primaire ne peut pas être NULL) : la
+  // chaîne vide dit « aucun modèle » et la lecture la rend `null` comme avant.
+  await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS auteur_id TEXT NOT NULL DEFAULT ''`)
+  await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS auteur_nom TEXT NOT NULL DEFAULT ''`)
+  await query(`UPDATE message_tags SET modele = '' WHERE modele IS NULL`)
+  await query(`ALTER TABLE message_tags ALTER COLUMN modele SET DEFAULT '', ALTER COLUMN modele SET NOT NULL`)
+  // Le rétro-remplissage ne tourne qu'UNE fois, au passage de l'ancienne clé à la nouvelle (lue
+  // dans le catalogue plutôt que supposée). Après, `auteur_id = ''` est un état LÉGITIME (« on ne
+  // sait pas qui ») : le rejouer à chaque démarrage prêterait ces lignes au moteur rattaché
+  // DEPUIS, et entrerait en collision avec les lignes que ce moteur a écrites lui-même
+  // (mesuré le 29/09/2026 : duplicate key sur message_tags_pkey au boot, après le retag du gate).
+  // Les lignes existantes étaient uniques sous l'ancienne clé, donc le sont sous la nouvelle,
+  // plus large : aucun dédoublonnage à faire avant.
+  const [pk] = await query<{ def: string }>(
+    `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'message_tags'::regclass AND contype = 'p'`
+  )
+  if (!pk?.def.includes('auteur_id')) {
+    await query(`
+      UPDATE message_tags t SET auteur_id = u.id::text, auteur_nom = u.name
+        FROM users u
+       WHERE t.auteur_id = '' AND t.source = '${HUMAN_SOURCE}' AND t.valide_par = u.id
+    `)
+    await query(`
+      UPDATE message_tags t SET auteur_id = e.id::text, auteur_nom = e.name
+        FROM mailbox_tagging m JOIN decision_engines e ON e.id = m.engine_id
+       WHERE t.auteur_id = '' AND t.source <> '${HUMAN_SOURCE}' AND m.account_id = t.account_id AND e.kind = t.source
+    `)
+    await query(`UPDATE message_tags SET auteur_nom = COALESCE(NULLIF(modele, ''), source) WHERE auteur_id = '' AND auteur_nom = ''`)
+    await query(`
+      ALTER TABLE message_tags
+        DROP CONSTRAINT IF EXISTS message_tags_pkey,
+        ADD PRIMARY KEY (account_id, message_id, question, source, auteur_id, modele, question_version)
+    `)
+  }
+
+  // La dernière position CONNUE d'un mail tagué, pour que le filtre par étiquette montre des
+  // mails absents de la page chargée. `messages_cache` ne suffit pas : il ne garde qu'une
+  // fenêtre, et un mail tagué il y a un mois en est sorti.
+  await query(`
+    CREATE TABLE IF NOT EXISTS tagged_messages (
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      folder TEXT,
+      uid INTEGER,
+      from_name TEXT,
+      from_address TEXT,
+      subject TEXT,
+      date TIMESTAMPTZ,
+      PRIMARY KEY (account_id, message_id)
+    )
+  `)
+
+  // Le tri d'une boîte : quel moteur, quel plafond, où en est-on. Une ligne par boîte.
+  // `locked_until` est le verrou qui empêche deux passages du planificateur de travailler
+  // la même boîte (claim par `UPDATE … WHERE locked_until < NOW() RETURNING`).
+  await query(`
+    CREATE TABLE IF NOT EXISTS mailbox_tagging (
+      account_id UUID PRIMARY KEY REFERENCES email_accounts(id) ON DELETE CASCADE,
+      engine_id UUID REFERENCES decision_engines(id) ON DELETE SET NULL,
+      budget_usd REAL NOT NULL DEFAULT ${TAGGING_BUDGET_USD_DEFAULT},
+      spent_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+      input_tokens BIGINT NOT NULL DEFAULT 0,
+      live BOOLEAN NOT NULL DEFAULT false,
+      live_cursor JSONB,
+      bulk_state VARCHAR(20) NOT NULL DEFAULT 'idle' CHECK (bulk_state IN (${sqlList(BULK_STATES)})),
+      bulk_cursor JSONB,
+      tagged INTEGER NOT NULL DEFAULT 0,
+      skipped INTEGER NOT NULL DEFAULT 0,
+      errors INTEGER NOT NULL DEFAULT 0,
+      total INTEGER NOT NULL DEFAULT 0,
+      paused_reason VARCHAR(20) CHECK (paused_reason IS NULL OR paused_reason IN (${sqlList(PAUSE_REASONS)})),
+      paused_detail TEXT,
+      locked_until TIMESTAMPTZ,
+      sample_size INTEGER,
+      sample_seed BIGINT,
+      sample_cursor JSONB,
+      run_started_tag_id BIGINT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+
+  // Le mode « échantillon » (lot T10b) : `sample_size` NULL = tri complet, sinon le nombre de
+  // mails tirés au hasard avant l'arrêt, `sample_seed` la graine qui rejoue LE MÊME tirage, et
+  // `sample_cursor` le tirage LUI-MÊME (la liste des mails tirés) plus où on en est dedans —
+  // enregistré parce qu'un tirage se fait sur l'état de la boîte à un instant donné : le rejouer
+  // à chaque passage donnerait une liste différente dès qu'un mail arrive.
+  await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_size INTEGER`)
+  await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_seed BIGINT`)
+  await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_cursor JSONB`)
+
+  // Le dernier `message_tags.id` qui existait quand le tri COURANT a été lancé (lot T10c). Il
+  // sépare « déjà tagué avant ce tri » — un mail sauté pour de bon — de « tagué par ce tri
+  // même », relu au passage suivant parce qu'un lot coupé au délai ne fait pas avancer son
+  // curseur. Sans cette borne, le second cas était compté en « sautés » alors qu'il avait déjà
+  // été compté en « tagués » : d'où `skipped=86` pour 995 mails tagués sur 1 000 tirés (gate
+  // T10b, 28/09/2026). Une borne par IDENTIFIANT et non par date (`run_started_at`, retiré) :
+  // l'horloge de Postgres sous Docker Desktop recule de 300 à 500 ms toutes les ~10 s (mesuré
+  // le 29/09/2026 : 6 fois sur 400, un `NOW()` lu 150 ms APRÈS un autre lui était antérieur),
+  // et un `cree_le` antérieur au lancement reclassait le premier lot du tri en « sautés ».
+  // La séquence, elle, ne recule jamais.
+  await query(`ALTER TABLE mailbox_tagging DROP COLUMN IF EXISTS run_started_at`)
+  await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS run_started_tag_id BIGINT`)
+
+  // Les CHECK ci-dessus ne sont posées qu'à la CRÉATION de la table : sur une base qui existe
+  // déjà, élargir une liste dans le code ne changerait rien. On les repose donc à chaque
+  // démarrage, pour que la base suive le code — c'est ce qui permet d'ajouter un type de moteur
+  // (décision 13) sans écrire de migration à la main.
+  for (const [table, name, expr] of [
+    ['message_tags', 'message_tags_source_check', `source IN (${sqlList(TAG_SOURCES)})`],
+    ['decision_engines', 'decision_engines_kind_check', `kind IN (${sqlList(ENGINES)})`],
+  ] as const) {
+    await query(`ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${name}`)
+    await query(`ALTER TABLE ${table} ADD CONSTRAINT ${name} CHECK (${expr})`)
+  }
 
   // Identité de l'instance — UNE seule ligne, forcée par `id BOOLEAN PRIMARY KEY DEFAULT TRUE`
   // contraint à TRUE : une deuxième insertion viole la clé primaire. Tout à NULL = apparence
