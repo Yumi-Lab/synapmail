@@ -1264,6 +1264,34 @@ Replaces the caller's **whole** set (added questions included) with the defaults
 ### `POST /api/tags/questions/[id]/test` 🔑 Bearer (`tags:write`)
 **Body** `{ accountId: string; folder: string; uid: number | string }`. **One** engine call for **one** question on **one** message — what the engine answers before paying for a mailbox. The engine is the one chosen for `accountId` (`409` when none), the message is read from IMAP; requires the `organize` share permission. `404` names an unknown question or message; `502` carries the engine `failure` kind (`credit`, `auth`, `rate`, `unavailable`). **Response** `{ data: { question, ms, model, inputTokens, answer: StoredTag | null, rejected: boolean } }` — `rejected` is `true` when the engine answered outside the question's values.
 
+### `GET /api/tags/rules` 🔑 Bearer (`tags:read`)
+The caller's **tagging rules** — "when a message matches these conditions, write these tags", with no engine call. A rule belongs to the user, for all their mailboxes (`accountId: null`) or for one of them. The sorter evaluates them **before** the engine, in `priority` order, on every pass (backlog and live); the tags they write carry `source: 'regle'`, signed by the rule. **Response** `{ data: TagRule[] }`.
+
+```ts
+interface TagRule {
+  id: string
+  accountId: string | null                     // null = every mailbox of the user
+  name: string
+  enabled: boolean
+  priority: number                             // lower runs first
+  conditionLogic: 'all' | 'any'
+  conditions: RuleCondition[]                  // same shape and same evaluator as /api/rules conditions
+  actions: { question: string; valeur: string }[]   // one tag per question, value validated against the question
+  authoritative: boolean                       // the questions this rule settles are NOT asked of the engine for that message
+  createdAt: string
+  updatedAt: string
+}
+```
+
+### `POST /api/tags/rules` 🔑 Bearer (`tags:write`)
+**Body** `TagRule` minus `id`/`createdAt`/`updatedAt` (`enabled`, `priority`, `conditionLogic`, `authoritative` optional). Checked server-side — `400` names the offending `field` (`name`, `accountId` when the mailbox is not the caller's, `conditions[n].field`, `actions[n].valeur` when the value is outside the question's list, …). At least one condition and one action; two actions cannot name the same question. **Response** `{ data: TagRule }`, `201`.
+
+### `PATCH /api/tags/rules/[id]` 🔑 Bearer (`tags:write`)
+Same body, every field optional; the body is merged into the stored rule and the **whole** rule is revalidated, so a partial patch cannot leave it inconsistent. `404` names an unknown `id` — another user's rule is unknown, not forbidden. **Response** `{ data: TagRule }`.
+
+### `DELETE /api/tags/rules/[id]` 🔑 Bearer (`tags:write`)
+Removes the rule. Tags it already wrote stay in the database — they are history. `404` names an unknown `id`. **Response** `{ data: { id } }`.
+
 ### `GET /api/tagging/settings?account=` — session only
 Same `TaggingStatus` body as above. **Session only, owner only**: these settings point at an engine, therefore at a key, so a delegate does not read them and no API key reaches them.
 
