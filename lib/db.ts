@@ -767,9 +767,22 @@ export async function initDb(): Promise<void> {
   // par un nombre de mails : `tagged` ne convient pas, il est remis à zéro à chaque tri alors que
   // `input_tokens` ne l'est jamais — après un échantillon d'1 mail, 13,6 M de jetons ÷ 1 donnait
   // 572,86 $ pour 1 000 mails au lieu de 0,30 $ (gate T-Q2, 01/10/2026). Ce compteur suit la même
-  // vie que `input_tokens` : cumulé, jamais remis à zéro. Les lignes d'avant restent à 0 : elles
-  // retombent sur la constante par défaut jusqu'à leur prochain passage.
+  // vie que `input_tokens` : cumulé, jamais remis à zéro.
   await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS input_mails BIGINT NOT NULL DEFAULT 0`)
+  // Une boîte triée AVANT cette colonne a des jetons sans mails derrière : laissée à 0, elle
+  // retombait bien sur la constante… jusqu'à son premier passage, où 13,6 M de jetons d'historique
+  // divisés par les 2 mails de ce passage donnaient 4,9 M de jetons par mail (gate T-Q3, 01/10/2026).
+  // Le dénominateur est donc rétro-rempli avec ce que l'historique sait : chaque tagage d'un mail
+  // par un moteur sous une taxonomie, ce que `tagged` aurait compté. Une seule fois (`input_mails = 0`).
+  // ponytail: un retagage sous la même version de question écrase sa ligne, l'historique sous-compte
+  // donc un peu (1,5× la mesure T8 sur la boîte de référence, dans la marge [0,5×, 2×] du gate) ;
+  // les passages suivants font converger la moyenne vers la mesure réelle.
+  await query(`
+    UPDATE mailbox_tagging m
+       SET input_mails = (SELECT COUNT(DISTINCT (t.message_id, t.auteur_id, t.taxonomy_version)) FROM message_tags t
+                           WHERE t.account_id = m.account_id AND t.source IN (${sqlList(ENGINES)}))
+     WHERE m.input_mails = 0 AND m.input_tokens > 0
+  `)
 
   // Le dernier `message_tags.id` qui existait quand le tri COURANT a été lancé (lot T10c). Il
   // sépare « déjà tagué avant ce tri » — un mail sauté pour de bon — de « tagué par ce tri

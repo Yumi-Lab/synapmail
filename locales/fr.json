@@ -748,7 +748,8 @@
         "requestsRange": "{trunk} à {max} requêtes par mail",
         "withGroupsUnknown": "Inconnu : lancez un échantillon pour mesurer la part des mails qui déclenchent chaque groupe.",
         "groupRate": "{name} : {questions} questions, déclenché pour {rate} des mails",
-        "groupRateUnknown": "{name} : {questions} questions, part inconnue"
+        "groupRateUnknown": "{name} : {questions} questions, part inconnue",
+        "groupRateHint": "Part lue sur les {mails} mails déjà étiquetés sous le jeu de questions courant, pas sur toute la boîte."
       }
     },
     "engines": {

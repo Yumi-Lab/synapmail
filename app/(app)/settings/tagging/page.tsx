@@ -381,7 +381,8 @@ function PassCost({ passes, remaining, count, labelG }: {
         {passes.groups.length > 0 && line(t('withGroups'), passes.tokensPerMail.withGroups, passes.usdPerMail?.withGroups, passes.usdRemaining?.withGroups,
           t('requestsRange', { trunk: passes.requestsPerMail.trunk, max: passes.requestsPerMail.max }))}
         {passes.groups.map(g => (
-          <p key={g.id} className="text-xs text-muted-foreground" data-pass-group={g.id}>
+          <p key={g.id} className="text-xs text-muted-foreground" data-pass-group={g.id} data-measured-on={g.measuredOn}
+            title={g.rate === null ? undefined : t('groupRateHint', { mails: count(g.measuredOn) })}>
             {g.rate === null
               ? t('groupRateUnknown', { name: labelG(g.id), questions: g.questions })
               : t('groupRate', { name: labelG(g.id), questions: g.questions, rate: `${Math.round(g.rate * 100)} %` })}

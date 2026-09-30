@@ -28,7 +28,8 @@
  *   F. le COÛT AVANT : `readTaggingStatus().passes` — jetons par mail du tronc = la mesure T8
  *      (7 164 000 / 995 mails, `ASSUMED_INPUT_TOKENS_PER_QUESTION × 49`, à ±1 %), requêtes par
  *      mail (1 tronc, +1 par groupe), taux de déclenchement lu dans la répartition de
- *      l'échantillon ;
+ *      l'échantillon ; la migration rétro-remplit `input_mails` d'une boîte triée avant la colonne,
+ *      et la moyenne reste dans [0,5×, 2×] de la vraie après son premier passage ;
  *   G. (HTTP) les routes : 201, 400 qui nomme le champ, 404, 409, 403 sans `tags:write`.
  *
  * CONTRÔLE NÉGATIF (`--negative`) : le déclencheur du groupe est remplacé EN BASE par un
@@ -36,7 +37,9 @@
  * budget de découpage n'est plus honoré (le banc appelle `chunkByBudget` avec un budget infini)
  * et la clé de banc reçoit TOUTES les portées — D3/D5/D6/D7 (la passe 2 ne part plus), E1/E2
  * (une seule requête porte tout), F4/F5/F6 (un déclencheur sur un champ du mail compte pour 1,
- * plus pour 2/3) et G5 (le 403) DOIVENT tomber. D2 tient (« Bonjour » n'avait déjà qu'une
+ * plus pour 2/3, et `measuredOn` ne lit plus rien : F12), F10 (`input_mails` remis à 0 après la
+ * migration : la moyenne redevient l'historique divisé par le dernier passage) et G5 (le 403)
+ * DOIVENT tomber. D2 tient (« Bonjour » n'avait déjà qu'une
  * requête). Ce qu'il démontre : ces assertions mesurent bien le déclenchement, la coupe et le
  * taux, pas la présence du code.
  */
@@ -75,6 +78,7 @@ const { validateGroup, InvalidGroupError, UnknownGroupError, DuplicateGroupError
 const { ASSUMED_INPUT_TOKENS_PER_QUESTION, assumedInputTokensPerMail } = await import('../lib/tagging/engine.ts')
 const { evaluateRule } = await import('../lib/rulesEval.ts')
 const { readTaggingStatus } = await import('../lib/tagging/mailbox.ts')
+const { taxonomyVersion } = await import('../lib/tagging/store.ts')
 const tr = await import('../lib/tagging/tagRules.ts')
 const runner = await import('../lib/tagging/runner.ts')
 const { ALL_SCOPES } = await import('../lib/apiScopes.ts')
@@ -252,6 +256,32 @@ try {
   check('F8 `triggerRate` : `any` = 1 − ∏(1 − p) (0,25 ou 0,75 → 0,8125), `not_equals` = 1 − p', Math.abs(triggerRate({ conditionLogic: 'any', conditions: [{ field: 'tag', operator: 'equals', tagQuestion: 'a', value: 'x' }, { field: 'tag', operator: 'equals', tagQuestion: 'a', value: 'y' }] }, [{ question: 'a', values: [{ valeur: 'x', count: 1 }, { valeur: 'y', count: 3 }] }]) - 0.8125) < 1e-9
     && Math.abs(triggerRate({ conditionLogic: 'all', conditions: [{ field: 'tag', operator: 'not_equals', tagQuestion: 'a', value: 'x' }] }, [{ question: 'a', values: [{ valeur: 'x', count: 1 }, { valeur: 'y', count: 3 }] }]) - 0.75) < 1e-9)
 
+  // Une boîte triée AVANT la colonne `input_mails` : des jetons d'historique (la mesure T8) et
+  // 0 mail derrière. La migration rétro-remplit le dénominateur depuis `message_tags` ; sans cela,
+  // le premier passage divisait 7,2 M de jetons par ses 2 mails (gate T-Q3 refusé, 01/10/2026).
+  // Sous --negative, la colonne est remise à 0 après la migration (l'état d'avant) : F10 doit tomber.
+  const A4 = await makeAccount(U1)
+  const Q0 = p1.trunk[0]
+  await pool.query(
+    `INSERT INTO message_tags (account_id, message_id, question, valeur, source, modele, taxonomy_version, auteur_id, auteur_nom)
+     SELECT $1, '<histo-' || n || '@banc-tq3.invalid>', $2, $3, 'jev', 'banc-1', $4, $5, 'banc tq3' FROM generate_series(1, $6::int) n`,
+    [A4, Q0.id, questions.valuesOf(Q0)[0], taxonomyVersion(set1), ENGINE_ID, T8.mails])
+  await pool.query(`INSERT INTO mailbox_tagging (account_id, engine_id, budget_usd, total, input_tokens, input_mails) VALUES ($1, $2, 1000, 1000, $3, 0)`, [A4, ENGINE_ID, T8.tokens])
+  await initDb()
+  const backfilled = Number((await pool.query(`SELECT input_mails FROM mailbox_tagging WHERE account_id = $1`, [A4])).rows[0].input_mails)
+  check(`F9 la migration rétro-remplit \`input_mails\` depuis l'historique : ${T8.mails} mails tagués par le moteur (obtenu ${backfilled})`, backfilled === T8.mails)
+  if (NEGATIVE) await pool.query(`UPDATE mailbox_tagging SET input_mails = 0 WHERE account_id = $1`, [A4])
+  const source4 = { ...source, async fetch(folder, afterUid, limit) { return MAILS.slice(0, 2).filter(m => m.uid > afterUid).slice(0, limit) }, async folders() { return [{ path: 'INBOX', uidValidity: '1', total: 2 }] } }
+  await runner.startBulk(A4)
+  const pass4 = await runner.runPass({ accountId: A4, source: source4, engine, budgetMs: 5_000 })
+  const row4 = (await pool.query(`SELECT input_tokens, input_mails FROM mailbox_tagging WHERE account_id = $1`, [A4])).rows[0]
+  const avg4 = Number(row4.input_tokens) / Number(row4.input_mails)
+  const truth = assumedInputTokensPerMail(set1.enabled.length)
+  const s4 = await readTaggingStatus(A4)
+  check(`F10 après un passage de ${pass4.tagged} mails sur cet historique, la moyenne reste dans [0,5×, 2×] de la vraie (${truth} jetons/mail) : ${avg4.toFixed(0)} = ${row4.input_tokens} / ${row4.input_mails}`, pass4.tagged === 2 && avg4 >= truth * 0.5 && avg4 <= truth * 2 && near(s4.passes.tokensPerMail.trunk, avg4 / set1.enabled.length * trunkN), JSON.stringify({ avg4, trunk: s4.passes.tokensPerMail.trunk }))
+  check(`F11 la migration ne touche pas une boîte déjà mesurée : A1 garde input_mails = ${s1.tagged}`, Number((await pool.query(`SELECT input_mails FROM mailbox_tagging WHERE account_id = $1`, [A1])).rows[0].input_mails) === s1.tagged)
+  check('F12 `measuredOn` dit sur combien de mails le taux est lu : les mails de l’échantillon qui répondent à la question du déclencheur (3 sur A1), 0 sans répartition', s1.passes.groups[0].measuredOn === 3 && s3.passes.groups[0].measuredOn === 0, JSON.stringify(s1.passes.groups))
+
   // ---- isolation + suppression ----------------------------------------------------------
   console.log('H. isolation et suppression')
   check('H1 U2 ne voit pas les groupes de U1 ; la boîte de U2 n’en reçoit aucun', (await listGroups(U2)).length === 0 && (await groupsForAccount(A2)).length === 0 && (await groupsForAccount(A1)).length === 1)
@@ -318,7 +348,7 @@ try {
 }
 
 if (NEGATIVE) {
-  const expected = ['D3', 'D5', 'D6', 'D7', 'E1', 'E2', 'F4', 'F5', 'F6', 'G5']
+  const expected = ['D3', 'D5', 'D6', 'D7', 'E1', 'E2', 'F4', 'F5', 'F6', 'F10', 'F12', 'G5']
   const fell = failures.map(f => f.split(' ')[0]).filter(k => expected.includes(k))
   const unexpected = failures.filter(f => !expected.includes(f.split(' ')[0]))
   const want = BASE ? expected : expected.filter(k => !k.startsWith('G'))

@@ -1228,8 +1228,9 @@ interface TaggingStatus {
     tokensPerMail: { trunk: number; withGroups: number | null }
     usdPerMail: { trunk: number; withGroups: number | null } | null      // null without an engine
     usdRemaining: { trunk: number; withGroups: number | null } | null    // × messages left
-    groups: { id: string; name: string; questions: number; requests: number; rate: number | null }[]
-  }                                               // `withGroups`/`rate` are null until a sample has answered what the triggers read
+    groups: { id: string; name: string; questions: number; requests: number; rate: number | null; measuredOn: number }[]
+  }                                               // `withGroups`/`rate` are null until a sample has answered what the triggers read;
+                                                  // `measuredOn` = how many already-tagged messages the rate is read on (not the whole mailbox)
   distribution?: …                                // only with `?distribution=1`: value counts per question
   staleCounts?: Record<string, number>            // only with `?stale=1`: per question id, messages tagged under an OLDER version
 }

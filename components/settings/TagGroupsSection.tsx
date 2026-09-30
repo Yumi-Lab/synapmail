@@ -22,6 +22,7 @@ import { useTagLabels } from '@/hooks/useTagLabels'
 import { isEnabled } from '@/lib/tagging/questions'
 import { TAG_GROUPS_ENDPOINT, TAGGING_SETTINGS_ENDPOINT } from '@/lib/tagging/view'
 import type { TagQuestionGroup } from '@/lib/tagging/questionGroups'
+import type { StoredQuestion } from '@/lib/tagging/userQuestions'
 import type { ConditionLogic } from '@/types/rule'
 import { cn } from '@/lib/utils'
 
@@ -47,14 +48,18 @@ export function TagGroupsSection() {
   const { data, mutate } = useSWR<{ data: TagQuestionGroup[] }>(TAG_GROUPS_ENDPOINT, fetcher)
   const stored = useMemo(() => data?.data ?? [], [data])
 
-  // Les slugs viennent des questions : chaque slug est une ligne, avec ou sans déclencheur.
+  // Les slugs viennent des questions ACTIVES : chaque slug est une ligne, avec ou sans déclencheur.
+  // Un slug sans question active n'a pas de ligne : il ne coûte rien et ne se déclenche pour rien
+  // (`planPasses` l'ignore de la même façon).
   const slugs = useMemo(() => {
     const counts = new Map<string, number>()
     for (const q of questions) if (isEnabled(q)) counts.set(q.group, (counts.get(q.group) ?? 0) + 1)
-    for (const q of questions) if (!counts.has(q.group)) counts.set(q.group, 0)
     return Array.from(counts, ([id, count]) => ({ id, count, group: stored.find(g => g.id === id) ?? null }))
   }, [questions, stored])
   const free = slugs.filter(s => !s.group)
+  // Un déclencheur ne lit que la passe 1 : les questions des groupes conditionnels (le sien compris)
+  // n'y sont jamais, elles ne sont donc pas proposées au choix « Étiquette ».
+  const conditional = useMemo(() => new Set(stored.filter(g => g.conditions.length).map(g => g.id)), [stored])
 
   const [open, setOpen] = useState<string | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
@@ -113,7 +118,8 @@ export function TagGroupsSection() {
 
   const editor = (isNew: boolean) => draft && (
     <>
-      <Editor draft={draft} setDraft={setDraft} free={free.map(s => s.id)} labelG={labelG} t={t} isNew={isNew} />
+      <Editor draft={draft} setDraft={setDraft} free={free.map(s => s.id)} labelG={labelG} t={t} isNew={isNew}
+        tagQuestions={questions.filter(q => q.group !== draft.id && !conditional.has(q.group))} />
       {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
       {isNew ? (
         <div className="mt-3 flex justify-end gap-2">
@@ -135,7 +141,7 @@ export function TagGroupsSection() {
           const isOpen = !!group && open === id && !adding
           return (
             <div key={id} className="rounded-xl border border-border bg-card shadow-sm" data-tag-group={id} data-conditional={!!group?.conditions.length}>
-              <div className="flex items-center gap-2 px-2.5 py-2">
+              <div className="flex min-h-12 items-center gap-2 px-2.5 py-2">
                 <button type="button" onClick={() => group && openRow(group)} disabled={!group} className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-default" aria-expanded={isOpen}>
                   {group ? (isOpen ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />) : <span className="h-4 w-4 shrink-0" />}
                   <span className="min-w-0 flex-1 truncate text-sm font-medium">{labelG(id)}</span>
@@ -176,9 +182,10 @@ export function TagGroupsSection() {
 
 type T = ReturnType<typeof useTranslations<'settings.tagging.groups'>>
 
-function Editor({ draft, setDraft, free, labelG, t, isNew }: {
+function Editor({ draft, setDraft, free, labelG, t, isNew, tagQuestions }: {
   draft: Draft; setDraft: (f: (d: Draft | null) => Draft | null) => void
   free: string[]; labelG: (id: string) => string; t: T; isNew: boolean
+  tagQuestions: StoredQuestion[]
 }) {
   const update = (patch: Partial<Draft>) => setDraft(d => d && { ...d, ...patch })
 
@@ -216,7 +223,7 @@ function Editor({ draft, setDraft, free, labelG, t, isNew }: {
         </div>
         <div className="space-y-2">
           {draft.conditions.map((c, i) => (
-            <ConditionRow key={c.id} cond={c} fields={GROUP_FIELDS}
+            <ConditionRow key={c.id} cond={c} fields={GROUP_FIELDS} tagQuestions={tagQuestions}
               onChange={updated => update({ conditions: draft.conditions.map((x, j) => (j === i ? updated : x)) })}
               onRemove={() => update({ conditions: draft.conditions.filter((_, j) => j !== i) })}
               canRemove={draft.conditions.length > 1} />

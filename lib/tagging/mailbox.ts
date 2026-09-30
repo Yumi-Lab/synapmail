@@ -71,8 +71,12 @@ export interface PassEstimate {
   /** En dollars, au tarif du moteur ; `null` sans moteur. Par mail et pour ce qui RESTE de la boîte. */
   usdPerMail: { trunk: number; withGroups: number | null } | null
   usdRemaining: { trunk: number; withGroups: number | null } | null
-  /** Par groupe conditionnel : ses questions, ses requêtes, son taux de déclenchement estimé. */
-  groups: Array<{ id: string; name: string; questions: number; requests: number; rate: number | null }>
+  /**
+   * Par groupe conditionnel : ses questions, ses requêtes, son taux de déclenchement estimé, et
+   * sur combien de mails ce taux est lu (`measuredOn`) — les mails déjà étiquetés sous le jeu
+   * courant qui répondent aux questions du déclencheur, pas la boîte entière.
+   */
+  groups: Array<{ id: string; name: string; questions: number; requests: number; rate: number | null; measuredOn: number }>
 }
 
 /**
@@ -85,10 +89,15 @@ function passEstimate(plan: PassPlan, enabled: number, distribution: Distributio
     ? measured.inputTokens / measured.mails / enabled
     : assumedInputTokensPerMail(1)
   const trunkTokens = perQuestion * plan.trunk.length
-  const groups = plan.conditional.map(({ group, questions }) => ({
-    id: group.id, name: group.name, questions: questions.length, requests: chunkByBudget(questions).length,
-    rate: distribution ? triggerRate(group, distribution) : null,
-  }))
+  const mailsAnswering = (question: string) => distribution?.find(d => d.question === question)?.values.reduce((n, v) => n + v.count, 0) ?? 0
+  const groups = plan.conditional.map(({ group, questions }) => {
+    const read = group.conditions.filter(c => c.field === 'tag').map(c => mailsAnswering(c.tagQuestion ?? ''))
+    return {
+      id: group.id, name: group.name, questions: questions.length, requests: chunkByBudget(questions).length,
+      rate: distribution ? triggerRate(group, distribution) : null,
+      measuredOn: read.length ? Math.min(...read) : 0,
+    }
+  })
   const known = groups.every(g => g.rate !== null)
   const withGroups = known
     ? trunkTokens + plan.conditional.reduce((n, g, i) => n + perQuestion * g.questions.length * (groups[i].rate ?? 0), 0)

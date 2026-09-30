@@ -6212,7 +6212,8 @@
                 "name",
                 "questions",
                 "requests",
-                "rate"
+                "rate",
+                "measuredOn"
               ],
               "properties": {
                 "id": {
@@ -6231,6 +6232,10 @@
                   "type": "number",
                   "nullable": true,
                   "description": "Estimated share of messages that trigger the group (independence assumed between conditions; a condition on a message field counts as 1)."
+                },
+                "measuredOn": {
+                  "type": "integer",
+                  "description": "How many already-tagged messages (current question set) the rate is read on — not the whole mailbox."
                 }
               }
             }

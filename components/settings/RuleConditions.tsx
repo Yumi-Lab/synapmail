@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import { valuesOf } from '@/lib/tagging/questions'
+import type { StoredQuestion } from '@/lib/tagging/userQuestions'
 import type { RuleCondition, RuleField, RuleOperator } from '@/types/rule'
 
 const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
@@ -61,7 +62,7 @@ export function useConditionText(): (c: RuleCondition) => string {
 }
 
 export function ConditionRow({
-  cond, onChange, onRemove, canRemove, fields = RULE_FIELDS,
+  cond, onChange, onRemove, canRemove, fields = RULE_FIELDS, tagQuestions,
 }: {
   cond: RuleCondition
   onChange: (c: RuleCondition) => void
@@ -69,6 +70,8 @@ export function ConditionRow({
   canRemove: boolean
   /** Les champs offerts : ceux d'une règle par défaut, `GROUP_FIELDS` pour un déclencheur. */
   fields?: readonly RuleField[]
+  /** Les questions qu'une condition « Étiquette » peut lire : tout le jeu par défaut. */
+  tagQuestions?: StoredQuestion[]
 }) {
   const t = useConditionLabels()
   const operators = FIELD_OPERATORS[cond.field] ?? []
@@ -104,7 +107,7 @@ export function ConditionRow({
         ))}
       </select>
 
-      {isTag && <TagPicker cond={cond} onChange={onChange} />}
+      {isTag && <TagPicker cond={cond} onChange={onChange} questions={tagQuestions} />}
 
       {!isBoolean && !isTag && (
         isDate ? (
@@ -146,8 +149,9 @@ export function ConditionRow({
  * La question et sa valeur d'une condition `tag`, lues dans le jeu de l'utilisateur (jamais
  * recopiées). Un composant à part pour que le jeu ne soit demandé que quand une ligne en a besoin.
  */
-function TagPicker({ cond, onChange }: { cond: RuleCondition; onChange: (c: RuleCondition) => void }) {
-  const { questions } = useQuestionSet()
+function TagPicker({ cond, onChange, questions: offered }: { cond: RuleCondition; onChange: (c: RuleCondition) => void; questions?: StoredQuestion[] }) {
+  const { questions: all } = useQuestionSet()
+  const questions = offered ?? all
   const { q: labelQ, v: labelV } = useTagLabels()
   const question = questions.find(q => q.id === cond.tagQuestion) ?? questions[0]
   const stale = !!question && (cond.tagQuestion !== question.id || !valuesOf(question).includes(cond.value))
