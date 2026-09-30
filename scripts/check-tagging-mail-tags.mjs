@@ -84,6 +84,7 @@ const tagsPath = (mid, q = '') => `/api/messages/${encodeURIComponent(mid)}/tags
 let engineKeyId = null
 let accountId = null
 let taggedIds = []
+let startedAt = null
 
 try {
   // --- B. une boîte possédée, et 5 messages RÉELS pris en lecture seule --------------
@@ -96,6 +97,11 @@ try {
   const messages = (list.messages ?? []).filter(m => m.messageId).slice(0, SEEDS.length)
   check(messages.length === SEEDS.length, `B2 ${SEEDS.length} messages réels servent de support`, `${messages.length} trouvé(s)`)
   if (messages.length < SEEDS.length) throw new Error('pas assez de messages pour le banc')
+
+  // L'horloge de la BASE borne ce que le banc a écrit : le nettoyage ne retire que ces lignes,
+  // jamais les étiquettes réelles (moteur ou main) que ces 5 mails portaient déjà.
+  const { query } = await import('../lib/db.ts')
+  startedAt = (await query('SELECT NOW() AS now'))[0].now
 
   // --- C. une clé API écrit la source d'un MOTEUR (décision 7) -----------------------
   // C'est la clé, et non la session, qui pose les étiquettes `jev` : une session n'a pas le
@@ -229,8 +235,9 @@ try {
   // viderait l'écran qu'il est en train de juger. Le banc se tait alors plutôt que de nettoyer.
   if (!SEED && taggedIds.length && !existsSync('.gate-handoff')) {
     const { query } = await import('../lib/db.ts')
-    await query('DELETE FROM message_tags WHERE account_id = $1 AND message_id = ANY($2::text[])', [accountId, taggedIds])
-    await query('DELETE FROM tagged_messages WHERE account_id = $1 AND message_id = ANY($2::text[])', [accountId, taggedIds])
+    await query('DELETE FROM message_tags WHERE account_id = $1 AND message_id = ANY($2::text[]) AND cree_le >= $3', [accountId, taggedIds, startedAt])
+    await query(`DELETE FROM tagged_messages t WHERE t.account_id = $1 AND t.message_id = ANY($2::text[])
+                   AND NOT EXISTS (SELECT 1 FROM message_tags m WHERE m.account_id = t.account_id AND m.message_id = t.message_id)`, [accountId, taggedIds])
   }
   if (engineKeyId) {
     await fetch(`${BASE}/api/api-keys/${engineKeyId}`, { method: 'DELETE', headers: { cookie } }).catch(() => {})

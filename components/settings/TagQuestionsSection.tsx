@@ -286,10 +286,11 @@ function Editor({ draft, setDraft, isNew, accountId, stale, t }: {
  * le tri de la boîte : le trieur repose le jeu courant et saute ce qui est à jour.
  */
 function TestOnMail({ question, accountId, stale, t }: { question: Draft; accountId: string | null; stale: number; t: T }) {
+  const tApp = useTranslations('common')
   const [uid, setUid] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<string | null>(null)
-  const { data } = useSWR<{ messages: Message[] }>(accountId ? `/api/messages?account=${accountId}&folder=INBOX&perPage=30` : null, fetcher)
+  const { data, isLoading } = useSWR<{ messages: Message[] }>(accountId ? `/api/messages?account=${accountId}&folder=INBOX&perPage=30` : null, fetcher)
   const messages = data?.messages ?? []
   useEffect(() => { if (!uid && messages.length) setUid(messages[0].uid) }, [messages, uid])
 
@@ -327,7 +328,7 @@ function TestOnMail({ question, accountId, stale, t }: { question: Draft; accoun
       <div className="flex flex-wrap items-center gap-2">
         <select value={uid} onChange={e => setUid(e.target.value)} disabled={!messages.length} data-test-uid
           className="h-8 min-w-0 max-w-[24rem] flex-1 truncate rounded-md border border-input bg-background px-2 text-xs">
-          {!messages.length && <option value="">{t('noMail')}</option>}
+          {!messages.length && <option value="">{isLoading ? tApp('loading') : t('noMail')}</option>}
           {messages.map(m => <option key={m.uid} value={m.uid}>{m.subject || m.from.address}</option>)}
         </select>
         <Button type="button" variant="ghost" size="sm" onClick={test} disabled={busy || !uid || !accountId} data-test-run>
