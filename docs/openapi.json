@@ -65,6 +65,10 @@
     {
       "name": "Tags",
       "description": "The tags a decision engine or a human puts on mail, and the sorter that produces them."
+    },
+    {
+      "name": "Webhooks",
+      "description": "Signed HTTP calls fired by filter rules, and the log of what was sent."
     }
   ],
   "paths": {
@@ -1045,11 +1049,24 @@
                     "maxItems": 20,
                     "items": {
                       "type": "object",
-                      "required": ["filename", "content"],
+                      "required": [
+                        "filename",
+                        "content"
+                      ],
                       "properties": {
-                        "filename": { "type": "string", "description": "Sanitised server-side: never used as a path, cut to 100 characters." },
-                        "content": { "type": "string", "format": "byte", "description": "The file's bytes in base64. Invalid base64 is refused, never silently truncated." },
-                        "contentType": { "type": "string", "description": "Defaults to application/octet-stream when absent or not a valid MIME type." }
+                        "filename": {
+                          "type": "string",
+                          "description": "Sanitised server-side: never used as a path, cut to 100 characters."
+                        },
+                        "content": {
+                          "type": "string",
+                          "format": "byte",
+                          "description": "The file's bytes in base64. Invalid base64 is refused, never silently truncated."
+                        },
+                        "contentType": {
+                          "type": "string",
+                          "description": "Defaults to application/octet-stream when absent or not a valid MIME type."
+                        }
                       }
                     }
                   }
@@ -1485,14 +1502,40 @@
     },
     "/api/subscriptions/history": {
       "get": {
-        "tags": ["Subscriptions"],
+        "tags": [
+          "Subscriptions"
+        ],
         "operationId": "countSubscriptionHistory",
         "summary": "Count one newsletter's whole history",
         "description": "Counts, across every folder of the mailbox except the sent, the drafts and the trash, the messages of one newsletter — including the ones the list route never sees, since it reads only the most recent messages of a single folder. Read only: nothing is moved. A slow call on a mailbox with many folders, so count once and then purge.",
         "parameters": [
-          { "name": "account", "in": "query", "required": true, "schema": { "type": "string" }, "description": "The mailbox id." },
-          { "name": "id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "An id the list route answered." },
-          { "name": "folder", "in": "query", "schema": { "type": "string", "default": "INBOX" }, "description": "The folder the id was listed from — where it is resolved back to a newsletter." }
+          {
+            "name": "account",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The mailbox id."
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "An id the list route answered."
+          },
+          {
+            "name": "folder",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "INBOX"
+            },
+            "description": "The folder the id was listed from — where it is resolved back to a newsletter."
+          }
         ],
         "responses": {
           "200": {
@@ -1501,22 +1544,38 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["data"],
-                  "properties": { "data": { "$ref": "#/components/schemas/SubscriptionHistory" } }
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SubscriptionHistory"
+                    }
+                  }
                 }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "500": { "$ref": "#/components/responses/ServerError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
         }
       }
     },
     "/api/subscriptions/purge": {
       "post": {
-        "tags": ["Subscriptions"],
+        "tags": [
+          "Subscriptions"
+        ],
         "operationId": "purgeSubscriptionHistory",
         "summary": "Move one newsletter's whole history to the trash",
         "description": "Moves every message of a newsletter to the mailbox's trash — never a permanent deletion, never an expunge, so a mistake stays recoverable. `expected` is the total the count route answered; the purge refuses and moves nothing when the mailbox no longer holds that number. Needs the `delete` permission.",
@@ -1526,12 +1585,28 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["account", "id", "expected"],
+                "required": [
+                  "account",
+                  "id",
+                  "expected"
+                ],
                 "properties": {
-                  "account": { "type": "string" },
-                  "id": { "type": "string", "description": "An id the list route answered." },
-                  "expected": { "type": "integer", "minimum": 0, "description": "The `total` answered by the count route. A different number refuses." },
-                  "folder": { "type": "string", "default": "INBOX" }
+                  "account": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string",
+                    "description": "An id the list route answered."
+                  },
+                  "expected": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "The `total` answered by the count route. A different number refuses."
+                  },
+                  "folder": {
+                    "type": "string",
+                    "default": "INBOX"
+                  }
                 }
               }
             }
@@ -1544,29 +1619,51 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["data"],
-                  "properties": { "data": { "$ref": "#/components/schemas/PurgeReport" } }
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PurgeReport"
+                    }
+                  }
                 }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
           "409": {
             "description": "The purge refused and moved nothing.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["data"],
-                  "properties": { "data": { "$ref": "#/components/schemas/PurgeRefused" } }
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PurgeRefused"
+                    }
+                  }
                 }
               }
             }
           },
-          "500": { "$ref": "#/components/responses/ServerError" }
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
         }
       }
     },
@@ -3496,6 +3593,547 @@
           }
         }
       }
+    },
+    "/api/webhooks": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "listWebhooks",
+        "summary": "List the webhooks",
+        "description": "`account` narrows the list to one mailbox. The signing secret is never in this answer. Requires the `webhooks:read` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccountQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The webhooks, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Webhook"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "createWebhook",
+        "summary": "Create a webhook",
+        "description": "The webhook belongs to `accountId`, which the key must be allowed to reach and on which the caller needs the `manageRules` share permission — a webhook is a rule seen from the other end. The URL is checked before anything is stored, so a saved webhook never carries an address the server would refuse to call. **The secret is returned here, once.** Requires the `webhooks:write` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "name",
+                  "url"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "https, unless the host is listed in the server's WEBHOOK_ALLOWED_HOSTS."
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created. The only answer that carries the secret, along with the rotate call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/WebhookWithSecret"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "The URL is one the server refuses to call — not https, or resolving to a private, loopback, link-local or cloud-metadata address. The body names the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/webhooks/{id}": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "getWebhook",
+        "summary": "Read one webhook",
+        "description": "The signing secret is never in this answer. Requires the `webhooks:read` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The webhook.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Webhook"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "updateWebhook",
+        "summary": "Update a webhook",
+        "description": "Only the fields sent change. A URL that changes is checked exactly like a URL that is born, so nothing enters by the side door. The mailbox cannot be moved. Requires the `webhooks:write` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookIdPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated webhook.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Webhook"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "The URL is one the server refuses to call — not https, or resolving to a private, loopback, link-local or cloud-metadata address. The body names the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "deleteWebhook",
+        "summary": "Delete a webhook",
+        "description": "Deleting a webhook never undoes the calls it already made. Rules that targeted it stop reaching it. Requires the `webhooks:write` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "deleted": {
+                          "const": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/webhooks/{id}/secret": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "rotateWebhookSecret",
+        "summary": "Regenerate the signing secret",
+        "description": "Returns a NEW secret, once. The old one stops validating immediately — that is the point of rotating a secret you believe someone else has read. Requires the `webhooks:write` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The webhook, carrying the new secret in clear. The last time it is readable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/WebhookWithSecret"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/webhooks/{id}/test": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "testWebhook",
+        "summary": "Send a signed test call",
+        "description": "Queues a `webhook.test` delivery, signed and logged like any other. The outgoing call is made by the scheduler, so this answers 202 at once rather than holding the request open for a silent receiver. A test carries no `message` and is repeatable — the once-per-mail uniqueness does not hold it back. Requires the `webhooks:write` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookIdPath"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Queued. Poll the deliveries list for the outcome.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "deliveryId",
+                        "event"
+                      ],
+                      "properties": {
+                        "deliveryId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "event": {
+                          "const": "webhook.test"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/webhooks/{id}/deliveries": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "listWebhookDeliveries",
+        "summary": "List what this webhook was sent",
+        "description": "Newest first. Rows older than 30 days are purged. Requires the `webhooks:read` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookIdPath"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many rows, capped server-side.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deliveries, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WebhookDelivery"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/webhooks/deliveries/{id}/retry": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "retryWebhookDelivery",
+        "summary": "Send an existing delivery again",
+        "description": "Adds ONE attempt to the existing row rather than creating a second one — otherwise the once-per-mail guarantee could be walked around with this call. The scheduler makes the call, as it does the first. Requires the `webhooks:write` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DeliveryIdPath"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Queued for another attempt.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "webhookId",
+                        "queued"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "webhookId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "queued": {
+                          "const": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3549,6 +4187,26 @@
         "description": "The IMAP uid, which belongs to one mailbox AND one folder: the same number elsewhere is another message.",
         "schema": {
           "type": "string"
+        }
+      },
+      "WebhookIdPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The webhook's id.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "DeliveryIdPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The delivery's id, as carried by the X-Synapmail-Delivery header.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
         }
       }
     },
@@ -4591,26 +5249,82 @@
       },
       "SubscriptionHistory": {
         "type": "object",
-        "required": ["id", "sender", "header", "value", "total", "folders"],
+        "required": [
+          "id",
+          "sender",
+          "header",
+          "value",
+          "total",
+          "folders"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "sender": { "$ref": "#/components/schemas/EmailAddress" },
-          "listId": { "type": ["string", "null"] },
-          "header": { "type": "string", "enum": ["list-id", "from"], "description": "What was searched. The purge replays the same criterion." },
-          "value": { "type": "string" },
-          "total": { "type": "integer", "description": "Across every folder of the scope." },
-          "oldest": { "type": ["string", "null"], "description": "Server date (INTERNALDATE), not the sender's Date header." },
-          "newest": { "type": ["string", "null"] },
+          "id": {
+            "type": "string"
+          },
+          "sender": {
+            "$ref": "#/components/schemas/EmailAddress"
+          },
+          "listId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "header": {
+            "type": "string",
+            "enum": [
+              "list-id",
+              "from"
+            ],
+            "description": "What was searched. The purge replays the same criterion."
+          },
+          "value": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "description": "Across every folder of the scope."
+          },
+          "oldest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Server date (INTERNALDATE), not the sender's Date header."
+          },
+          "newest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "folders": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["folder", "count"],
+              "required": [
+                "folder",
+                "count"
+              ],
               "properties": {
-                "folder": { "type": "string" },
-                "count": { "type": "integer" },
-                "oldest": { "type": ["string", "null"] },
-                "newest": { "type": ["string", "null"] }
+                "folder": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "oldest": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "newest": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
               }
             }
           }
@@ -4618,28 +5332,65 @@
       },
       "PurgeReport": {
         "type": "object",
-        "required": ["id", "moved", "trash", "folders"],
+        "required": [
+          "id",
+          "moved",
+          "trash",
+          "folders"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "moved": { "type": "integer" },
-          "trash": { "type": "string", "description": "The folder everything was moved to." },
+          "id": {
+            "type": "string"
+          },
+          "moved": {
+            "type": "integer"
+          },
+          "trash": {
+            "type": "string",
+            "description": "The folder everything was moved to."
+          },
           "folders": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["folder", "moved"],
-              "properties": { "folder": { "type": "string" }, "moved": { "type": "integer" } }
+              "required": [
+                "folder",
+                "moved"
+              ],
+              "properties": {
+                "folder": {
+                  "type": "string"
+                },
+                "moved": {
+                  "type": "integer"
+                }
+              }
             }
           }
         }
       },
       "PurgeRefused": {
         "type": "object",
-        "required": ["id", "refused"],
+        "required": [
+          "id",
+          "refused"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "refused": { "type": "string", "enum": ["not_found", "count_changed", "no_trash"] },
-          "total": { "type": "integer", "description": "On `count_changed`: what the mailbox holds now, to replay with." }
+          "id": {
+            "type": "string"
+          },
+          "refused": {
+            "type": "string",
+            "enum": [
+              "not_found",
+              "count_changed",
+              "no_trash"
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "description": "On `count_changed`: what the mailbox holds now, to replay with."
+          }
         }
       },
       "AssistantResult": {
@@ -4899,6 +5650,192 @@
               "null"
             ],
             "format": "uuid"
+          }
+        }
+      },
+      "Webhook": {
+        "type": "object",
+        "required": [
+          "id",
+          "accountId",
+          "name",
+          "url",
+          "enabled",
+          "createdAt",
+          "lastDelivery",
+          "ruleCount"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accountId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The one mailbox whose mail can fire this webhook."
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastDelivery": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The last call made, or null if this webhook has never fired.",
+            "properties": {
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "ok",
+                  "failed"
+                ]
+              },
+              "responseStatus": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          },
+          "ruleCount": {
+            "type": "integer",
+            "description": "How many rules target it — its triggers."
+          }
+        }
+      },
+      "WebhookWithSecret": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Webhook"
+          },
+          {
+            "type": "object",
+            "required": [
+              "secret"
+            ],
+            "properties": {
+              "secret": {
+                "type": "string",
+                "description": "The signing secret, in clear. Returned ONLY here and by the rotate call, once — store it now, it is never readable again."
+              }
+            }
+          }
+        ]
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "required": [
+          "id",
+          "webhookId",
+          "event",
+          "status",
+          "attempts",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Also sent as the X-Synapmail-Delivery header."
+          },
+          "webhookId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ruleId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "null for a test send."
+          },
+          "ruleName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "messageId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "null for a test send."
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {
+            "type": "string",
+            "enum": [
+              "rule.matched",
+              "webhook.test"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ok",
+              "failed"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "description": "One first attempt then at most 3 retries, at 1 min, 5 min and 30 min."
+          },
+          "responseStatus": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "durationMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Truncated to 500 characters."
+          },
+          "nextAttemptAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }

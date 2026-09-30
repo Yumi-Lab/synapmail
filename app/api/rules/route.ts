@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
-import { getRulesForUser, createRule } from '@/lib/rules'
+import { getRulesForUser, createRule, validateConditions } from '@/lib/rules'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { query } from '@/lib/db'
+import { validateWebhookActions } from '@/lib/webhooks'
 import type { EmailRule } from '@/types/rule'
 
 export const dynamic = 'force-dynamic'
@@ -38,8 +39,18 @@ async function postHandler(req: Request) {
     if (!body.conditions?.length) return NextResponse.json({ error: 'At least one condition required' }, { status: 400 })
     if (!body.actions?.length) return NextResponse.json({ error: 'At least one action required' }, { status: 400 })
 
+    // Un motif est compilé ICI : une règle enregistrée ne porte jamais une regex qui ne
+    // compile pas, et l'erreur NOMME la condition fautive.
+    const invalid = validateConditions(body.conditions)
+    if (invalid) return NextResponse.json({ error: invalid }, { status: 422 })
+
     const account = await getAccessibleAccount(body.accountId, userId, ['manageRules'])
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+
+    // Une règle ne vise qu'un webhook de SA boîte (décision 9). Vérifié après la barrière :
+    // sonder les webhooks d'une boîte qu'on ne peut pas atteindre dirait déjà qu'elle existe.
+    const badWebhook = await validateWebhookActions(body.actions, body.accountId, userId)
+    if (badWebhook) return NextResponse.json({ error: badWebhook }, { status: 422 })
 
     // Get max priority for this account
     const maxRows = await query<{ max: number | null }>(

@@ -12,12 +12,17 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { QUESTIONS, questionById, valuesOf } from '@/lib/tagging/questions'
+import { webhooksOfAccount } from '@/lib/webhookRoutes'
+import type { RulePrefill } from '@/lib/rulePrefill'
 import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
 import { RowMenu, ContextMenuItem, ContextMenuSeparator, MENU_ICON } from '@/components/ui/ContextMenu'
 import type {
   EmailRule, RuleCondition, RuleAction, RuleField,
   RuleOperator, RuleActionType, RuleTemplate,
 } from '@/types/rule'
+import { REGEX_PATTERN_MAX } from '@/types/rule'
+import type { Webhook } from '@/types/webhook'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,20 +60,22 @@ const FIELD_LABELS: Record<RuleField, string> = {
   date_received:   'Date de réception',
   priority:        'Priorité (X-Priority)',
   header:          'En-tête personnalisé',
+  tag:             'Étiquette',
 }
 
 const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
-  from:            ['contains','not_contains','equals','not_equals','starts_with','ends_with'],
-  to:              ['contains','not_contains','equals','not_equals'],
-  cc:              ['contains','not_contains','equals','not_equals'],
-  subject:         ['contains','not_contains','equals','not_equals','starts_with','ends_with'],
-  body:            ['contains','not_contains'],
+  from:            ['contains','not_contains','equals','not_equals','starts_with','ends_with','matches','not_matches'],
+  to:              ['contains','not_contains','equals','not_equals','matches','not_matches'],
+  cc:              ['contains','not_contains','equals','not_equals','matches','not_matches'],
+  subject:         ['contains','not_contains','equals','not_equals','starts_with','ends_with','matches','not_matches'],
+  body:            ['contains','not_contains','matches','not_matches'],
   has_attachments: ['is_true','is_false'],
   list_unsubscribe:['is_true','is_false'],
   size:            ['greater_than','less_than'],
   date_received:   ['before','after'],
   priority:        ['equals','less_than','greater_than'],
   header:          ['contains','not_contains','equals'],
+  tag:             ['equals','not_equals'],
 }
 
 const OPERATOR_LABELS: Record<RuleOperator, string> = {
@@ -84,6 +91,8 @@ const OPERATOR_LABELS: Record<RuleOperator, string> = {
   less_than:    'inférieur à',
   before:       'avant le',
   after:        'après le',
+  matches:      'correspond au motif',
+  not_matches:  'ne correspond pas au motif',
 }
 
 const ACTION_LABELS: Record<RuleActionType, string> = {
@@ -94,9 +103,12 @@ const ACTION_LABELS: Record<RuleActionType, string> = {
   mark_unstarred:"Retirer l'étoile",
   delete:        'Supprimer',
   forward:       'Transférer à',
+  webhook:       'Appeler le webhook',
 }
 
-const ACTIONS_NEEDING_VALUE: RuleActionType[] = ['move', 'forward']
+// `webhook` prend l'identifiant du webhook. Le sélecteur qui le CHOISIT vient avec l'écran des
+// webhooks (lot W5) ; en attendant, le champ générique le reçoit tel quel.
+const ACTIONS_NEEDING_VALUE: RuleActionType[] = ['move', 'forward', 'webhook']
 const BOOLEAN_FIELDS: RuleField[] = ['has_attachments', 'list_unsubscribe']
 
 // ---------------------------------------------------------------------------
@@ -208,14 +220,25 @@ function ConditionRow({
   onRemove: () => void
   canRemove: boolean
 }) {
+  const tTag = useTranslations('tags')
   const operators = FIELD_OPERATORS[cond.field] ?? []
   const isBoolean = BOOLEAN_FIELDS.includes(cond.field)
   const isDate    = cond.field === 'date_received'
   const isPriority = cond.field === 'priority'
+  const isTag     = cond.field === 'tag'
+  const isRegex   = cond.operator === 'matches' || cond.operator === 'not_matches'
+  // Les questions et leurs valeurs viennent de `questions.ts`, les libellés de `locales/` :
+  // rien de la taxonomie n'est recopié ici.
+  const tagQuestion = questionById(cond.tagQuestion ?? '') ?? QUESTIONS[0]
 
   const handleFieldChange = (field: RuleField) => {
     const ops = FIELD_OPERATORS[field] ?? []
-    onChange({ ...cond, field, operator: ops[0], value: '' })
+    if (field === 'tag') {
+      const q = QUESTIONS[0]
+      onChange({ ...cond, field, operator: ops[0], tagQuestion: q.id, value: valuesOf(q)[0] })
+      return
+    }
+    onChange({ ...cond, field, operator: ops[0], value: '', tagQuestion: undefined })
   }
 
   return (
@@ -240,8 +263,33 @@ function ConditionRow({
         ))}
       </select>
 
+      {isTag && (
+        <select
+          value={tagQuestion.id}
+          onChange={e => {
+            const q = questionById(e.target.value) ?? QUESTIONS[0]
+            onChange({ ...cond, tagQuestion: q.id, value: valuesOf(q)[0] })
+          }}
+          className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
+        >
+          {QUESTIONS.map(q => (
+            <option key={q.id} value={q.id}>{tTag(`q.${q.id}`)}</option>
+          ))}
+        </select>
+      )}
+
       {!isBoolean && (
-        isDate ? (
+        isTag ? (
+          <select
+            value={cond.value}
+            onChange={e => onChange({ ...cond, value: e.target.value })}
+            className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
+          >
+            {valuesOf(tagQuestion).map(v => (
+              <option key={v} value={v}>{tTag(`v.${v}`)}</option>
+            ))}
+          </select>
+        ) : isDate ? (
           <Input
             type="date"
             value={cond.value}
@@ -264,8 +312,9 @@ function ConditionRow({
           <Input
             value={cond.value}
             onChange={e => onChange({ ...cond, value: e.target.value })}
-            placeholder={cond.field === 'size' ? 'Ko (ex: 5120 = 5 Mo)' : 'Valeur…'}
-            className="h-8 text-sm flex-1 min-w-[120px]"
+            maxLength={isRegex ? REGEX_PATTERN_MAX : undefined}
+            placeholder={isRegex ? 'Motif (ex : ^facture n°\\d+)' : cond.field === 'size' ? 'Ko (ex: 5120 = 5 Mo)' : 'Valeur…'}
+            className={cn('h-8 text-sm flex-1 min-w-[120px]', isRegex && 'font-mono')}
           />
         )
       )}
@@ -285,13 +334,14 @@ function ConditionRow({
 // ---------------------------------------------------------------------------
 
 function ActionRow({
-  action, onChange, onRemove, canRemove, folders,
+  action, onChange, onRemove, canRemove, folders, webhooks,
 }: {
   action: RuleAction
   onChange: (a: RuleAction) => void
   onRemove: () => void
   canRemove: boolean
   folders: { path: string; name: string }[]
+  webhooks: Webhook[]
 }) {
   const needsValue = ACTIONS_NEEDING_VALUE.includes(action.type)
   return (
@@ -315,11 +365,25 @@ function ActionRow({
           <option value="">— Choisir un dossier —</option>
           {folders.map(f => <option key={f.path} value={f.path}>{f.name}</option>)}
         </select>
+      ) : needsValue && action.type === 'webhook' ? (
+        // Un webhook se CHOISIT par son nom : son identifiant est un uuid que personne ne
+        // retape. La liste est celle de la boîte de la règle, donc un webhook d'une autre
+        // boîte ne peut pas être visé ici (ce que la route refuserait de toute façon).
+        <select
+          value={action.value ?? ''}
+          onChange={e => onChange({ ...action, value: e.target.value })}
+          data-rule-webhook-picker
+          className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none flex-1"
+        >
+          <option value="">— Choisir un webhook —</option>
+          {webhooks.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
       ) : needsValue ? (
         <Input
           value={action.value ?? ''}
           onChange={e => onChange({ ...action, value: e.target.value })}
-          placeholder={action.type === 'forward' ? 'email@exemple.com' : 'Nom du dossier…'}
+          placeholder={action.type === 'forward' ? 'email@exemple.com'
+            : action.type === 'webhook' ? 'Identifiant du webhook' : 'Nom du dossier…'}
           className="h-8 text-sm flex-1 min-w-0"
         />
       ) : null}
@@ -374,6 +438,12 @@ function RuleEditor({ rule, accounts, onSave, onCancel, saving, error }: EditorP
   )
   const folders = foldersData?.data ?? []
   const folderPaths = folders.map(f => ({ path: f.path, name: f.name }))
+
+  // Les webhooks de la boîte de la règle : ce que l'action « webhook » propose à choisir.
+  const { data: webhooksData } = useSWR<{ data: Webhook[] }>(
+    accountId ? webhooksOfAccount(accountId) : null, fetcher
+  )
+  const webhooks = webhooksData?.data ?? []
 
   const handleTest = async () => {
     if (!rule.id) return
@@ -457,7 +527,7 @@ function RuleEditor({ rule, accounts, onSave, onCancel, saving, error }: EditorP
               <ActionRow key={a.id} action={a}
                 onChange={updated => setActions(as => as.map((x, j) => j === i ? updated : x))}
                 onRemove={() => setActions(as => as.filter((_, j) => j !== i))}
-                canRemove={actions.length > 1} folders={folderPaths} />
+                canRemove={actions.length > 1} folders={folderPaths} webhooks={webhooks} />
             ))}
           </div>
           <button type="button" onClick={() => setActions(as => [...as, { id: uid(), type: 'mark_read' }])}
@@ -646,12 +716,7 @@ function RuleCard({
 // ---------------------------------------------------------------------------
 
 interface Props {
-  prefill?: {
-    fromAddress?: string
-    fromName?: string
-    subject?: string
-    accountId?: string
-  }
+  prefill?: RulePrefill
 }
 
 export default function RulesClient({ prefill }: Props) {
@@ -704,6 +769,7 @@ export default function RulesClient({ prefill }: Props) {
   useEffect(() => {
     if (!prefill || !accounts.length) return
     const prefillAccountId = prefill.accountId || accounts[0]?.id
+    if (prefillAccountId) setSelectedAccount(prefillAccountId)
     const initialConditions: RuleCondition[] = []
     if (prefill.fromAddress) {
       initialConditions.push({ id: uid(), field: 'from', operator: 'contains', value: prefill.fromAddress })
@@ -717,7 +783,9 @@ export default function RulesClient({ prefill }: Props) {
       name: prefill.fromName ? `De : ${prefill.fromName}` : prefill.fromAddress ? `De : ${prefill.fromAddress}` : '',
       conditionLogic: 'all',
       conditions: initialConditions.length ? initialConditions : [{ id: uid(), field: 'from', operator: 'contains', value: '' }],
-      actions: [{ id: uid(), type: 'mark_read' }],
+      actions: [prefill.webhookId
+        ? { id: uid(), type: 'webhook', value: prefill.webhookId }
+        : { id: uid(), type: 'mark_read' }],
       enabled: true,
       stopProcessing: false,
     })

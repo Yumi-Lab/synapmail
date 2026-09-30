@@ -283,7 +283,8 @@
       "apiKeys": "Clés API",
       "admin": "Administration",
       "branding": "Nom et icône de l'onglet",
-      "tagging": "Tri automatique"
+      "tagging": "Tri automatique",
+      "webhooks": "Webhooks"
     },
     "common": {
       "save": "Enregistrer",
@@ -305,7 +306,9 @@
       "pgpKeyDelete": "Supprimer cette clé…",
       "pgpKeyDeleteConfirm": "Supprimer la clé publique de {name} ? Vous ne pourrez plus lui écrire de message chiffré tant que vous ne l’aurez pas réimportée.",
       "ruleDelete": "Supprimer cette règle…",
-      "ruleDeleteConfirm": "Supprimer la règle « {name} » ? Les messages qu’elle a déjà triés restent où ils sont, mais la règle ne se récupère pas."
+      "ruleDeleteConfirm": "Supprimer la règle « {name} » ? Les messages qu’elle a déjà triés restent où ils sont, mais la règle ne se récupère pas.",
+      "webhookDelete": "Supprimer ce webhook…",
+      "webhookDeleteConfirm": "Supprimer le webhook « {name} » ? Ses déclencheurs cessent de l'appeler et son journal d'envois est perdu."
     },
     "accounts": {
       "title": "Comptes email",
@@ -645,6 +648,41 @@
       "kindJev": "JEV (TypeSafe)",
       "kindOne": "Yumi One",
       "kindAutre": "Autre"
+    },
+    "webhooks": {
+      "title": "Webhooks",
+      "description": "Faire appeler une adresse à vous par une règle, dès qu'un message lui correspond.",
+      "name": "Nom",
+      "namePlaceholder": "Robot des commandes",
+      "url": "Adresse",
+      "urlPlaceholder": "https://n8n.exemple.com/webhook/commandes",
+      "account": "Boîte",
+      "create": "Créer",
+      "save": "Enregistrer",
+      "saving": "Enregistrement…",
+      "cancel": "Annuler",
+      "new": "Nouveau webhook",
+      "empty": "Aucun webhook. Créez-en un, puis ajoutez-lui un déclencheur.",
+      "noAccount": "Ajoutez d'abord une boîte : un webhook est déclenché par les messages de l'une d'elles.",
+      "enabled": "Actif",
+      "disabled": "En pause",
+      "enable": "Reprendre",
+      "disable": "Mettre en pause",
+      "never": "Jamais appelé",
+      "test": "Envoyer un test",
+      "testQueued": "Test inscrit. Il part dans la minute, et apparaît dans ce journal.",
+      "rotate": "Régénérer le secret…",
+      "rotateConfirm": "Régénérer le secret de « {name} » ? Ce qui vérifie sa signature avec l'ancien cesse aussitôt d'accepter les appels.",
+      "secretWarn": "Traitez ce secret comme un mot de passe : il signe chaque appel, et ne s'affiche ici qu'une seule fois.",
+      "secretCopy": "Copier",
+      "secretCopied": "Copié",
+      "secretDone": "J'ai copié le secret",
+      "triggers": "Déclencheurs",
+      "triggersNone": "Aucune règle n'appelle encore ce webhook.",
+      "triggersAdd": "Ajouter un déclencheur",
+      "deliveries": "Envois",
+      "deliveriesNone": "Rien n'est encore parti.",
+      "retry": "Renvoyer"
     }
   },
   "admin": {
@@ -959,7 +997,8 @@
       "apiKeys": "api, cle, jeton, token, bearer, mcp, agent, integration",
       "admin": "admin, administration, utilisateurs, roles, comptes",
       "branding": "onglet, icône, favicon, titre, nom du site, identité, logo",
-      "tagging": "tri étiquettes moteur classer automatique"
+      "tagging": "tri étiquettes moteur classer automatique",
+      "webhooks": "webhook, http, rappel, bot, n8n, intégration, déclencheur"
     }
   },
   "tags": {
