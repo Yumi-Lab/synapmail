@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { RowMenu, ContextMenuItem, MENU_ICON } from '@/components/ui/ContextMenu'
 import { SettingsSection, SaveBar, Toggle } from '@/components/settings/primitives'
-import { ConditionRow, conditionText, newCondition } from '@/components/settings/RuleConditions'
+import { ConditionRow, newCondition, useConditionText } from '@/components/settings/RuleConditions'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import { valuesOf } from '@/lib/tagging/questions'
@@ -43,6 +43,7 @@ export function TagRulesSection({ accounts }: { accounts: EmailAccount[] }) {
   const tCommon = useTranslations('settings.common')
   const tApp = useTranslations('common')
   const tRow = useTranslations('settings.rowActions')
+  const conditionText = useConditionText()
   const { q: labelQ, v: labelV } = useTagLabels()
   const { set, questions } = useQuestionSet()
   const { data, mutate } = useSWR<{ data: TagRule[] }>(TAG_RULES_ENDPOINT, fetcher)

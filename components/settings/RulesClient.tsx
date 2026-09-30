@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
 import { RowMenu, ContextMenuItem, ContextMenuSeparator, MENU_ICON } from '@/components/ui/ContextMenu'
-import { ConditionRow, conditionText, newCondition } from '@/components/settings/RuleConditions'
+import { ConditionRow, newCondition, useConditionText } from '@/components/settings/RuleConditions'
 import type {
   EmailRule, RuleCondition, RuleAction,
   RuleActionType, RuleTemplate,
@@ -135,7 +135,7 @@ const TEMPLATES: RuleTemplate[] = [
 // Plain-language summary
 // ---------------------------------------------------------------------------
 
-function ruleSummary(rule: EmailRule): string {
+function ruleSummary(rule: EmailRule, conditionText: (c: RuleCondition) => string): string {
   if (!rule.conditions.length) return '(aucune condition)'
   const lg   = rule.conditionLogic === 'all' ? 'ET' : 'OU'
   const cond = rule.conditions.slice(0, 2).map(conditionText).join(` ${lg} `)
@@ -427,6 +427,7 @@ function RuleCard({
   onDrop: () => void
 }) {
   const tRow = useTranslations('settings.rowActions')
+  const conditionText = useConditionText()
 
   return (
     <div
@@ -462,7 +463,7 @@ function RuleCard({
               </span>
             )}
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5 truncate">{ruleSummary(rule)}</p>
+          <p className="text-xs text-muted-foreground mt-0.5 truncate">{ruleSummary(rule, conditionText)}</p>
 
           {/* Stats */}
           <div className="flex items-center gap-3 mt-1.5 flex-wrap">

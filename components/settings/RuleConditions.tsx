@@ -7,22 +7,9 @@
  * produit sont évaluées par `lib/rulesEval.ts` des deux côtés.
  */
 import { X } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 import { Input } from '@/components/ui/input'
 import type { RuleCondition, RuleField, RuleOperator } from '@/types/rule'
-
-const FIELD_LABELS: Record<RuleField, string> = {
-  from:            'Expéditeur',
-  to:              'Destinataire',
-  cc:              'CC',
-  subject:         'Objet',
-  body:            'Corps du message',
-  has_attachments: 'Pièces jointes',
-  list_unsubscribe:'Liste de diffusion',
-  size:            'Taille (Ko)',
-  date_received:   'Date de réception',
-  priority:        'Priorité (X-Priority)',
-  header:          'En-tête personnalisé',
-}
 
 const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
   from:            ['contains','not_contains','equals','not_equals','starts_with','ends_with'],
@@ -38,20 +25,11 @@ const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
   header:          ['contains','not_contains','equals'],
 }
 
-const OPERATOR_LABELS: Record<RuleOperator, string> = {
-  contains:     'contient',
-  not_contains: 'ne contient pas',
-  equals:       'est exactement',
-  not_equals:   "n'est pas",
-  starts_with:  'commence par',
-  ends_with:    'se termine par',
-  is_true:      'est présent(e)',
-  is_false:     "n'est pas présent(e)",
-  greater_than: 'supérieur à',
-  less_than:    'inférieur à',
-  before:       'avant le',
-  after:        'après le',
-}
+const FIELDS = Object.keys(FIELD_OPERATORS) as RuleField[]
+const PRIORITIES = ['1', '2', '3', '4', '5'] as const
+
+/** Les libellés vivent dans `settings.rules.conditions` (fr/en/zh), partagés par les deux écrans. */
+const useConditionLabels = () => useTranslations('settings.rules.conditions')
 
 const BOOLEAN_FIELDS: RuleField[] = ['has_attachments', 'list_unsubscribe']
 
@@ -60,13 +38,17 @@ const uid = () => Math.random().toString(36).slice(2)
 /** Une condition vide, telle qu'un « Ajouter une condition » la pose. */
 export const newCondition = (): RuleCondition => ({ id: uid(), field: 'from', operator: 'contains', value: '' })
 
-export function conditionText(c: RuleCondition): string {
-  const f = FIELD_LABELS[c.field] ?? c.field
-  const o = OPERATOR_LABELS[c.operator] ?? c.operator
-  if (BOOLEAN_FIELDS.includes(c.field)) return `${f} ${o}`
-  if (c.field === 'date_received') return `${f} ${o} ${c.value}`
-  if (c.field === 'size') return `${f} ${o} ${c.value} Ko`
-  return `${f} ${o} "${c.value}"`
+/** La condition en une phrase, dans la langue de l'écran : « Objet contient "facture" ». */
+export function useConditionText(): (c: RuleCondition) => string {
+  const t = useConditionLabels()
+  return c => {
+    const f = t(`field_${c.field}`)
+    const o = t(`op_${c.operator}`)
+    if (BOOLEAN_FIELDS.includes(c.field)) return `${f} ${o}`
+    if (c.field === 'date_received') return `${f} ${o} ${c.value}`
+    if (c.field === 'size') return `${f} ${o} ${c.value} ${t('sizeUnit')}`
+    return `${f} ${o} "${c.value}"`
+  }
 }
 
 export function ConditionRow({
@@ -77,6 +59,7 @@ export function ConditionRow({
   onRemove: () => void
   canRemove: boolean
 }) {
+  const t = useConditionLabels()
   const operators = FIELD_OPERATORS[cond.field] ?? []
   const isBoolean = BOOLEAN_FIELDS.includes(cond.field)
   const isDate    = cond.field === 'date_received'
@@ -94,8 +77,8 @@ export function ConditionRow({
         onChange={e => handleFieldChange(e.target.value as RuleField)}
         className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
       >
-        {(Object.keys(FIELD_LABELS) as RuleField[]).map(f => (
-          <option key={f} value={f}>{FIELD_LABELS[f]}</option>
+        {FIELDS.map(f => (
+          <option key={f} value={f}>{t(`field_${f}`)}</option>
         ))}
       </select>
 
@@ -105,7 +88,7 @@ export function ConditionRow({
         className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
       >
         {operators.map(op => (
-          <option key={op} value={op}>{OPERATOR_LABELS[op]}</option>
+          <option key={op} value={op}>{t(`op_${op}`)}</option>
         ))}
       </select>
 
@@ -123,17 +106,13 @@ export function ConditionRow({
             onChange={e => onChange({ ...cond, value: e.target.value })}
             className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
           >
-            <option value="1">1 — Urgente</option>
-            <option value="2">2 — Haute</option>
-            <option value="3">3 — Normale</option>
-            <option value="4">4 — Basse</option>
-            <option value="5">5 — Très basse</option>
+            {PRIORITIES.map(n => <option key={n} value={n}>{t(`priority_${n}`)}</option>)}
           </select>
         ) : (
           <Input
             value={cond.value}
             onChange={e => onChange({ ...cond, value: e.target.value })}
-            placeholder={cond.field === 'size' ? 'Ko (ex: 5120 = 5 Mo)' : 'Valeur…'}
+            placeholder={cond.field === 'size' ? t('sizePlaceholder') : t('valuePlaceholder')}
             className="h-8 text-sm flex-1 min-w-[120px]"
           />
         )
