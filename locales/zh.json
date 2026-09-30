@@ -749,7 +749,7 @@
         "withGroupsUnknown": "未知：运行一次抽样以测量触发各组的邮件比例。",
         "groupRate": "{name}：{questions} 个问题，{rate} 的邮件触发",
         "groupRateUnknown": "{name}：{questions} 个问题，比例未知",
-        "groupRateHint": "该比例基于当前问题集下已标注的 {mails} 封邮件，而非整个邮箱。"
+        "groupRateHint": "该比例基于已按所读问题当前定义标注的 {mails} 封邮件，而非整个邮箱。"
       }
     },
     "engines": {

@@ -73,8 +73,8 @@ export interface PassEstimate {
   usdRemaining: { trunk: number; withGroups: number | null } | null
   /**
    * Par groupe conditionnel : ses questions, ses requêtes, son taux de déclenchement estimé, et
-   * sur combien de mails ce taux est lu (`measuredOn`) — les mails déjà étiquetés sous le jeu
-   * courant qui répondent aux questions du déclencheur, pas la boîte entière.
+   * sur combien de mails ce taux est lu (`measuredOn`) — les mails déjà étiquetés sous la
+   * définition courante des questions que lit le déclencheur, pas la boîte entière.
    */
   groups: Array<{ id: string; name: string; questions: number; requests: number; rate: number | null; measuredOn: number }>
 }

@@ -389,18 +389,22 @@ export async function exportTags(params: {
  * `EFFECTIVE_RANK`) : une valeur corrigée à la main compte pour la correction, pas pour ce que le
  * moteur avait dit — sinon la répartition décrirait le moteur au lieu de décrire la boîte.
  *
- * Restreinte à la taxonomie COURANTE : mélanger deux jeux de questions dans un même tableau
- * donnerait des totaux par question qui ne s'additionnent pas.
+ * Restreinte, QUESTION PAR QUESTION, aux lignes qui répondent à sa définition COURANTE
+ * (`question_version`, le complément exact de `staleCounts`) : mélanger deux définitions d'une
+ * même question donnerait des valeurs qui ne s'additionnent pas. Pas à la taxonomie entière :
+ * `taxonomyVersion` change dès qu'on (dés)active N'IMPORTE QUELLE question, et un simple
+ * interrupteur ferait perdre la mesure de toutes les autres (lot T-Q3b).
  */
 export async function tagDistribution(accountId: string): Promise<Array<{ question: string; values: Array<{ valeur: string; count: number }> }>> {
   const set = await questionSetForAccount(accountId)
   const rows = await query<{ question: string; valeur: string; n: string }>(
     `SELECT question, valeur, COUNT(*) AS n FROM (
        SELECT question, valeur, ${EFFECTIVE_RANK} AS rang
-         FROM message_tags WHERE account_id = $1 AND taxonomy_version = $2
+         FROM message_tags WHERE account_id = $1
+          AND (question, question_version) IN (SELECT * FROM unnest($2::text[], $3::text[]))
      ) r WHERE rang = 1
       GROUP BY question, valeur`,
-    [accountId, taxonomyVersion(set)]
+    [accountId, set.enabled.map(q => q.id), set.enabled.map(questionVersion)]
   )
   const byQuestion = new Map<string, Array<{ valeur: string; count: number }>>()
   for (const r of rows) {

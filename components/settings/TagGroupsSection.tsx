@@ -57,8 +57,8 @@ export function TagGroupsSection() {
     return Array.from(counts, ([id, count]) => ({ id, count, group: stored.find(g => g.id === id) ?? null }))
   }, [questions, stored])
   const free = slugs.filter(s => !s.group)
-  // Un déclencheur ne lit que la passe 1 : les questions des groupes conditionnels (le sien compris)
-  // n'y sont jamais, elles ne sont donc pas proposées au choix « Étiquette ».
+  // Un déclencheur ne lit que la passe 1 : les questions désactivées et celles des groupes
+  // conditionnels (le sien compris) n'y sont jamais, elles ne sont donc pas proposées au choix « Étiquette ».
   const conditional = useMemo(() => new Set(stored.filter(g => g.conditions.length).map(g => g.id)), [stored])
 
   const [open, setOpen] = useState<string | null>(null)
@@ -119,7 +119,7 @@ export function TagGroupsSection() {
   const editor = (isNew: boolean) => draft && (
     <>
       <Editor draft={draft} setDraft={setDraft} free={free.map(s => s.id)} labelG={labelG} t={t} isNew={isNew}
-        tagQuestions={questions.filter(q => q.group !== draft.id && !conditional.has(q.group))} />
+        tagQuestions={questions.filter(q => isEnabled(q) && q.group !== draft.id && !conditional.has(q.group))} />
       {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
       {isNew ? (
         <div className="mt-3 flex justify-end gap-2">

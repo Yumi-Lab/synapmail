@@ -3461,7 +3461,7 @@
                 "1"
               ]
             },
-            "description": "Add `distribution` (value counts per question) — a GROUP BY over every tag of the mailbox, so opt-in only."
+            "description": "Add `distribution` (value counts per question, restricted per question to tags written under its CURRENT definition — the complement of `staleCounts`) — a GROUP BY over every tag of the mailbox, so opt-in only."
           },
           {
             "name": "stale",
@@ -6235,7 +6235,7 @@
                 },
                 "measuredOn": {
                   "type": "integer",
-                  "description": "How many already-tagged messages (current question set) the rate is read on — not the whole mailbox."
+                  "description": "How many already-tagged messages (under the current definition of the questions the trigger reads) the rate is read on — not the whole mailbox."
                 }
               }
             }

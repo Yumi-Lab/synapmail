@@ -29,7 +29,10 @@
  *      (7 164 000 / 995 mails, `ASSUMED_INPUT_TOKENS_PER_QUESTION × 49`, à ±1 %), requêtes par
  *      mail (1 tronc, +1 par groupe), taux de déclenchement lu dans la répartition de
  *      l'échantillon ; la migration rétro-remplit `input_mails` d'une boîte triée avant la colonne,
- *      et la moyenne reste dans [0,5×, 2×] de la vraie après son premier passage ;
+ *      et la moyenne reste dans [0,5×, 2×] de la vraie après son premier passage ; la répartition
+ *      est lue question par question sous sa définition courante (lot T-Q3b) : désactiver une AUTRE
+ *      question ne fait pas tomber le taux, redéfinir la question lue le fait ; le choix « Étiquette »
+ *      ne propose que des questions actives ;
  *   G. (HTTP) les routes : 201, 400 qui nomme le champ, 404, 409, 403 sans `tags:write`.
  *
  * CONTRÔLE NÉGATIF (`--negative`) : le déclencheur du groupe est remplacé EN BASE par un
@@ -37,7 +40,7 @@
  * budget de découpage n'est plus honoré (le banc appelle `chunkByBudget` avec un budget infini)
  * et la clé de banc reçoit TOUTES les portées — D3/D5/D6/D7 (la passe 2 ne part plus), E1/E2
  * (une seule requête porte tout), F4/F5/F6 (un déclencheur sur un champ du mail compte pour 1,
- * plus pour 2/3, et `measuredOn` ne lit plus rien : F12), F10 (`input_mails` remis à 0 après la
+ * plus pour 2/3, et `measuredOn` ne lit plus rien : F12, et de même après l'interrupteur : F13), F10 (`input_mails` remis à 0 après la
  * migration : la moyenne redevient l'historique divisé par le dernier passage) et G5 (le 403)
  * DOIVENT tomber. D2 tient (« Bonjour » n'avait déjà qu'une
  * requête). Ce qu'il démontre : ces assertions mesurent bien le déclenchement, la coupe et le
@@ -78,7 +81,7 @@ const { validateGroup, InvalidGroupError, UnknownGroupError, DuplicateGroupError
 const { ASSUMED_INPUT_TOKENS_PER_QUESTION, assumedInputTokensPerMail } = await import('../lib/tagging/engine.ts')
 const { evaluateRule } = await import('../lib/rulesEval.ts')
 const { readTaggingStatus } = await import('../lib/tagging/mailbox.ts')
-const { taxonomyVersion } = await import('../lib/tagging/store.ts')
+const { taxonomyVersion, tagDistribution } = await import('../lib/tagging/store.ts')
 const tr = await import('../lib/tagging/tagRules.ts')
 const runner = await import('../lib/tagging/runner.ts')
 const { ALL_SCOPES } = await import('../lib/apiScopes.ts')
@@ -282,6 +285,29 @@ try {
   check(`F11 la migration ne touche pas une boîte déjà mesurée : A1 garde input_mails = ${s1.tagged}`, Number((await pool.query(`SELECT input_mails FROM mailbox_tagging WHERE account_id = $1`, [A1])).rows[0].input_mails) === s1.tagged)
   check('F12 `measuredOn` dit sur combien de mails le taux est lu : les mails de l’échantillon qui répondent à la question du déclencheur (3 sur A1), 0 sans répartition', s1.passes.groups[0].measuredOn === 3 && s3.passes.groups[0].measuredOn === 0, JSON.stringify(s1.passes.groups))
 
+  // Lot T-Q3b : la répartition est lue QUESTION PAR QUESTION sous sa définition courante, pas sous
+  // la taxonomie entière — sinon (dés)activer n'importe quelle question ferait tomber le taux de
+  // tous les groupes à « part inconnue » jusqu'au prochain échantillon.
+  await updateQuestion(U1, NOUL_Q, { enabled: false })
+  const s1b = await readTaggingStatus(A1)
+  const rateB = s1b.passes.groups.find(x => x.id === 'support')?.rate
+  check(`F13 après avoir DÉSACTIVÉ une autre question (${NOUL_Q}), le taux du groupe reste ${(expectedRate * 100).toFixed(0)} % sur 3 mails (obtenu ${rateB === null || rateB === undefined ? 'null' : (rateB * 100).toFixed(0)} % sur ${s1b.passes.groups[0]?.measuredOn})`, rateB !== null && rateB !== undefined && Math.abs(rateB - expectedRate) < 1e-9 && s1b.passes.groups[0].measuredOn === 3, JSON.stringify(s1b.passes.groups))
+  const distB = await tagDistribution(A1)
+  check(`F14 la répartition ne cite plus la question désactivée et garde les 3 réponses à \`${INT}\``, !distB.some(d => d.question === NOUL_Q) && distB.find(d => d.question === INT)?.values.reduce((n, v) => n + v.count, 0) === 3, JSON.stringify(distB.map(d => d.question)))
+  await updateQuestion(U1, NOUL_Q, { enabled: true })
+  // La contrepartie : une question dont la DÉFINITION change n'a plus de réponse valable — ses
+  // anciennes lignes ne comptent pas (c'est exactement ce que `staleCounts` recense).
+  const intWas = set1.questionById(INT).instructions
+  await updateQuestion(U1, INT, { instructions: intWas + ' (redéfinie)' })
+  const distC = await tagDistribution(A1)
+  check(`F15 une question REDÉFINIE (\`${INT}\`) sort de la répartition : ses anciennes réponses ne valent plus, les autres questions gardent les leurs`, !distC.some(d => d.question === INT) && distC.some(d => d.question === NOUL_Q && d.values.reduce((n, v) => n + v.count, 0) === 3), JSON.stringify(distC.map(d => [d.question, d.values.reduce((n, v) => n + v.count, 0)]).slice(0, 4)))
+  await updateQuestion(U1, INT, { instructions: intWas })
+  check('F16 définition rétablie : la répartition retrouve les 3 réponses', (await tagDistribution(A1)).find(d => d.question === INT)?.values.reduce((n, v) => n + v.count, 0) === 3)
+  // Le choix « Étiquette » d'un déclencheur ne propose que des questions ACTIVES (le filtre par
+  // groupe seul laissait passer une question désactivée — gate T-Q3, remarque 4).
+  const uiSrc = readFileSync(new URL('../components/settings/TagGroupsSection.tsx', import.meta.url), 'utf8')
+  check('F17 `TagGroupsSection.tsx` filtre les questions proposées au déclencheur par `isEnabled(q)`', /tagQuestions=\{questions\.filter\(q => isEnabled\(q\) &&/.test(uiSrc))
+
   // ---- isolation + suppression ----------------------------------------------------------
   console.log('H. isolation et suppression')
   check('H1 U2 ne voit pas les groupes de U1 ; la boîte de U2 n’en reçoit aucun', (await listGroups(U2)).length === 0 && (await groupsForAccount(A2)).length === 0 && (await groupsForAccount(A1)).length === 1)
@@ -348,7 +374,7 @@ try {
 }
 
 if (NEGATIVE) {
-  const expected = ['D3', 'D5', 'D6', 'D7', 'E1', 'E2', 'F4', 'F5', 'F6', 'F10', 'F12', 'G5']
+  const expected = ['D3', 'D5', 'D6', 'D7', 'E1', 'E2', 'F4', 'F5', 'F6', 'F10', 'F12', 'F13', 'G5']
   const fell = failures.map(f => f.split(' ')[0]).filter(k => expected.includes(k))
   const unexpected = failures.filter(f => !expected.includes(f.split(' ')[0]))
   const want = BASE ? expected : expected.filter(k => !k.startsWith('G'))

@@ -749,7 +749,7 @@
         "withGroupsUnknown": "Unknown: run a sample to measure the share of messages that trigger each group.",
         "groupRate": "{name}: {questions} questions, triggered on {rate} of messages",
         "groupRateUnknown": "{name}: {questions} questions, share unknown",
-        "groupRateHint": "Share read on the {mails} messages already tagged under the current question set, not on the whole mailbox."
+        "groupRateHint": "Share read on the {mails} messages already tagged under the current definition of the question it reads, not on the whole mailbox."
       }
     },
     "engines": {
