@@ -12,6 +12,7 @@ import {
 } from '@/components/settings/primitives'
 import { ENGINES_ENDPOINT } from '@/components/settings/DecisionEnginesSection'
 import { TagQuestionsSection } from '@/components/settings/TagQuestionsSection'
+import { TagRulesSection } from '@/components/settings/TagRulesSection'
 import type { TaggingStatus } from '@/lib/tagging/mailbox'
 import type { tagDistribution } from '@/lib/tagging/store'
 import type { DecisionEngine } from '@/lib/tagging/engines'
@@ -325,6 +326,9 @@ export default function TaggingSettingsPage() {
       {/* Les questions sont celles de l'UTILISATEUR, pas d'une boîte : la section se rend même sans boîte. */}
       <div className="mt-5">
         <TagQuestionsSection accountId={accountId} staleCounts={staleData?.data?.staleCounts ?? {}} />
+      </div>
+      <div className="mt-5">
+        <TagRulesSection accounts={accounts} />
       </div>
     </SettingsPage>
   )

@@ -25,11 +25,12 @@ import type { ImapAccountRow } from '../accounts'
 import { query } from '../db'
 import { decrypt } from '../encrypt'
 import {
-  EngineError, askEngine, assumedInputTokensPerMail, buildState, costUsd,
+  EngineError, RULE_SOURCE, askEngine, assumedInputTokensPerMail, buildState, costUsd,
   type BulkState, type EngineResult, type EngineState, type MailForState, type PauseReason, type TagSource,
 } from './engine'
 import { alreadyTagged, messageIdOf, writeTags, type TagAuthor } from './store'
 import { questionSetForAccount } from './userQuestions'
+import { applyTagRules, remainingQuestions, rulesForAccount, type TagRule } from './tagRules'
 import type { QuestionSet, TagQuestion } from './questions'
 
 /** Un mail tel que la source le rend : de quoi bâtir l'état ET le situer. */
@@ -384,9 +385,9 @@ const remaining = (deadline: number): number => deadline - Date.now()
  * boîte (`credit`, `auth`) est remontée telle quelle — l'appelant pose la pause.
  */
 async function tagBatch(
-  params: { accountId: string; engine: TaggingEngine; mails: SourceMail[]; deadline: number; questions: QuestionSet }
+  params: { accountId: string; engine: TaggingEngine; mails: SourceMail[]; deadline: number; questions: QuestionSet; rules: readonly TagRule[] }
 ): Promise<{ tagged: number; errors: number; calls: number; inputTokens: number; stop?: EngineError }> {
-  const { accountId, engine, mails, deadline, questions } = params
+  const { accountId, engine, mails, deadline, questions, rules } = params
   const posed = questions.posed()
   const queue = [...mails]
   let tagged = 0, errors = 0, calls = 0, inputTokens = 0
@@ -397,10 +398,23 @@ async function tagBatch(
       if (stop || remaining(deadline) <= 0) return
       const mail = queue.shift()
       if (!mail) return
+      // Les règles d'étiquetage passent AVANT le moteur (décision 24.1) : leurs étiquettes sont
+      // écrites en source `regle`, signées de la règle, et les questions qu'une règle « qui fait
+      // foi » a tranchées ne sont plus posées — un mail entièrement tranché ne coûte rien.
+      const decided = applyTagRules(rules, mail, questions)
+      const position = { folder: mail.folder, uid: mail.uid, fromName: mail.fromName, fromAddress: mail.fromAddress, subject: mail.subject, date: mail.date }
+      for (const rule of Array.from(new Set(decided.tags.map(t => t.rule)))) {
+        await writeTags({
+          accountId, messageId: messageIdOf(mail), source: RULE_SOURCE, auteur: { id: rule.id, nom: rule.name },
+          tags: decided.tags.filter(t => t.rule === rule).map(({ question, valeur }) => ({ question, valeur })), questions, position,
+        })
+      }
+      const ask = remainingQuestions(posed, decided.settled)
+      if (!ask.length) { tagged += 1; continue }
       let result: EngineResult
       calls += 1
       try {
-        result = await engine.ask(buildState(mail), posed)
+        result = await engine.ask(buildState(mail), ask)
       } catch (err) {
         if (err instanceof EngineError && (err.kind === 'credit' || err.kind === 'auth')) { stop = err; return }
         errors += 1
@@ -410,8 +424,7 @@ async function tagBatch(
       if (!result.tags.length) { errors += 1; continue }
       await writeTags({
         accountId, messageId: messageIdOf(mail), source: engine.source, auteur: engine.auteur, modele: result.model,
-        tags: result.tags, questions,
-        position: { folder: mail.folder, uid: mail.uid, fromName: mail.fromName, fromAddress: mail.fromAddress, subject: mail.subject, date: mail.date },
+        tags: result.tags, questions, position,
       })
       tagged += 1
     }
@@ -485,6 +498,9 @@ export async function runPass(params: {
     // Le jeu de questions est relu UNE fois par passage : une question modifiée pendant un tri
     // s'applique au passage suivant (≤ 60 s), et tous les lots d'un passage posent le même jeu.
     const questions = await questionSetForAccount(accountId)
+    // Les règles d'étiquetage, relues au même rythme : une règle ajoutée pendant un tri
+    // s'applique au passage suivant.
+    const rules = await rulesForAccount(accountId)
 
     // Le plafond se vérifie AVANT tout appel : une boîte déjà au plafond ne paie pas un mail
     // de plus pour l'apprendre.
@@ -501,8 +517,8 @@ export async function runPass(params: {
       // Un échantillon est un tri en masse BORNÉ : même état, même verrou, même plafond, mêmes
       // pauses — seule la liste des mails diffère, donc un seul `if` les sépare.
       const res = row.sample_size === null
-        ? await advanceBulk({ row, source, engine, deadline, spent, budget: row.budget_usd, questions })
-        : await advanceSample({ row, source, engine, deadline, spent, budget: row.budget_usd, questions })
+        ? await advanceBulk({ row, source, engine, deadline, spent, budget: row.budget_usd, questions, rules })
+        : await advanceSample({ row, source, engine, deadline, spent, budget: row.budget_usd, questions, rules })
       acc.tagged += res.tagged; acc.skipped += res.skipped; acc.errors += res.errors; acc.calls += res.calls
       spent = res.spent
       acc.spentUsd = spent
@@ -512,7 +528,7 @@ export async function runPass(params: {
 
     if (row.live && remaining(deadline) > 0 && spent < row.budget_usd) {
       worked = true
-      const res = await advanceLive({ row, source, engine, deadline, spent, budget: row.budget_usd, questions })
+      const res = await advanceLive({ row, source, engine, deadline, spent, budget: row.budget_usd, questions, rules })
       acc.tagged += res.tagged; acc.skipped += res.skipped; acc.errors += res.errors; acc.calls += res.calls
       spent = res.spent
       acc.spentUsd = spent
@@ -541,9 +557,9 @@ type Advance = {
  */
 async function processBatch(params: {
   accountId: string; engine: TaggingEngine; mails: SourceMail[]; deadline: number; spent: number; budget: number
-  sinceTagId: string | null; questions: QuestionSet
+  sinceTagId: string | null; questions: QuestionSet; rules: readonly TagRule[]
 }): Promise<Advance & { lastUid: number; complete: boolean }> {
-  const { accountId, engine, mails, deadline, questions } = params
+  const { accountId, engine, mails, deadline, questions, rules } = params
   const ids = mails.map(m => messageIdOf(m))
   const seen = await alreadyTagged(accountId, { source: engine.source, auteurId: engine.auteur.id, questions }, ids, params.sinceTagId)
   // Le même mail peut être classé dans deux dossiers, ou deux fois dans le même : il porte alors
@@ -567,7 +583,7 @@ async function processBatch(params: {
     return { tagged: 0, skipped, errors: 0, calls: 0, spent, lastUid, complete: true }
   }
 
-  const res = await tagBatch({ accountId, engine, mails: todo, deadline, questions })
+  const res = await tagBatch({ accountId, engine, mails: todo, deadline, questions, rules })
   // Un lot INTERROMPU (délai épuisé, refus du moteur) laisse des mails non traités : l'appelant
   // ne doit alors PAS avancer son curseur, sinon ces mails ne seraient jamais redemandés. Les
   // reprendre au passage suivant ne coûte rien — ceux qui sont faits sont sautés par leur étiquette.
@@ -593,7 +609,7 @@ async function processBatch(params: {
  * tout ce qui a déjà été payé.
  */
 async function advanceBulk(params: {
-  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number; questions: QuestionSet
+  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number; questions: QuestionSet; rules: readonly TagRule[]
 }): Promise<Advance> {
   const { row, source, engine, deadline } = params
   const accountId = row.account_id
@@ -637,7 +653,7 @@ async function advanceBulk(params: {
       continue
     }
 
-    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, sinceTagId: row.run_started_tag_id, questions: params.questions })
+    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, sinceTagId: row.run_started_tag_id, questions: params.questions, rules: params.rules })
     acc.tagged += res.tagged; acc.skipped += res.skipped; acc.errors += res.errors; acc.calls += res.calls
     acc.spent = res.spent
     if (res.complete) {
@@ -672,7 +688,7 @@ const saveSampleCursor = (accountId: string, cursor: SampleCursor): Promise<unkn
  * c'est une lecture d'en-têtes bornée aux mails tirés, pas un appel au moteur.
  */
 async function advanceSample(params: {
-  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number; questions: QuestionSet
+  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number; questions: QuestionSet; rules: readonly TagRule[]
 }): Promise<Advance> {
   const { row, source, engine, deadline } = params
   const accountId = row.account_id
@@ -729,7 +745,7 @@ async function advanceSample(params: {
       continue
     }
 
-    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, sinceTagId: row.run_started_tag_id, questions: params.questions })
+    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, sinceTagId: row.run_started_tag_id, questions: params.questions, rules: params.rules })
     acc.tagged += res.tagged; acc.skipped += res.skipped + missing; acc.errors += res.errors; acc.calls += res.calls
     acc.spent = res.spent
     if (missing) {
@@ -752,7 +768,7 @@ async function advanceSample(params: {
  * déclencherait un tri de tout l'historique, aux frais de l'utilisateur.
  */
 async function advanceLive(params: {
-  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number; questions: QuestionSet
+  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number; questions: QuestionSet; rules: readonly TagRule[]
 }): Promise<Advance> {
   const { row, source, engine, deadline } = params
   const accountId = row.account_id
@@ -773,7 +789,7 @@ async function advanceLive(params: {
       if (remaining(deadline) <= 0 || acc.spent >= params.budget) return acc
       const mails = await source.fetch(f.path, after, BATCH_SIZE)
       if (!mails.length) break
-      const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, sinceTagId: row.run_started_tag_id, questions: params.questions })
+      const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, sinceTagId: row.run_started_tag_id, questions: params.questions, rules: params.rules })
       acc.tagged += res.tagged; acc.skipped += res.skipped; acc.errors += res.errors; acc.calls += res.calls
       acc.spent = res.spent
       if (res.complete) {

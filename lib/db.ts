@@ -667,6 +667,28 @@ export async function initDb(): Promise<void> {
     )
   `)
 
+  // Les règles d'étiquetage SANS moteur (lot T-Q2, décision 24.1) : mêmes `conditions` que
+  // `email_rules`, évaluées par la même fonction ; `actions` = [{question, valeur}] ;
+  // `authoritative` = la question tranchée n'est pas posée au moteur. `account_id` NULL = toutes
+  // les boîtes de l'utilisateur.
+  await query(`
+    CREATE TABLE IF NOT EXISTS tag_rules (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      account_id UUID REFERENCES email_accounts(id) ON DELETE CASCADE,
+      name VARCHAR(255) NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      priority INTEGER NOT NULL DEFAULT 0,
+      condition_logic VARCHAR(10) NOT NULL DEFAULT 'all' CHECK (condition_logic IN ('all', 'any')),
+      conditions JSONB NOT NULL DEFAULT '[]',
+      actions JSONB NOT NULL DEFAULT '[]',
+      authoritative BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS tag_rules_user_idx ON tag_rules(user_id)`)
+
   // La dernière position CONNUE d'un mail tagué, pour que le filtre par étiquette montre des
   // mails absents de la page chargée. `messages_cache` ne suffit pas : il ne garde qu'une
   // fenêtre, et un mail tagué il y a un mois en est sorti.

@@ -148,6 +148,11 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'DELETE /api/tags/questions/[id]': 'tags:write',
   'POST /api/tags/questions/reset': 'tags:write',
   'POST /api/tags/questions/[id]/test': 'tags:write',
+  // Les règles d'étiquetage (lot T-Q2) : à l'utilisateur, comme les questions.
+  'GET /api/tags/rules': 'tags:read',
+  'POST /api/tags/rules': 'tags:write',
+  'PATCH /api/tags/rules/[id]': 'tags:write',
+  'DELETE /api/tags/rules/[id]': 'tags:write',
 }
 
 /**

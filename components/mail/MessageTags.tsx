@@ -17,7 +17,7 @@ import { useFormatter, useTranslations } from 'next-intl'
 import { Tags } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { valuesOf } from '@/lib/tagging/questions'
-import { HUMAN_SOURCE } from '@/lib/tagging/engine'
+import { HUMAN_SOURCE, RULE_SOURCE } from '@/lib/tagging/engine'
 import { listPills, orderedTags, tagsByGroup } from '@/lib/tagging/view'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
@@ -36,7 +36,9 @@ function useOriginText() {
     const name = tag.auteurNom || tag.modele || tag.source
     const who = tag.source === HUMAN_SOURCE
       ? t('sourceHuman', { name })
-      : t('sourceEngine', { name, model: tag.modele ?? tag.source })
+      : tag.source === RULE_SOURCE
+        ? t('sourceRule', { name })
+        : t('sourceEngine', { name, model: tag.modele ?? tag.source })
     return `${who} · ${format.dateTime(new Date(tag.creeLe), { dateStyle: 'short', timeStyle: 'short' })}`
   }
 }

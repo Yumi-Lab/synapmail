@@ -1020,11 +1020,24 @@
                     "maxItems": 20,
                     "items": {
                       "type": "object",
-                      "required": ["filename", "content"],
+                      "required": [
+                        "filename",
+                        "content"
+                      ],
                       "properties": {
-                        "filename": { "type": "string", "description": "Sanitised server-side: never used as a path, cut to 100 characters." },
-                        "content": { "type": "string", "format": "byte", "description": "The file's bytes in base64. Invalid base64 is refused, never silently truncated." },
-                        "contentType": { "type": "string", "description": "Defaults to application/octet-stream when absent or not a valid MIME type." }
+                        "filename": {
+                          "type": "string",
+                          "description": "Sanitised server-side: never used as a path, cut to 100 characters."
+                        },
+                        "content": {
+                          "type": "string",
+                          "format": "byte",
+                          "description": "The file's bytes in base64. Invalid base64 is refused, never silently truncated."
+                        },
+                        "contentType": {
+                          "type": "string",
+                          "description": "Defaults to application/octet-stream when absent or not a valid MIME type."
+                        }
                       }
                     }
                   }
@@ -1460,14 +1473,40 @@
     },
     "/api/subscriptions/history": {
       "get": {
-        "tags": ["Subscriptions"],
+        "tags": [
+          "Subscriptions"
+        ],
         "operationId": "countSubscriptionHistory",
         "summary": "Count one newsletter's whole history",
         "description": "Counts, across every folder of the mailbox except the sent, the drafts and the trash, the messages of one newsletter — including the ones the list route never sees, since it reads only the most recent messages of a single folder. Read only: nothing is moved. A slow call on a mailbox with many folders, so count once and then purge.",
         "parameters": [
-          { "name": "account", "in": "query", "required": true, "schema": { "type": "string" }, "description": "The mailbox id." },
-          { "name": "id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "An id the list route answered." },
-          { "name": "folder", "in": "query", "schema": { "type": "string", "default": "INBOX" }, "description": "The folder the id was listed from — where it is resolved back to a newsletter." }
+          {
+            "name": "account",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The mailbox id."
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "An id the list route answered."
+          },
+          {
+            "name": "folder",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "INBOX"
+            },
+            "description": "The folder the id was listed from — where it is resolved back to a newsletter."
+          }
         ],
         "responses": {
           "200": {
@@ -1476,22 +1515,38 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["data"],
-                  "properties": { "data": { "$ref": "#/components/schemas/SubscriptionHistory" } }
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SubscriptionHistory"
+                    }
+                  }
                 }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "500": { "$ref": "#/components/responses/ServerError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
         }
       }
     },
     "/api/subscriptions/purge": {
       "post": {
-        "tags": ["Subscriptions"],
+        "tags": [
+          "Subscriptions"
+        ],
         "operationId": "purgeSubscriptionHistory",
         "summary": "Move one newsletter's whole history to the trash",
         "description": "Moves every message of a newsletter to the mailbox's trash — never a permanent deletion, never an expunge, so a mistake stays recoverable. `expected` is the total the count route answered; the purge refuses and moves nothing when the mailbox no longer holds that number. Needs the `delete` permission.",
@@ -1501,12 +1556,28 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["account", "id", "expected"],
+                "required": [
+                  "account",
+                  "id",
+                  "expected"
+                ],
                 "properties": {
-                  "account": { "type": "string" },
-                  "id": { "type": "string", "description": "An id the list route answered." },
-                  "expected": { "type": "integer", "minimum": 0, "description": "The `total` answered by the count route. A different number refuses." },
-                  "folder": { "type": "string", "default": "INBOX" }
+                  "account": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string",
+                    "description": "An id the list route answered."
+                  },
+                  "expected": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "The `total` answered by the count route. A different number refuses."
+                  },
+                  "folder": {
+                    "type": "string",
+                    "default": "INBOX"
+                  }
                 }
               }
             }
@@ -1519,29 +1590,51 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["data"],
-                  "properties": { "data": { "$ref": "#/components/schemas/PurgeReport" } }
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PurgeReport"
+                    }
+                  }
                 }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
           "409": {
             "description": "The purge refused and moved nothing.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["data"],
-                  "properties": { "data": { "$ref": "#/components/schemas/PurgeRefused" } }
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PurgeRefused"
+                    }
+                  }
                 }
               }
             }
           },
-          "500": { "$ref": "#/components/responses/ServerError" }
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
         }
       }
     },
@@ -3058,7 +3151,8 @@
                                 "one",
                                 "autre",
                                 "humain",
-                                "dossier"
+                                "dossier",
+                                "regle"
                               ]
                             }
                           }
@@ -3354,9 +3448,33 @@
         "summary": "Read where a mailbox's sorting stands",
         "description": "Counters, spend, estimate and the chosen engine — never its key, only `hasKey`. Requires the `tags:read` scope; a key without it gets 403 naming it.",
         "parameters": [
-          {"$ref": "#/components/parameters/AccountQueryRequired"},
-          {"name": "distribution", "in": "query", "required": false, "schema": {"type": "string", "enum": ["1"]}, "description": "Add `distribution` (value counts per question) — a GROUP BY over every tag of the mailbox, so opt-in only."},
-          {"name": "stale", "in": "query", "required": false, "schema": {"type": "string", "enum": ["1"]}, "description": "Add `staleCounts`: per question id, how many messages carry a tag written under an OLDER version of that question than the caller’s current one. Human (`humain`) tags never count. Opt-in for the same reason as `distribution`."}
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          },
+          {
+            "name": "distribution",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "Add `distribution` (value counts per question) — a GROUP BY over every tag of the mailbox, so opt-in only."
+          },
+          {
+            "name": "stale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "Add `staleCounts`: per question id, how many messages carry a tag written under an OLDER version of that question than the caller’s current one. Human (`humain`) tags never count. Opt-in for the same reason as `distribution`."
+          }
         ],
         "responses": {
           "200": {
@@ -3873,6 +3991,212 @@
           }
         }
       }
+    },
+    "/api/tags/rules": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "listTagRules",
+        "summary": "The caller's tagging rules",
+        "description": "Rules that set tags without an engine call (source `regle`, signed by the rule). One list per user, in application order. Requires the `tags:read` scope.",
+        "responses": {
+          "200": {
+            "description": "The rules, by priority then creation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TagRule"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "createTagRule",
+        "summary": "Add a tagging rule",
+        "description": "Validated against the caller's question set: `400` names the offending `field` (`actions[n].valeur` for a value outside the question's list, `accountId` for a mailbox that is not the caller's). Requires the `tags:write` scope.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagRuleInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The stored rule.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TagRule"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tags/rules/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "updateTagRule",
+        "summary": "Change a tagging rule",
+        "description": "Every field optional; the body is merged into the stored rule and the whole rule is revalidated. `404` names an unknown rule (another user's rule is unknown). Requires the `tags:write` scope.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagRuleInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rule after the change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TagRule"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "deleteTagRule",
+        "summary": "Remove a tagging rule",
+        "description": "Tags the rule already set stay in the database: they are history. `404` names an unknown rule. Requires the `tags:write` scope.",
+        "responses": {
+          "200": {
+            "description": "The removed id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4111,7 +4435,8 @@
               "one",
               "autre",
               "humain",
-              "dossier"
+              "dossier",
+              "regle"
             ],
             "description": "The engine kind that produced it, or the hand that wrote it."
           },
@@ -4907,26 +5232,82 @@
       },
       "SubscriptionHistory": {
         "type": "object",
-        "required": ["id", "sender", "header", "value", "total", "folders"],
+        "required": [
+          "id",
+          "sender",
+          "header",
+          "value",
+          "total",
+          "folders"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "sender": { "$ref": "#/components/schemas/EmailAddress" },
-          "listId": { "type": ["string", "null"] },
-          "header": { "type": "string", "enum": ["list-id", "from"], "description": "What was searched. The purge replays the same criterion." },
-          "value": { "type": "string" },
-          "total": { "type": "integer", "description": "Across every folder of the scope." },
-          "oldest": { "type": ["string", "null"], "description": "Server date (INTERNALDATE), not the sender's Date header." },
-          "newest": { "type": ["string", "null"] },
+          "id": {
+            "type": "string"
+          },
+          "sender": {
+            "$ref": "#/components/schemas/EmailAddress"
+          },
+          "listId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "header": {
+            "type": "string",
+            "enum": [
+              "list-id",
+              "from"
+            ],
+            "description": "What was searched. The purge replays the same criterion."
+          },
+          "value": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "description": "Across every folder of the scope."
+          },
+          "oldest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Server date (INTERNALDATE), not the sender's Date header."
+          },
+          "newest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "folders": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["folder", "count"],
+              "required": [
+                "folder",
+                "count"
+              ],
               "properties": {
-                "folder": { "type": "string" },
-                "count": { "type": "integer" },
-                "oldest": { "type": ["string", "null"] },
-                "newest": { "type": ["string", "null"] }
+                "folder": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "oldest": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "newest": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
               }
             }
           }
@@ -4934,28 +5315,65 @@
       },
       "PurgeReport": {
         "type": "object",
-        "required": ["id", "moved", "trash", "folders"],
+        "required": [
+          "id",
+          "moved",
+          "trash",
+          "folders"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "moved": { "type": "integer" },
-          "trash": { "type": "string", "description": "The folder everything was moved to." },
+          "id": {
+            "type": "string"
+          },
+          "moved": {
+            "type": "integer"
+          },
+          "trash": {
+            "type": "string",
+            "description": "The folder everything was moved to."
+          },
           "folders": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["folder", "moved"],
-              "properties": { "folder": { "type": "string" }, "moved": { "type": "integer" } }
+              "required": [
+                "folder",
+                "moved"
+              ],
+              "properties": {
+                "folder": {
+                  "type": "string"
+                },
+                "moved": {
+                  "type": "integer"
+                }
+              }
             }
           }
         }
       },
       "PurgeRefused": {
         "type": "object",
-        "required": ["id", "refused"],
+        "required": [
+          "id",
+          "refused"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "refused": { "type": "string", "enum": ["not_found", "count_changed", "no_trash"] },
-          "total": { "type": "integer", "description": "On `count_changed`: what the mailbox holds now, to replay with." }
+          "id": {
+            "type": "string"
+          },
+          "refused": {
+            "type": "string",
+            "enum": [
+              "not_found",
+              "count_changed",
+              "no_trash"
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "description": "On `count_changed`: what the mailbox holds now, to replay with."
+          }
         }
       },
       "AssistantResult": {
@@ -5318,6 +5736,109 @@
             "minimum": 0
           }
         }
+      },
+      "TagRuleInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "conditions",
+          "actions"
+        ],
+        "description": "A tagging rule: when the message matches the conditions (the same format and evaluator as an email rule), set the listed tags without calling the engine. Every `valeur` must be one of its question's values (`400` names `actions[n].valeur`). `authoritative` removes the settled questions from the engine call for that message.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "accountId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "One of the caller's mailboxes, or `null` for all of them."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "priority": {
+            "type": "integer",
+            "default": 0,
+            "description": "Lower runs first; on a shared question the first matching rule wins."
+          },
+          "conditionLogic": {
+            "type": "string",
+            "enum": [
+              "all",
+              "any"
+            ],
+            "default": "all"
+          },
+          "conditions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/RuleCondition"
+            }
+          },
+          "actions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "question",
+                "valeur"
+              ],
+              "properties": {
+                "question": {
+                  "type": "string"
+                },
+                "valeur": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "authoritative": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "TagRule": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TagRuleInput"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "accountId",
+              "enabled",
+              "priority",
+              "conditionLogic",
+              "authoritative",
+              "createdAt",
+              "updatedAt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ]
       }
     }
   }
