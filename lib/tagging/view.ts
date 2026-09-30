@@ -29,6 +29,9 @@ export const TAG_RULES_ENDPOINT = '/api/tags/rules'
 /** Les groupes de questions conditionnels (lot T-Q3). */
 export const TAG_GROUPS_ENDPOINT = '/api/tags/groups'
 
+/** Le statut et les réglages d'une boîte (`?account=`) — clé SWR de l'écran de tri, aussi revalidée par les groupes. */
+export const TAGGING_SETTINGS_ENDPOINT = '/api/tagging/settings'
+
 /** L'ordre d'affichage d'une étiquette : celui du jeu de l'utilisateur, jamais celui du SQL. */
 const byQuestionOrder = (set: QuestionSet) => (a: StoredTag, b: StoredTag) => set.rankOf(a.question) - set.rankOf(b.question)
 

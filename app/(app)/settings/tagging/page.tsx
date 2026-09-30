@@ -16,6 +16,7 @@ import { TagGroupsSection } from '@/components/settings/TagGroupsSection'
 import { TagRulesSection } from '@/components/settings/TagRulesSection'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import type { PassEstimate, TaggingStatus } from '@/lib/tagging/mailbox'
+import { TAGGING_SETTINGS_ENDPOINT } from '@/lib/tagging/view'
 import type { tagDistribution } from '@/lib/tagging/store'
 import type { DecisionEngine } from '@/lib/tagging/engines'
 import type { EmailAccount } from '@/types/account'
@@ -26,7 +27,7 @@ const fetcher = (url: string) => fetch(url).then(r => r.json())
 type TagDistribution = Awaited<ReturnType<typeof tagDistribution>>
 
 /** Les routes de l'écran, écrites une fois. */
-const SETTINGS_ENDPOINT = '/api/tagging/settings'
+const SETTINGS_ENDPOINT = TAGGING_SETTINGS_ENDPOINT
 const RUN_ENDPOINT = '/api/tagging/run'
 const STATUS_ENDPOINT = '/api/tagging/status'
 

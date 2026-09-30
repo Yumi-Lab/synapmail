@@ -9,7 +9,7 @@
  * « … » le retire, derrière une confirmation.
  */
 import { useMemo, useState } from 'react'
-import useSWR from 'swr'
+import useSWR, { mutate as globalMutate } from 'swr'
 import { useTranslations } from 'next-intl'
 import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -20,7 +20,7 @@ import { ConditionRow, GROUP_FIELDS, newCondition, useConditionText } from '@/co
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import { isEnabled } from '@/lib/tagging/questions'
-import { TAG_GROUPS_ENDPOINT } from '@/lib/tagging/view'
+import { TAG_GROUPS_ENDPOINT, TAGGING_SETTINGS_ENDPOINT } from '@/lib/tagging/view'
 import type { TagQuestionGroup } from '@/lib/tagging/questionGroups'
 import type { ConditionLogic } from '@/types/rule'
 import { cn } from '@/lib/utils'
@@ -67,6 +67,13 @@ export function TagGroupsSection() {
   const dirty = !!draft && !!current && JSON.stringify(draftOf(current)) !== JSON.stringify(draft)
   const complete = (d: Draft) => d.conditions.length > 0
 
+  // Un déclencheur change le coût AVANT de lancer, qui vit dans le statut de la boîte affichée :
+  // la clé du statut est revalidée avec la liste, sinon la ligne « avec groupes » n'apparaît pas.
+  const refresh = () => Promise.all([
+    mutate(),
+    globalMutate((key: unknown) => typeof key === 'string' && key.startsWith(TAGGING_SETTINGS_ENDPOINT)),
+  ])
+
   async function send(method: string, path: string, body?: unknown): Promise<{ ok: boolean; json: { error?: string; data?: unknown } }> {
     const res = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
     return { ok: res.ok, json: await res.json().catch(() => ({})) }
@@ -80,7 +87,7 @@ export function TagGroupsSection() {
         ? await send('POST', TAG_GROUPS_ENDPOINT, draft)
         : await send('PATCH', `${TAG_GROUPS_ENDPOINT}/${open}`, draft)
       if (!ok) { setError(json.error ?? t('saveFailed')); return }
-      await mutate()
+      await refresh()
       if (adding) { setAdding(false); setDraft(null); setOpen(null) } else setDraft(draftOf(json.data as TagQuestionGroup))
       setSaved(true)
     } finally {
@@ -92,7 +99,7 @@ export function TagGroupsSection() {
     if (!window.confirm(t('deleteConfirm', { name: labelG(g.id) }))) return
     await send('DELETE', `${TAG_GROUPS_ENDPOINT}/${g.id}`)
     if (open === g.id) { setOpen(null); setDraft(null) }
-    await mutate()
+    await refresh()
   }
 
   const openRow = (g: TagQuestionGroup) => {
