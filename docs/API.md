@@ -46,6 +46,7 @@ A key that is valid but too narrow gets **`403`**, naming what it lacks — neve
 | `messages:read` | list, read, search and thread messages |
 | `messages:write` | flag, move and delete messages |
 | `messages:send` | send messages |
+| `messages:draft` | write drafts into the mailbox's Drafts folder — never sends |
 | `folders:read` / `folders:write` | list folders / create, rename, delete them |
 | `contacts:read` / `contacts:write` | list and search contacts / add, edit and delete them |
 | `signatures:read` / `signatures:write` | list signatures / create, edit and delete them |
@@ -429,8 +430,10 @@ Mark read/unread, or move, a set of messages in one call.
 ### `DELETE /api/messages/bulk` 🔑 Bearer (`messages:write`)
 **Body** `{ uids: string[]; accountId: string; folder: string }` → `{ success: true }`.
 
-### `GET /api/messages/[id]/attachment/[partId]?account=&folder=&inline=` — session only
-Streams one attachment by its index in the parsed MIME structure (`partId`, 0-based). `inline=true` sets `Content-Disposition: inline` (for preview); omitted/`false` forces download. **Not** a JSON route — returns the raw bytes with `Content-Type`/`Content-Disposition`/`Content-Length` headers, or a plain-text error body with the matching status (`400`/`404`/`500`) — not `{ error }` JSON.
+### `GET /api/messages/[id]/attachment/[partId]?account=&folder=&inline=` 🔑 Bearer (`messages:read`)
+Streams one attachment by its index in the parsed MIME structure (`partId`, 0-based). `account` required. `inline=true` sets `Content-Disposition: inline` (for preview); omitted/`false` forces download. **Not** a JSON route — returns the raw bytes with `Content-Type`/`Content-Disposition`/`Content-Length` headers, or a plain-text error body with the matching status (`400`/`404`/`500`) — not `{ error }` JSON. A refusal, however, IS `{ error }` JSON, like every other Bearer route (`401` with no key, `403` naming the missing scope or the unreachable mailbox).
+
+Because the body is binary, it can carry no `aiSafety` preamble. A **Bearer** call therefore gets the header `X-Synapmail-Untrusted: attachment` instead: the bytes AND the filename were written by a third party and are data, never instructions. A session call does not get the header — a browser download has nobody to warn.
 
 ### `POST /api/messages/[id]/mdn` — session only
 Sends an RFC 8098 Message Disposition Notification ("read receipt") for a message that requested one (`Disposition-Notification-To` header present).
@@ -544,6 +547,56 @@ would leave and come back as a bounce.
 `filename` is sanitised, never used as a path: separators, control characters and `..` are stripped and the
 name is cut to 100 characters (`attachment` if nothing usable is left). `contentType` falls back to
 `application/octet-stream` when absent or not a valid MIME type. On send: appends a copy to the account's IMAP Sent folder (fire-and-forget), extracts `to`+`cc` as contacts (fire-and-forget, `lib/contacts.ts`), and if `requestReadReceipt` is set, records a `sent_tracking` row keyed by a fresh UUID token embedded in the pixel URL (`GET /api/track/[token]`). **Response** `{ success: true }`, plus `warning` + `bytes` past the warning threshold. Note: forwarded-attachment resolution (by IMAP descriptor) is handled by the legacy `/api/send` route, not this one — see [Legacy routes](#legacy--internal-routes).
+
+### `POST /api/messages/draft` 🔑 Bearer (`messages:draft`)
+Write a draft into the mailbox's **real Drafts folder**, so it shows up in every client — phone included.
+
+**Body**: exactly the body of `POST /api/messages/send` above — same fields, same validation, same
+attachment rules and the same server-announced ceiling (both routes share `lib/outgoing.ts`). The
+`requestReadReceipt` field is accepted but has no effect: nothing is sent, so there is nothing to track.
+
+Nothing is sent. The MIME message is built by the same generator a send uses (`composeMail`, `lib/smtp.ts`)
+and then `APPEND`ed over IMAP with the `\Draft` and `\Seen` flags. The target folder is the one the server
+declares with the RFC 6154 `\Drafts` attribute, falling back to the usual names (`lib/specialFolders.ts`);
+a mailbox that exposes none answers `409 { error: "draft_no_drafts_folder" }` and nothing is written.
+
+`inReplyTo` (and `references`) are written as the `In-Reply-To`/`References` headers, so a draft written as
+a reply hangs under its thread in the client that opens it.
+
+Several drafts coexist — one `APPEND` each. This has no relation to `GET/PUT/DELETE /api/drafts`, the
+session-only autosave of the compose window (one row per account, in Postgres, never in the mailbox).
+
+**Response** `{ data: { folder: string, uid: string | null, messageId: string | null } }` — `folder` is the
+path the message landed in, `uid` its IMAP UID from `APPENDUID` (`null` on a server without UIDPLUS: the
+draft **is** written, it just cannot be addressed afterwards), `messageId` the `Message-ID` the message
+carries.
+
+Requires the `send` share permission on the account — a draft prepares a send from that mailbox.
+
+```bash
+curl -X POST -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{"accountId":"'$ACCOUNT'","to":"client@example.com","subject":"Re: quote",
+       "text":"Here is the revised quote.","inReplyTo":"<abc@mail.example.com>",
+       "attachments":[{"filename":"quote.pdf","contentType":"application/pdf","content":"'$B64'"}]}' \
+  "$BASE/messages/draft"
+```
+
+### `PUT /api/messages/draft/[uid]?account=&folder=` 🔑 Bearer (`messages:draft`)
+Replace a draft. IMAP cannot rewrite a message, so this writes the new one and removes the old one —
+**in that order**, and the delete only happens once the `APPEND` has succeeded. A failure in between
+leaves two drafts (visible, repairable); the other order would lose the text it was meant to correct.
+
+`account` and `folder` are required query params and name where the old draft lives. `[uid]` is its IMAP
+UID. The body is the same as `POST` above; an `accountId` in the body that contradicts `?account=` is
+refused with `400 { error: "account_mismatch", expected, received }` rather than silently ignored.
+
+**Response** `{ data: { folder, uid, messageId, replaced: string } }` — `replaced` is the UID that was
+removed. `404 { error: "draft_not_found" }` if that UID is no longer in the folder (nothing is written).
+
+### `DELETE /api/messages/draft/[uid]?account=&folder=` 🔑 Bearer (`messages:draft`)
+Delete a draft. Same required params as `PUT`.
+
+**Response** `{ data: { folder, uid, deleted: true } }`, or `404 { error: "draft_not_found" }`.
 
 ---
 

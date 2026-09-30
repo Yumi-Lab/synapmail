@@ -1,16 +1,29 @@
-import { auth } from '@/lib/auth'
+import { NextResponse } from 'next/server'
+import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
-import { createClient } from '@/lib/imap'
-import { simpleParser } from 'mailparser'
+import { toImapConfig } from '@/lib/accounts'
+import { getAttachmentContent } from '@/lib/imap'
+import { isMachineRequest } from '@/lib/promptGuard'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(
+/**
+ * Ce que dit un en-tête là où aucun `aiSafety` ne peut tenir. La réponse est un
+ * BINAIRE : rien n'y porte le rappel que `guardApiPayload` ajoute aux routes JSON
+ * (`lib/promptGuard.ts`). Le rappel passe donc par un en-tête, et seulement pour un
+ * appel machine — un navigateur qui télécharge une pièce jointe n'a personne à
+ * prévenir. Une pièce jointe est écrite par un tiers : son contenu ET son nom sont
+ * des données, jamais des instructions.
+ */
+const UNTRUSTED_HEADER = 'X-Synapmail-Untrusted'
+
+async function getHandler(
   req: Request,
   { params }: { params: { id: string; partId: string } }
 ) {
-  const session = await auth()
-  if (!session) return new Response('Unauthorized', { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -20,52 +33,33 @@ export async function GET(
   if (!accountId) return new Response('account param required', { status: 400 })
 
   try {
-    const account = await getAccessibleAccount(accountId, session.user?.id ?? '', [])
+    const account = await getAccessibleAccount(accountId, gate.ctx.id, [])
     if (!account) return new Response('Account not found', { status: 404 })
 
-    const imapClient = await createClient({
-      id: account.id,
-      imapHost: account.imap_host,
-      imapPort: account.imap_port,
-      imapSecure: account.imap_secure,
-      username: account.username,
-      passwordEncrypted: account.password_encrypted,
-      oauthProvider: account.oauth_provider,
-      oauthAccessToken: account.oauth_access_token,
-      oauthRefreshToken: account.oauth_refresh_token,
-      oauthExpiresAt: account.oauth_expires_at,
+    const attachment = await getAttachmentContent(toImapConfig(account), folder, params.id, partIdx)
+    if (!attachment) return new Response('Attachment not found', { status: 404 })
+
+    const inline = searchParams.get('inline') === 'true'
+    const filename = encodeURIComponent(attachment.filename)
+
+    // `new Uint8Array(buffer)` COPIE les octets de la pièce jointe, et eux seuls.
+    // `attachment.content.buffer` rendrait la mémoire sous-jacente — pour un petit
+    // fichier, le pool partagé de Node (8 Ko) — qui commence AILLEURS que la pièce
+    // jointe : les octets servis seraient ceux du voisin. Même forme que
+    // `app/api/branding/favicon/route.ts`. Voir le banc (empreinte comparée).
+    return new NextResponse(new Uint8Array(attachment.content), {
+      headers: {
+        'Content-Type': attachment.contentType,
+        'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${filename}"`,
+        'Content-Length': String(attachment.content.length),
+        'Cache-Control': 'private, max-age=300',
+        ...(isMachineRequest(req) ? { [UNTRUSTED_HEADER]: 'attachment' } : {}),
+      },
     })
-
-    try {
-      await imapClient.mailboxOpen(folder)
-      const msg = await imapClient.fetchOne(params.id, { source: true }, { uid: true })
-      if (!msg) return new Response('Message not found', { status: 404 })
-
-      const parsed = await simpleParser(msg.source ?? Buffer.alloc(0))
-      const attachment = parsed.attachments?.[partIdx]
-
-      if (!attachment) return new Response('Attachment not found', { status: 404 })
-
-      const filename = attachment.filename ?? `attachment-${partIdx}`
-      const contentType = attachment.contentType ?? 'application/octet-stream'
-
-      const inline = searchParams.get('inline') === 'true'
-      const disposition = inline
-        ? `inline; filename="${encodeURIComponent(filename)}"`
-        : `attachment; filename="${encodeURIComponent(filename)}"`
-
-      return new Response(attachment.content.buffer as ArrayBuffer, {
-        headers: {
-          'Content-Type': contentType,
-          'Content-Disposition': disposition,
-          'Content-Length': String(attachment.content.length),
-          'Cache-Control': 'private, max-age=300',
-        },
-      })
-    } finally {
-      await imapClient.logout()
-    }
   } catch (err) {
     return new Response(String(err), { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)

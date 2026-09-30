@@ -17,8 +17,10 @@ export const FORWARD_MAX_MESSAGES = 25
 /**
  * An IMAP uid is a positive decimal integer written canonically: `1:*` is a
  * sequence SET, `0` is not a uid, and `007` is not how any server spells 7.
+ * Exported: the same shape serves every route that receives a uid in its URL
+ * (`/api/messages/draft/[uid]`), not only the forward.
  */
-const UID_PATTERN = /^[1-9]\d*$/
+export const UID_PATTERN = /^[1-9]\d*$/
 
 /** Error codes — the server returns them, the compose window translates them. */
 export const FORWARD_ERROR = {

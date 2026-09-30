@@ -15,9 +15,9 @@
  *
  *   node --experimental-strip-types scripts/check-forward-decision.mjs
  *   node --experimental-strip-types scripts/check-forward-decision.mjs --negative
- * NEGATIVE CONTROL (`--negative`): the route is read as it was BEFORE the fix
- * (a fixed FORWARD_MAX_TOTAL_BYTES fed to the fetch, the server ceiling resolved
- * after it). The ceiling assertions MUST then fail.
+ * NEGATIVE CONTROL (`--negative`): the preparation is read as it was BEFORE the
+ * fix (a fixed FORWARD_MAX_TOTAL_BYTES fed to the fetch, the server ceiling
+ * resolved after it). The ceiling assertions MUST then fail.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -84,14 +84,15 @@ ok('a repeated uid is attached once, not three times')
 
 console.log('ONE size ceiling — the server\'s, resolved before the IMAP fetch')
 
-// The route's source is read rather than reconstructed: a constant that
-// re-appears there, or a ceiling resolved after the fetch, fails here.
-let route = readFileSync(join(ROOT, 'app/api/messages/send/route.ts'), 'utf8')
+// The preparation shared by the send and draft routes (`lib/outgoing.ts`) is read
+// rather than reconstructed: a constant that re-appears there, or a ceiling
+// resolved after the fetch, fails here.
+let route = readFileSync(join(ROOT, 'lib/outgoing.ts'), 'utf8')
 if (NEGATIVE) {
   route = route
     .replace('const ceiling = resolveSendCeiling(account.smtp_max_size, MESSAGE_MAX_TOTAL_BYTES)\n', '')
-    .replace('ceiling.limit\n      )\n      if (result.oversized)', 'FORWARD_MAX_TOTAL_BYTES\n      )\n      if (result.oversized)')
-    .replace('    // Fichiers joints par l\'appelant.', '    const ceiling = resolveSendCeiling(account.smtp_max_size, MESSAGE_MAX_TOTAL_BYTES)\n    // Fichiers joints par l\'appelant.')
+    .replace('ceiling.limit\n    )\n    if (result.oversized)', 'FORWARD_MAX_TOTAL_BYTES\n    )\n    if (result.oversized)')
+    .replace('  // Fichiers joints par l\'appelant.', '  const ceiling = resolveSendCeiling(account.smtp_max_size, MESSAGE_MAX_TOTAL_BYTES)\n  // Fichiers joints par l\'appelant.')
 }
 const forwardModule = readFileSync(join(ROOT, 'lib/forward.ts'), 'utf8')
 expect(!/FORWARD_MAX_TOTAL_BYTES/.test(NEGATIVE ? route : route + forwardModule),

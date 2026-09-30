@@ -8,6 +8,7 @@ import { DEFAULT_FLAG_KEY, FLAG_BIT_KEYWORDS, FLAG_IMAP_FLAG, flagFromKeywords, 
 import type { MailListFilter } from './flags'
 import { SEARCH_FIELDS, SEARCH_RESULT_LIMIT, orderFoldersForSearch, splitFolderPasses } from './search'
 import type { FolderRank } from './search'
+import { detectSpecials } from './specialFolders'
 import type { Message, Folder, AuthResults } from '@/types/email'
 
 /**
@@ -644,6 +645,61 @@ export async function getAttachmentContent(
       filename: attachment.filename ?? `attachment-${partIdx}`,
       contentType: attachment.contentType ?? 'application/octet-stream',
     }
+  } finally {
+    await client.logout()
+  }
+}
+
+/**
+ * Écrit un message dans le dossier des BROUILLONS de la boîte, et rend où il a atterri.
+ *
+ * Le rôle du dossier n'est jamais deviné ici : `detectSpecials` (`lib/specialFolders.ts`)
+ * lit d'abord l'attribut SPECIAL-USE `\Drafts` annoncé par le serveur, et ne retombe sur
+ * les noms usuels (EN/FR) qu'à défaut. Aucune liste de noms n'est recopiée dans ce
+ * fichier — contrairement à `appendToSentFolder`, écrit avant ce module.
+ *
+ * `uid` vient d'`APPENDUID` (UIDPLUS). Un serveur qui se tait rend `null` : le brouillon
+ * est bel et bien écrit, seulement on ne peut pas le désigner ensuite. Échouer là serait
+ * mentir sur ce qui s'est passé.
+ */
+/** Ce message est-il ENCORE dans ce dossier ? Un `FETCH` d'enveloppe, rien de plus. */
+export async function messageExists(
+  account: AccountConfig,
+  folder: string,
+  uid: string
+): Promise<boolean> {
+  const client = await createClient(account)
+  try {
+    await client.mailboxOpen(folder)
+    return !!(await client.fetchOne(uid, { uid: true }, { uid: true }))
+  } finally {
+    await client.logout()
+  }
+}
+
+export async function appendDraft(
+  account: AccountConfig,
+  raw: Buffer
+): Promise<{ folder: string; uid: string | null } | null> {
+  const client = await createClient(account)
+  try {
+    const folders = (await client.list())
+      .filter(f => !f.flags?.has('\\Noselect'))
+      .map(f => ({
+        name: f.name,
+        path: f.path,
+        delimiter: f.delimiter ?? '/',
+        specialUse: (f as unknown as Record<string, unknown>).specialUse as string | undefined,
+      }))
+    const specials = detectSpecials(folders)
+    const target = folders.find(f => specials.get(f.path) === 'drafts')
+    if (!target) return null
+
+    // `append()` rend `false` quand le serveur a refusé : rien n'a été écrit, et
+    // dire « écrit sans uid » serait un mensonge que l'appelant ne pourrait pas voir.
+    const result = await client.append(target.path, raw, ['\\Draft', '\\Seen'])
+    if (!result) return null
+    return { folder: result.destination || target.path, uid: result.uid == null ? null : String(result.uid) }
   } finally {
     await client.logout()
   }
