@@ -46,7 +46,8 @@ const {
   REGEX_BODY_MAX, REGEX_PATTERN_MAX, REGEX_TEXT_MAX,
   compileRulePattern, evaluateRule, generateSieveScript, needsTags, testRule, validateConditions,
 } = await import('../lib/rules.ts')
-const { QUESTIONS, valuesOf } = await import('../lib/tagging/questions.ts')
+const { DEFAULT_SET, valuesOf } = await import('../lib/tagging/questions.ts')
+const QUESTIONS = DEFAULT_SET.enabled
 
 if (typeof validateConditions !== 'function') harness('validateConditions absente de lib/rules.ts')
 if (!QUESTIONS?.length) harness('aucune question dans lib/tagging/questions.ts')
@@ -59,7 +60,7 @@ const ok = (label, cond, detail = '') => {
 
 /** Le contrôle négatif : rien n'est refusé à l'écriture. */
 const acceptAnything = () => null
-const validate = NEGATIVE ? acceptAnything : validateConditions
+const validate = NEGATIVE ? acceptAnything : conditions => validateConditions(conditions, DEFAULT_SET)
 
 let idSeq = 0
 const cond = c => ({ id: `c${++idSeq}`, ...c })
@@ -202,7 +203,7 @@ ok('une valeur hors liste est refusée à l’écriture',
 ok('un opérateur de motif sur le champ `tag` est refusé',
   typeof validate([cond({ field: 'tag', operator: 'matches', value: V[0], tagQuestion: Q.id })]) === 'string')
 ok('une condition `tag` valide passe',
-  validateConditions([cond({ field: 'tag', operator: 'equals', value: V[0], tagQuestion: Q.id })]) === null)
+  validateConditions([cond({ field: 'tag', operator: 'equals', value: V[0], tagQuestion: Q.id })], DEFAULT_SET) === null)
 ok('`needsTags` ne déclenche une lecture que si une règle en a besoin',
   needsTags([rule([tagCond(V[0])])]) === true
   && needsTags([rule([cond({ field: 'subject', operator: 'contains', value: 'a' })])]) === false)

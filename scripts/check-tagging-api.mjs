@@ -96,7 +96,8 @@ const call = async (path, { method = 'GET', key, cookie, body } = {}) => {
  * Les trois questions du banc, une par TYPE, lues de `questions.ts` — jamais recopiées :
  * renommer une valeur là-bas doit casser ici, sinon le banc mesurerait une taxonomie morte.
  */
-const { QUESTIONS, valuesOf } = await import('../lib/tagging/questions.ts')
+const { DEFAULT_SET, valuesOf } = await import('../lib/tagging/questions.ts')
+const QUESTIONS = DEFAULT_SET.all
 const pick = type => {
   const q = QUESTIONS.find(x => x.type === type)
   if (!q) harness(`aucune question de type ${type} dans questions.ts`)

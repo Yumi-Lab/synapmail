@@ -3,7 +3,7 @@ import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { filterByTag, readEffectiveFor } from '@/lib/tagging/store'
-import { isValidTag, questionById } from '@/lib/tagging/questions'
+import { questionSetForAccount } from '@/lib/tagging/userQuestions'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,10 +38,11 @@ async function getHandler(req: Request) {
     if (!question || !valeur) {
       return NextResponse.json({ error: 'question and valeur required, or one id at least' }, { status: 400 })
     }
-    // Une question ou une valeur inconnue de `questions.ts` ne peut RIEN porter : le dire est
+    // Une question ou une valeur inconnue du jeu de la boîte ne peut RIEN porter : le dire est
     // plus utile qu'une page vide, qu'on confondrait avec « aucun mail ne porte ceci ».
-    if (!questionById(question)) return NextResponse.json({ error: `question inconnue: ${question}`, question }, { status: 422 })
-    if (!isValidTag(question, valeur)) return NextResponse.json({ error: `valeur non prévue pour la question ${question}: ${valeur}`, question, valeur }, { status: 422 })
+    const set = await questionSetForAccount(accountId)
+    if (!set.questionById(question)) return NextResponse.json({ error: `question inconnue: ${question}`, question }, { status: 422 })
+    if (!set.isValidTag(question, valeur)) return NextResponse.json({ error: `valeur non prévue pour la question ${question}: ${valeur}`, question, valeur }, { status: 422 })
 
     const page = Number(searchParams.get('page') ?? '1')
     const { messages, total } = await filterByTag({ accountId, question, valeur, page, origine: searchParams.get('origine') })

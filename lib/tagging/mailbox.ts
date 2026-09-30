@@ -11,8 +11,8 @@
 
 import { query } from '../db'
 import { estimateUsd, SAMPLE_SEED_DEFAULT, SAMPLE_SIZE_DEFAULT } from './runner'
-import { QUESTIONS } from './questions'
-import { TAXONOMY_VERSION } from './store'
+import { taxonomyVersion } from './store'
+import { questionSetForAccount } from './userQuestions'
 import type { BulkState, EngineKind, PauseReason } from './engine'
 
 /** Ce qu'une boîte expose de son tri. Lu par l'écran, jamais écrit tel quel. */
@@ -33,11 +33,11 @@ export interface TaggingStatus {
   total: number
   /** Le coût estimé du tri de ce qui RESTE, au tarif du moteur choisi. `null` sans moteur. */
   estimateUsd: number | null
-  /** Le nombre de questions posées à chaque mail : ce qui explique l'ordre de grandeur du coût. */
+  /** Le nombre de questions ACTIVES posées à chaque mail : ce qui explique l'ordre de grandeur du coût. */
   questions: number
   /**
-   * La version du JEU de questions (`TAXONOMY_VERSION`). Affichée parce qu'elle explique une
-   * relance : un tri « terminé » repart de zéro quand cette chaîne a changé.
+   * La version du JEU de questions actives du propriétaire (`taxonomyVersion`). Affichée parce
+   * qu'elle explique une relance : un tri « terminé » repart de zéro quand cette chaîne a changé.
    */
   taxonomyVersion: string
   /**
@@ -108,6 +108,8 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
   )
   const r = rows[0]
   if (!r) throw new Error(`mailbox_tagging manquante pour ${accountId}`)
+  const set = await questionSetForAccount(accountId)
+  const questions = set.enabled.length
 
   const inputTokens = Number(r.input_tokens)
   const remaining = Math.max(r.total - r.tagged - r.skipped, 0)
@@ -134,9 +136,9 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
     total: r.total,
     estimateUsd: r.engine_price === null || r.engine_price === undefined
       ? null
-      : estimateUsd({ mails: remaining, usdPerBillionInput: Number(r.engine_price), inputTokens, tagged: r.tagged }),
-    questions: QUESTIONS.length,
-    taxonomyVersion: TAXONOMY_VERSION,
+      : estimateUsd({ mails: remaining, questions, usdPerBillionInput: Number(r.engine_price), inputTokens, tagged: r.tagged }),
+    questions,
+    taxonomyVersion: taxonomyVersion(set),
     sample: r.sample_size === null ? null : {
       size: r.sample_size,
       seed: r.sample_seed === null ? SAMPLE_SEED_DEFAULT : Number(r.sample_seed),
@@ -147,7 +149,7 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
     // défaut, pas sur le reste d'un tirage en cours — c'est le prix du bouton, pas de l'état.
     sampleEstimateUsd: r.engine_price === null || r.engine_price === undefined
       ? null
-      : estimateUsd({ mails: SAMPLE_SIZE_DEFAULT, usdPerBillionInput: Number(r.engine_price), inputTokens, tagged: r.tagged }),
+      : estimateUsd({ mails: SAMPLE_SIZE_DEFAULT, questions, usdPerBillionInput: Number(r.engine_price), inputTokens, tagged: r.tagged }),
     sampleDefaults: { size: SAMPLE_SIZE_DEFAULT, seed: SAMPLE_SEED_DEFAULT },
   }
 }

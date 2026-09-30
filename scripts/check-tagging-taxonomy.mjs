@@ -58,14 +58,22 @@ const check = (label, ok, detail = '') => {
 
 const { initDb, query } = await import('../lib/db.ts')
 const store = await import('../lib/tagging/store.ts')
-const { ENGINE_QUESTIONS, QUESTIONS, engineQuestionsFor, isValidTag, questionById, valuesOf } =
-  await import('../lib/tagging/questions.ts')
+const { DEFAULT_SET, engineBodyFor, valuesOf } = await import('../lib/tagging/questions.ts')
+// Le banc mesure le JEU PAR DÉFAUT (lot T-Q : le jeu est par utilisateur ; ici, rien n'a été modifié) —
+// les mêmes fonctions que le produit, appliquées à ce jeu-là.
+const QUESTIONS = DEFAULT_SET.enabled
+const questionById = id => DEFAULT_SET.questionById(id)
+const isValidTag = (q, v) => DEFAULT_SET.isValidTag(q, v)
+const engineQuestionsFor = ids => engineBodyFor(DEFAULT_SET.posed(ids))
+const ENGINE_QUESTIONS = engineQuestionsFor()
+const questionVersion = id => store.questionVersion(questionById(id))
+const TAXONOMY_VERSION = store.taxonomyVersion(DEFAULT_SET)
 const { alreadyTagged } = store
 /** L'auteur du banc (décision 23) : un id de moteur qui n'existe pas en base, ce qui suffit à signer. */
 const MOTEUR = { id: '00000000-0000-4000-8000-0000000000a1', nom: 'JEV banc T10' }
 
 /** Les 12 hex : la longueur du produit, relue sur lui plutôt que recopiée ici. */
-const VERSION_LEN = store.questionVersion('categorie').length
+const VERSION_LEN = questionVersion('categorie').length
 
 /**
  * La version du CONTRÔLE NÉGATIF : dérivée du seul identifiant, donc insensible à un changement
@@ -146,25 +154,25 @@ try {
 
   // ---- B. la version est stable et distingue deux questions ----
   console.log('\nB. la version d’une question est stable, et propre à elle')
-  const v1 = store.questionVersion('categorie')
-  check('B1 elle est reproductible', v1 === store.questionVersion('categorie'), `${v1} / ${store.questionVersion('categorie')}`)
+  const v1 = questionVersion('categorie')
+  check('B1 elle est reproductible', v1 === questionVersion('categorie'), `${v1} / ${questionVersion('categorie')}`)
   check(`B2 elle fait ${VERSION_LEN} hex`, /^[0-9a-f]+$/.test(v1) && v1.length === VERSION_LEN, v1)
   check('B3 deux questions différentes ont deux versions différentes',
-    v1 !== store.questionVersion(ACTION), `${v1} / ${store.questionVersion(ACTION)}`)
+    v1 !== questionVersion(ACTION), `${v1} / ${questionVersion(ACTION)}`)
 
   // ---- C. elle change quand la définition change ----
   console.log('\nC. elle CHANGE quand la définition change')
   const corps = engineQuestionsFor(['categorie']).categorie
-  const telQuel = versionOfBody('categorie', { categorie: corps })
+  const telQuel = versionOfBody('categorie', corps)
   check('C1 le hachage du corps réel redonne la version du produit', telQuel === v1, `${telQuel} / ${v1}`)
   const modifie = JSON.parse(JSON.stringify(corps))
   modifie.criteria[NOUVELLE_CATEGORIE] = { ...modifie.criteria[NOUVELLE_CATEGORIE], what: 'une définition RÉÉCRITE' }
-  const apres = versionOfBody('categorie', { categorie: modifie })
+  const apres = versionOfBody('categorie', modifie)
   check('C2 un critère RÉÉCRIT donne une AUTRE version (sinon un export mélangerait deux définitions)',
     apres !== telQuel, `avant ${telQuel} / après ${apres}`)
   const consigne = JSON.parse(JSON.stringify(corps))
   consigne.instructions = `${consigne.instructions} (reformulée)`
-  check('C3 une CONSIGNE reformulée aussi', versionOfBody('categorie', { categorie: consigne }) !== telQuel)
+  check('C3 une CONSIGNE reformulée aussi', versionOfBody('categorie', consigne) !== telQuel)
 
   // ---- D. la base la retient, pour toutes les sources ----
   console.log('\nD. la base retient la version, moteur comme humain')
@@ -179,10 +187,10 @@ try {
   const lu = await store.readTags(ACCOUNT, MID(1))
   const ligneMoteur = lu.tags.find(t => t.question === 'categorie')
   check('D1 la ligne du moteur porte la version de SA question',
-    ligneMoteur?.questionVersion === store.questionVersion('categorie'),
-    `${ligneMoteur?.questionVersion} / ${store.questionVersion('categorie')}`)
+    ligneMoteur?.questionVersion === questionVersion('categorie'),
+    `${ligneMoteur?.questionVersion} / ${questionVersion('categorie')}`)
   check('D2 chaque question porte SA version, pas une version de lot',
-    lu.tags.find(t => t.question === ACTION)?.questionVersion === store.questionVersion(ACTION))
+    lu.tags.find(t => t.question === ACTION)?.questionVersion === questionVersion(ACTION))
   await store.writeTags({
     accountId: ACCOUNT, messageId: MID(1), source: 'humain', auteur: { id: USER, nom: 'Banc T10' }, validePar: USER,
     tags: [{ question: 'categorie', valeur: 'marketing' }],
@@ -190,8 +198,8 @@ try {
   const corrige = await store.readTags(ACCOUNT, MID(1))
   const ligneHumaine = corrige.tags.find(t => t.question === 'categorie' && t.source === 'humain')
   check('D3 la correction HUMAINE porte la même version : les deux répondent à la MÊME question',
-    ligneHumaine?.questionVersion === store.questionVersion('categorie'),
-    `${ligneHumaine?.questionVersion} / ${store.questionVersion('categorie')}`)
+    ligneHumaine?.questionVersion === questionVersion('categorie'),
+    `${ligneHumaine?.questionVersion} / ${questionVersion('categorie')}`)
   const { rows } = await store.exportTags({ accountId: ACCOUNT, limit: 5000 })
   const exportees = rows.filter(r => String(r.messageId).startsWith('<banc-t10-'))
   check('D5 l’export rend la version avec chaque ligne (c’est ce qui sépare deux jeux)',
@@ -201,16 +209,16 @@ try {
   // ---- F. la version GLOBALE, et le saut qui la respecte ----
   console.log('\nF. la version de la TAXONOMIE, et le saut du trieur qui la respecte')
   check(`F1 elle fait ${VERSION_LEN} hex`,
-    /^[0-9a-f]+$/.test(store.TAXONOMY_VERSION) && store.TAXONOMY_VERSION.length === VERSION_LEN,
-    store.TAXONOMY_VERSION)
+    /^[0-9a-f]+$/.test(TAXONOMY_VERSION) && TAXONOMY_VERSION.length === VERSION_LEN,
+    TAXONOMY_VERSION)
   check('F2 elle porte sur le JEU entier, donc elle diffère de la version d’UNE question',
-    store.TAXONOMY_VERSION !== store.questionVersion('categorie'),
-    `${store.TAXONOMY_VERSION} / ${store.questionVersion('categorie')}`)
+    TAXONOMY_VERSION !== questionVersion('categorie'),
+    `${TAXONOMY_VERSION} / ${questionVersion('categorie')}`)
   // Le hachage du corps de TOUTES les questions doit redonner la constante : sans ça, elle ne
   // décrirait pas le jeu réellement envoyé, et un ajout de question passerait inaperçu.
   check('F3 le hachage du corps de TOUTES les questions redonne la constante',
-    versionOfBody('*', engineQuestionsFor()) === store.TAXONOMY_VERSION,
-    `${versionOfBody('*', engineQuestionsFor())} / ${store.TAXONOMY_VERSION}`)
+    versionOfBody('*', Object.entries(engineQuestionsFor())) === TAXONOMY_VERSION,
+    `${versionOfBody('*', Object.entries(engineQuestionsFor()))} / ${TAXONOMY_VERSION}`)
   // Ce qui compte vraiment : un mail tagué sous la taxonomie COURANTE est sauté, un mail tagué
   // sous une AUTRE version ne l’est pas. La seconde ligne est écrite en SQL direct, car le
   // produit n’a pas de chemin pour écrire une version périmée — c’est l’état d’une base d’avant.
@@ -236,7 +244,7 @@ try {
   await ensureMailboxTagging(ACCOUNT)
   const etat = await readTaggingStatus(ACCOUNT)
   check('F7 l’état que lit l’écran de tri porte la version courante et le nombre de questions',
-    etat?.taxonomyVersion === store.TAXONOMY_VERSION && etat?.questions === TOTAL_QUESTIONS,
+    etat?.taxonomyVersion === TAXONOMY_VERSION && etat?.questions === TOTAL_QUESTIONS,
     `${etat?.taxonomyVersion} / ${etat?.questions} question(s)`)
 
   // ---- E. les libellés des trois locales ----

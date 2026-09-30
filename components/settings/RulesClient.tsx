@@ -12,7 +12,9 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { QUESTIONS, questionById, valuesOf } from '@/lib/tagging/questions'
+import { valuesOf } from '@/lib/tagging/questions'
+import { useQuestionSet } from '@/hooks/useQuestionSet'
+import { useTagLabels } from '@/hooks/useTagLabels'
 import { webhooksOfAccount } from '@/lib/webhookRoutes'
 import type { RulePrefill } from '@/lib/rulePrefill'
 import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
@@ -220,22 +222,23 @@ function ConditionRow({
   onRemove: () => void
   canRemove: boolean
 }) {
-  const tTag = useTranslations('tags')
+  const { set } = useQuestionSet()
+  const { q: qLabel, v: vLabel } = useTagLabels()
   const operators = FIELD_OPERATORS[cond.field] ?? []
   const isBoolean = BOOLEAN_FIELDS.includes(cond.field)
   const isDate    = cond.field === 'date_received'
   const isPriority = cond.field === 'priority'
   const isTag     = cond.field === 'tag'
   const isRegex   = cond.operator === 'matches' || cond.operator === 'not_matches'
-  // Les questions et leurs valeurs viennent de `questions.ts`, les libellés de `locales/` :
-  // rien de la taxonomie n'est recopié ici.
-  const tagQuestion = questionById(cond.tagQuestion ?? '') ?? QUESTIONS[0]
+  // Les questions et leurs valeurs viennent du jeu de l'utilisateur (lot T-Q), les libellés
+  // de `useTagLabels` : rien de la taxonomie n'est recopié ici.
+  const tagQuestion = set.questionById(cond.tagQuestion ?? '') ?? set.enabled[0]
 
   const handleFieldChange = (field: RuleField) => {
     const ops = FIELD_OPERATORS[field] ?? []
     if (field === 'tag') {
-      const q = QUESTIONS[0]
-      onChange({ ...cond, field, operator: ops[0], tagQuestion: q.id, value: valuesOf(q)[0] })
+      const q = set.enabled[0]
+      onChange({ ...cond, field, operator: ops[0], tagQuestion: q?.id, value: q ? valuesOf(q)[0] : '' })
       return
     }
     onChange({ ...cond, field, operator: ops[0], value: '', tagQuestion: undefined })
@@ -263,17 +266,17 @@ function ConditionRow({
         ))}
       </select>
 
-      {isTag && (
+      {isTag && tagQuestion && (
         <select
           value={tagQuestion.id}
           onChange={e => {
-            const q = questionById(e.target.value) ?? QUESTIONS[0]
+            const q = set.questionById(e.target.value) ?? tagQuestion
             onChange({ ...cond, tagQuestion: q.id, value: valuesOf(q)[0] })
           }}
           className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
         >
-          {QUESTIONS.map(q => (
-            <option key={q.id} value={q.id}>{tTag(`q.${q.id}`)}</option>
+          {set.enabled.map(q => (
+            <option key={q.id} value={q.id}>{qLabel(q.id)}</option>
           ))}
         </select>
       )}
@@ -285,8 +288,8 @@ function ConditionRow({
             onChange={e => onChange({ ...cond, value: e.target.value })}
             className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
           >
-            {valuesOf(tagQuestion).map(v => (
-              <option key={v} value={v}>{tTag(`v.${v}`)}</option>
+            {(tagQuestion ? valuesOf(tagQuestion) : []).map(v => (
+              <option key={v} value={v}>{vLabel(v)}</option>
             ))}
           </select>
         ) : isDate ? (

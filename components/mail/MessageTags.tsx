@@ -6,8 +6,9 @@
  * deux tailles — un libellé, une valeur, et en infobulle la confiance et la source.
  *
  * Aucun libellé n'est écrit dans ce fichier : `tags.q.<question>` et `tags.v.<valeur>` viennent
- * des trois fichiers de `locales/` (décision 1). Une question ou une valeur que `questions.ts`
- * ne connaît pas n'arrive jamais jusqu'ici : c'est déjà refusé à l'écriture.
+ * des trois fichiers de `locales/` (décision 1), une question ajoutée à l'écran se lit par son
+ * identifiant (`useTagLabels`). Les règles (pastille en liste, valeurs admises, ordre, groupe)
+ * viennent du jeu de questions de l'utilisateur (`useQuestionSet`, lot T-Q).
  */
 
 import { useMemo, useState } from 'react'
@@ -15,9 +16,11 @@ import useSWR from 'swr'
 import { useFormatter, useTranslations } from 'next-intl'
 import { Tags } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { questionById, valuesOf } from '@/lib/tagging/questions'
+import { valuesOf } from '@/lib/tagging/questions'
 import { HUMAN_SOURCE } from '@/lib/tagging/engine'
-import { listPills, tagsByGroup } from '@/lib/tagging/view'
+import { listPills, orderedTags, tagsByGroup } from '@/lib/tagging/view'
+import { useQuestionSet } from '@/hooks/useQuestionSet'
+import { useTagLabels } from '@/hooks/useTagLabels'
 import type { StoredTag } from '@/lib/tagging/store'
 import type { Message } from '@/types/email'
 
@@ -41,9 +44,10 @@ function useOriginText() {
 /** Ce qu'une étiquette dit d'elle-même quand on s'arrête dessus : valeur, confiance, origine. */
 function useTagText() {
   const t = useTranslations('tags')
+  const { q, v } = useTagLabels()
   const origin = useOriginText()
   return (tag: StoredTag): string => {
-    const parts = [`${t(`q.${tag.question}`)} : ${t(`v.${tag.valeur}`)}`]
+    const parts = [`${q(tag.question)} : ${v(tag.valeur)}`]
     if (tag.confiance !== null) parts.push(t('confidence', { percent: Math.round(tag.confiance * 100) }))
     parts.push(origin(tag))
     return parts.join(' · ')
@@ -62,15 +66,18 @@ function useTagText() {
  */
 export function TagPills({ tags, compact }: { tags: readonly StoredTag[]; compact?: boolean }) {
   const t = useTranslations('tags')
+  const { v } = useTagLabels()
   const describe = useTagText()
-  const pills = useMemo(() => listPills(tags), [tags])
+  const { set } = useQuestionSet()
+  const visible = useMemo(() => orderedTags(set, tags), [set, tags])
+  const pills = useMemo(() => listPills(set, visible), [set, visible])
   if (!pills.length) return null
 
   // Deux pastilles au plus : au-delà, la ligne ne dit plus rien de l'objet du mail. Le reste
-  // se compte, et l'infobulle de ce compteur porte l'ENSEMBLE des étiquettes du message.
+  // se compte, et l'infobulle de ce compteur porte l'ENSEMBLE des étiquettes visibles du message.
   const shown = pills.slice(0, compact ? 1 : 2)
-  const hidden = tags.length - shown.length
-  const all = tags.map(describe).join('\n')
+  const hidden = visible.length - shown.length
+  const all = visible.map(describe).join('\n')
 
   return (
     <span className="flex min-w-0 items-center gap-1" data-tag-pills={pills.length}>
@@ -81,7 +88,7 @@ export function TagPills({ tags, compact }: { tags: readonly StoredTag[]; compac
           title={describe(tag)}
           className="flex h-4 max-w-[10rem] shrink-0 items-center truncate rounded border border-border bg-muted/60 px-1 text-[10px] leading-none text-muted-foreground"
         >
-          {t(`v.${tag.valeur}`)}
+          {v(tag.valeur)}
         </span>
       ))}
       {hidden > 0 && (
@@ -108,10 +115,12 @@ function TagRow({ tag, engine, history, correct, disabled }: {
   tag: StoredTag; engine: StoredTag | undefined; history: readonly StoredTag[]; correct: Correct; disabled: boolean
 }) {
   const t = useTranslations('tags')
+  const { q, v } = useTagLabels()
   const describe = useTagText()
   const origin = useOriginText()
+  const { set } = useQuestionSet()
   const [busy, setBusy] = useState(false)
-  const question = questionById(tag.question)
+  const question = set.questionById(tag.question)
   if (!question) return null
 
   const confirmed = tag.source === HUMAN_SOURCE
@@ -125,16 +134,16 @@ function TagRow({ tag, engine, history, correct, disabled }: {
     <div className="py-1 text-xs" data-tag-row={tag.question}>
     <div className="flex items-center gap-2">
       <span className="min-w-0 flex-1 truncate text-muted-foreground" title={describe(tag)}>
-        {t(`q.${tag.question}`)}
+        {q(tag.question)}
       </span>
       <span
         className={cn('shrink-0 truncate', confirmed ? 'font-semibold text-foreground' : 'text-foreground/80')}
         // La valeur du moteur reste visible même après correction : c'est ce que le panneau doit
         // au lecteur qui compare, et c'est ce que la base conserve de toute façon.
-        title={engine && engine.valeur !== tag.valeur ? t('engineSaid', { value: t(`v.${engine.valeur}`) }) : describe(tag)}
+        title={engine && engine.valeur !== tag.valeur ? t('engineSaid', { value: v(engine.valeur) }) : describe(tag)}
         data-tag-value={tag.valeur}
       >
-        {t(`v.${tag.valeur}`)}
+        {v(tag.valeur)}
       </span>
       {!disabled && (
         <>
@@ -162,8 +171,8 @@ function TagRow({ tag, engine, history, correct, disabled }: {
             className="shrink-0 rounded border border-border bg-transparent px-1 py-0.5 text-[10px] text-muted-foreground disabled:opacity-50"
           >
             <option value="">{t('change')}</option>
-            {valuesOf(question).map(v => (
-              <option key={v} value={v}>{t(`v.${v}`)}</option>
+            {valuesOf(question).map(value => (
+              <option key={value} value={value}>{v(value)}</option>
             ))}
           </select>
         </>
@@ -182,7 +191,7 @@ function TagRow({ tag, engine, history, correct, disabled }: {
             <li key={`${h.source}|${h.auteurId}|${h.modele}|${h.questionVersion}`}
               className="flex items-baseline gap-2 text-[10px] text-muted-foreground" data-tag-history-row={h.auteurId}>
               <span className="min-w-0 flex-1 truncate" title={describe(h)}>{origin(h)}</span>
-              <span className={cn('shrink-0', h.source === HUMAN_SOURCE && 'font-semibold text-foreground/80')}>{t(`v.${h.valeur}`)}</span>
+              <span className={cn('shrink-0', h.source === HUMAN_SOURCE && 'font-semibold text-foreground/80')}>{v(h.valeur)}</span>
             </li>
           ))}
         </ul>
@@ -208,6 +217,8 @@ export function TagsPanel({ message, accountId, canOrganize }: {
   canOrganize: boolean
 }) {
   const t = useTranslations('tags')
+  const { g } = useTagLabels()
+  const { set } = useQuestionSet()
   // `effective` = ce que le panneau affiche (décision 5) ; `tags` = toutes les sources, ce qui
   // fait tenir « le moteur a dit » en infobulle. Un mail sans `Message-ID` n'a pas de clé côté
   // client : rien n'est demandé (et la correction est refusée, voir plus bas).
@@ -219,8 +230,9 @@ export function TagsPanel({ message, accountId, canOrganize }: {
       return res.json()
     },
   )
-  const tags = data?.data.effective ?? []
-  const groups = useMemo(() => tagsByGroup(tags), [tags])
+  // Le jeu ACTIF seulement : une question désactivée n'a ni ligne ni part au compteur.
+  const tags = useMemo(() => orderedTags(set, data?.data.effective ?? []), [set, data])
+  const groups = useMemo(() => tagsByGroup(set, tags), [set, tags])
   const engineByQuestion = useMemo(
     () => new Map((data?.data.tags ?? []).filter(tag => tag.source !== HUMAN_SOURCE).map(tag => [tag.question, tag])),
     [data],
@@ -267,7 +279,7 @@ export function TagsPanel({ message, accountId, canOrganize }: {
         ) : (
           groups.map(({ group, tags: groupTags }) => (
             <div key={group} className="mt-2 first:mt-0">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60">{t(`g.${group}`)}</p>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60">{g(group)}</p>
               {groupTags.map(tag => (
                 <TagRow
                   key={tag.question}

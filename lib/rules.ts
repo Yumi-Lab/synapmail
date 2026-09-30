@@ -11,7 +11,7 @@ import { markReadBulk, deleteMessagesBulk, moveMessagesBulk, markStarred } from 
 import { sendMail } from './smtp'
 import type { AccountConfig } from './imap'
 import type { Message } from '@/types/email'
-import { questionById, valuesOf } from './tagging/questions'
+import { valuesOf, type QuestionSet } from './tagging/questions'
 import { messageIdOf, readEffectiveFor } from './tagging/store'
 import { queueRuleDelivery, type WebhookMessage } from './webhooks'
 import type { EmailRule, RuleCondition, RuleAction } from '@/types/rule'
@@ -44,8 +44,11 @@ export interface RuleTag { question: string; valeur: string }
  * Ce qu'une condition doit valoir AVANT d'être enregistrée. Rend le motif de l'erreur en
  * NOMMANT la condition fautive — une règle enregistrée ne peut pas porter une regex qui ne
  * compile pas, donc `evalCondition` n'a jamais à s'en expliquer à l'exécution.
+ * Une condition `tag` se juge contre le jeu de questions de la BOÎTE de la règle
+ * (`questionSetForAccount`) : ses étiquettes répondent au jeu du propriétaire, pas à celui
+ * de la main qui écrit la règle.
  */
-export function validateConditions(conditions: readonly RuleCondition[]): string | null {
+export function validateConditions(conditions: readonly RuleCondition[], set: QuestionSet): string | null {
   for (let i = 0; i < conditions.length; i++) {
     const c = conditions[i]
     const where = `condition ${i + 1} (${c?.field ?? '?'} ${c?.operator ?? '?'})`
@@ -62,7 +65,7 @@ export function validateConditions(conditions: readonly RuleCondition[]): string
       if (c.operator !== 'equals' && c.operator !== 'not_equals') {
         return `${where}: the tag field takes equals / not_equals`
       }
-      const q = questionById(c.tagQuestion ?? '')
+      const q = set.questionById(c.tagQuestion ?? '')
       if (!q) return `${where}: unknown tag question "${c.tagQuestion ?? ''}"`
       if (!valuesOf(q).includes(c.value)) {
         return `${where}: value "${c.value}" is not one of ${valuesOf(q).join(' / ')}`

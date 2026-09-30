@@ -3,7 +3,8 @@ import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { readTaggingStatus } from '@/lib/tagging/mailbox'
-import { tagDistribution } from '@/lib/tagging/store'
+import { questionVersion, tagDistribution } from '@/lib/tagging/store'
+import { questionSetForAccount, staleCounts } from '@/lib/tagging/userQuestions'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,6 +17,10 @@ export const dynamic = 'force-dynamic'
  * après un échantillon pour décider de lancer le reste. Elle n'est pas dans la réponse par défaut
  * parce que l'écran redemande l'état toutes les 20 s pendant un tri, et qu'un GROUP BY sur toutes
  * les étiquettes de la boîte n'a pas à tourner à ce rythme.
+ *
+ * `?stale=1` y ajoute, par question, le nombre de mails tagués sous une AUTRE version que la
+ * courante (lot T-Q) : le « N mails tagués avec une ancienne version » de l'écran. Même raison
+ * de ne pas être dans la réponse par défaut.
  */
 async function getHandler(req: Request) {
   const gate = await authorize(req)
@@ -28,8 +33,12 @@ async function getHandler(req: Request) {
 
   try {
     const status = await readTaggingStatus(accountId)
-    if (new URL(req.url).searchParams.get('distribution') !== '1') return NextResponse.json({ data: status })
-    return NextResponse.json({ data: { ...status, distribution: await tagDistribution(accountId) } })
+    const params = new URL(req.url).searchParams
+    return NextResponse.json({ data: {
+      ...status,
+      ...(params.get('distribution') === '1' ? { distribution: await tagDistribution(accountId) } : {}),
+      ...(params.get('stale') === '1' ? { staleCounts: await staleCounts(accountId, await questionSetForAccount(accountId), questionVersion) } : {}),
+    } })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

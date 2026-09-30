@@ -162,6 +162,14 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'POST /api/webhooks/[id]/test': 'webhooks:write',
   'GET /api/webhooks/[id]/deliveries': 'webhooks:read',
   'POST /api/webhooks/deliveries/[id]/retry': 'webhooks:write',
+  // Les questions de tri de l'utilisateur (lot T-Q) : un jeu par utilisateur, aucune boîte
+  // nommée, sauf le test qui interroge le moteur d'UNE boîte sur UN de ses mails.
+  'GET /api/tags/questions': 'tags:read',
+  'POST /api/tags/questions': 'tags:write',
+  'PATCH /api/tags/questions/[id]': 'tags:write',
+  'DELETE /api/tags/questions/[id]': 'tags:write',
+  'POST /api/tags/questions/reset': 'tags:write',
+  'POST /api/tags/questions/[id]/test': 'tags:write',
 }
 
 /**
@@ -216,6 +224,7 @@ export const ROUTE_ACCOUNT_PERMISSION: Record<string, AccountPermission> = {
   'POST /api/webhooks/[id]/secret': 'manageRules',
   'POST /api/webhooks/[id]/test': 'manageRules',
   'POST /api/webhooks/deliveries/[id]/retry': 'manageRules',
+  'POST /api/tags/questions/[id]/test': 'organize',
 }
 
 export const isApiScope = (value: unknown): value is ApiScope =>

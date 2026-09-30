@@ -10,35 +10,45 @@
  * (décision 1). Ce fichier ne manipule que des identifiants de question et de valeur.
  */
 import type { Message } from '@/types/email'
-import { QUESTIONS, showsInList } from './questions'
+import { isEnabled, type QuestionSet } from './questions'
 import type { StoredTag, TaggedMessage } from './store'
 
 /** La route qui sert les étiquettes, écrite UNE fois. */
 export const TAGS_ENDPOINT = '/api/tags'
 
-/** L'ordre d'affichage d'une étiquette : celui de `questions.ts`, jamais celui du SQL. */
-const RANK = new Map(QUESTIONS.map((q, i) => [q.id, i]))
-const byQuestionOrder = (a: StoredTag, b: StoredTag) =>
-  (RANK.get(a.question) ?? Number.MAX_SAFE_INTEGER) - (RANK.get(b.question) ?? Number.MAX_SAFE_INTEGER)
+/**
+ * La route qui sert le JEU de questions de l'utilisateur (lot T-Q), écrite UNE fois : c'est la
+ * clé SWR que la liste, le panneau et l'écran de réglages partagent (mêmes règles que
+ * `/api/settings` : `{ data }`, un seul fetcher, une mutation la rafraîchit partout).
+ */
+export const QUESTIONS_ENDPOINT = '/api/tags/questions'
 
-/** Les étiquettes d'un message, dans l'ordre des questions. */
-export const orderedTags = (tags: readonly StoredTag[]): StoredTag[] => [...tags].sort(byQuestionOrder)
+/** L'ordre d'affichage d'une étiquette : celui du jeu de l'utilisateur, jamais celui du SQL. */
+const byQuestionOrder = (set: QuestionSet) => (a: StoredTag, b: StoredTag) => set.rankOf(a.question) - set.rankOf(b.question)
+
+/**
+ * Les étiquettes d'un message que l'interface MONTRE : celles d'une question du jeu ACTIF de
+ * l'utilisateur, dans l'ordre des questions. Une question désactivée (ou retirée) garde ses
+ * lignes en base — elles reviendraient si on la réactivait — mais n'a plus rien à dire à
+ * l'écran : ni pastille, ni ligne de panneau, ni compteur.
+ */
+export const orderedTags = (set: QuestionSet, tags: readonly StoredTag[]): StoredTag[] =>
+  tags.filter(tag => { const q = set.questionById(tag.question); return !!q && isEnabled(q) }).sort(byQuestionOrder(set))
 
 /**
  * Les étiquettes qui méritent une pastille sur la LIGNE. `showsInList` décide (un `noul`
  * seulement sur `oui`, un `score` à partir du niveau déclaré) ; le reste du panneau n'est
- * pas perdu pour autant, il passe en infobulle. Une question inconnue de `questions.ts` ne
- * peut rien afficher : c'est la même fermeture qu'à l'écriture.
+ * pas perdu pour autant, il passe en infobulle. Une question inconnue du jeu ne peut rien
+ * afficher : c'est la même fermeture qu'à l'écriture.
  */
-export const listPills = (tags: readonly StoredTag[]): StoredTag[] =>
-  orderedTags(tags.filter(tag => showsInList(tag.question, tag.valeur)))
+export const listPills = (set: QuestionSet, tags: readonly StoredTag[]): StoredTag[] =>
+  orderedTags(set, tags.filter(tag => set.showsInList(tag.question, tag.valeur)))
 
-/** Les étiquettes rangées par groupe, dans l'ordre de `questions.ts`, groupes vides omis. */
-export function tagsByGroup(tags: readonly StoredTag[]): { group: string; tags: StoredTag[] }[] {
+/** Les étiquettes rangées par groupe, dans l'ordre du jeu, groupes vides omis. */
+export function tagsByGroup(set: QuestionSet, tags: readonly StoredTag[]): { group: string; tags: StoredTag[] }[] {
   const groups = new Map<string, StoredTag[]>()
-  for (const tag of orderedTags(tags)) {
-    const group = QUESTIONS[RANK.get(tag.question) ?? -1]?.group
-    if (!group) continue
+  for (const tag of orderedTags(set, tags)) {
+    const group = set.questionById(tag.question)!.group
     const list = groups.get(group) ?? []
     list.push(tag)
     groups.set(group, list)

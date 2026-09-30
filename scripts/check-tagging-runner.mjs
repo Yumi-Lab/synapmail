@@ -77,7 +77,9 @@ const check = (label, ok, detail = '') => {
 const { initDb, query } = await import('../lib/db.ts')
 const runner = await import('../lib/tagging/runner.ts')
 const { ASSUMED_INPUT_TOKENS_PER_QUESTION, assumedInputTokensPerMail, EngineError } = await import('../lib/tagging/engine.ts')
-const { QUESTIONS, valuesOf } = await import('../lib/tagging/questions.ts')
+const { DEFAULT_SET, valuesOf } = await import('../lib/tagging/questions.ts')
+// Le jeu PAR DÉFAUT (lot T-Q) : la boîte du banc appartient à un utilisateur qui n'a rien modifié.
+const QUESTIONS = DEFAULT_SET.enabled
 const store = await import('../lib/tagging/store.ts')
 
 /** Domaine de test réservé (RFC 2606) : aucun risque de heurter un vrai mail de la boîte. */
@@ -232,7 +234,7 @@ const makeEngine = (opts = {}) => {
         const a = ANSWERS[q.id]
         const valeur = q.type === 'noul' ? 'oui' : valuesOf(q)[0]
         return { question: q.id, valeur, probabilites: a.probabilities ?? null, confiance: 0.8 }
-      }), rejected: [], inputTokens: opts.inputTokens ?? assumedInputTokensPerMail() }
+      }), rejected: [], inputTokens: opts.inputTokens ?? assumedInputTokensPerMail(QUESTIONS.length) }
     },
   }
 }
@@ -676,17 +678,16 @@ try {
   // — ce que le lot T-Q rendra courant en laissant modifier les questions.
   console.log('\nI. l’estimation d’une boîte jamais triée suit le nombre de questions')
   const MAILS_I = 1_000, PRICE_I = 42
-  const estI = n => runner.estimateUsd({ mails: MAILS_I, usdPerBillionInput: PRICE_I, inputTokens: 0, tagged: 0 })
-  const estNow = estI()
+  const estI = n => runner.estimateUsd({ mails: MAILS_I, questions: n, usdPerBillionInput: PRICE_I, inputTokens: 0, tagged: 0 })
+  const estNow = estI(QUESTIONS.length)
   check('I1 elle vaut coût-par-question × nombre de questions × mails, au tarif du moteur',
     Math.abs(estNow - (ASSUMED_INPUT_TOKENS_PER_QUESTION * QUESTIONS.length * MAILS_I * PRICE_I) / 1e9) < 1e-12,
     `estimée=${estNow}`)
-  // Le discriminant : à 41 questions (ce que mesurait T8) elle ne doit PAS rendre la même chose
-  // qu'à 49. Une constante figée par mail rendrait le même nombre dans les deux cas.
-  const estAt = q => (ASSUMED_INPUT_TOKENS_PER_QUESTION * q * MAILS_I * PRICE_I) / 1e9
+  // Le discriminant : à 41 questions (ce que mesurait T8) le PRODUIT ne doit PAS rendre la même
+  // chose qu'à 49. Une constante figée par mail rendrait le même nombre dans les deux cas.
   check(`I2 elle CHANGE avec le nombre de questions (41 → ${QUESTIONS.length})`,
-    Math.abs(estAt(41) - estAt(QUESTIONS.length)) > 1e-9 && Math.abs(estNow - estAt(QUESTIONS.length)) < 1e-12,
-    `41 questions=${estAt(41)}, ${QUESTIONS.length} questions=${estAt(QUESTIONS.length)}`)
+    Math.abs(estI(41) - estNow) > 1e-9 && Math.abs(estI(41) - (ASSUMED_INPUT_TOKENS_PER_QUESTION * 41 * MAILS_I * PRICE_I) / 1e9) < 1e-12,
+    `41 questions=${estI(41)}, ${QUESTIONS.length} questions=${estNow}`)
   // Et elle reste ancrée sur la mesure réelle : 995 mails tagués pour 0,3009 $ à 42 $/milliard
   // (gate T10b, 28/09/2026). Une estimation de 1 000 mails doit tomber à ±20 % de ce coût-là.
   const MESURE_USD_POUR_1000 = (0.3009 / 995) * 1_000
@@ -694,7 +695,7 @@ try {
     Math.abs(estNow - MESURE_USD_POUR_1000) / MESURE_USD_POUR_1000 < 0.2,
     `estimée=${estNow.toFixed(4)} $, mesurée=${MESURE_USD_POUR_1000.toFixed(4)} $, écart=${((estNow - MESURE_USD_POUR_1000) / MESURE_USD_POUR_1000 * 100).toFixed(1)} %`)
   // Et une boîte qui a DÉJÀ une moyenne mesurée l'utilise, elle : la constante n'est qu'un défaut.
-  const estMesure = runner.estimateUsd({ mails: MAILS_I, usdPerBillionInput: PRICE_I, inputTokens: 1_000_000, tagged: 100 })
+  const estMesure = runner.estimateUsd({ mails: MAILS_I, questions: QUESTIONS.length, usdPerBillionInput: PRICE_I, inputTokens: 1_000_000, tagged: 100 })
   check('I4 une boîte qui a une moyenne MESURÉE s’en sert, et ignore le défaut',
     Math.abs(estMesure - (10_000 * MAILS_I * PRICE_I) / 1e9) < 1e-12, `estimée=${estMesure}`)
 } finally {

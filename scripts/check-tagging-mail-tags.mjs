@@ -191,7 +191,8 @@ try {
   // --- G. un libellé existe pour TOUT ce que l'interface peut afficher ---------------
   // Sans cela, une pastille afficherait la clé brute `tags.v.xxx` au lieu d'un mot. Le contrôle
   // lit les VRAIS fichiers de langue et les VRAIES questions : aucune liste recopiée à la main.
-  const { QUESTIONS, valuesOf } = await import('../lib/tagging/questions.ts')
+  const { DEFAULT_SET, valuesOf } = await import('../lib/tagging/questions.ts')
+  const QUESTIONS = DEFAULT_SET.all
   const missing = []
   for (const locale of ['en', 'fr', 'zh']) {
     const dict = JSON.parse(readFileSync(`locales/${locale}.json`, 'utf8')).tags ?? {}

@@ -12,7 +12,7 @@ import { query } from '../db'
 import { encrypt, decrypt } from '../encrypt'
 import { askEngine, ENGINE_PRESETS, isEngineKind, type EngineKind } from './engine'
 import { UnknownEngineError } from './mailbox'
-import { QUESTIONS } from './questions'
+import { loadQuestionSet } from './userQuestions'
 
 /** Un moteur vu de l'écran : tout sauf la clé. */
 export interface DecisionEngine {
@@ -200,7 +200,8 @@ export interface EngineTestResult {
 /**
  * UNE requête minimale pour vérifier une clé avant de s'en servir (décision 13) : un état
  * factice et UNE question, pas les 41 — c'est un test de porte, pas un tri, et il se paie.
- * La question posée est la PREMIÈRE de `questions.ts` : aucune liste séparée à tenir d'accord.
+ * La question posée est la PREMIÈRE du jeu actif de l'utilisateur : aucune liste séparée à tenir
+ * d'accord (un jeu sans question active pose la première question du jeu, active ou non).
  *
  * La clé se déchiffre ici et n'en sort pas : ni la réponse, ni l'erreur recopiée ne la portent.
  */
@@ -212,11 +213,14 @@ export async function testEngine(userId: string, id: string): Promise<EngineTest
   if (!rows.length) throw new UnknownEngineError(id)
   const row = rows[0]
 
+  const set = await loadQuestionSet(userId)
+  const first = set.enabled[0] ?? set.all[0]
+  if (!first) throw new Error('aucune question définie : rien à poser au moteur')
   const started = Date.now()
   const result = await askEngine(
     { url: row.url, apiKey: row.key_encrypted ? decrypt(row.key_encrypted) : '', model: row.model },
     { expediteur: { nom: 'Test', adresse: 'test@synapmail.local' }, objet: 'test', corps: 'test' },
-    [QUESTIONS[0].id]
+    [first]
   )
   return { ms: Date.now() - started, inputTokens: result.inputTokens, model: result.model }
 }
