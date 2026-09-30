@@ -18,7 +18,7 @@ import { Tags } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { valuesOf } from '@/lib/tagging/questions'
 import { HUMAN_SOURCE } from '@/lib/tagging/engine'
-import { listPills, tagsByGroup } from '@/lib/tagging/view'
+import { listPills, orderedTags, tagsByGroup } from '@/lib/tagging/view'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import type { StoredTag } from '@/lib/tagging/store'
@@ -69,14 +69,15 @@ export function TagPills({ tags, compact }: { tags: readonly StoredTag[]; compac
   const { v } = useTagLabels()
   const describe = useTagText()
   const { set } = useQuestionSet()
-  const pills = useMemo(() => listPills(set, tags), [set, tags])
+  const visible = useMemo(() => orderedTags(set, tags), [set, tags])
+  const pills = useMemo(() => listPills(set, visible), [set, visible])
   if (!pills.length) return null
 
   // Deux pastilles au plus : au-delà, la ligne ne dit plus rien de l'objet du mail. Le reste
-  // se compte, et l'infobulle de ce compteur porte l'ENSEMBLE des étiquettes du message.
+  // se compte, et l'infobulle de ce compteur porte l'ENSEMBLE des étiquettes visibles du message.
   const shown = pills.slice(0, compact ? 1 : 2)
-  const hidden = tags.length - shown.length
-  const all = tags.map(describe).join('\n')
+  const hidden = visible.length - shown.length
+  const all = visible.map(describe).join('\n')
 
   return (
     <span className="flex min-w-0 items-center gap-1" data-tag-pills={pills.length}>
@@ -229,7 +230,8 @@ export function TagsPanel({ message, accountId, canOrganize }: {
       return res.json()
     },
   )
-  const tags = data?.data.effective ?? []
+  // Le jeu ACTIF seulement : une question désactivée n'a ni ligne ni part au compteur.
+  const tags = useMemo(() => orderedTags(set, data?.data.effective ?? []), [set, data])
   const groups = useMemo(() => tagsByGroup(set, tags), [set, tags])
   const engineByQuestion = useMemo(
     () => new Map((data?.data.tags ?? []).filter(tag => tag.source !== HUMAN_SOURCE).map(tag => [tag.question, tag])),

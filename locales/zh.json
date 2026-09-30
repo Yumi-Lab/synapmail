@@ -655,7 +655,8 @@
         "retagStarted": "分类已重新启动：邮件将在调度器下次运行时重新标记。",
         "noMail": "收件箱中没有邮件",
         "bodyPreview": "发送给引擎的正文：{chars} 个字符",
-        "saveFailed": "保存失败。"
+        "saveFailed": "保存失败。",
+        "reservedId": "标识符“{id}”已保留给规则检测器，请换一个。"
       }
     },
     "engines": {

@@ -26,10 +26,18 @@
  *   G. (HTTP) les routes : 400 qui nomme le champ, 400 qui nomme l'id réservé, 409 sur doublon,
  *      404 sur inconnue, 403 sans `tags:write`, et `POST …/[id]/test` pose UNE question au moteur
  *      de la boîte et rend sa réponse.
+ *   H. sur une VRAIE jointure (`message_tags` × le jeu de l'utilisateur) : `staleCounts` compte
+ *      les mails tagués sous une version antérieure d'une question passée en v2 (gate T-Q refus
+ *      n°1 : la requête non qualifiée rendait « column reference "question" is ambiguous ») ;
+ *      et une question DÉSACTIVÉE n'a plus ni pastille, ni ligne de panneau, ni part au compteur
+ *      (`orderedTags`/`listPills`/`tagsByGroup` de `view.ts`, refus n°2) ; le refus d'un id
+ *      réservé porte le code `reserved_id` + l'id, pour que l'écran le traduise.
  *
  * CONTRÔLE NÉGATIF (`--negative`) : `RESERVED_QUESTION_IDS` est vidé sur la copie chargée par
- * le banc et la clé de banc reçoit TOUTES les portées — B2 et G6 DOIVENT tomber. Ce qu'il
- * démontre : ces assertions mesurent la liste réservée et les portées, pas la présence des routes.
+ * le banc, la clé de banc reçoit TOUTES les portées, la requête de H1 est rejouée SANS qualifier
+ * `question` et H3 lit le jeu comme si aucune question n'était désactivée — B2, G6, H1 et H3
+ * DOIVENT tomber. Ce qu'il démontre : ces assertions mesurent la liste réservée, les portées, la
+ * qualification de la colonne et le filtre sur `enabled`, pas la présence des routes.
  * Ce qu'il ne démontre PAS : G3 (l'id réservé refusé par la ROUTE) tourne dans le processus du
  * serveur, que ce drapeau n'atteint pas — il reste vert sous `--negative`, et c'est attendu.
  */
@@ -66,8 +74,10 @@ const { initDb, query } = await import('../lib/db.ts')
 const questions = await import('../lib/tagging/questions.ts')
 const { DEFAULT_QUESTIONS, RULE_QUESTION_IDS, RESERVED_QUESTION_IDS, SCORE_LEVELS, CHOICE_MAX_OPTIONS, engineBodyFor } = questions
 const uq = await import('../lib/tagging/userQuestions.ts')
-const { validateQuestion, InvalidQuestionError, loadQuestionSet, listQuestions, createQuestion, updateQuestion, deleteQuestion, resetQuestions } = uq
-const { taxonomyVersion } = await import('../lib/tagging/store.ts')
+const { validateQuestion, InvalidQuestionError, loadQuestionSet, listQuestions, createQuestion, updateQuestion, deleteQuestion, resetQuestions, staleCounts } = uq
+const store = await import('../lib/tagging/store.ts')
+const { taxonomyVersion, questionVersion, writeTags } = store
+const view = await import('../lib/tagging/view.ts')
 const { ALL_SCOPES } = await import('../lib/apiScopes.ts')
 
 if (NEGATIVE) RESERVED_QUESTION_IDS.length = 0
@@ -139,6 +149,10 @@ try {
   try { validateQuestion({ ...NOUL, id: reserved }) } catch (e) { reservedMsg = e instanceof InvalidQuestionError ? `${e.field}: ${e.message}` : `!${e.message}` }
   check('B2 un id réservé est refusé sur `id`, et le message NOMME cet id',
     reservedMsg !== null && reservedMsg.startsWith('id:') && reservedMsg.includes(reserved), String(reservedMsg))
+  let reservedErr = null
+  try { validateQuestion({ ...NOUL, id: RULE_QUESTION_IDS[1] }) } catch (e) { reservedErr = e }
+  check('B3 le refus porte le code `reserved_id` et l’id, pour que l’écran le traduise (fr/en/zh)',
+    reservedErr instanceof InvalidQuestionError && reservedErr.code === questions.RESERVED_ID_CODE && reservedErr.id === RULE_QUESTION_IDS[1], String(reservedErr?.code))
 
   // ---- C. le jeu par défaut, une fois ------------------------------------------------
   console.log('C. le jeu par défaut est inséré une fois')
@@ -211,6 +225,63 @@ try {
   check('F2 le nombre de questions posées baisse de un, le jeu complet (`all`) la garde', afterOff.posed().length === before.posed().length - 1 && afterOff.all.length === before.all.length)
   check('F3 `taxonomyVersion` change avec l’activation : le trieur saura repartir', taxonomyVersion(before) !== taxonomyVersion(afterOff))
 
+  // ---- H. une vraie jointure : anciennes versions, question désactivée ----------------
+  console.log('H. anciennes versions et question désactivée, sur une vraie jointure')
+  const acc = await pool.query(
+    `INSERT INTO email_accounts (user_id, name, email, imap_host, imap_port, imap_secure, smtp_host, smtp_port, smtp_secure, username, password_encrypted)
+     VALUES ($1, 'banc tq', $2, 'imap.banc-tq.invalid', 993, true, 'smtp.banc-tq.invalid', 587, false, $2, 'banc-not-a-real-secret') RETURNING id`,
+    [U1, `tq-${crypto.randomBytes(4).toString('hex')}@banc-tq.invalid`]
+  )
+  const accountId = acc.rows[0].id
+  created.accounts.push(accountId)
+  const STALE_Q = DEFAULT_QUESTIONS.find(q => q.type === 'choice' && q.listBadge).id
+  const OFF_Q = DEFAULT_QUESTIONS.find(q => q.type === 'choice' && q.listBadge && q.id !== STALE_Q).id
+  const setV1 = await loadQuestionSet(U1)
+  const valueOf = (set, id) => questions.valuesOf(set.questionById(id))[0]
+  const MOTEUR = { id: '00000000-0000-4000-8000-0000000000a1', nom: 'JEV banc TQ' }
+  const MID = n => `<banc-tq-${n}@exemple.invalid>`
+  // Trois mails tagués par le moteur sous la v1 de STALE_Q et OFF_Q ; un quatrième corrigé à la main.
+  for (const n of [1, 2, 3]) {
+    await writeTags({ accountId, messageId: MID(n), source: 'jev', auteur: MOTEUR, modele: 'banc-1', questions: setV1,
+      tags: [{ question: STALE_Q, valeur: valueOf(setV1, STALE_Q) }, { question: OFF_Q, valeur: valueOf(setV1, OFF_Q) }] })
+  }
+  await writeTags({ accountId, messageId: MID(4), source: 'humain', auteur: { id: U1, nom: 'banc' }, validePar: U1, questions: setV1,
+    tags: [{ question: STALE_Q, valeur: valueOf(setV1, STALE_Q) }] })
+  const zero = await staleCounts(accountId, setV1, questionVersion)
+  check('H0 avant toute modification, aucune question n’a d’ancienne version', Object.keys(zero).length === 0, JSON.stringify(zero))
+  await updateQuestion(U1, STALE_Q, { instructions: `${setV1.questionById(STALE_Q).instructions} (v2)` })
+  const setV2 = await loadQuestionSet(U1)
+  let stale = null, staleErr = null
+  try {
+    stale = NEGATIVE
+      // La requête d’origine, NON qualifiée : c’est elle qui rendait 500 à chaque chargement de l’écran.
+      ? Object.fromEntries((await query(
+          `SELECT question, COUNT(DISTINCT message_id) AS n FROM message_tags m
+             JOIN unnest($2::text[], $3::text[]) AS v(question, version) ON v.question = m.question
+            WHERE m.account_id = $1 AND m.source <> 'humain' AND m.question_version <> v.version GROUP BY question`,
+          [accountId, setV2.all.map(q => q.id), setV2.all.map(questionVersion)])).map(r => [r.question, Number(r.n)]))
+      : await staleCounts(accountId, setV2, questionVersion)
+  } catch (e) { staleErr = e }
+  check(`H1 \`staleCounts\` sur la jointure réelle : ${STALE_Q} passée en v2 → 3 mails moteur comptés, la correction humaine non, ${OFF_Q} absente`,
+    !staleErr && stale?.[STALE_Q] === 3 && !(OFF_Q in (stale ?? {})) && Object.keys(stale ?? {}).length === 1, staleErr ? String(staleErr.message) : JSON.stringify(stale))
+
+  await updateQuestion(U1, OFF_Q, { enabled: false })
+  const setOff = await loadQuestionSet(U1)
+  const seen = NEGATIVE ? questions.questionSet(setOff.all.map(q => ({ ...q, enabled: true }))) : setOff
+  const { effective } = await store.readTags(accountId, MID(1))
+  check('H2 la base garde bien les deux étiquettes du mail (désactiver n’efface rien)', effective.length === 2 && effective.some(t => t.question === OFF_Q), `${effective.length} étiquette(s)`)
+  const visible = view.orderedTags(seen, effective)
+  const pills = view.listPills(seen, effective)
+  const groups = view.tagsByGroup(seen, effective).flatMap(g => g.tags)
+  check(`H3 ${OFF_Q} désactivée : ni dans les étiquettes visibles (compteur), ni en pastille, ni dans le panneau par groupe`,
+    visible.length === 1 && !visible.some(t => t.question === OFF_Q) && !pills.some(t => t.question === OFF_Q) && !groups.some(t => t.question === OFF_Q),
+    `visibles ${visible.map(t => t.question)}, pastilles ${pills.map(t => t.question)}, panneau ${groups.map(t => t.question)}`)
+  check(`H4 ${STALE_Q} reste active : toujours visible, en pastille et dans le panneau`,
+    visible.some(t => t.question === STALE_Q) && pills.some(t => t.question === STALE_Q) && groups.some(t => t.question === STALE_Q))
+  await updateQuestion(U1, OFF_Q, { enabled: true })
+  const setBack = await loadQuestionSet(U1)
+  check(`H5 réactivée, ${OFF_Q} revient avec ses étiquettes intactes`, view.orderedTags(setBack, effective).length === 2)
+
   // ---- G. les routes ----------------------------------------------------------------
   const alive = BASE ? await fetch(`${BASE}/login`).then(r => r.status === 200).catch(() => false) : false
   if (!alive) {
@@ -238,14 +309,6 @@ try {
       return { status: res.status, body: parsed, text }
     }
     const P = '/api/tags/questions'
-
-    const acc = await pool.query(
-      `INSERT INTO email_accounts (user_id, name, email, imap_host, imap_port, imap_secure, smtp_host, smtp_port, smtp_secure, username, password_encrypted)
-       VALUES ($1, 'banc tq', $2, 'imap.banc-tq.invalid', 993, true, 'smtp.banc-tq.invalid', 587, false, $2, 'banc-not-a-real-secret') RETURNING id`,
-      [U1, `tq-${crypto.randomBytes(4).toString('hex')}@banc-tq.invalid`]
-    )
-    const accountId = acc.rows[0].id
-    created.accounts.push(accountId)
     const writer = await makeKey(U1, ['tags:read', 'tags:write', 'messages:read'], [accountId])
     const reader = await makeKey(U1, ['tags:read'], [accountId])
 
@@ -255,7 +318,8 @@ try {
     const bad = await call(P, { method: 'POST', key: writer, body: { ...SCORE, id: 'banc_http_score', options: SCORE.options.slice(0, 1) } })
     check('G2 un POST invalide est un 400 qui NOMME le champ (`field: options`)', bad.status === 400 && bad.body?.field === 'options' && /options/.test(bad.body?.error ?? ''), `${bad.status} ${bad.text.slice(0, 160)}`)
     const res = await call(P, { method: 'POST', key: writer, body: { ...NOUL, id: reserved } })
-    check('G3 un POST avec un id réservé est un 400 qui NOMME l’id', res.status === 400 && res.body?.field === 'id' && (res.body?.error ?? '').includes(reserved), `${res.status} ${res.text.slice(0, 160)}`)
+    check('G3 un POST avec un id réservé est un 400 qui NOMME l’id, avec `code: reserved_id` et `id`',
+      res.status === 400 && res.body?.field === 'id' && (res.body?.error ?? '').includes(reserved) && res.body?.code === questions.RESERVED_ID_CODE && res.body?.id === reserved, `${res.status} ${res.text.slice(0, 160)}`)
     const ok = await call(P, { method: 'POST', key: writer, body: { ...SCORE, id: 'banc_http_score' } })
     check('G4 un POST valide est un 201 `{ data }` en version 1', ok.status === 201 && ok.body?.data?.id === 'banc_http_score' && ok.body.data.version === 1, `${ok.status} ${ok.text.slice(0, 160)}`)
     const dupHttp = await call(P, { method: 'POST', key: writer, body: { ...SCORE, id: 'banc_http_score' } })
@@ -321,10 +385,10 @@ try {
 }
 
 if (NEGATIVE) {
-  const expected = ['B2', 'G6']
+  const expected = ['B2', 'G6', 'H1', 'H3']
   const fell = expected.filter(id => failures.some(f => f.startsWith(id)))
   if (fell.length === expected.length) { console.log(`\ncontrôle négatif : ${failures.length} refus tombés (${failures.map(f => f.split(' ')[0]).join(', ')}), comme attendu`); process.exit(0) }
-  console.error(`\nCONTRÔLE NÉGATIF MUET : liste réservée vidée, et ${expected.filter(id => !fell.includes(id)).join(', ')} reste vert — le banc ne mesure pas la liste`)
+  console.error(`\nCONTRÔLE NÉGATIF MUET : ${expected.filter(id => !fell.includes(id)).join(', ')} reste vert — le banc ne mesure pas ce qu’il prétend`)
   process.exit(1)
 }
 if (failures.length) { console.error(`\n${failures.length} échec(s)`); process.exit(1) }

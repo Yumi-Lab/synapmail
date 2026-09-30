@@ -20,7 +20,7 @@ import { RowMenu, ContextMenuItem, MENU_ICON } from '@/components/ui/ContextMenu
 import { SettingsSection, SaveBar, Toggle } from '@/components/settings/primitives'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
-import { SCORE_LEVELS, SLUG_RE, engineBodyOf, type QuestionType, type TagOption, type TagQuestion } from '@/lib/tagging/questions'
+import { RESERVED_ID_CODE, SCORE_LEVELS, SLUG_RE, engineBodyOf, type QuestionType, type TagOption, type TagQuestion } from '@/lib/tagging/questions'
 import { QUESTIONS_ENDPOINT } from '@/lib/tagging/view'
 import type { StoredQuestion } from '@/lib/tagging/userQuestions'
 import type { Message } from '@/types/email'
@@ -61,7 +61,7 @@ export function TagQuestionsSection({ accountId, staleCounts }: {
   const current = useMemo(() => questions.find(q => q.id === open) ?? null, [questions, open])
   const dirty = !!draft && !!current && JSON.stringify(draftOf(current)) !== JSON.stringify(draft)
 
-  async function send(method: string, path: string, body?: unknown): Promise<{ ok: boolean; json: { error?: string; data?: unknown } }> {
+  async function send(method: string, path: string, body?: unknown): Promise<{ ok: boolean; json: { error?: string; code?: string; id?: string; data?: unknown } }> {
     const res = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
     return { ok: res.ok, json: await res.json().catch(() => ({})) }
   }
@@ -73,9 +73,11 @@ export function TagQuestionsSection({ accountId, staleCounts }: {
       const { ok, json } = adding
         ? await send('POST', QUESTIONS_ENDPOINT, draft)
         : await send('PATCH', `${QUESTIONS_ENDPOINT}/${encodeURIComponent(draft.id)}`, draft)
-      if (!ok) { setError(json.error ?? t('saveFailed')); return }
+      if (!ok) { setError(json.code === RESERVED_ID_CODE ? t('reservedId', { id: json.id ?? draft.id }) : json.error ?? t('saveFailed')); return }
       await mutate()
-      if (adding) { setAdding(false); setDraft(null); setOpen(null) }
+      // La question rendue porte sa nouvelle version : le brouillon se réaligne dessus, sinon
+      // `dirty` resterait vrai (v1 en main, v2 à l'écran) et le bouton actif après l'enregistrement.
+      if (adding) { setAdding(false); setDraft(null); setOpen(null) } else setDraft(draftOf(json.data as StoredQuestion))
       setSaved(true)
     } finally {
       setSaving(false)

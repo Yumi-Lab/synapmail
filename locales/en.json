@@ -655,7 +655,8 @@
         "retagStarted": "Sort restarted: the mails will be retagged on the scheduler’s next pass.",
         "noMail": "No mail in the inbox",
         "bodyPreview": "Body sent to the engine: {chars} characters",
-        "saveFailed": "Saving failed."
+        "saveFailed": "Saving failed.",
+        "reservedId": "The id “{id}” is reserved for a rule detector: pick another one."
       }
     },
     "engines": {

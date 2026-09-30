@@ -655,7 +655,8 @@
         "retagStarted": "Tri relancé : les mails seront retagués au prochain passage du planificateur.",
         "noMail": "Aucun mail dans la boîte de réception",
         "bodyPreview": "Corps envoyé au moteur : {chars} caractères",
-        "saveFailed": "L’enregistrement a échoué."
+        "saveFailed": "L’enregistrement a échoué.",
+        "reservedId": "L’identifiant « {id} » est réservé à un détecteur de règles : choisissez-en un autre."
       }
     },
     "engines": {

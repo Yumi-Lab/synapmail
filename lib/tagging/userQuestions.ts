@@ -17,7 +17,7 @@
  */
 import { query } from '../db'
 import {
-  CHOICE_MAX_OPTIONS, DEFAULT_QUESTIONS, RESERVED_QUESTION_IDS, SCORE_LEVELS, SLUG_RE, engineBodyOf, questionSet,
+  CHOICE_MAX_OPTIONS, DEFAULT_QUESTIONS, RESERVED_ID_CODE, RESERVED_QUESTION_IDS, SCORE_LEVELS, SLUG_RE, engineBodyOf, questionSet,
   type QuestionSet, type QuestionType, type TagOption, type TagQuestion,
 } from './questions'
 
@@ -26,10 +26,14 @@ const TYPES: readonly QuestionType[] = ['choice', 'score', 'noul']
 /** Un refus de validation : la route en fait un 400 qui nomme le champ. */
 export class InvalidQuestionError extends Error {
   field: string
-  constructor(field: string, message: string) {
+  /** Un code stable quand l'écran doit TRADUIRE le refus (`reserved_id` porte aussi `id`). */
+  code?: string
+  id?: string
+  constructor(field: string, message: string, extra?: { code: string; id: string }) {
     super(message)
     this.name = 'InvalidQuestionError'
     this.field = field
+    if (extra) { this.code = extra.code; this.id = extra.id }
   }
 }
 
@@ -151,7 +155,7 @@ function validateOption(o: unknown, field: string): TagOption {
  */
 export function validateQuestion(input: QuestionInput): TagQuestion {
   if (typeof input.id !== 'string' || !SLUG_RE.test(input.id)) throw new InvalidQuestionError('id', `id: identifiant attendu [a-z0-9_]{2,40}, reçu ${JSON.stringify(input.id)}`)
-  if (RESERVED_QUESTION_IDS.includes(input.id)) throw new InvalidQuestionError('id', `id: identifiant réservé ${input.id}`)
+  if (RESERVED_QUESTION_IDS.includes(input.id)) throw new InvalidQuestionError('id', `id: identifiant réservé ${input.id}`, { code: RESERVED_ID_CODE, id: input.id })
   if (!TYPES.includes(input.type as QuestionType)) throw new InvalidQuestionError('type', `type: l'un de ${TYPES.join(', ')}, reçu ${JSON.stringify(input.type)}`)
   const type = input.type as QuestionType
   if (typeof input.instructions !== 'string' || !input.instructions.trim()) throw new InvalidQuestionError('instructions', 'instructions: consigne vide')
@@ -272,11 +276,11 @@ export async function resetQuestions(userId: string): Promise<StoredQuestion[]> 
  */
 export async function staleCounts(accountId: string, set: QuestionSet, versionOf: (q: TagQuestion) => string): Promise<Record<string, number>> {
   const rows = await query<{ question: string; n: string }>(
-    `SELECT question, COUNT(DISTINCT message_id) AS n
+    `SELECT m.question, COUNT(DISTINCT m.message_id) AS n
        FROM message_tags m
        JOIN unnest($2::text[], $3::text[]) AS v(question, version) ON v.question = m.question
       WHERE m.account_id = $1 AND m.source <> 'humain' AND m.question_version <> v.version
-      GROUP BY question`,
+      GROUP BY m.question`,
     [accountId, set.all.map(q => q.id), set.all.map(versionOf)]
   )
   return Object.fromEntries(rows.map(r => [r.question, Number(r.n)]))

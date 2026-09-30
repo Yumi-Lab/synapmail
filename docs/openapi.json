@@ -3516,7 +3516,7 @@
         ],
         "operationId": "createTagQuestion",
         "summary": "Add a sorting question",
-        "description": "Checked against the JEV contract server-side; `400` names the offending `field`. Reserved ids (rule detectors, `reset`) are refused with `400` naming the id; `409` when the id is already in the set. Requires the `tags:write` scope.",
+        "description": "Checked against the JEV contract server-side; `400` names the offending `field`. Reserved ids (rule detectors, `reset`) are refused with `400` naming the id and carrying `code: \"reserved_id\"` plus `id`; `409` when the id is already in the set. Requires the `tags:write` scope.",
         "requestBody": {
           "required": true,
           "content": {

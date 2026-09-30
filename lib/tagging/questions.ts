@@ -86,6 +86,8 @@ export const RULE_QUESTION_IDS = ['telephone', 'email_tiers', 'iban', 'carte_ban
  * cet id serait injoignable par `PATCH/DELETE /api/tags/questions/[id]`.
  */
 export const RESERVED_QUESTION_IDS: readonly string[] = [...RULE_QUESTION_IDS, 'reset']
+/** Le code du refus d'un identifiant réservé (400 `code`) : l'écran le traduit, le banc le mesure. */
+export const RESERVED_ID_CODE = 'reserved_id'
 
 /** Le contrat JEV d'un identifiant (question comme valeur) : `[a-z0-9_]{2,40}`. */
 export const SLUG_RE = /^[a-z0-9_]{2,40}$/
@@ -727,7 +729,7 @@ export function questionSet(questions: readonly TagQuestion[]): QuestionSet {
     all, enabled, questionById, isValidTag,
     showsInList(question, value) {
       const q = byId.get(question)
-      if (!q?.listBadge || !isValidTag(question, value)) return false
+      if (!q?.listBadge || !isEnabled(q) || !isValidTag(question, value)) return false
       if (q.type === 'noul') return value === NOUL_YES
       if (q.type === 'score' && typeof q.listBadge === 'string') {
         const levels = valuesOf(q)

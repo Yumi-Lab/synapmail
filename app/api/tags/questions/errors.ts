@@ -7,7 +7,7 @@ import { DuplicateQuestionError, InvalidQuestionError, UnknownQuestionError } fr
  * méthodes HTTP, d'où ce voisin. Voir lib/tagging/userQuestions.ts.
  */
 export function questionErrorResponse(err: unknown): NextResponse | null {
-  if (err instanceof InvalidQuestionError) return NextResponse.json({ error: err.message, field: err.field }, { status: 400 })
+  if (err instanceof InvalidQuestionError) return NextResponse.json({ error: err.message, field: err.field, ...(err.code ? { code: err.code, id: err.id } : {}) }, { status: 400 })
   if (err instanceof DuplicateQuestionError) return NextResponse.json({ error: err.message, id: err.id }, { status: 409 })
   if (err instanceof UnknownQuestionError) return NextResponse.json({ error: err.message, id: err.id }, { status: 404 })
   return null

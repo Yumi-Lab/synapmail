@@ -10,7 +10,7 @@
  * (décision 1). Ce fichier ne manipule que des identifiants de question et de valeur.
  */
 import type { Message } from '@/types/email'
-import type { QuestionSet } from './questions'
+import { isEnabled, type QuestionSet } from './questions'
 import type { StoredTag, TaggedMessage } from './store'
 
 /** La route qui sert les étiquettes, écrite UNE fois. */
@@ -26,8 +26,14 @@ export const QUESTIONS_ENDPOINT = '/api/tags/questions'
 /** L'ordre d'affichage d'une étiquette : celui du jeu de l'utilisateur, jamais celui du SQL. */
 const byQuestionOrder = (set: QuestionSet) => (a: StoredTag, b: StoredTag) => set.rankOf(a.question) - set.rankOf(b.question)
 
-/** Les étiquettes d'un message, dans l'ordre des questions. */
-export const orderedTags = (set: QuestionSet, tags: readonly StoredTag[]): StoredTag[] => [...tags].sort(byQuestionOrder(set))
+/**
+ * Les étiquettes d'un message que l'interface MONTRE : celles d'une question du jeu ACTIF de
+ * l'utilisateur, dans l'ordre des questions. Une question désactivée (ou retirée) garde ses
+ * lignes en base — elles reviendraient si on la réactivait — mais n'a plus rien à dire à
+ * l'écran : ni pastille, ni ligne de panneau, ni compteur.
+ */
+export const orderedTags = (set: QuestionSet, tags: readonly StoredTag[]): StoredTag[] =>
+  tags.filter(tag => { const q = set.questionById(tag.question); return !!q && isEnabled(q) }).sort(byQuestionOrder(set))
 
 /**
  * Les étiquettes qui méritent une pastille sur la LIGNE. `showsInList` décide (un `noul`
@@ -42,8 +48,7 @@ export const listPills = (set: QuestionSet, tags: readonly StoredTag[]): StoredT
 export function tagsByGroup(set: QuestionSet, tags: readonly StoredTag[]): { group: string; tags: StoredTag[] }[] {
   const groups = new Map<string, StoredTag[]>()
   for (const tag of orderedTags(set, tags)) {
-    const group = set.questionById(tag.question)?.group
-    if (!group) continue
+    const group = set.questionById(tag.question)!.group
     const list = groups.get(group) ?? []
     list.push(tag)
     groups.set(group, list)

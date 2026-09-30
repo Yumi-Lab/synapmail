@@ -1290,7 +1290,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             )}
           >
             <option value="">{tTags('filterAll')}</option>
-            {questionSet.all.map(q => (
+            {questionSet.enabled.map(q => (
               <optgroup key={q.id} label={labelQ(q.id)}>
                 {valuesOf(q).map(v => (
                   <option key={v} value={`${q.id}|${v}`}>{labelV(v)}</option>
