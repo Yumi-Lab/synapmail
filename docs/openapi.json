@@ -4197,6 +4197,215 @@
           }
         }
       }
+    },
+    "/api/tags/groups": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "listTagQuestionGroups",
+        "summary": "The caller's question-group triggers",
+        "description": "One row per question group that has a trigger. Groups without a row are trunk (asked on every message). Requires the `tags:read` scope.",
+        "responses": {
+          "200": {
+            "description": "The triggers, by position then slug.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TagQuestionGroup"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "createTagQuestionGroup",
+        "summary": "Give a question group a trigger",
+        "description": "Validated against the caller's question set: `400` names the offending `field` (`conditions[n].tagQuestion` for an unknown question, `conditions[n].value` for a value outside its list, `conditions[n].operator` when a `tag` condition uses something other than `equals` / `not_equals`). `409` when the slug already has a trigger. Requires the `tags:write` scope.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagQuestionGroupInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The stored trigger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TagQuestionGroup"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tags/groups/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,40}$"
+          }
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "updateTagQuestionGroup",
+        "summary": "Change a group's trigger",
+        "description": "Every field optional; the body is merged into the stored row and the whole trigger is revalidated. The slug itself cannot change. `404` names an unknown group (another user's group is unknown). Requires the `tags:write` scope.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagQuestionGroupInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The trigger after the change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TagQuestionGroup"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "deleteTagQuestionGroup",
+        "summary": "Remove a group's trigger",
+        "description": "The group's questions go back to the trunk; no question is deleted. `404` names an unknown group. Requires the `tags:write` scope.",
+        "responses": {
+          "200": {
+            "description": "The removed trigger's slug.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4529,7 +4738,8 @@
           "errors",
           "total",
           "estimateUsd",
-          "questions"
+          "questions",
+          "passes"
         ],
         "properties": {
           "accountId": {
@@ -4637,6 +4847,9 @@
           "questions": {
             "type": "integer",
             "description": "How many questions each message is asked."
+          },
+          "passes": {
+            "$ref": "#/components/schemas/PassEstimate"
           }
         }
       },
@@ -5513,6 +5726,14 @@
           },
           "value": {
             "type": "string"
+          },
+          "headerName": {
+            "type": "string",
+            "description": "For `field: 'header'` — the header to read."
+          },
+          "tagQuestion": {
+            "type": "string",
+            "description": "For `field: 'tag'` (question-group triggers only) — the question whose already-obtained answer is compared to `value` with `equals` / `not_equals`."
           }
         }
       },
@@ -5839,6 +6060,182 @@
             }
           }
         ]
+      },
+      "TagQuestionGroupInput": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "description": "A trigger on a question group. `id` is the slug carried by each question's `group`. Empty `conditions` (or no row at all) = trunk: asked on every message. Non-empty = conditional: asked in a second request only for messages whose trigger is true after pass 1 (tagging rules + trunk answers). Conditions use the email-rule format and evaluator, plus `field: 'tag'` (`tagQuestion` + `value`, `equals` / `not_equals`) which reads an answer already obtained for the message.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,40}$"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name; defaults to the slug."
+          },
+          "position": {
+            "type": "integer",
+            "default": 0
+          },
+          "conditionLogic": {
+            "type": "string",
+            "enum": [
+              "all",
+              "any"
+            ],
+            "default": "all"
+          },
+          "conditions": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RuleCondition"
+            }
+          }
+        }
+      },
+      "TagQuestionGroup": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TagQuestionGroupInput"
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "position",
+              "conditionLogic",
+              "conditions",
+              "createdAt",
+              "updatedAt"
+            ],
+            "properties": {
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ]
+      },
+      "PassEstimate": {
+        "type": "object",
+        "required": [
+          "requestsPerMail",
+          "tokensPerMail",
+          "usdPerMail",
+          "usdRemaining",
+          "groups"
+        ],
+        "description": "What the passes cost BEFORE starting. `trunk` = pass 1 alone; `withGroups` = pass 1 plus each conditional group weighted by its trigger rate read from the sample's tag distribution — `null` until a sample has answered every question the triggers read. Tokens per question are the mailbox's own measure (`inputTokens / input_mails / questions`) when it has one, else the documented constant.",
+        "properties": {
+          "requestsPerMail": {
+            "type": "object",
+            "required": [
+              "trunk",
+              "max"
+            ],
+            "properties": {
+              "trunk": {
+                "type": "integer",
+                "description": "Requests for the trunk (more than 1 when the trunk exceeds the token budget)."
+              },
+              "max": {
+                "type": "integer",
+                "description": "Trunk requests plus one per conditional group that fires (each split by the same budget)."
+              }
+            }
+          },
+          "tokensPerMail": {
+            "type": "object",
+            "required": [
+              "trunk",
+              "withGroups"
+            ],
+            "properties": {
+              "trunk": {
+                "type": "number"
+              },
+              "withGroups": {
+                "type": "number",
+                "nullable": true
+              }
+            }
+          },
+          "usdPerMail": {
+            "type": "object",
+            "nullable": true,
+            "required": [
+              "trunk",
+              "withGroups"
+            ],
+            "properties": {
+              "trunk": {
+                "type": "number"
+              },
+              "withGroups": {
+                "type": "number",
+                "nullable": true
+              }
+            }
+          },
+          "usdRemaining": {
+            "type": "object",
+            "nullable": true,
+            "required": [
+              "trunk",
+              "withGroups"
+            ],
+            "properties": {
+              "trunk": {
+                "type": "number"
+              },
+              "withGroups": {
+                "type": "number",
+                "nullable": true
+              }
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "questions",
+                "requests",
+                "rate"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "questions": {
+                  "type": "integer"
+                },
+                "requests": {
+                  "type": "integer"
+                },
+                "rate": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Estimated share of messages that trigger the group (independence assumed between conditions; a condition on a message field counts as 1)."
+                }
+              }
+            }
+          }
+        }
       }
     }
   }

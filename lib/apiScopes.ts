@@ -153,6 +153,11 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'POST /api/tags/rules': 'tags:write',
   'PATCH /api/tags/rules/[id]': 'tags:write',
   'DELETE /api/tags/rules/[id]': 'tags:write',
+  // Les groupes de questions conditionnels (lot T-Q3) : à l'utilisateur, comme les questions.
+  'GET /api/tags/groups': 'tags:read',
+  'POST /api/tags/groups': 'tags:write',
+  'PATCH /api/tags/groups/[id]': 'tags:write',
+  'DELETE /api/tags/groups/[id]': 'tags:write',
 }
 
 /**

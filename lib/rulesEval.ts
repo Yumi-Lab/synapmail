@@ -6,6 +6,11 @@
 import type { Message } from '@/types/email'
 import type { EmailRule, RuleCondition } from '@/types/rule'
 
+/** Une étiquette telle qu'une condition `tag` la lit : la question et sa valeur, rien d'autre. */
+export interface RuleTag { question: string; valeur: string }
+
+const NO_TAGS: readonly RuleTag[] = []
+
 // ---------------------------------------------------------------------------
 // Condition evaluation
 // ---------------------------------------------------------------------------
@@ -14,7 +19,16 @@ import type { EmailRule, RuleCondition } from '@/types/rule'
  * UNE condition sur UN message. Exportée pour les règles d'étiquetage (`lib/tagging/tagRules.ts`,
  * décision 24.1) : elles s'évaluent avec CETTE fonction, jamais une copie.
  */
-export function evalCondition(msg: Message, cond: RuleCondition): boolean {
+export function evalCondition(msg: Message, cond: RuleCondition, tags: readonly RuleTag[] = NO_TAGS): boolean {
+  // Étiquette : la valeur résolue en amont et passée telle quelle — `evalCondition` reste
+  // synchrone et pure, elle ne lit pas la base. Même contrat que la lane webhooks.
+  if (cond.field === 'tag') {
+    const held = tags.some(t => t.question === cond.tagQuestion && t.valeur === cond.value)
+    if (cond.operator === 'equals')     return held
+    if (cond.operator === 'not_equals') return !held
+    return false
+  }
+
   // Boolean fields
   if (cond.field === 'has_attachments') {
     if (cond.operator === 'is_true')  return msg.hasAttachments === true
@@ -81,10 +95,10 @@ export function evalCondition(msg: Message, cond: RuleCondition): boolean {
   }
 }
 
-export function evaluateRule(msg: Message, rule: Pick<EmailRule, 'enabled' | 'conditions' | 'conditionLogic'>): boolean {
+export function evaluateRule(msg: Message, rule: Pick<EmailRule, 'enabled' | 'conditions' | 'conditionLogic'>, tags: readonly RuleTag[] = NO_TAGS): boolean {
   if (!rule.enabled || !rule.conditions.length) return false
-  if (rule.conditionLogic === 'all') return rule.conditions.every(c => evalCondition(msg, c))
-  return rule.conditions.some(c => evalCondition(msg, c))
+  if (rule.conditionLogic === 'all') return rule.conditions.every(c => evalCondition(msg, c, tags))
+  return rule.conditions.some(c => evalCondition(msg, c, tags))
 }
 
 export function testRule(messages: Message[], rule: EmailRule): Message[] {

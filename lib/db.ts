@@ -689,6 +689,24 @@ export async function initDb(): Promise<void> {
   `)
   await query(`CREATE INDEX IF NOT EXISTS tag_rules_user_idx ON tag_rules(user_id)`)
 
+  // Les groupes de questions CONDITIONNELS (lot T-Q3, décision 24.2) : `id` est le slug que
+  // porte `tag_questions.groupe` ; `conditions` = le déclencheur, même format que `tag_rules`
+  // plus le champ `tag` (une étiquette déjà obtenue). Vide = tronc, posé à chaque mail. Un slug
+  // sans ligne est du tronc aussi : les 49 questions d'origine n'ont donc aucune ligne ici.
+  await query(`
+    CREATE TABLE IF NOT EXISTS tag_question_groups (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      id VARCHAR(40) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      condition_logic VARCHAR(10) NOT NULL DEFAULT 'all' CHECK (condition_logic IN ('all', 'any')),
+      conditions JSONB NOT NULL DEFAULT '[]',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, id)
+    )
+  `)
+
   // La dernière position CONNUE d'un mail tagué, pour que le filtre par étiquette montre des
   // mails absents de la page chargée. `messages_cache` ne suffit pas : il ne garde qu'une
   // fenêtre, et un mail tagué il y a un mois en est sorti.

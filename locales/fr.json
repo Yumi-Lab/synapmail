@@ -488,6 +488,7 @@
         "field_date_received": "Date de réception",
         "field_priority": "Priorité (X-Priority)",
         "field_header": "En-tête personnalisé",
+        "field_tag": "Étiquette",
         "op_contains": "contient",
         "op_not_contains": "ne contient pas",
         "op_equals": "est exactement",
@@ -715,6 +716,39 @@
         "allAccounts": "toutes les boîtes",
         "saveFailed": "Enregistrement impossible",
         "empty": "Aucune règle. Une règle pose une étiquette sans appeler le moteur : utile pour ce qu’un simple critère suffit à reconnaître."
+      },
+      "groups": {
+        "title": "Groupes de questions",
+        "description": "{conditional} groupes conditionnels sur {total} groupes. Un groupe sans déclencheur est posé à chaque mail (passe 1) ; un groupe conditionnel n’est posé qu’aux mails dont le déclencheur est vrai après la passe 1 : une requête de plus, seulement pour eux.",
+        "add": "Rendre un groupe conditionnel",
+        "delete": "Retirer le déclencheur…",
+        "deleteConfirm": "Retirer le déclencheur de « {name} » ? Ses questions seront posées à chaque mail, comme avant.",
+        "group": "Groupe",
+        "name": "Nom affiché",
+        "always": "toujours",
+        "conditional": "conditionnel",
+        "questions": "{count} questions",
+        "trigger": "Déclencheur",
+        "logicAll": "Toutes (ET)",
+        "logicAny": "L’une (OU)",
+        "addCondition": "Ajouter une condition",
+        "triggerHint": "Une condition « Étiquette » lit une réponse déjà obtenue pour ce mail (règles ou passe 1). Une condition sur un champ du mail est lue directement.",
+        "saveFailed": "Enregistrement impossible",
+        "empty": "Toutes les questions sont posées à chaque mail. Rendez un groupe conditionnel pour ne poser ses questions qu’aux mails concernés.",
+        "noFreeGroup": "Tous les groupes de questions ont déjà un déclencheur."
+      },
+      "cost": {
+        "passes": "Requêtes et coût par mail",
+        "passesDesc": "Avant de lancer : ce que coûte chaque mail selon les groupes actifs, au tarif de ce moteur.",
+        "trunk": "Tronc seul",
+        "withGroups": "Avec les groupes",
+        "perMail": "{cost} / mail",
+        "remaining": "{cost} pour les {mails} mails restants",
+        "requests": "{count} requête(s) par mail",
+        "requestsRange": "{trunk} à {max} requêtes par mail",
+        "withGroupsUnknown": "Inconnu : lancez un échantillon pour mesurer la part des mails qui déclenchent chaque groupe.",
+        "groupRate": "{name} : {questions} questions, déclenché pour {rate} des mails",
+        "groupRateUnknown": "{name} : {questions} questions, part inconnue"
       }
     },
     "engines": {

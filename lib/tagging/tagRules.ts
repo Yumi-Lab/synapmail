@@ -120,18 +120,28 @@ export interface TagRuleInput {
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 const LOGICS: readonly ConditionLogic[] = ['all', 'any']
-const FIELDS: readonly RuleField[] = ['from', 'to', 'cc', 'subject', 'body', 'has_attachments', 'list_unsubscribe', 'size', 'date_received', 'priority', 'header']
-const OPERATORS: readonly RuleOperator[] = ['contains', 'not_contains', 'equals', 'not_equals', 'starts_with', 'ends_with', 'is_true', 'is_false', 'greater_than', 'less_than', 'before', 'after']
+export const RULE_FIELDS: readonly RuleField[] = ['from', 'to', 'cc', 'subject', 'body', 'has_attachments', 'list_unsubscribe', 'size', 'date_received', 'priority', 'header']
+export const RULE_OPERATORS: readonly RuleOperator[] = ['contains', 'not_contains', 'equals', 'not_equals', 'starts_with', 'ends_with', 'is_true', 'is_false', 'greater_than', 'less_than', 'before', 'after']
 
-function validateCondition(c: unknown, field: string): RuleCondition {
-  if (!isRecord(c)) throw new InvalidTagRuleError(field, `${field}: une condition est un objet {field, operator, value}`)
-  if (!FIELDS.includes(c.field as RuleField)) throw new InvalidTagRuleError(`${field}.field`, `${field}.field: champ inconnu ${JSON.stringify(c.field)}`)
-  if (!OPERATORS.includes(c.operator as RuleOperator)) throw new InvalidTagRuleError(`${field}.operator`, `${field}.operator: opérateur inconnu ${JSON.stringify(c.operator)}`)
-  if (c.value !== undefined && c.value !== null && typeof c.value !== 'string') throw new InvalidTagRuleError(`${field}.value`, `${field}.value: chaîne attendue`)
+/**
+ * UNE condition, sous le contrat des règles de courrier. Partagée avec les groupes de questions
+ * (`questionGroups.ts`), qui admettent en plus le champ `tag` : `fields` dit lesquels sont
+ * permis ici, `fail` fabrique le refus de l'appelant (chacun a sa classe d'erreur).
+ */
+export function validateCondition(
+  c: unknown, field: string, fail: (field: string, message: string) => never, fields: readonly RuleField[] = RULE_FIELDS
+): RuleCondition {
+  if (!isRecord(c)) fail(field, `${field}: une condition est un objet {field, operator, value}`)
+  if (!fields.includes(c.field as RuleField)) fail(`${field}.field`, `${field}.field: champ inconnu ${JSON.stringify(c.field)}`)
+  if (!RULE_OPERATORS.includes(c.operator as RuleOperator)) fail(`${field}.operator`, `${field}.operator: opérateur inconnu ${JSON.stringify(c.operator)}`)
+  if (c.value !== undefined && c.value !== null && typeof c.value !== 'string') fail(`${field}.value`, `${field}.value: chaîne attendue`)
   const out: RuleCondition = { id: typeof c.id === 'string' && c.id ? c.id : `${field}`, field: c.field as RuleField, operator: c.operator as RuleOperator, value: (c.value as string | undefined) ?? '' }
   if (typeof c.headerName === 'string' && c.headerName) out.headerName = c.headerName
+  if (typeof c.tagQuestion === 'string' && c.tagQuestion) out.tagQuestion = c.tagQuestion
   return out
 }
+
+const failRule = (field: string, message: string): never => { throw new InvalidTagRuleError(field, message) }
 
 function validateAction(a: unknown, field: string, set: QuestionSet): TagRuleAction {
   if (!isRecord(a)) throw new InvalidTagRuleError(field, `${field}: une action est un objet {question, valeur}`)
@@ -160,7 +170,7 @@ export function validateTagRule(input: TagRuleInput, set: QuestionSet): Omit<Tag
   return {
     accountId: (input.accountId as string | null | undefined) ?? null,
     name: input.name.trim(), enabled: (input.enabled as boolean | undefined) ?? true, priority, conditionLogic,
-    conditions: input.conditions.map((c, i) => validateCondition(c, `conditions[${i}]`)),
+    conditions: input.conditions.map((c, i) => validateCondition(c, `conditions[${i}]`, failRule)),
     actions, authoritative: (input.authoritative as boolean | undefined) ?? false,
   }
 }

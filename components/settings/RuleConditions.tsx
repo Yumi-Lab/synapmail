@@ -6,9 +6,13 @@
  * jeu de champs, d'opérateurs et de libellés, la même ligne à l'écran. Les conditions qu'il
  * produit sont évaluées par `lib/rulesEval.ts` des deux côtés.
  */
+import { useEffect } from 'react'
 import { X } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { Input } from '@/components/ui/input'
+import { useQuestionSet } from '@/hooks/useQuestionSet'
+import { useTagLabels } from '@/hooks/useTagLabels'
+import { valuesOf } from '@/lib/tagging/questions'
 import type { RuleCondition, RuleField, RuleOperator } from '@/types/rule'
 
 const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
@@ -23,9 +27,12 @@ const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
   date_received:   ['before','after'],
   priority:        ['equals','less_than','greater_than'],
   header:          ['contains','not_contains','equals'],
+  tag:             ['equals','not_equals'],
 }
 
-const FIELDS = Object.keys(FIELD_OPERATORS) as RuleField[]
+/** Les champs d'une règle. `tag` (une étiquette déjà obtenue) n'est offert qu'aux déclencheurs de groupe (lot T-Q3). */
+export const RULE_FIELDS = (Object.keys(FIELD_OPERATORS) as RuleField[]).filter(f => f !== 'tag')
+export const GROUP_FIELDS = Object.keys(FIELD_OPERATORS) as RuleField[]
 const PRIORITIES = ['1', '2', '3', '4', '5'] as const
 
 /** Les libellés vivent dans `settings.rules.conditions` (fr/en/zh), partagés par les deux écrans. */
@@ -38,12 +45,14 @@ const uid = () => Math.random().toString(36).slice(2)
 /** Une condition vide, telle qu'un « Ajouter une condition » la pose. */
 export const newCondition = (): RuleCondition => ({ id: uid(), field: 'from', operator: 'contains', value: '' })
 
-/** La condition en une phrase, dans la langue de l'écran : « Objet contient "facture" ». */
+/** La condition en une phrase, dans la langue de l'écran : « Objet contient "facture" », « Étiquette intention est exactement réclamation ». */
 export function useConditionText(): (c: RuleCondition) => string {
   const t = useConditionLabels()
+  const { q: labelQ, v: labelV } = useTagLabels()
   return c => {
     const f = t(`field_${c.field}`)
     const o = t(`op_${c.operator}`)
+    if (c.field === 'tag') return `${labelQ(c.tagQuestion ?? '')} ${o} ${labelV(c.value)}`
     if (BOOLEAN_FIELDS.includes(c.field)) return `${f} ${o}`
     if (c.field === 'date_received') return `${f} ${o} ${c.value}`
     if (c.field === 'size') return `${f} ${o} ${c.value} ${t('sizeUnit')}`
@@ -52,22 +61,25 @@ export function useConditionText(): (c: RuleCondition) => string {
 }
 
 export function ConditionRow({
-  cond, onChange, onRemove, canRemove,
+  cond, onChange, onRemove, canRemove, fields = RULE_FIELDS,
 }: {
   cond: RuleCondition
   onChange: (c: RuleCondition) => void
   onRemove: () => void
   canRemove: boolean
+  /** Les champs offerts : ceux d'une règle par défaut, `GROUP_FIELDS` pour un déclencheur. */
+  fields?: readonly RuleField[]
 }) {
   const t = useConditionLabels()
   const operators = FIELD_OPERATORS[cond.field] ?? []
   const isBoolean = BOOLEAN_FIELDS.includes(cond.field)
   const isDate    = cond.field === 'date_received'
   const isPriority = cond.field === 'priority'
+  const isTag     = cond.field === 'tag'
 
   const handleFieldChange = (field: RuleField) => {
     const ops = FIELD_OPERATORS[field] ?? []
-    onChange({ ...cond, field, operator: ops[0], value: '' })
+    onChange({ ...cond, field, operator: ops[0], value: '', tagQuestion: undefined })
   }
 
   return (
@@ -77,7 +89,7 @@ export function ConditionRow({
         onChange={e => handleFieldChange(e.target.value as RuleField)}
         className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
       >
-        {FIELDS.map(f => (
+        {fields.map(f => (
           <option key={f} value={f}>{t(`field_${f}`)}</option>
         ))}
       </select>
@@ -92,7 +104,9 @@ export function ConditionRow({
         ))}
       </select>
 
-      {!isBoolean && (
+      {isTag && <TagPicker cond={cond} onChange={onChange} />}
+
+      {!isBoolean && !isTag && (
         isDate ? (
           <Input
             type="date"
@@ -125,5 +139,39 @@ export function ConditionRow({
         </button>
       )}
     </div>
+  )
+}
+
+/**
+ * La question et sa valeur d'une condition `tag`, lues dans le jeu de l'utilisateur (jamais
+ * recopiées). Un composant à part pour que le jeu ne soit demandé que quand une ligne en a besoin.
+ */
+function TagPicker({ cond, onChange }: { cond: RuleCondition; onChange: (c: RuleCondition) => void }) {
+  const { questions } = useQuestionSet()
+  const { q: labelQ, v: labelV } = useTagLabels()
+  const question = questions.find(q => q.id === cond.tagQuestion) ?? questions[0]
+  const stale = !!question && (cond.tagQuestion !== question.id || !valuesOf(question).includes(cond.value))
+  // Une ligne fraîche n'a pas encore de question : la première du jeu s'y pose, avec sa première valeur.
+  useEffect(() => {
+    if (stale) onChange({ ...cond, tagQuestion: question.id, value: valuesOf(question)[0] })
+  }, [stale]) // eslint-disable-line react-hooks/exhaustive-deps
+  if (!question) return null
+  return (
+    <>
+      <select
+        value={question.id} data-field="tagQuestion"
+        onChange={e => { const q = questions.find(x => x.id === e.target.value) ?? question; onChange({ ...cond, tagQuestion: q.id, value: valuesOf(q)[0] }) }}
+        className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
+      >
+        {questions.map(q => <option key={q.id} value={q.id}>{labelQ(q.id)}</option>)}
+      </select>
+      <select
+        value={cond.value} data-field="tagValue"
+        onChange={e => onChange({ ...cond, value: e.target.value })}
+        className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
+      >
+        {valuesOf(question).map(v => <option key={v} value={v}>{labelV(v)}</option>)}
+      </select>
+    </>
   )
 }

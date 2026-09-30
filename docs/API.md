@@ -1223,6 +1223,13 @@ interface TaggingStatus {
   tagged: number; skipped: number; errors: number; total: number
   estimateUsd: number | null                      // cost of what is LEFT, at the engine's price
   questions: number                               // how many are asked of each message
+  passes: {                                       // what the passes cost BEFORE starting (question groups)
+    requestsPerMail: { trunk: number; max: number }       // trunk requests for every message; + one per conditional group that fires
+    tokensPerMail: { trunk: number; withGroups: number | null }
+    usdPerMail: { trunk: number; withGroups: number | null } | null      // null without an engine
+    usdRemaining: { trunk: number; withGroups: number | null } | null    // × messages left
+    groups: { id: string; name: string; questions: number; requests: number; rate: number | null }[]
+  }                                               // `withGroups`/`rate` are null until a sample has answered what the triggers read
   distribution?: …                                // only with `?distribution=1`: value counts per question
   staleCounts?: Record<string, number>            // only with `?stale=1`: per question id, messages tagged under an OLDER version
 }
@@ -1291,6 +1298,32 @@ Same body, every field optional; the body is merged into the stored rule and the
 
 ### `DELETE /api/tags/rules/[id]` 🔑 Bearer (`tags:write`)
 Removes the rule. Tags it already wrote stay in the database — they are history. `404` names an unknown `id`. **Response** `{ data: { id } }`.
+
+### `GET /api/tags/groups` 🔑 Bearer (`tags:read`)
+The caller's **question-group triggers**. Every question carries a `group` slug; a row here gives that slug a trigger. A group **without** a row (or with empty `conditions`) is the *trunk*: asked of every message in pass 1. A group **with** a trigger is *conditional*: its questions are asked in **one more request** (pass 2), only for the messages whose trigger is true once pass 1 (and the tagging rules) have answered. The default 49 questions have no row, so nothing changes until one is created. Each pass is split into as many requests as needed to keep the serialized `questions` body under a token budget (`PASS_TOKEN_BUDGET`, 24 000) — never a `max_tokens_exceeded`. **Response** `{ data: TagQuestionGroup[] }`, by position then slug.
+
+```ts
+interface TagQuestionGroup {
+  id: string                                   // the slug of `TagQuestion.group`
+  name: string
+  position: number
+  conditionLogic: 'all' | 'any'
+  conditions: RuleCondition[]                  // email-rule format and evaluator, plus field 'tag':
+                                               //   { field: 'tag', tagQuestion: string, operator: 'equals' | 'not_equals', value: string }
+                                               //   reads an answer already obtained for the message
+  createdAt: string
+  updatedAt: string
+}
+```
+
+### `POST /api/tags/groups` 🔑 Bearer (`tags:write`)
+**Body** `{ id: string; name?: string; position?: number; conditionLogic?: 'all' | 'any'; conditions?: RuleCondition[] }`. Checked against the caller's question set — `400` names the offending `field` (`id` for a bad slug, `conditions[n].tagQuestion` for an unknown question, `conditions[n].value` for a value outside its list, `conditions[n].operator` when a `tag` condition uses anything but `equals` / `not_equals`). `409` when the slug already has a trigger. **Response** `{ data: TagQuestionGroup }`, `201`.
+
+### `PATCH /api/tags/groups/[id]` 🔑 Bearer (`tags:write`)
+Same body, every field optional; merged into the stored row and revalidated whole. The slug cannot change. `404` names an unknown `id` — another user's group is unknown, not forbidden. **Response** `{ data: TagQuestionGroup }`.
+
+### `DELETE /api/tags/groups/[id]` 🔑 Bearer (`tags:write`)
+Removes the trigger: the group's questions go back to the trunk, no question is deleted. `404` names an unknown `id`. **Response** `{ data: { id } }`.
 
 ### `GET /api/tagging/settings?account=` — session only
 Same `TaggingStatus` body as above. **Session only, owner only**: these settings point at an engine, therefore at a key, so a delegate does not read them and no API key reaches them.

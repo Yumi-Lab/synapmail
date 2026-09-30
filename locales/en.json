@@ -488,6 +488,7 @@
         "field_date_received": "Date received",
         "field_priority": "Priority (X-Priority)",
         "field_header": "Custom header",
+        "field_tag": "Tag",
         "op_contains": "contains",
         "op_not_contains": "does not contain",
         "op_equals": "is exactly",
@@ -715,6 +716,39 @@
         "allAccounts": "all mailboxes",
         "saveFailed": "Could not save",
         "empty": "No rule yet. A rule sets a tag without calling the engine: for whatever a simple criterion is enough to recognise."
+      },
+      "groups": {
+        "title": "Question groups",
+        "description": "{conditional} of {total} groups are conditional. A group without a trigger is asked on every message (pass 1); a conditional group is only asked on messages whose trigger is true after pass 1: one more request, for those only.",
+        "add": "Make a group conditional",
+        "delete": "Remove the trigger…",
+        "deleteConfirm": "Remove the trigger of “{name}”? Its questions will be asked on every message, as before.",
+        "group": "Group",
+        "name": "Display name",
+        "always": "always",
+        "conditional": "conditional",
+        "questions": "{count} questions",
+        "trigger": "Trigger",
+        "logicAll": "All (AND)",
+        "logicAny": "Any (OR)",
+        "addCondition": "Add a condition",
+        "triggerHint": "A “Tag” condition reads an answer already obtained for this message (rules or pass 1). A condition on a message field is read directly.",
+        "saveFailed": "Could not save",
+        "empty": "Every question is asked on every message. Make a group conditional to ask its questions only on the messages concerned.",
+        "noFreeGroup": "Every question group already has a trigger."
+      },
+      "cost": {
+        "passes": "Requests and cost per message",
+        "passesDesc": "Before starting: what each message costs given the active groups, at this engine’s rate.",
+        "trunk": "Trunk only",
+        "withGroups": "With groups",
+        "perMail": "{cost} / message",
+        "remaining": "{cost} for the {mails} messages left",
+        "requests": "{count} request(s) per message",
+        "requestsRange": "{trunk} to {max} requests per message",
+        "withGroupsUnknown": "Unknown: run a sample to measure the share of messages that trigger each group.",
+        "groupRate": "{name}: {questions} questions, triggered on {rate} of messages",
+        "groupRateUnknown": "{name}: {questions} questions, share unknown"
       }
     },
     "engines": {

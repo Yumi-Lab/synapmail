@@ -488,6 +488,7 @@
         "field_date_received": "接收日期",
         "field_priority": "优先级（X-Priority）",
         "field_header": "自定义邮件头",
+        "field_tag": "标签",
         "op_contains": "包含",
         "op_not_contains": "不包含",
         "op_equals": "等于",
@@ -715,6 +716,39 @@
         "allAccounts": "所有邮箱",
         "saveFailed": "保存失败",
         "empty": "尚无规则。规则无需调用引擎即可打标签，适用于简单条件即可识别的情况。"
+      },
+      "groups": {
+        "title": "问题组",
+        "description": "{total} 个问题组中有 {conditional} 个为条件组。无触发条件的组对每封邮件提问（第一轮）；条件组仅对第一轮后触发条件为真的邮件提问：仅为这些邮件多发一次请求。",
+        "add": "将某个组设为条件组",
+        "delete": "移除触发条件…",
+        "deleteConfirm": "移除“{name}”的触发条件？其问题将像以前一样对每封邮件提问。",
+        "group": "组",
+        "name": "显示名称",
+        "always": "始终",
+        "conditional": "条件",
+        "questions": "{count} 个问题",
+        "trigger": "触发条件",
+        "logicAll": "全部（且）",
+        "logicAny": "任一（或）",
+        "addCondition": "添加条件",
+        "triggerHint": "“标签”条件读取该邮件已获得的答案（规则或第一轮）。邮件字段条件直接读取。",
+        "saveFailed": "无法保存",
+        "empty": "所有问题都会对每封邮件提问。将某个组设为条件组，只对相关邮件提问。",
+        "noFreeGroup": "所有问题组都已有触发条件。"
+      },
+      "cost": {
+        "passes": "每封邮件的请求数与费用",
+        "passesDesc": "启动前：按当前启用的组和此引擎费率，每封邮件的费用。",
+        "trunk": "仅主干",
+        "withGroups": "含条件组",
+        "perMail": "{cost} / 封",
+        "remaining": "剩余 {mails} 封共 {cost}",
+        "requests": "每封 {count} 次请求",
+        "requestsRange": "每封 {trunk} 至 {max} 次请求",
+        "withGroupsUnknown": "未知：运行一次抽样以测量触发各组的邮件比例。",
+        "groupRate": "{name}：{questions} 个问题，{rate} 的邮件触发",
+        "groupRateUnknown": "{name}：{questions} 个问题，比例未知"
       }
     },
     "engines": {
