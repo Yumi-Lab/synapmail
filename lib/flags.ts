@@ -75,3 +75,16 @@ export function flagFromKeywords(flags: Iterable<string> | null | undefined): st
  */
 export const MAIL_LIST_FILTERS = ['all', 'unread', 'flagged', 'focus'] as const
 export type MailListFilter = (typeof MAIL_LIST_FILTERS)[number]
+
+/**
+ * Le tri par priorité (lot T12), côté CLIENT comme serveur. Le score lui-même est calculé
+ * dans `lib/focus.ts` (serveur : il lit la base) ; ce qui doit être partagé avec la liste
+ * vit ici, dans un module sans dépendance serveur — un composant client qui importerait
+ * `lib/focus.ts` embarquerait `pg` dans le navigateur.
+ */
+/** Le filtre de liste « à traiter » : les derniers non-lus dont la priorité atteint le seuil. */
+export const FOCUS_FILTER = 'focus' satisfies MailListFilter
+/** La valeur du paramètre `sort` de `/api/messages`, écrite une fois. */
+export const PRIORITY_SORT = 'priority'
+export const byPriorityThenDate = (a: { priority?: { score: number }; date: string }, b: { priority?: { score: number }; date: string }) =>
+  (b.priority?.score ?? 0) - (a.priority?.score ?? 0) || +new Date(b.date) - +new Date(a.date)

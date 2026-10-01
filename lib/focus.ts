@@ -1,7 +1,7 @@
 import { query } from './db'
 import { listAccessibleAccounts } from './accountAccess'
 import { readEffectiveFor, type StoredTag } from './tagging/store'
-import type { MailListFilter } from './flags'
+import { FOCUS_FILTER, type MailListFilter } from './flags'
 import type { Message } from '@/types/email'
 import type { FocusItem, FocusPart, FocusReason, FocusScore } from '@/types/dashboard'
 
@@ -64,14 +64,8 @@ export interface FocusRow {
 
 export type FocusSignals = Pick<FocusRow, 'subject' | 'from_address' | 'is_starred' | 'has_attachments'>
 
-/** Le filtre de liste « à traiter » : les `FOCUS_SCAN` derniers non-lus (IMAP) dont le score atteint le seuil (ici). */
-export const FOCUS_FILTER: MailListFilter = 'focus'
 /** Ce que le serveur IMAP reçoit pour un filtre de liste : « à traiter » se lit dans les non-lus. */
 export const imapFilterOf = (filter: MailListFilter): Exclude<MailListFilter, 'focus'> => (filter === FOCUS_FILTER ? 'unread' : filter)
-/** Le tri de liste par priorité : la valeur du paramètre `sort` de `/api/messages`, écrite une fois. */
-export const PRIORITY_SORT = 'priority'
-export const byPriorityThenDate = (a: { priority?: FocusScore; date: string }, b: { priority?: FocusScore; date: string }) =>
-  (b.priority?.score ?? 0) - (a.priority?.score ?? 0) || +new Date(b.date) - +new Date(a.date)
 
 export function scoreFocus(
   row: FocusSignals,
