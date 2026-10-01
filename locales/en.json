@@ -1121,6 +1121,7 @@
     "fieldsTitle": "Values",
     "fieldOther": "Other value…",
     "fieldPrompt": "Value for \"{field}\"",
+    "fieldRefused": "Value rejected: \"{value}\"",
     "f": {
       "montant": "Amount",
       "devise": "Currency",

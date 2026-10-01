@@ -15,7 +15,8 @@
  *   A. (pur) les regex : les candidats trouvés, les normalisations (« 1 234,56 € » → 1234.56 EUR,
  *      « 15 octobre 2026 » → 2026-10-15, « sous 30 jours » CALCULÉ depuis la date du mail,
  *      un 31/02 écarté), le transporteur déduit du format, l'IBAN validé mod 97 et réduit à 4
- *      caractères ;
+ *      caractères ; (T11c) une URL n'offre aucun candidat de n° de commande, les consignes
+ *      `echeance` / `sens_flux` portent les exclusions tirées du gate T11 ;
  *   B. (DB + faux moteur) le trieur : la 3e requête ne part QUE si `montant_mentionne` /
  *      `echeance_mentionnee` = oui avec des candidats, ou si une regex trouve un numéro ; ses
  *      options SONT les candidats + `aucun` ; la valeur écrite est celle du candidat désigné,
@@ -23,7 +24,7 @@
  *   B9. la base ENTIÈRE est relue : l'IBAN semé n'y figure nulle part (ni `message_fields`, ni
  *      `message_tags`, ni `tagged_messages`) — l'étiquette ne doit pas devenir elle-même une fuite ;
  *   C. (DB) le stockage : une valeur mal formée est refusée AVANT la base ; l'effective est la
- *      `humain` d'abord ;
+ *      `humain` d'abord, rendue dans l'ordre métier de `FIELDS` (T11c) ;
  *   D. (HTTP) `GET`/`PUT /api/messages/[id]/fields` : 200, 422 qui nomme, 403 sans `tags:write`.
  *
  * CONTRÔLE NÉGATIF (`--negative`) : le faux moteur répond `non` à `montant_mentionne` et
@@ -31,7 +32,8 @@
  * B3/B4/B5/B6/B10 (la 3e requête n'emporte plus que le n° trouvé par regex, aucune valeur n'est
  * écrite), C3/D1 (sans ligne de moteur, la correction humaine n'a plus de ligne à côté d'elle)
  * et D4 (le 403 de portée) DOIVENT tomber. B2 tient (« Bonjour » n'avait déjà qu'une requête),
- * B8/B9 tiennent (l'IBAN ne passe par aucun moteur), D5 tient (`humain` par clé est refusé quelle
+ * B8/B9 tiennent (l'IBAN ne passe par aucun moteur), C4 tient (l'ordre métier ne dépend pas du
+ * moteur), D5 tient (`humain` par clé est refusé quelle
  * que soit la portée). Ce qu'il démontre : les assertions mesurent la conditionnalité et la
  * désignation, pas la présence du code.
  */
@@ -98,6 +100,12 @@ check('A10 la question au moteur a pour options les candidats (c1..c3) + aucun, 
 check('A11 `isValidFieldValue` : 2026-02-31 refusé, 1234.56 admis, IBAN entier refusé, 4 caractères admis', !isValidFieldValue('echeance', '2026-02-31') && isValidFieldValue('echeance', '2026-10-15') && isValidFieldValue('montant', '1234.56') && !isValidFieldValue('iban', IBAN.replace(/ /g, '')) && isValidFieldValue('iban', '0189'))
 const xNone = extractionFor('Bonjour, merci pour votre message.', [{ question: 'montant_mentionne', valeur: NOUL_YES }], mailDate)
 check('A12 `montant_mentionne = oui` SANS candidat regex → aucune question (rien à faire désigner)', xNone.questions.length === 0 && xNone.direct.length === 0)
+// Suivis du gate T11 (lot T11c) : le mail 827 n'avait qu'un lien Google, et « Po… » y passait pour « PO n° ».
+const urlMail = 'Voir https://www.google.com/url?q=x&sa=D&usg=AOvVaw1-PoW3CgLyExHbWSt877sIv6tcMZCT-abc et commande n° YL-2026-0042.'
+check('A13 (T11c) un « Po… » au milieu d’une URL n’est PAS un n° de commande ; celui hors URL l’est encore', JSON.stringify(orderCandidates(urlMail).map(c => c.valeur)) === JSON.stringify(['YL-2026-0042']) && !orderCandidates('https://x.invalid/PoW3CgLyExHbWSt').length, JSON.stringify(orderCandidates(urlMail)))
+check('A14 (T11c) la consigne `echeance` exclut la durée de validité d’un lien ou d’une offre', /validité d'un lien/.test(questionFor('echeance', dm).instructions))
+const sensFlux = DEFAULT_SET.questionById('sens_flux')
+check('A15 (T11c) `sens_flux.a_encaisser` exclut le reçu d’un paiement fait par nous (`notFor`), `a_payer` le cite en exemple', /paiement effectué par nous/.test(sensFlux?.options?.find(o => o.value === 'a_encaisser')?.notFor ?? '') && (sensFlux?.options?.find(o => o.value === 'a_payer')?.examples ?? []).some(e => /paiement que nous avons effectué/.test(e)))
 
 // ---- B. le trieur -------------------------------------------------------------------------
 await initDb()
@@ -188,6 +196,9 @@ try {
   await writeFields({ accountId: A1, messageId: MID(1), source: 'humain', auteur: AUTH, validePar: U1, fields: [{ champ: 'montant', valeur: '205.76' }] })
   const after = await readFields(A1, MID(1))
   check('C3 une correction humaine devient l’effective, la ligne du moteur reste lisible', after.effective.find(x => x.question === 'montant')?.valeur === '205.76' && after.fields.filter(x => x.question === 'montant').length === 2)
+  const order = after.effective.map(x => x.question)
+  // Tient aussi en négatif (montant humain + iban) : l'ordre ne dépend pas de ce que le moteur a désigné.
+  check('C4 (T11c) l’effective est rendue dans l’ordre MÉTIER de `FIELDS` (montant avant devise, iban dernier), pas l’alphabétique', order.length >= 2 && JSON.stringify(order) === JSON.stringify(f.FIELDS.filter(c => order.includes(c))) && order.at(-1) === 'iban', JSON.stringify(order))
 
   // ---- D. les routes ------------------------------------------------------------------
   const alive = BASE ? await fetch(`${BASE}/login`).then(r => r.status === 200).catch(() => false) : false

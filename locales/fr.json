@@ -1121,6 +1121,7 @@
     "fieldsTitle": "Valeurs",
     "fieldOther": "Autre valeur…",
     "fieldPrompt": "Valeur pour « {field} »",
+    "fieldRefused": "Valeur refusée : « {value} »",
     "f": {
       "montant": "Montant",
       "devise": "Devise",

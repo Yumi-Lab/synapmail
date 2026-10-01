@@ -216,10 +216,13 @@ const FIELD_CHOICES: Partial<Record<FieldName, readonly string[]>> = {
  * saisie par an ne justifie pas une modale). Pas de bouton « Confirmer » : une valeur lue n'a
  * rien à entraîner, la corriger suffit.
  */
-function FieldRow({ field, correct, disabled }: { field: StoredField; correct: (champ: string, valeur: string) => Promise<void>; disabled: boolean }) {
+function FieldRow({ field, correct, disabled }: { field: StoredField; correct: (champ: string, valeur: string) => Promise<boolean>; disabled: boolean }) {
   const t = useTranslations('tags')
   const origin = useOriginText()
   const [busy, setBusy] = useState(false)
+  // La saisie que le serveur a REFUSÉE (422), montrée sous la ligne jusqu'à la prochaine tentative :
+  // un refus muet laissait croire que la correction avait pris (gate T11).
+  const [refused, setRefused] = useState<string | null>(null)
   const champ = field.question as FieldName
   const label = t.has(`f.${champ}`) ? t(`f.${champ}`) : champ
   const fv = (v: string) => (t.has(`fv.${v}`) ? t(`fv.${v}`) : v)
@@ -232,11 +235,12 @@ function FieldRow({ field, correct, disabled }: { field: StoredField; correct: (
     const chosen = valeur === '*' ? window.prompt(t('fieldPrompt', { field: label }), field.valeur)?.trim() : valeur
     if (!chosen) return
     setBusy(true)
-    try { await correct(champ, chosen) } finally { setBusy(false) }
+    try { setRefused(await correct(champ, chosen) ? null : chosen) } finally { setBusy(false) }
   }
 
   return (
-    <div className="flex items-center gap-2 py-1 text-xs" data-field-row={champ}>
+    <div className="py-1 text-xs" data-field-row={champ}>
+    <div className="flex items-center gap-2">
       <span className="min-w-0 flex-1 truncate text-muted-foreground" title={origin(field)}>{label}</span>
       <span className={cn('shrink-0 truncate tabular-nums', confirmed ? 'font-semibold text-foreground' : 'text-foreground/80')}
         title={origin(field)} data-field-value={field.valeur}>
@@ -250,6 +254,10 @@ function FieldRow({ field, correct, disabled }: { field: StoredField; correct: (
           {!choices && <option value="*">{t('fieldOther')}</option>}
         </select>
       )}
+    </div>
+    {refused !== null && (
+      <p className="mt-0.5 text-[10px] text-destructive" role="alert" data-field-refused={champ}>{t('fieldRefused', { value: refused })}</p>
+    )}
     </div>
   )
 }
@@ -323,13 +331,14 @@ export function TagsPanel({ message, accountId, canOrganize }: {
     })
     if (res.ok) mutate()
   }
-  const correctField = async (champ: string, valeur: string) => {
+  const correctField = async (champ: string, valeur: string): Promise<boolean> => {
     const res = await fetch(`/api/messages/${encodeURIComponent(message.messageId)}/fields`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ accountId: message.accountId, fields: [{ champ, valeur }] }),
     })
     if (res.ok) mutateFields()
+    return res.ok
   }
 
   return (

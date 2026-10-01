@@ -599,8 +599,17 @@ export const DEFAULT_QUESTIONS: TagQuestion[] = [
     id: 'sens_flux', group: 'finance', type: 'choice', listBadge: true,
     instructions: "Ce mail concerne-t-il de l'argent à payer ou à encaisser ?",
     options: [
-      { value: 'a_payer', definition: "une somme que l'entreprise doit verser" },
-      { value: 'a_encaisser', definition: "une somme que l'entreprise doit recevoir" },
+      {
+        value: 'a_payer',
+        definition: "une somme que l'entreprise verse ou a versée",
+        examples: ['une facture à régler', 'le reçu ou la confirmation d\'un paiement que nous avons effectué'],
+      },
+      {
+        value: 'a_encaisser',
+        definition: "une somme que l'entreprise reçoit ou a reçue",
+        notFor: "le reçu d'un paiement effectué par nous : c'est `a_payer`",
+        examples: ['une facture que nous avons émise', 'un paiement entrant annoncé par la banque'],
+      },
       {
         value: 'information',
         definition: "un montant est cité, mais il n'entre ni ne sort de chez nous",

@@ -161,9 +161,11 @@ export function dateCandidates(text: string, mailDate?: Date | string | null): C
 // ---------------------------------------------------------------- numéros
 
 const ORDER_RE = /\b(?:commande|order|cde|bon de commande|po|订单)\s*(?:n[°o]\.?|#|:|number|no\.?)?\s*#?([A-Z0-9][A-Z0-9-]{3,24}\d[A-Z0-9-]*|\d[A-Z0-9-]{3,24})\b/gi
+// Une URL n'est jamais un n° de commande : « …-PoW3CgLy… » au milieu d'un lien y ressemblait (gate T11, mail 827).
+const URL_RE = /\bhttps?:\/\/\S+/gi
 
 export function orderCandidates(text: string): Candidate[] {
-  return dedupe(Array.from(text.matchAll(ORDER_RE), m => ({ valeur: m[1].toUpperCase(), texte: m[0].trim() })))
+  return dedupe(Array.from(text.replace(URL_RE, ' ').matchAll(ORDER_RE), m => ({ valeur: m[1].toUpperCase(), texte: m[0].trim() })))
 }
 
 /**
@@ -224,7 +226,7 @@ export function ibanOf(text: string): string | null {
 
 const TEMPLATES: Record<'montant' | 'echeance' | 'numero_commande' | 'numero_suivi', string> = {
   montant: 'Parmi ces montants cités dans le mail, lequel est LE montant que ce mail demande de payer, annonce à encaisser ou à rembourser ?',
-  echeance: 'Parmi ces dates citées dans le mail, laquelle est la date limite ou l\'échéance que ce mail fixe ?',
+  echeance: 'Parmi ces dates citées dans le mail, laquelle est la date limite ou l\'échéance que ce mail fixe ? Ne pas confondre avec la durée de validité d\'un lien, d\'un code ou d\'une offre.',
   numero_commande: 'Parmi ces numéros cités dans le mail, lequel est le numéro de la commande dont parle ce mail ?',
   numero_suivi: 'Parmi ces numéros cités dans le mail, lequel est un numéro de suivi de colis ?',
 }

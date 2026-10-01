@@ -1121,6 +1121,7 @@
     "fieldsTitle": "数值",
     "fieldOther": "其他值…",
     "fieldPrompt": "“{field}”的值",
+    "fieldRefused": "值被拒绝：“{value}”",
     "f": {
       "montant": "金额",
       "devise": "币种",

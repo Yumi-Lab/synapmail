@@ -20,7 +20,7 @@ import { createHash } from 'crypto'
 import { query } from '../db'
 import { HUMAN_SOURCE, isEngineKind, TAG_SOURCES, type TagSource } from './engine'
 import { engineBodyOf, type QuestionSet, type TagQuestion } from './questions'
-import { fieldTemplate, isFieldName, isValidFieldValue, type Candidate, type FieldValue } from './fields'
+import { FIELDS, fieldTemplate, isFieldName, isValidFieldValue, type Candidate, type FieldValue } from './fields'
 import { questionSetForAccount } from './userQuestions'
 
 /**
@@ -516,13 +516,16 @@ type FieldRow = Omit<TagRow, 'probabilites' | 'confiance'> & { candidats: Candid
 
 const FIELD_COLUMNS = `question, valeur, candidats, source, modele, cree_le, valide_par, question_version, auteur_id, auteur_nom`
 
-/** Toutes les valeurs d'un mail, toutes sources, plus l'effective par champ — même règle que `readTags`. */
+/**
+ * Toutes les valeurs d'un mail, toutes sources, plus l'effective par champ — même règle que
+ * `readTags`. Dans l'ordre MÉTIER de `FIELDS` (montant, devise, type…), pas l'alphabétique.
+ */
 export async function readFields(accountId: string, messageId: string): Promise<{ fields: StoredField[]; effective: StoredField[] }> {
   const rows = await query<FieldRow & { rang: number }>(
     `SELECT ${FIELD_COLUMNS}, ${EFFECTIVE_RANK} AS rang
        FROM message_fields WHERE account_id = $1 AND message_id = $2
-      ORDER BY question, ${EFFECTIVE_ORDER}`,
-    [accountId, messageId]
+      ORDER BY array_position($3::text[], question), ${EFFECTIVE_ORDER}`,
+    [accountId, messageId, [...FIELDS]]
   )
   const toField = (r: FieldRow): StoredField => ({
     question: r.question, valeur: r.valeur, candidats: r.candidats, source: r.source, modele: r.modele || null,

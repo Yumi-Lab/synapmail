@@ -2,6 +2,7 @@ import { Pool } from 'pg'
 import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
 import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
 import { BULK_STATES, ENGINES, HUMAN_SOURCE, PAUSE_REASONS, TAG_SOURCES } from '@/lib/tagging/engine'
+import { DEFAULT_QUESTIONS } from '@/lib/tagging/questions'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -691,6 +692,17 @@ export async function initDb(): Promise<void> {
       PRIMARY KEY (user_id, id)
     )
   `)
+  // Une question par défaut corrigée dans `questions.ts` rejoint les jeux que l'utilisateur n'a
+  // JAMAIS édités (`version = 1`) : sinon la correction ne vaudrait que pour un compte neuf.
+  // Une question éditée garde sa consigne — c'est la sienne.
+  await query(
+    `UPDATE tag_questions t SET instructions = d.instructions, criteria = d.criteria, updated_at = NOW()
+       FROM unnest($1::text[], $2::text[], $3::jsonb[]) AS d(id, instructions, criteria)
+      WHERE t.id = d.id AND t.version = 1
+        AND (t.instructions <> d.instructions OR t.criteria IS DISTINCT FROM d.criteria)`,
+    [DEFAULT_QUESTIONS.map(q => q.id), DEFAULT_QUESTIONS.map(q => q.instructions),
+      DEFAULT_QUESTIONS.map(q => (q.options ? JSON.stringify(q.options) : null))]
+  )
 
   // Les règles d'étiquetage SANS moteur (lot T-Q2, décision 24.1) : mêmes `conditions` que
   // `email_rules`, évaluées par la même fonction ; `actions` = [{question, valeur}] ;
