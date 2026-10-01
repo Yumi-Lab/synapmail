@@ -33,6 +33,8 @@ import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import { HUMAN_SOURCE, RULE_SOURCE } from '@/lib/tagging/engine'
 import { TAGS_ENDPOINT, taggedRows } from '@/lib/tagging/view'
+import { FOCUS_FILTER, PRIORITY_SORT, byPriorityThenDate } from '@/lib/focus'
+import { useFocusText } from '@/hooks/useFocusText'
 import type { StoredTag, TaggedMessage } from '@/lib/tagging/store'
 import type { DecisionEngine } from '@/lib/tagging/engines'
 import { ENGINES_ENDPOINT } from '@/components/settings/DecisionEnginesSection'
@@ -172,6 +174,11 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   // État partagé : la liste est la SEULE à publier et à enregistrer des actions.
   const { publish, register } = useMailSelection()
   const [filter, setFilter] = useState<MailListFilter>('all')
+  // Tri de la liste : par date (IMAP) ou par priorité (lot T12, `lib/focus.ts`). « À traiter »
+  // est par priorité par nature ; le choix n'a pas de sens en recherche ni en filtre d'étiquette.
+  const [sortByPriority, setSortByPriority] = useState(false)
+  const byPriority = sortByPriority || filter === FOCUS_FILTER
+  const focusText = useFocusText()
   const [page, setPage] = useState(1)
   const [accumulated, setAccumulated] = useState<Message[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
@@ -263,7 +270,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const { data, error, isValidating, mutate } = useSWR<{ messages: Message[]; total: number }>(
     isSearchMode
       ? null
-      : `/api/messages?folder=${encodeURIComponent(folder)}&filter=${filter}&page=${page}&perPage=${perPage}${accountParam}`,
+      : `/api/messages?folder=${encodeURIComponent(folder)}&filter=${filter}&page=${page}&perPage=${perPage}${accountParam}${byPriority ? `&sort=${PRIORITY_SORT}` : ''}`,
     fetcher,
     { refreshInterval: 60000 }
   )
@@ -532,6 +539,14 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const trackingMap = trackingData?.data ?? {}
 
   const threads = useMemo<ThreadGroup[]>(() => {
+    // Par priorité : le score d'un fil est celui de son dernier message, et les groupes de date
+    // n'ont plus de sens (un seul groupe, le tri commande).
+    if (byPriority) {
+      const grouped = threadView ? groupIntoThreads(messages) : messages.map(msg => ({
+        key: msg.uid, subject: displaySubject(msg.subject), messages: [msg], lastMessage: msg, hasUnread: !msg.isRead, count: 1,
+      }))
+      return grouped.sort((a, b) => byPriorityThenDate(a.lastMessage, b.lastMessage))
+    }
     if (!threadView) {
       return [...messages]
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -545,7 +560,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
         }))
     }
     return groupIntoThreads(messages)
-  }, [messages, threadView])
+  }, [messages, threadView, byPriority])
 
   // Direction B — bucket threads by recency for sticky date headers.
   const timeBucket = useCallback((iso: string): string => {
@@ -558,7 +573,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   }, [t])
 
   const groupedThreads = useMemo(() => {
-    if (isSearchMode) return [{ label: null as string | null, items: threads }]
+    if (isSearchMode || byPriority) return [{ label: null as string | null, items: threads }]
     const out: { label: string | null; items: ThreadGroup[] }[] = []
     for (const thread of threads) {
       const label = timeBucket(thread.lastMessage.date)
@@ -567,7 +582,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       else out.push({ label, items: [thread] })
     }
     return out
-  }, [threads, isSearchMode, timeBucket])
+  }, [threads, isSearchMode, byPriority, timeBucket])
 
   /**
    * L'origine d'une ligne : SON compte et SON dossier, pas ceux de l'écran. Une
@@ -1177,6 +1192,13 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
                 )
               })()}
               {thread.messages.some(m => m.hasAttachments) && <Paperclip className="w-3 h-3 text-muted-foreground" />}
+              {/* Par priorité (lot T12) : la composante la plus forte, chaque composante dans l'infobulle. */}
+              {msg.priority && msg.priority.score > 0 && (
+                <span title={focusText.describe(msg.priority)} data-focus-score={msg.priority.score}
+                  className="inline-flex max-w-[7rem] items-center rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 text-[10px] font-semibold leading-4 text-violet-600 dark:text-violet-400">
+                  <span className="truncate">{focusText.label(msg.priority)}</span>
+                </span>
+              )}
               {isSentFolder && (() => {
                 const receipt = trackingMap[msg.subject]
                 if (!receipt) return null
@@ -1275,6 +1297,18 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
               </button>
             ))}
           </div>
+          {/* Tri (lot T12) : par date ou par priorité — la MÊME fonction que « à traiter ». Masqué
+              sur « à traiter », qui est par priorité par nature. */}
+          {filter !== FOCUS_FILTER && (
+            <div className="flex rounded-lg overflow-hidden border border-border text-xs font-medium" data-sort={byPriority ? PRIORITY_SORT : 'date'}>
+              {([false, true] as const).map(p => (
+                <button key={String(p)} onClick={() => { setSortByPriority(p); setPage(1); setAccumulated([]); loadingLockRef.current = 0 }}
+                  className={cn('px-2.5 py-1.5 transition-colors', sortByPriority === p ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-accent')}>
+                  {p ? t('sortByPriority') : t('sortByDate')}
+                </button>
+              ))}
+            </div>
+          )}
           {/* Filtre par étiquette : question → valeur. UN `<select>` natif et non deux, parce
               qu'une question sans valeur ne filtre rien — le choix est donc la PAIRE, groupée
               par question (`<optgroup>`). Natif : la liste est fermée, le navigateur la rend

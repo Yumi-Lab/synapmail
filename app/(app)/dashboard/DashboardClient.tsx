@@ -10,7 +10,7 @@ import {
   Mail, Send, Eye, Clock, Sparkles, BarChart3, Users, Filter,
   PenSquare, RefreshCw, ArrowUpRight, Minus, CheckCheck,
   Paperclip, Star, FileText, AlarmClock, ChevronRight, ChevronDown, Check, MailX,
-  GripVertical, Undo2,
+  GripVertical, Undo2, Tag,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AccountAvatar } from '@/components/layout/AccountAvatar'
@@ -23,6 +23,7 @@ import {
   DASHBOARD_CARD_MIME, type DashboardCardId,
 } from '@/lib/dashboardOrder'
 import type { DashboardData, DashboardAccount, FocusReason, ActivityPoint } from '@/types/dashboard'
+import { useFocusText } from '@/hooks/useFocusText'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -288,6 +289,7 @@ const REASON_STYLE: Record<FocusReason, string> = {
   frequent: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
   starred: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
   attachment: 'bg-muted text-muted-foreground border-border',
+  tag: 'bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20',
 }
 const REASON_ICON: Record<FocusReason, React.ReactNode> = {
   invoice: <FileText className="h-3 w-3" />,
@@ -297,6 +299,7 @@ const REASON_ICON: Record<FocusReason, React.ReactNode> = {
   frequent: <Users className="h-3 w-3" />,
   starred: <Star className="h-3 w-3" />,
   attachment: <Paperclip className="h-3 w-3" />,
+  tag: <Tag className="h-3 w-3" />,
 }
 
 /** Le nom lisible d'une carte, pour la poignée. Même source d'identités que l'ordre. */
@@ -314,6 +317,7 @@ const CARD_LABEL_KEY: Record<DashboardCardId, string> = {
 
 export function DashboardClient() {
   const t = useTranslations('dashboard')
+  const focusText = useFocusText()
   const locale = useLocale()
   const router = useRouter()
   const pathname = usePathname()
@@ -510,8 +514,8 @@ export function DashboardClient() {
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-semibold">{f.subject || t('from')}</span>
                     <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-[2px] font-semibold', REASON_STYLE[f.reason])}>
-                        {REASON_ICON[f.reason]}{reasonLabel(t, f.reason)}
+                      <span title={focusText.describe(f)} data-focus-score={f.score} className={cn('inline-flex max-w-[12rem] items-center gap-1 rounded-full border px-2 py-[2px] font-semibold', REASON_STYLE[f.reason])}>
+                        {REASON_ICON[f.reason]}<span className="truncate">{focusText.label(f)}</span>
                       </span>
                       {!scoped && f.accountName && (
                         <span className="inline-flex items-center gap-1">
@@ -1106,7 +1110,3 @@ function AccountFilter({
   )
 }
 
-function reasonLabel(t: ReturnType<typeof useTranslations>, r: FocusReason) {
-  const key = `reason${r.charAt(0).toUpperCase()}${r.slice(1)}` as const
-  return t(key)
-}

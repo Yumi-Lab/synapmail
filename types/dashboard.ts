@@ -8,6 +8,20 @@ export type FocusReason =
   | 'frequent'
   | 'starred'
   | 'attachment'
+  | 'tag'
+
+/** Une composante du score, lisible dans l'infobulle : un signal de surface ou une étiquette pesée. */
+export type FocusPart =
+  | { kind: 'reason'; reason: Exclude<FocusReason, 'tag'>; points: number }
+  | { kind: 'tag'; question: string; valeur: string; points: number }
+
+/** Ce que `scoreFocus()` (lib/focus.ts) rend — LA priorité du dépôt, à traiter comme tri par priorité. */
+export interface FocusScore {
+  score: number
+  /** La composante la plus forte, pour la pastille. */
+  reason: FocusReason
+  parts: FocusPart[]
+}
 
 export interface DashboardKpis {
   unreadTotal: number
@@ -41,8 +55,10 @@ export interface ActivityPoint {
   sent: number
 }
 
-export interface FocusItem {
+export interface FocusItem extends FocusScore {
   uid: string
+  /** `Message-ID` RFC ('' si le mail n'en a pas) : la liste s'en sert pour retrouver la ligne déjà chargée. */
+  messageId: string
   accountId: string
   accountName: string
   folder: string
@@ -50,7 +66,6 @@ export interface FocusItem {
   fromName: string | null
   fromAddress: string | null
   date: string
-  reason: FocusReason
 }
 
 export interface ReceiptItem {

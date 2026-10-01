@@ -4,6 +4,7 @@ import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { listMessages } from '@/lib/imap'
+import { FOCUS_FILTER, FOCUS_SCAN, FOCUS_THRESHOLD, PRIORITY_SORT, byPriorityThenDate, imapFilterOf, withPriority } from '@/lib/focus'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import { withApiLog } from '@/lib/apiLog'
 
@@ -16,9 +17,13 @@ async function getHandler(req: Request) {
 
   const { searchParams } = new URL(req.url)
   const folder = searchParams.get('folder') ?? 'INBOX'
-  const page = parseInt(searchParams.get('page') ?? '1')
-  const perPage = parseInt(searchParams.get('perPage') ?? '30')
   const filter = (searchParams.get('filter') ?? 'all') as MailListFilter
+  const isFocus = filter === FOCUS_FILTER
+  // « À traiter » (lot T12) n'est pas paginé : UNE fenêtre des derniers non-lus, scorée puis
+  // filtrée ici, rendue entière — `total` est alors exact, ce qu'une page filtrée ne saurait dire.
+  const page = isFocus ? 1 : parseInt(searchParams.get('page') ?? '1')
+  const perPage = isFocus ? FOCUS_SCAN : parseInt(searchParams.get('perPage') ?? '30')
+  const byPriority = isFocus || searchParams.get('sort') === PRIORITY_SORT
   const accountParam = searchParams.get('account')
 
   try {
@@ -59,7 +64,7 @@ async function getHandler(req: Request) {
       folder,
       page,
       perPage,
-      filter,
+      imapFilterOf(filter),
       authCtx.id
     )
 
@@ -76,6 +81,15 @@ async function getHandler(req: Request) {
       const before = result.messages.length
       result.messages = result.messages.filter(m => !hidden.has(m.uid))
       result.total = Math.max(0, result.total - (before - result.messages.length))
+    }
+
+    // La priorité : LA fonction de « à traiter » (lib/focus.ts), pas une seconde.
+    if (byPriority) {
+      result.messages = (await withPriority(result.messages, account.id, authCtx.id)).sort(byPriorityThenDate)
+      if (isFocus) {
+        result.messages = result.messages.filter(m => (m.priority?.score ?? 0) >= FOCUS_THRESHOLD)
+        result.total = result.messages.length
+      }
     }
 
     // Mail content is untrusted input: an agent reading this response is warned,

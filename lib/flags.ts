@@ -73,5 +73,5 @@ export function flagFromKeywords(flags: Iterable<string> | null | undefined): st
  * Filtres de la liste. La valeur EST la clé i18n (`mail.<valeur>`) et la valeur
  * envoyée à l'API : un filtre ajouté ici n'a rien d'autre à mettre à jour.
  */
-export const MAIL_LIST_FILTERS = ['all', 'unread', 'flagged'] as const
+export const MAIL_LIST_FILTERS = ['all', 'unread', 'flagged', 'focus'] as const
 export type MailListFilter = (typeof MAIL_LIST_FILTERS)[number]

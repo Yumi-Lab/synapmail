@@ -4,7 +4,7 @@ import { query } from '@/lib/db'
 import type {
   DashboardData, ActivityPoint,
 } from '@/types/dashboard'
-import { scoreFocus } from '@/lib/focus'
+import { getFocusItems } from '@/lib/focus'
 import { listAccessibleAccounts } from '@/lib/accountAccess'
 
 export const dynamic = 'force-dynamic'
@@ -16,12 +16,6 @@ const NON_INBOX = `(mc.folder ILIKE '%trash%' OR mc.folder ILIKE '%sent%' OR mc.
 type CountRow = { n: string }
 type UnreadRow = { account_id: string; n: string }
 type ActivityRow = { d: string; received: string; sent: string }
-type FocusRow = {
-  uid: string; account_id: string; folder: string; subject: string | null
-  from_name: string | null; from_address: string | null; date: string
-  is_starred: boolean; has_attachments: boolean
-}
-type ContactRow = { email: string; frequency: number; is_starred: boolean }
 type ReceiptRow = {
   subject: string | null; sent_to: string; opened_at: string; open_count: number
   account_name: string | null; account_id: string | null
@@ -66,8 +60,7 @@ export async function GET(req: Request) {
       scheduledCountRow,
       nextScheduledRow,
       activityRows,
-      focusRows,
-      contactRows,
+      focus,
       receiptRows,
       scheduledRows,
       ruleRows,
@@ -130,23 +123,8 @@ export async function GET(req: Request) {
          GROUP BY 1 ORDER BY 1`,
         P
       ),
-      query<FocusRow>(
-        `SELECT mc.uid, mc.account_id, mc.folder, mc.subject, mc.from_name, mc.from_address,
-                mc.date, mc.is_starred, mc.has_attachments
-         FROM messages_cache mc JOIN email_accounts ea ON ea.id = mc.account_id
-         WHERE ea.user_id = $1 AND mc.is_read = false AND NOT ${NON_INBOX} ${byEa}
-           AND NOT EXISTS (
-             SELECT 1 FROM snoozed_messages sm
-             WHERE sm.account_id = mc.account_id AND sm.folder = mc.folder
-               AND sm.uid = mc.uid AND sm.snooze_until > now()
-           )
-         ORDER BY mc.date DESC LIMIT 60`,
-        P
-      ),
-      query<ContactRow>(
-        `SELECT email, frequency, is_starred FROM contacts WHERE user_id = $1`,
-        [userId]
-      ),
+      // LA priorité du dépôt (lib/focus.ts) : même liste que le volet de lecture vide.
+      getFocusItems(userId, acct, 5),
       query<ReceiptRow>(
         `SELECT st.subject, st.sent_to, st.opened_at, st.open_count,
                 ea.name AS account_name, ea.id AS account_id
@@ -190,7 +168,6 @@ export async function GET(req: Request) {
     // il ne serait plus celui de la barre latérale.
     const rankById = new Map(accounts.map((a, rank) => [a.id, rank]))
     const ownedAccounts = accounts.filter(a => a.user_id === userId)
-    const accountById = new Map(accounts.map(a => [a.id, a]))
     // La couleur n'est PAS résolue ici : la liste des boîtes part avec la couleur
     // CHOISIE et son RANG (l'ordre de `accountOrderBy`), et chaque vignette de mail
     // porte l'id de sa boîte. Le client y lit la même bulle `AccountAvatar` que la
@@ -200,33 +177,6 @@ export async function GET(req: Request) {
       ? (unreadByAccount.get(acct) ?? 0)
       : Array.from(unreadByAccount.values()).reduce((s, n) => s + n, 0)
     const unreadToday = Number(unreadTodayRow[0]?.n ?? 0)
-
-    // VIP = starred contacts; frequent = top decile by frequency (min 5 exchanges).
-    const vip = new Set(contactRows.filter(c => c.is_starred).map(c => c.email.toLowerCase()))
-    const freqThreshold = Math.max(5, ...contactRows.map(c => c.frequency))
-    const frequent = new Set(
-      contactRows.filter(c => c.frequency >= Math.min(freqThreshold, 10)).map(c => c.email.toLowerCase())
-    )
-
-    const focus = focusRows
-      .map(row => ({ row, ...scoreFocus(row, vip, frequent) }))
-      .filter(x => x.score > 0)
-      .sort((a, b) => b.score - a.score || +new Date(b.row.date) - +new Date(a.row.date))
-      .slice(0, 5)
-      .map(({ row, reason }) => {
-        const acc = accountById.get(row.account_id)
-        return {
-          uid: row.uid,
-          accountId: row.account_id,
-          accountName: acc?.name ?? '',
-          folder: row.folder,
-          subject: row.subject ?? '',
-          fromName: row.from_name,
-          fromAddress: row.from_address,
-          date: row.date,
-          reason,
-        }
-      })
 
     // 14-day activity, zero-filled.
     const activity: ActivityPoint[] = []
