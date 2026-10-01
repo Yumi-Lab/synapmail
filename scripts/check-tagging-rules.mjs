@@ -198,15 +198,17 @@ try {
   check('D3 le mail « newsletter » (toutes les questions tranchées) ne coûte AUCUN appel moteur', !('Newsletter de la semaine' in byObjet) && asked.length === 2, `${asked.length} appel(s) : ${Object.keys(byObjet)}`)
   check('D4 le mail « Bonjour » (aucune règle) est posé au moteur avec TOUTES les questions', byObjet['Bonjour']?.length === all.length)
   const rows = await pool.query(`SELECT message_id, question, valeur, source, auteur_id, auteur_nom FROM message_tags WHERE account_id = $1 ORDER BY id`, [A1])
-  const ofRule = rows.rows.filter(r => r.source === RULE_SOURCE)
+  // Les DÉTECTEURS (lot T11b) écrivent aussi en `regle`, signés de leur id, sur TOUT mail :
+  // ce banc mesure les règles d'étiquetage, il les écarte.
+  const ofRule = rows.rows.filter(r => r.source === RULE_SOURCE && !questions.isRuleQuestionId(r.question))
   check(`D5 les étiquettes de règle sont en source \`${RULE_SOURCE}\`, signées de la règle (id + nom)`,
     ofRule.some(r => r.message_id === MID(1) && r.question === NOUL_Q && r.valeur === 'oui' && r.auteur_id === ruleFoi.id && r.auteur_nom === ruleFoi.name)
     && ofRule.some(r => r.message_id === MID(1) && r.question === CHOICE_Q && r.auteur_id === ruleAvis.id), JSON.stringify(ofRule.slice(0, 3)))
   check('D6 la règle d’AVIS laisse le moteur répondre aussi : deux lignes pour la même question (règle + moteur)',
     rows.rows.filter(r => r.message_id === MID(1) && r.question === CHOICE_Q).length === 2)
   check('D7 le mail « newsletter » porte une étiquette de règle par question active, aucune du moteur',
-    rows.rows.filter(r => r.message_id === MID(3)).every(r => r.source === RULE_SOURCE && r.auteur_id === ruleTout.id) && rows.rows.filter(r => r.message_id === MID(3)).length === all.length)
-  check('D8 le mail « Bonjour » n’a aucune étiquette de règle', !rows.rows.some(r => r.message_id === MID(2) && r.source === RULE_SOURCE))
+    rows.rows.filter(r => r.message_id === MID(3) && !questions.isRuleQuestionId(r.question)).every(r => r.source === RULE_SOURCE && r.auteur_id === ruleTout.id) && rows.rows.filter(r => r.message_id === MID(3) && !questions.isRuleQuestionId(r.question)).length === all.length)
+  check('D8 le mail « Bonjour » n’a aucune étiquette de règle', !ofRule.some(r => r.message_id === MID(2)))
   const { effective } = await store.readTags(A1, MID(1))
   check('D9 lecture : l’effective d’une question tranchée par règle est la ligne de la règle', effective.find(t => t.question === NOUL_Q)?.source === RULE_SOURCE)
 

@@ -285,10 +285,12 @@ const forgetResume = async accountId => {
 const mailboxOf = async accountId =>
   (await pool.query('SELECT * FROM mailbox_tagging WHERE account_id = $1', [accountId])).rows[0]
 
+// Les mails que le MOTEUR a tagués : les lignes `regle` (détecteurs, lot T11b) s'écrivent
+// AVANT l'appel, donc un mail coupé par un 402 en porte déjà — ce n'est pas un mail « fait ».
 const taggedCount = async accountId =>
   Number((await pool.query(
     `SELECT COUNT(DISTINCT message_id) AS n FROM message_tags
-      WHERE account_id = $3 AND (${MINE})`, [...MINE_ARGS, accountId])).rows[0].n)
+      WHERE account_id = $3 AND source = 'jev' AND (${MINE})`, [...MINE_ARGS, accountId])).rows[0].n)
 
 console.log(`\nbanc du trieur${NEGATIVE ? ' — CONTRÔLE NÉGATIF (curseur non enregistré)' : ''}\n`)
 

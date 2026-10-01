@@ -117,7 +117,7 @@ const ACTION_VALUES = ['repondre', 'payer', 'signer', 'expedier', 'rembourser', 
 const NOUVELLES_QUESTIONS = {
   relation: 9, canal_vente: 7, sens_flux: 4, organisme: 7, transporteur: 9, pays: 11, retour_positif: 2,
 }
-const TOTAL_QUESTIONS = 49
+const TOTAL_QUESTIONS = 53
 
 try {
   await clean()
@@ -216,9 +216,12 @@ try {
     `${TAXONOMY_VERSION} / ${questionVersion('categorie')}`)
   // Le hachage du corps de TOUTES les questions doit redonner la constante : sans ça, elle ne
   // décrirait pas le jeu réellement envoyé, et un ajout de question passerait inaperçu.
-  check('F3 le hachage du corps de TOUTES les questions redonne la constante',
-    versionOfBody('*', Object.entries(engineQuestionsFor())) === TAXONOMY_VERSION,
-    `${versionOfBody('*', Object.entries(engineQuestionsFor()))} / ${TAXONOMY_VERSION}`)
+  // Triées par id : la version décrit le JEU, pas l'ordre d'affichage (F7 le prouve sur un jeu
+  // en base dont les positions ne sont plus celles du défaut).
+  const sortedBody = () => Object.entries(engineQuestionsFor()).sort(([a], [b]) => a.localeCompare(b))
+  check('F3 le hachage du corps de TOUTES les questions, triées par id, redonne la constante',
+    versionOfBody('*', sortedBody()) === TAXONOMY_VERSION,
+    `${versionOfBody('*', sortedBody())} / ${TAXONOMY_VERSION}`)
   // Ce qui compte vraiment : un mail tagué sous la taxonomie COURANTE est sauté, un mail tagué
   // sous une AUTRE version ne l’est pas. La seconde ligne est écrite en SQL direct, car le
   // produit n’a pas de chemin pour écrire une version périmée — c’est l’état d’une base d’avant.

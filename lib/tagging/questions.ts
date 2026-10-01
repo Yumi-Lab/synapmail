@@ -80,6 +80,9 @@ export interface TagQuestion {
  * ici (vérifié au chargement du module), ni une question modifiable (400 qui nomme l'id).
  */
 export const RULE_QUESTION_IDS = ['telephone', 'email_tiers', 'iban', 'carte_bancaire', 'secret_technique'] as const
+export type RuleQuestionId = (typeof RULE_QUESTION_IDS)[number]
+export const isRuleQuestionId = (v: unknown): v is RuleQuestionId =>
+  typeof v === 'string' && (RULE_QUESTION_IDS as readonly string[]).includes(v)
 
 /**
  * `reset` est le segment de la route `POST /api/tags/questions/reset` : une question qui porterait
@@ -572,9 +575,29 @@ export const DEFAULT_QUESTIONS: TagQuestion[] = [
     id: 'fraude_paiement', group: 'security', type: 'noul', listBadge: true,
     instructions: "Ce mail contient-il une demande de paiement suspecte ou une demande de changement de coordonnées bancaires (RIB, IBAN) ?",
   },
+  // Les DIVULGATIONS (lot T11b, étage B) : cinq nouls atomiques à la place de l'ancien
+  // `donnees_sensibles`, trop large (la doc préfère l'atomique). Un noul n'a pas de critères :
+  // la frontière (`not_for`) est écrite dans la consigne. Les formats eux-mêmes (IBAN, carte,
+  // téléphone, clé) sont détectés par PROGRAMME (`RULE_QUESTIONS`), jamais demandés au moteur.
   {
-    id: 'donnees_sensibles', group: 'security', type: 'noul',
-    instructions: "Ce mail contient-il des données personnelles ou bancaires sensibles (numéro de carte, IBAN, pièce d'identité, mot de passe, données de santé) ?",
+    id: 'partage_mot_de_passe', group: 'security', type: 'noul', listBadge: true,
+    instructions: "Ce mail donne-t-il en clair un mot de passe, un code d'accès ou un code PIN ? Une demande de réinitialisation, un lien « mot de passe oublié » ou un code à usage unique envoyé automatiquement par un service ne comptent pas.",
+  },
+  {
+    id: 'partage_secret_technique', group: 'security', type: 'noul', listBadge: true,
+    instructions: "Ce mail donne-t-il en clair une clé d'API, un jeton, une clé privée ou des identifiants de serveur (hôte + utilisateur + mot de passe) ?",
+  },
+  {
+    id: 'donnees_personnelles_tiers', group: 'security', type: 'noul',
+    instructions: "Ce mail donne-t-il des informations personnelles sur une personne AUTRE que l'expéditeur : son nom ET au moins une autre donnée (adresse, date de naissance, numéro de sécurité sociale, santé, situation familiale) ? Une simple signature, une formule de politesse ou un nom seul ne comptent pas.",
+  },
+  {
+    id: 'piece_identite', group: 'security', type: 'noul', listBadge: true,
+    instructions: "Ce mail transmet-il ou décrit-il une pièce d'identité (passeport, carte d'identité, permis de conduire) ou un justificatif de domicile ?",
+  },
+  {
+    id: 'donnees_bancaires', group: 'security', type: 'noul', listBadge: true,
+    instructions: "Ce mail communique-t-il des coordonnées bancaires ou de carte (RIB, IBAN, numéro de carte, cryptogramme) ?",
   },
   {
     id: 'demande_desinscription', group: 'security', type: 'noul',
@@ -663,6 +686,22 @@ export const DEFAULT_QUESTIONS: TagQuestion[] = [
 
 export const QUESTION_GROUPS: QuestionGroup[] = ['general', 'support', 'prospection', 'security', 'finance']
 
+/**
+ * Les DÉTECTEURS par programme (lot T11b, étage A) : des « questions » que NOTRE code tranche,
+ * jamais un moteur — source `regle`, auteur = le détecteur (`lib/tagging/detectors.ts`). Elles
+ * ne vivent pas dans `tag_questions` (pas modifiables, pas désactivables), mais tout jeu les
+ * connaît (`questionSet` les ajoute) : mêmes pastilles, même filtre, même panneau. La consigne
+ * ne part nulle part — elle dit seulement ce que le détecteur mesure.
+ */
+export const RULE_QUESTIONS: readonly (TagQuestion & { id: RuleQuestionId })[] = [
+  { id: 'telephone', group: 'security', type: 'noul', instructions: 'Un numéro de téléphone (FR, CN ou E.164) figure dans le mail.' },
+  { id: 'email_tiers', group: 'security', type: 'noul', instructions: "Une adresse e-mail autre que celles de l'expéditeur et des destinataires figure dans le mail." },
+  { id: 'iban', group: 'security', type: 'noul', listBadge: true, instructions: 'Un IBAN valide (mod 97) figure dans le mail.' },
+  { id: 'carte_bancaire', group: 'security', type: 'noul', listBadge: true, instructions: 'Un numéro de carte bancaire valide (Luhn) figure dans le mail.' },
+  { id: 'secret_technique', group: 'security', type: 'noul', listBadge: true, instructions: "Une clé d'API, un jeton ou une clé privée figure dans le mail." },
+]
+export const isRuleQuestion = (q: Pick<TagQuestion, 'id'>): boolean => isRuleQuestionId(q.id)
+
 /** Les valeurs qu'une question admet, dans l'ordre (l'ordre d'un `score` est son échelle). */
 export function valuesOf(q: TagQuestion): string[] {
   return q.type === 'noul' ? [...NOUL_VALUES] : (q.options ?? []).map(o => o.value)
@@ -693,9 +732,16 @@ export function engineBodyOf(q: TagQuestion): Record<string, unknown> {
   return { type: q.type, instructions: q.instructions, criteria: Object.fromEntries(q.options!.map(o => [o.value, criterionOf(o)])) }
 }
 
-/** Le corps `questions` de la requête, pour une liste de questions déjà résolue. */
-export const engineBodyFor = (questions: readonly TagQuestion[]): Record<string, unknown> =>
-  Object.fromEntries(questions.map(q => [q.id, engineBodyOf(q)]))
+/**
+ * Le corps `questions` de la requête, pour une liste de questions déjà résolue. C'est LE seul
+ * endroit qui bâtit une requête : un détecteur (`RULE_QUESTIONS`) y est refusé, donc aucun
+ * chemin — tri, test d'une question, estimation — ne peut poser un détecteur à un moteur.
+ */
+export const engineBodyFor = (questions: readonly TagQuestion[]): Record<string, unknown> => {
+  const rule = questions.find(isRuleQuestion)
+  if (rule) throw new Error(`question réservée au programme, jamais posée à un moteur: ${rule.id}`)
+  return Object.fromEntries(questions.map(q => [q.id, engineBodyOf(q)]))
+}
 
 export const isEnabled = (q: TagQuestion): boolean => q.enabled !== false
 
@@ -705,10 +751,12 @@ export const isEnabled = (q: TagQuestion): boolean => q.enabled !== false
  * devient des fonctions sur LE jeu de l'utilisateur, sans en changer une règle.
  */
 export interface QuestionSet {
-  /** Toutes les questions, actives ou non, dans l'ordre d'affichage. */
+  /** Toutes les questions de l'utilisateur, actives ou non, dans l'ordre d'affichage. */
   readonly all: readonly TagQuestion[]
-  /** Les questions POSÉES au moteur : les actives, dans l'ordre. */
+  /** Les questions POSÉES au moteur : les actives, dans l'ordre — jamais un détecteur. */
   readonly enabled: readonly TagQuestion[]
+  /** Les détecteurs par programme (`RULE_QUESTIONS`) : connus du jeu, jamais posés. */
+  readonly rules: readonly TagQuestion[]
   questionById(id: string): TagQuestion | undefined
   /** La seule porte d'entrée d'une valeur, qu'elle vienne du moteur, d'un agent ou d'un clic. */
   isValidTag(question: string, value: unknown): boolean
@@ -725,9 +773,14 @@ export interface QuestionSet {
 }
 
 export function questionSet(questions: readonly TagQuestion[]): QuestionSet {
-  const all = [...questions]
-  const byId = new Map(all.map(q => [q.id, q]))
-  const rank = new Map(all.map((q, i) => [q.id, i]))
+  // `all` reste le jeu de l'UTILISATEUR ; les détecteurs (`rules`) ferment la marche des rangs
+  // et sont connus de `questionById`/`isValidTag` : une étiquette `regle` est valide, rangée et
+  // affichable comme les autres, sans jamais entrer dans `enabled` (jamais posée).
+  const all = questions.filter(q => !isRuleQuestion(q))
+  const rules = [...RULE_QUESTIONS]
+  const known = [...all, ...rules]
+  const byId = new Map(known.map(q => [q.id, q]))
+  const rank = new Map(known.map((q, i) => [q.id, i]))
   const enabled = all.filter(isEnabled)
   const questionById = (id: string) => byId.get(id)
   const isValidTag = (question: string, value: unknown): boolean => {
@@ -735,7 +788,7 @@ export function questionSet(questions: readonly TagQuestion[]): QuestionSet {
     return !!q && typeof value === 'string' && valuesOf(q).includes(value)
   }
   return {
-    all, enabled, questionById, isValidTag,
+    all, enabled, rules, questionById, isValidTag,
     showsInList(question, value) {
       const q = byId.get(question)
       if (!q?.listBadge || !isEnabled(q) || !isValidTag(question, value)) return false
@@ -750,7 +803,7 @@ export function questionSet(questions: readonly TagQuestion[]): QuestionSet {
       if (!ids) return enabled
       return ids.map(id => {
         const q = byId.get(id)
-        if (!q) throw new Error(`question inconnue: ${id}`)
+        if (!q || isRuleQuestion(q)) throw new Error(`question inconnue ou réservée: ${id}`)
         return q
       })
     },
@@ -760,6 +813,28 @@ export function questionSet(questions: readonly TagQuestion[]): QuestionSet {
 
 /** Le jeu par défaut, tel qu'un utilisateur sans ligne le reçoit. */
 export const DEFAULT_SET: QuestionSet = questionSet(DEFAULT_QUESTIONS)
+
+/**
+ * Les défauts en COLONNES, prêts pour un `unnest` : la seule forme que l'insertion du jeu
+ * d'un utilisateur neuf (`userQuestions.ts`) et la migration d'un jeu existant (`db.ts`)
+ * écrivent — une question ajoutée ici rejoint les deux sans qu'on recopie une liste.
+ */
+export const defaultQuestionColumns = () => ({
+  ids: DEFAULT_QUESTIONS.map(q => q.id),
+  types: DEFAULT_QUESTIONS.map(q => q.type),
+  instructions: DEFAULT_QUESTIONS.map(q => q.instructions),
+  criteria: DEFAULT_QUESTIONS.map(q => (q.options ? JSON.stringify(q.options) : null)),
+  listBadges: DEFAULT_QUESTIONS.map(q => (q.listBadge === undefined ? null : JSON.stringify(q.listBadge))),
+  groups: DEFAULT_QUESTIONS.map(q => q.group),
+  positions: DEFAULT_QUESTIONS.map((_, i) => i),
+})
+
+/**
+ * Les questions par défaut RETIRÉES (lot T11b : `donnees_sensibles`, remplacée par cinq nouls
+ * atomiques). La migration les efface d'un jeu que l'utilisateur n'a jamais édité (`version = 1`) ;
+ * une question éditée reste la sienne.
+ */
+export const RETIRED_DEFAULT_IDS: readonly string[] = ['donnees_sensibles']
 
 // Un défaut qui porterait un id réservé serait refusé à l'insertion : autant le dire ici, une
 // fois, au chargement — le banc du lot T-Q le vérifie aussi.

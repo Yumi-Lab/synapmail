@@ -2,7 +2,7 @@ import { Pool } from 'pg'
 import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
 import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
 import { BULK_STATES, ENGINES, HUMAN_SOURCE, PAUSE_REASONS, TAG_SOURCES } from '@/lib/tagging/engine'
-import { DEFAULT_QUESTIONS } from '@/lib/tagging/questions'
+import { DEFAULT_QUESTIONS, RETIRED_DEFAULT_IDS, defaultQuestionColumns } from '@/lib/tagging/questions'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -703,6 +703,21 @@ export async function initDb(): Promise<void> {
     [DEFAULT_QUESTIONS.map(q => q.id), DEFAULT_QUESTIONS.map(q => q.instructions),
       DEFAULT_QUESTIONS.map(q => (q.options ? JSON.stringify(q.options) : null))]
   )
+  // Une question par défaut AJOUTÉE (lot T11b : cinq nouls de divulgation) rejoint les jeux
+  // déjà insérés — sinon seuls les comptes neufs la recevraient. ponytail: une question par
+  // défaut que l'utilisateur avait SUPPRIMÉE revient par le même chemin ; voie d'amélioration :
+  // mémoriser les suppressions. Une question par défaut RETIRÉE quitte les jeux jamais édités.
+  const d = defaultQuestionColumns()
+  await query(
+    `INSERT INTO tag_questions (user_id, id, type, instructions, criteria, list_badge, groupe, enabled, position, version)
+     SELECT u.user_id, q.id, q.type, q.instructions, q.criteria, q.list_badge, q.groupe, true, q.position, 1
+       FROM (SELECT DISTINCT user_id FROM tag_questions) u
+      CROSS JOIN unnest($1::text[], $2::text[], $3::text[], $4::jsonb[], $5::jsonb[], $6::text[], $7::int[])
+              AS q(id, type, instructions, criteria, list_badge, groupe, position)
+     ON CONFLICT (user_id, id) DO NOTHING`,
+    [d.ids, d.types, d.instructions, d.criteria, d.listBadges, d.groups, d.positions]
+  )
+  await query(`DELETE FROM tag_questions WHERE id = ANY($1::text[]) AND version = 1`, [RETIRED_DEFAULT_IDS])
 
   // Les règles d'étiquetage SANS moteur (lot T-Q2, décision 24.1) : mêmes `conditions` que
   // `email_rules`, évaluées par la même fonction ; `actions` = [{question, valeur}] ;

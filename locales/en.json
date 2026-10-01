@@ -1193,7 +1193,11 @@
       "menace_juridique": "Legal threat",
       "violation_marketplace": "Marketplace breach",
       "fraude_paiement": "Payment fraud",
-      "donnees_sensibles": "Sensitive data",
+      "partage_mot_de_passe": "Password shared",
+      "partage_secret_technique": "Technical secret shared",
+      "donnees_personnelles_tiers": "Third party’s personal data",
+      "piece_identite": "Identity document",
+      "donnees_bancaires": "Bank details",
       "demande_desinscription": "Unsubscribe request",
       "document": "Document",
       "montant_mentionne": "Amount named",
@@ -1204,7 +1208,12 @@
       "retour_positif": "Positive feedback",
       "sens_flux": "Money direction",
       "organisme": "Official body",
-      "transporteur": "Carrier"
+      "transporteur": "Carrier",
+      "telephone": "Phone number",
+      "email_tiers": "Third-party e-mail address",
+      "iban": "IBAN",
+      "carte_bancaire": "Payment card",
+      "secret_technique": "Technical secret"
     },
     "v": {
       "oui": "Yes",
@@ -1336,6 +1345,9 @@
     "history": "{count, plural, one {# answer} other {# answers}}",
     "filterOrigin": "Origin",
     "filterOriginAll": "Any origin",
-    "filterOriginHuman": "Confirmed by hand"
+    "filterOriginHuman": "Confirmed by hand",
+    "sourceDetector": "internal rule · {name}",
+    "occurrences": "{count, plural, one {# occurrence} other {# occurrences}}",
+    "filterOriginRule": "Internal rule"
   }
 }

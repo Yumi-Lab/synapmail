@@ -17,7 +17,7 @@
  */
 import { query } from '../db'
 import {
-  CHOICE_MAX_OPTIONS, DEFAULT_QUESTIONS, RESERVED_ID_CODE, RESERVED_QUESTION_IDS, SCORE_LEVELS, SLUG_RE, engineBodyOf, questionSet,
+  CHOICE_MAX_OPTIONS, defaultQuestionColumns, RESERVED_ID_CODE, RESERVED_QUESTION_IDS, SCORE_LEVELS, SLUG_RE, engineBodyOf, questionSet,
   type QuestionSet, type QuestionType, type TagOption, type TagQuestion,
 } from './questions'
 
@@ -86,17 +86,14 @@ async function rows(userId: string): Promise<Row[]> {
 }
 
 async function insertDefaults(userId: string): Promise<void> {
+  const d = defaultQuestionColumns()
   await query(
     `INSERT INTO tag_questions (user_id, id, type, instructions, criteria, list_badge, groupe, enabled, position, version)
      SELECT $1, q.id, q.type, q.instructions, q.criteria, q.list_badge, q.groupe, true, q.position, 1
        FROM unnest($2::text[], $3::text[], $4::text[], $5::jsonb[], $6::jsonb[], $7::text[], $8::int[])
               AS q(id, type, instructions, criteria, list_badge, groupe, position)
      ON CONFLICT (user_id, id) DO NOTHING`,
-    [userId,
-      DEFAULT_QUESTIONS.map(q => q.id), DEFAULT_QUESTIONS.map(q => q.type), DEFAULT_QUESTIONS.map(q => q.instructions),
-      DEFAULT_QUESTIONS.map(q => (q.options ? JSON.stringify(q.options) : null)),
-      DEFAULT_QUESTIONS.map(q => (q.listBadge === undefined ? null : JSON.stringify(q.listBadge))),
-      DEFAULT_QUESTIONS.map(q => q.group), DEFAULT_QUESTIONS.map((_, i) => i)]
+    [userId, d.ids, d.types, d.instructions, d.criteria, d.listBadges, d.groups, d.positions]
   )
 }
 

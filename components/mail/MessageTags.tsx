@@ -16,7 +16,8 @@ import useSWR from 'swr'
 import { useFormatter, useTranslations } from 'next-intl'
 import { Tags } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { valuesOf } from '@/lib/tagging/questions'
+import { isRuleQuestionId, valuesOf } from '@/lib/tagging/questions'
+import { OCCURRENCES_KEY } from '@/lib/tagging/detectors'
 import { HUMAN_SOURCE, RULE_SOURCE } from '@/lib/tagging/engine'
 import { listPills, orderedTags, tagsByGroup } from '@/lib/tagging/view'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
@@ -33,12 +34,15 @@ import type { Message } from '@/types/email'
 function useOriginText() {
   const t = useTranslations('tags')
   const format = useFormatter()
-  return (tag: Pick<StoredTag, 'auteurNom' | 'modele' | 'source' | 'creeLe'>): string => {
+  const { q } = useTagLabels()
+  return (tag: Pick<StoredTag, 'auteurNom' | 'modele' | 'source' | 'creeLe' | 'auteurId'>): string => {
     const name = tag.auteurNom || tag.modele || tag.source
+    // Une source `regle` est soit une règle d'étiquetage (nommée par l'utilisateur), soit un
+    // détecteur interne (lot T11b, `auteur_id` = l'id du détecteur) : les deux se disent en clair.
     const who = tag.source === HUMAN_SOURCE
       ? t('sourceHuman', { name })
       : tag.source === RULE_SOURCE
-        ? t('sourceRule', { name })
+        ? (isRuleQuestionId(tag.auteurId) ? t('sourceDetector', { name: q(tag.auteurId) }) : t('sourceRule', { name }))
         : t('sourceEngine', { name, model: tag.modele ?? tag.source })
     return `${who} · ${format.dateTime(new Date(tag.creeLe), { dateStyle: 'short', timeStyle: 'short' })}`
   }
@@ -52,6 +56,8 @@ function useTagText() {
   return (tag: StoredTag): string => {
     const parts = [`${q(tag.question)} : ${v(tag.valeur)}`]
     if (tag.confiance !== null) parts.push(t('confidence', { percent: Math.round(tag.confiance * 100) }))
+    const occurrences = tag.probabilites?.[OCCURRENCES_KEY]
+    if (occurrences) parts.push(t('occurrences', { count: occurrences }))
     parts.push(origin(tag))
     return parts.join(' · ')
   }

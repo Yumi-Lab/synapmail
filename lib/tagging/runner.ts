@@ -30,6 +30,8 @@ import {
 } from './engine'
 import { alreadyTagged, messageIdOf, writeFields, writeTags, type TagAuthor } from './store'
 import { extractionFor, fieldsFromAnswers } from './fields'
+import { detect, detectorAuthor, tagOf } from './detectors'
+import { messageText } from '../html'
 import { questionSetForAccount } from './userQuestions'
 import { applyTagRules, remainingQuestions, rulesForAccount, type TagRule } from './tagRules'
 import { chunkByBudget, groupsForAccount, planPasses, triggeredQuestions, type PassPlan } from './questionGroups'
@@ -42,6 +44,8 @@ export interface SourceMail extends MailForState {
   folder: string
   uid: number
   date?: Date | string | null
+  /** Les adresses To/Cc : ce qu'`email_tiers` EXCLUT (lot T11b). Absentes = aucune exclusion. */
+  recipients?: readonly string[]
 }
 
 /**
@@ -436,10 +440,17 @@ async function tagBatch(
           tags: decided.tags.filter(t => t.rule === rule).map(({ question, valeur }) => ({ question, valeur })), questions, position,
         })
       }
+      // Les DÉTECTEURS (lot T11b, étage A) : par programme, sur le corps ENTIER (pas l'état
+      // tronqué — un secret en fin de mail compte), source `regle`, un auteur par détecteur,
+      // jamais une valeur lue dans le mail. Coût nul, donc toujours, avant tout moteur.
+      const detected = detect({ subject: mail.subject, text: messageText({ bodyPlain: mail.bodyPlain, bodyHtml: mail.bodyHtml }), fromAddress: mail.fromAddress, recipients: mail.recipients })
+      for (const d of detected) {
+        await writeTags({ accountId, messageId: messageIdOf(mail), source: RULE_SOURCE, auteur: detectorAuthor(d.question), tags: [tagOf(d)], questions, position })
+      }
       // Passe 1 : le tronc. Passe 2 : les groupes dont le déclencheur est vrai au vu des
       // étiquettes déjà obtenues (règles + passe 1) — une requête de plus, pour ces mails
       // seulement (décision 24.2).
-      const held: { question: string; valeur: string }[] = decided.tags.map(({ question, valeur }) => ({ question, valeur }))
+      const held: { question: string; valeur: string }[] = [...decided.tags, ...detected.map(tagOf)].map(({ question, valeur }) => ({ question, valeur }))
       const trunk = remainingQuestions(plan.trunk, decided.settled)
       if (trunk.length) {
         const got = await runPassOn(mail, trunk, position)

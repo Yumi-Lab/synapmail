@@ -1193,7 +1193,11 @@
       "menace_juridique": "法律威胁",
       "violation_marketplace": "平台违规",
       "fraude_paiement": "支付欺诈",
-      "donnees_sensibles": "敏感数据",
+      "partage_mot_de_passe": "泄露密码",
+      "partage_secret_technique": "泄露技术密钥",
+      "donnees_personnelles_tiers": "第三方个人信息",
+      "piece_identite": "身份证件",
+      "donnees_bancaires": "银行信息",
       "demande_desinscription": "要求退订",
       "document": "单据",
       "montant_mentionne": "提及金额",
@@ -1204,7 +1208,12 @@
       "retour_positif": "正面反馈",
       "sens_flux": "资金方向",
       "organisme": "官方机构",
-      "transporteur": "承运商"
+      "transporteur": "承运商",
+      "telephone": "电话号码",
+      "email_tiers": "第三方邮箱地址",
+      "iban": "IBAN",
+      "carte_bancaire": "银行卡",
+      "secret_technique": "技术密钥"
     },
     "v": {
       "oui": "是",
@@ -1336,6 +1345,9 @@
     "history": "{count} 条回答",
     "filterOrigin": "来源",
     "filterOriginAll": "全部来源",
-    "filterOriginHuman": "人工确认"
+    "filterOriginHuman": "人工确认",
+    "sourceDetector": "内部规则 · {name}",
+    "occurrences": "{count} 处",
+    "filterOriginRule": "内部规则"
   }
 }

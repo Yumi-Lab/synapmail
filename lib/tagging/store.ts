@@ -19,7 +19,7 @@
 import { createHash } from 'crypto'
 import { query } from '../db'
 import { HUMAN_SOURCE, isEngineKind, TAG_SOURCES, type TagSource } from './engine'
-import { engineBodyOf, type QuestionSet, type TagQuestion } from './questions'
+import { engineBodyOf, isRuleQuestionId, type QuestionSet, type TagQuestion } from './questions'
 import { FIELDS, fieldTemplate, isFieldName, isValidFieldValue, type Candidate, type FieldValue } from './fields'
 import { questionSetForAccount } from './userQuestions'
 
@@ -65,9 +65,13 @@ export const questionVersion = (q: TagQuestion): string =>
  * décider de rejouer une boîte (une question AJOUTÉE laisse les autres inchangées, donc aucune
  * `questionVersion` ne bouge, et sans cette version globale le mail serait sauté sans jamais
  * recevoir la nouvelle). Une question DÉSACTIVÉE la change aussi : le jeu posé n'est plus le même.
+ * Triée par id : l'ORDRE d'affichage n'est pas le jeu — déplacer une question (ou une migration
+ * qui en insère une au milieu, lot T11b) ne doit pas rejouer la boîte.
  */
 export const taxonomyVersion = (set: QuestionSet): string =>
-  createHash('sha256').update(JSON.stringify(set.enabled.map(q => [q.id, engineBodyOf(q)]))).digest('hex').slice(0, VERSION_CHARS)
+  createHash('sha256').update(JSON.stringify(
+    [...set.enabled].sort((a, b) => a.id.localeCompare(b.id)).map(q => [q.id, engineBodyOf(q)]),
+  )).digest('hex').slice(0, VERSION_CHARS)
 
 export interface TagToWrite {
   question: string
@@ -149,6 +153,7 @@ export function sourceForWriter(params: { session: boolean; requested?: unknown 
     if (requested !== undefined && requested !== null && requested !== HUMAN_SOURCE) throw new ForbiddenSourceError(requested)
     return HUMAN_SOURCE
   }
+  // `regle` n'est pas un moteur (`ENGINES`) : seul le code du trieur la signe (lot T11b).
   if (!isEngineKind(requested)) throw new ForbiddenSourceError(requested ?? null)
   return requested
 }
@@ -208,7 +213,12 @@ export async function writeTags(params: {
 }): Promise<number> {
   const { accountId, messageId, source, auteur, tags } = params
   const set = params.questions ?? await questionSetForAccount(accountId)
-  for (const t of tags) if (!set.isValidTag(t.question, t.valeur)) throw new InvalidTagError(t.question, t.valeur)
+  for (const t of tags) {
+    if (!set.isValidTag(t.question, t.valeur)) throw new InvalidTagError(t.question, t.valeur)
+    // Un détecteur (lot T11b) est tranché par le programme ou corrigé par une main — jamais
+    // signé d'un moteur, même par une clé qui parle pour lui.
+    if (isEngineKind(source) && isRuleQuestionId(t.question)) throw new InvalidTagError(t.question, t.valeur)
+  }
   if (!tags.length) return 0
   const versionOf = (question: string) => questionVersion(set.questionById(question)!)
 

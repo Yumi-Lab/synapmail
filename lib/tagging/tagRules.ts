@@ -21,7 +21,7 @@ import { evaluateRule } from '../rulesEval'
 import type { Message } from '@/types/email'
 import type { ConditionLogic, RuleCondition, RuleField, RuleOperator } from '@/types/rule'
 import type { MailForState } from './engine'
-import type { QuestionSet, TagQuestion } from './questions'
+import { isRuleQuestionId, type QuestionSet, type TagQuestion } from './questions'
 import type { TagToWrite } from './store'
 
 export interface TagRuleAction {
@@ -145,7 +145,7 @@ const failRule = (field: string, message: string): never => { throw new InvalidT
 
 function validateAction(a: unknown, field: string, set: QuestionSet): TagRuleAction {
   if (!isRecord(a)) throw new InvalidTagRuleError(field, `${field}: une action est un objet {question, valeur}`)
-  if (typeof a.question !== 'string' || !set.questionById(a.question)) throw new InvalidTagRuleError(`${field}.question`, `${field}.question: question inconnue ${JSON.stringify(a.question)}`)
+  if (typeof a.question !== 'string' || !set.questionById(a.question) || isRuleQuestionId(a.question)) throw new InvalidTagRuleError(`${field}.question`, `${field}.question: question inconnue ou réservée ${JSON.stringify(a.question)}`)
   if (!set.isValidTag(a.question, a.valeur)) throw new InvalidTagRuleError(`${field}.valeur`, `${field}.valeur: valeur hors liste pour ${a.question}: ${JSON.stringify(a.valeur)}`)
   return { question: a.question, valeur: a.valeur as string }
 }

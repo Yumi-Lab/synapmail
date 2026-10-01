@@ -31,7 +31,7 @@ import { TagPills } from '@/components/mail/MessageTags'
 import { valuesOf } from '@/lib/tagging/questions'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
-import { HUMAN_SOURCE } from '@/lib/tagging/engine'
+import { HUMAN_SOURCE, RULE_SOURCE } from '@/lib/tagging/engine'
 import { TAGS_ENDPOINT, taggedRows } from '@/lib/tagging/view'
 import type { StoredTag, TaggedMessage } from '@/lib/tagging/store'
 import type { DecisionEngine } from '@/lib/tagging/engines'
@@ -1290,7 +1290,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             )}
           >
             <option value="">{tTags('filterAll')}</option>
-            {questionSet.enabled.map(q => (
+            {[...questionSet.enabled, ...questionSet.rules].map(q => (
               <optgroup key={q.id} label={labelQ(q.id)}>
                 {valuesOf(q).map(v => (
                   <option key={v} value={`${q.id}|${v}`}>{labelV(v)}</option>
@@ -1311,6 +1311,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             >
               <option value="">{tTags('filterOriginAll')}</option>
               <option value={HUMAN_SOURCE}>{tTags('filterOriginHuman')}</option>
+              <option value={RULE_SOURCE}>{tTags('filterOriginRule')}</option>
               {engines.map(e => (
                 <option key={e.id} value={e.id}>{e.name}</option>
               ))}

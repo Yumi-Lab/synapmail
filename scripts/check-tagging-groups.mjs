@@ -204,7 +204,7 @@ try {
   console.log('E. le découpage d’une passe au budget de jetons')
   const budget = NEGATIVE ? Infinity : PASS_TOKEN_BUDGET
   const total = estimateTokens(set1.enabled)
-  check(`E0 le jeu de 49 questions tient en UNE requête (${total} jetons estimés < ${PASS_TOKEN_BUDGET})`, total < PASS_TOKEN_BUDGET && chunkByBudget(set1.enabled).length === 1)
+  check(`E0 le jeu de ${set1.enabled.length} questions tient en UNE requête (${total} jetons estimés < ${PASS_TOKEN_BUDGET})`, total < PASS_TOKEN_BUDGET && chunkByBudget(set1.enabled).length === 1)
   // Un jeu 5 × plus gros que le budget : 49 questions allongées, chacune sous une consigne longue.
   const long = 'a'.repeat(Math.ceil(PASS_TOKEN_BUDGET * g.CHARS_PER_TOKEN / 10))
   const big = questions.questionSet(set1.enabled.map(q => ({ ...q, instructions: q.instructions + ' ' + long })))
@@ -232,8 +232,9 @@ try {
   const expected2 = chunkByBudget(set2.enabled).length
   check(`E5 le trieur envoie ${expected2} requêtes pour UN mail dont le jeu (${estimateTokens(set2.enabled)} jetons) dépasse le budget, et le compte en 1 tagué`, pass2.tagged === 1 && pass2.calls === expected2 && asked2.length === expected2 && expected2 > 1, JSON.stringify({ tagged: pass2.tagged, calls: pass2.calls, expected2 }))
   check('E6 les requêtes du trieur couvrent le jeu entier, chaque question une fois', JSON.stringify(asked2.flat()) === JSON.stringify(set2.enabled.map(q => q.id)))
-  const rows2 = await pool.query(`SELECT COUNT(*)::int AS n FROM message_tags WHERE account_id = $1`, [A2])
-  check('E7 en base : une étiquette par question, toutes requêtes confondues', rows2.rows[0].n === set2.enabled.length, `${rows2.rows[0].n}`)
+  // Hors détecteurs (lot T11b) : ils écrivent leurs cinq lignes `regle` sur tout mail, sans requête.
+  const rows2 = await pool.query(`SELECT COUNT(*)::int AS n FROM message_tags WHERE account_id = $1 AND NOT (question = ANY($2::text[]))`, [A2, [...questions.RULE_QUESTION_IDS]])
+  check('E7 en base : une étiquette par question posée, toutes requêtes confondues', rows2.rows[0].n === set2.enabled.length, `${rows2.rows[0].n}`)
 
   // ---- F. le coût AVANT --------------------------------------------------------------
   console.log('F. le coût visible avant de lancer')
