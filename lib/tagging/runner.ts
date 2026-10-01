@@ -28,7 +28,8 @@ import {
   EngineError, RULE_SOURCE, askEngine, assumedInputTokensPerMail, buildState, costUsd,
   type BulkState, type EngineResult, type EngineState, type MailForState, type PauseReason, type TagSource,
 } from './engine'
-import { alreadyTagged, messageIdOf, writeTags, type TagAuthor } from './store'
+import { alreadyTagged, messageIdOf, writeFields, writeTags, type TagAuthor } from './store'
+import { extractionFor, fieldsFromAnswers } from './fields'
 import { questionSetForAccount } from './userQuestions'
 import { applyTagRules, remainingQuestions, rulesForAccount, type TagRule } from './tagRules'
 import { chunkByBudget, groupsForAccount, planPasses, triggeredQuestions, type PassPlan } from './questionGroups'
@@ -449,6 +450,31 @@ async function tagBatch(
       if (second.length) {
         const got = await runPassOn(mail, second, position)
         if (!got) { if (stop) return; errors += 1; continue }
+        held.push(...got)
+      }
+      // Passe 3 : les VALEURS (décision 19) — une requête de plus SEULEMENT si les regex ont
+      // des candidats à faire désigner ; l'IBAN (4 derniers caractères) s'écrit sans moteur.
+      // Les réponses ne sont pas des étiquettes : elles vont dans `message_fields`, et une
+      // option hors liste est déjà rejetée par `parseAnswer`.
+      const state = buildState(mail)
+      const extraction = extractionFor(`${state.objet}\n${state.corps}`, held, mail.date)
+      let fields = extraction.direct
+      let modele: string | null = null
+      if (extraction.questions.length) {
+        let result: EngineResult
+        calls += 1
+        try {
+          result = await engine.ask(state, extraction.questions)
+        } catch (err) {
+          if (err instanceof EngineError && (err.kind === 'credit' || err.kind === 'auth')) { stop = err; return }
+          errors += 1; continue
+        }
+        inputTokens += result.inputTokens
+        modele = result.model
+        fields = [...fields, ...fieldsFromAnswers(extraction, result.tags, held)]
+      }
+      if (fields.length) {
+        await writeFields({ accountId, messageId: messageIdOf(mail), source: engine.source, auteur: engine.auteur, modele, fields })
       }
       tagged += 1
     }

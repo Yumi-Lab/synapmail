@@ -21,7 +21,8 @@ import { HUMAN_SOURCE, RULE_SOURCE } from '@/lib/tagging/engine'
 import { listPills, orderedTags, tagsByGroup } from '@/lib/tagging/view'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
-import type { StoredTag } from '@/lib/tagging/store'
+import type { StoredField, StoredTag } from '@/lib/tagging/store'
+import { CARRIERS, TYPE_ECHEANCE, TYPE_MONTANT, type FieldName } from '@/lib/tagging/fields'
 import type { Message } from '@/types/email'
 
 /**
@@ -32,7 +33,7 @@ import type { Message } from '@/types/email'
 function useOriginText() {
   const t = useTranslations('tags')
   const format = useFormatter()
-  return (tag: StoredTag): string => {
+  return (tag: Pick<StoredTag, 'auteurNom' | 'modele' | 'source' | 'creeLe'>): string => {
     const name = tag.auteurNom || tag.modele || tag.source
     const who = tag.source === HUMAN_SOURCE
       ? t('sourceHuman', { name })
@@ -203,6 +204,56 @@ function TagRow({ tag, engine, history, correct, disabled }: {
   )
 }
 
+/** Les champs dont la valeur se choisit dans une liste FERMÉE ; les autres se lisent dans le mail. */
+const FIELD_CHOICES: Partial<Record<FieldName, readonly string[]>> = {
+  type_montant: TYPE_MONTANT, type_echeance: TYPE_ECHEANCE, transporteur_suivi: CARRIERS,
+}
+
+/**
+ * Une VALEUR extraite (décision 19) : libellé du champ, valeur, origine en infobulle, et de quoi
+ * la corriger en un clic — les candidats que les regex avaient trouvés (les mêmes que le
+ * moteur a vus), ou la liste fermée du champ, ou une valeur tapée (`prompt` natif : une
+ * saisie par an ne justifie pas une modale). Pas de bouton « Confirmer » : une valeur lue n'a
+ * rien à entraîner, la corriger suffit.
+ */
+function FieldRow({ field, correct, disabled }: { field: StoredField; correct: (champ: string, valeur: string) => Promise<void>; disabled: boolean }) {
+  const t = useTranslations('tags')
+  const origin = useOriginText()
+  const [busy, setBusy] = useState(false)
+  const champ = field.question as FieldName
+  const label = t.has(`f.${champ}`) ? t(`f.${champ}`) : champ
+  const fv = (v: string) => (t.has(`fv.${v}`) ? t(`fv.${v}`) : v)
+  const confirmed = field.source === HUMAN_SOURCE
+  const choices = FIELD_CHOICES[champ]
+  const options = choices ?? (field.candidats ?? []).map(c => c.valeur)
+
+  const run = async (valeur: string) => {
+    if (busy || valeur === '') return
+    const chosen = valeur === '*' ? window.prompt(t('fieldPrompt', { field: label }), field.valeur)?.trim() : valeur
+    if (!chosen) return
+    setBusy(true)
+    try { await correct(champ, chosen) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="flex items-center gap-2 py-1 text-xs" data-field-row={champ}>
+      <span className="min-w-0 flex-1 truncate text-muted-foreground" title={origin(field)}>{label}</span>
+      <span className={cn('shrink-0 truncate tabular-nums', confirmed ? 'font-semibold text-foreground' : 'text-foreground/80')}
+        title={origin(field)} data-field-value={field.valeur}>
+        {choices ? fv(field.valeur) : field.valeur}
+      </span>
+      {!disabled && (
+        <select value="" onChange={e => run(e.target.value)} disabled={busy} aria-label={t('change')} data-field-change={champ}
+          className="shrink-0 rounded border border-border bg-transparent px-1 py-0.5 text-[10px] text-muted-foreground disabled:opacity-50">
+          <option value="">{busy ? t('saving') : t('change')}</option>
+          {options.map(v => <option key={v} value={v}>{choices ? fv(v) : v}</option>)}
+          {!choices && <option value="*">{t('fieldOther')}</option>}
+        </select>
+      )}
+    </div>
+  )
+}
+
 /**
  * Le panneau du volet de lecture, replié. `<details>` natif : le pli est un état du navigateur,
  * donc rien à tenir en React, rien à ré-ouvrir à chaque message, et il reste ouvrable au
@@ -224,14 +275,19 @@ export function TagsPanel({ message, accountId, canOrganize }: {
   // `effective` = ce que le panneau affiche (décision 5) ; `tags` = toutes les sources, ce qui
   // fait tenir « le moteur a dit » en infobulle. Un mail sans `Message-ID` n'a pas de clé côté
   // client : rien n'est demandé (et la correction est refusée, voir plus bas).
+  const fetcher = async (url: string) => {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  }
   const { data, mutate } = useSWR<{ data: { tags: StoredTag[]; effective: StoredTag[] } }>(
     message.messageId ? `/api/messages/${encodeURIComponent(message.messageId)}/tags?account=${encodeURIComponent(accountId)}` : null,
-    async (url: string) => {
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      return res.json()
-    },
+    fetcher,
   )
+  // Les VALEURS extraites, lues à côté (décision 19) : même clé de message, même boîte.
+  const fieldsUrl = message.messageId ? `/api/messages/${encodeURIComponent(message.messageId)}/fields?account=${encodeURIComponent(accountId)}` : null
+  const { data: fieldsData, mutate: mutateFields } = useSWR<{ data: { effective: StoredField[] } }>(fieldsUrl, fetcher)
+  const fields = fieldsData?.data.effective ?? []
   // Le jeu ACTIF seulement : une question désactivée n'a ni ligne ni part au compteur.
   const tags = useMemo(() => orderedTags(set, data?.data.effective ?? []), [set, data])
   const groups = useMemo(() => tagsByGroup(set, tags), [set, tags])
@@ -267,16 +323,24 @@ export function TagsPanel({ message, accountId, canOrganize }: {
     })
     if (res.ok) mutate()
   }
+  const correctField = async (champ: string, valeur: string) => {
+    const res = await fetch(`/api/messages/${encodeURIComponent(message.messageId)}/fields`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId: message.accountId, fields: [{ champ, valeur }] }),
+    })
+    if (res.ok) mutateFields()
+  }
 
   return (
     <details className="group border-b border-border" data-tags-panel>
       <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50">
         <Tags className="h-3.5 w-3.5 shrink-0" />
         <span className="font-medium">{t('panelTitle')}</span>
-        <span className="tabular-nums text-muted-foreground/70">{tags.length || ''}</span>
+        <span className="tabular-nums text-muted-foreground/70">{(tags.length + fields.length) || ''}</span>
       </summary>
       <div className="px-4 pb-3">
-        {!tags.length ? (
+        {!tags.length && !fields.length ? (
           <p className="text-xs text-muted-foreground/70">{t('none')}</p>
         ) : (
           groups.map(({ group, tags: groupTags }) => (
@@ -294,6 +358,14 @@ export function TagsPanel({ message, accountId, canOrganize }: {
               ))}
             </div>
           ))
+        )}
+        {fields.length > 0 && (
+          <div className="mt-2" data-fields-panel={fields.length}>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60">{t('fieldsTitle')}</p>
+            {fields.map(field => (
+              <FieldRow key={field.question} field={field} correct={correctField} disabled={!canOrganize || !message.messageId} />
+            ))}
+          </div>
         )}
       </div>
     </details>

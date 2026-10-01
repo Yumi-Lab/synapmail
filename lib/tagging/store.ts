@@ -20,6 +20,7 @@ import { createHash } from 'crypto'
 import { query } from '../db'
 import { HUMAN_SOURCE, isEngineKind, TAG_SOURCES, type TagSource } from './engine'
 import { engineBodyOf, type QuestionSet, type TagQuestion } from './questions'
+import { fieldTemplate, isFieldName, isValidFieldValue, type Candidate, type FieldValue } from './fields'
 import { questionSetForAccount } from './userQuestions'
 
 /**
@@ -461,4 +462,71 @@ export async function alreadyTagged(
   const before = new Set<string>(), during = new Set<string>()
   for (const r of rows) (r.during ? during : before).add(r.message_id)
   return { before, during }
+}
+
+// ---------------------------------------------------------------- valeurs extraites (lot T11)
+
+/** Ce qu'une ligne de `message_fields` rend à la lecture : une étiquette dont la valeur est LUE, pas prévue. */
+export interface StoredField extends Omit<StoredTag, 'probabilites' | 'confiance'> {
+  candidats: Candidate[] | null
+}
+
+/** Une valeur de champ refusée à l'entrée : même refus nommé qu'une étiquette (422). */
+export class InvalidFieldError extends InvalidTagError {
+  constructor(champ: string, valeur: unknown) {
+    super(champ, valeur)
+    this.name = 'InvalidFieldError'
+  }
+}
+
+/**
+ * Écrit les valeurs extraites d'UN auteur sur UN mail — même forme, même clé, même conflit que
+ * `writeTags` : la version est celle du GABARIT du champ (`fieldTemplate`, sans les candidats
+ * qui changent à chaque mail), la validation est `isValidFieldValue` pour toute source.
+ */
+export async function writeFields(params: {
+  accountId: string
+  messageId: string
+  source: TagSource
+  auteur: TagAuthor
+  fields: FieldValue[]
+  modele?: string | null
+  validePar?: string | null
+}): Promise<number> {
+  const { accountId, messageId, source, auteur, fields } = params
+  for (const f of fields) if (!isFieldName(f.champ) || !isValidFieldValue(f.champ, f.valeur)) throw new InvalidFieldError(f.champ, f.valeur)
+  if (!fields.length) return 0
+  await query(
+    `INSERT INTO message_fields (account_id, message_id, question, valeur, candidats,
+                                 source, modele, valide_par, question_version, auteur_id, auteur_nom, cree_le)
+     SELECT $1, $2, q.question, q.valeur, q.candidats, $3, $4, $5, q.question_version, $9, $10, NOW()
+       FROM unnest($6::text[], $7::text[], $8::jsonb[], $11::text[]) AS q(question, valeur, candidats, question_version)
+     ON CONFLICT (account_id, message_id, question, source, auteur_id, modele, question_version) DO UPDATE SET
+       valeur = EXCLUDED.valeur, candidats = EXCLUDED.candidats, valide_par = EXCLUDED.valide_par,
+       auteur_nom = EXCLUDED.auteur_nom, cree_le = NOW()`,
+    [accountId, messageId, source, params.modele ?? '', params.validePar ?? null,
+      fields.map(f => f.champ), fields.map(f => f.valeur),
+      fields.map(f => (f.candidats?.length ? JSON.stringify(f.candidats) : null)),
+      auteur.id, auteur.nom, fields.map(f => questionVersion(fieldTemplate(f.champ)))]
+  )
+  return fields.length
+}
+
+type FieldRow = Omit<TagRow, 'probabilites' | 'confiance'> & { candidats: Candidate[] | null }
+
+const FIELD_COLUMNS = `question, valeur, candidats, source, modele, cree_le, valide_par, question_version, auteur_id, auteur_nom`
+
+/** Toutes les valeurs d'un mail, toutes sources, plus l'effective par champ — même règle que `readTags`. */
+export async function readFields(accountId: string, messageId: string): Promise<{ fields: StoredField[]; effective: StoredField[] }> {
+  const rows = await query<FieldRow & { rang: number }>(
+    `SELECT ${FIELD_COLUMNS}, ${EFFECTIVE_RANK} AS rang
+       FROM message_fields WHERE account_id = $1 AND message_id = $2
+      ORDER BY question, ${EFFECTIVE_ORDER}`,
+    [accountId, messageId]
+  )
+  const toField = (r: FieldRow): StoredField => ({
+    question: r.question, valeur: r.valeur, candidats: r.candidats, source: r.source, modele: r.modele || null,
+    creeLe: r.cree_le, validePar: r.valide_par, questionVersion: r.question_version, auteurId: r.auteur_id, auteurNom: r.auteur_nom,
+  })
+  return { fields: rows.map(toField), effective: rows.filter(r => Number(r.rang) === 1).map(toField) }
 }

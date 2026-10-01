@@ -643,6 +643,31 @@ export async function initDb(): Promise<void> {
     `)
   }
 
+  // Les VALEURS extraites d'un mail (lot T11, décision 19) : montant, échéance, n° de commande,
+  // n° de suivi — mêmes colonnes de traçabilité et même clé que `message_tags` (l'étiquette
+  // effective se calcule par le même fragment SQL). `question` est le nom du champ ; `valeur`
+  // est TEXT (un montant, une date ISO, un numéro) ; `candidats` garde ce que les regex avaient
+  // trouvé, pour que l'écran propose les mêmes choix qu'au moteur. Un IBAN n'y entre jamais en
+  // clair : seulement ses 4 derniers caractères (`lib/tagging/fields.ts`).
+  await query(`
+    CREATE TABLE IF NOT EXISTS message_fields (
+      id BIGSERIAL UNIQUE,
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      question VARCHAR(60) NOT NULL,
+      valeur TEXT NOT NULL,
+      candidats JSONB,
+      source VARCHAR(20) NOT NULL CHECK (source IN (${sqlList(TAG_SOURCES)})),
+      modele VARCHAR(100) NOT NULL DEFAULT '',
+      cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      valide_par UUID REFERENCES users(id) ON DELETE SET NULL,
+      question_version VARCHAR(12) NOT NULL DEFAULT '',
+      auteur_id TEXT NOT NULL DEFAULT '',
+      auteur_nom TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (account_id, message_id, question, source, auteur_id, modele, question_version)
+    )
+  `)
+
   // Les QUESTIONS de tri d'un utilisateur (lot T-Q, décision 22) : la source unique de sa
   // taxonomie. `lib/tagging/questions.ts` ne garde que les défauts, copiés ici à la première
   // lecture (`lib/tagging/userQuestions.ts`). `criteria` porte les options telles que le code les

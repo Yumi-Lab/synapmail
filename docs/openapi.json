@@ -3192,6 +3192,260 @@
         }
       }
     },
+    "/api/messages/{id}/fields": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "readMessageFields",
+        "summary": "Read the values extracted from a message",
+        "description": "Every row of `message_fields` and the effective one per field (amount, currency, amount type, due date, due-date type, order number, tracking number, carrier deduced from the tracking format, last 4 characters of an IBAN — never the full IBAN). Requires the `tags:read` scope; a key without it gets 403 naming it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MessageIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The extracted values of that message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "messageId",
+                        "fields",
+                        "effective"
+                      ],
+                      "properties": {
+                        "messageId": {
+                          "type": "string"
+                        },
+                        "fields": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/StoredField"
+                          },
+                          "description": "Every row, all sources."
+                        },
+                        "effective": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/StoredField"
+                          },
+                          "description": "One per field: the human row when it exists, else the most recent engine row."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "writeMessageFields",
+        "summary": "Write the extracted values of one source on a message",
+        "description": "Same contract as the tags route: a session writes `humain`, a key writes an engine kind. A value must be well-formed for its field (a decimal amount, an ISO date that exists, a 3-letter currency, a 4-character IBAN tail) — 422 names the field otherwise. Requires the `tags:write` scope and the `organize` share permission.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MessageIdPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "fields"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "jev",
+                      "one",
+                      "autre"
+                    ],
+                    "description": "For a key: which engine it speaks for. A session must omit it or pass `humain`."
+                  },
+                  "model": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "engineId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Key callers only: the decision engine that signs these rows (must belong to the caller — 403 naming it otherwise). Without it the key signs as itself. Sessions always sign as their user."
+                  },
+                  "fields": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "champ",
+                        "valeur"
+                      ],
+                      "properties": {
+                        "champ": {
+                          "type": "string",
+                          "enum": [
+                            "montant",
+                            "devise",
+                            "type_montant",
+                            "echeance",
+                            "type_echeance",
+                            "numero_commande",
+                            "numero_suivi",
+                            "transporteur_suivi",
+                            "iban"
+                          ]
+                        },
+                        "valeur": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was written, and the rows as they now stand.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "allOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "messageId",
+                            "fields",
+                            "effective"
+                          ],
+                          "properties": {
+                            "messageId": {
+                              "type": "string"
+                            },
+                            "fields": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/StoredField"
+                              },
+                              "description": "Every row, all sources."
+                            },
+                            "effective": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/StoredField"
+                              },
+                              "description": "One per field: the human row when it exists, else the most recent engine row."
+                            }
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "required": [
+                            "written",
+                            "source"
+                          ],
+                          "properties": {
+                            "written": {
+                              "type": "integer"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "jev",
+                                "one",
+                                "autre",
+                                "humain",
+                                "dossier",
+                                "regle"
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "A value this question does not allow. The body names the question and the value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
     "/api/tags": {
       "get": {
         "tags": [
@@ -4675,6 +4929,96 @@
           "auteurNom": {
             "type": "string",
             "description": "The author's name as it was at write time — a snapshot, readable after the engine is renamed or deleted."
+          }
+        }
+      },
+      "StoredField": {
+        "type": "object",
+        "required": [
+          "question",
+          "valeur",
+          "source",
+          "modele",
+          "creeLe",
+          "validePar",
+          "questionVersion",
+          "auteurId",
+          "auteurNom",
+          "candidats"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "The field name: montant, devise, type_montant, echeance, type_echeance, numero_commande, numero_suivi, transporteur_suivi or iban."
+          },
+          "valeur": {
+            "type": "string",
+            "description": "The value as the code normalised it: a decimal amount, a 3-letter currency, an ISO date, an upper-case number, or the last 4 characters of an IBAN (never the full IBAN)."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "jev",
+              "one",
+              "autre",
+              "humain",
+              "dossier",
+              "regle"
+            ],
+            "description": "The engine kind that produced it, or the hand that wrote it."
+          },
+          "modele": {
+            "type": "string",
+            "nullable": true,
+            "description": "The model the engine announced (e.g. `jev-1.13.0`); null when none."
+          },
+          "creeLe": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validePar": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "The user who validated, for `humain`."
+          },
+          "questionVersion": {
+            "type": "string",
+            "description": "Hash of the exact wording of the question this row answered. Two rows with different versions answered two different definitions."
+          },
+          "auteurId": {
+            "type": "string",
+            "description": "Who signed: the decision engine id, the user id, or the API key id. Empty on rows migrated with no nameable author."
+          },
+          "auteurNom": {
+            "type": "string",
+            "description": "The author's name as it was at write time — a snapshot, readable after the engine is renamed or deleted."
+          },
+          "candidats": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "object",
+              "required": [
+                "valeur",
+                "texte"
+              ],
+              "properties": {
+                "valeur": {
+                  "type": "string"
+                },
+                "texte": {
+                  "type": "string"
+                },
+                "devise": {
+                  "type": "string"
+                },
+                "transporteur": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "What the regexes found in the message — the same options the engine was asked to pick from."
           }
         }
       },

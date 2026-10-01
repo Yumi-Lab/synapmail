@@ -1198,6 +1198,12 @@ Every row this message carries, all sources, plus the effective one per question
 
 Requires the `organize` share permission (tagging is filing). `422` names the offending `question` and `valeur` when a value is not one this question allows; `403` names the `source` when the caller may not write it (a key asking for `humain`, a session asking for anything else). **Response** `{ data: { messageId, written: number, source, tags: StoredTag[], effective: StoredTag[] } }`.
 
+### `GET /api/messages/[id]/fields?account=` 🔑 Bearer (`tags:read`)
+The VALUES extracted from this message (decision 19): `montant` (+ `devise`, `type_montant`), `echeance` (ISO date, + `type_echeance`), `numero_commande`, `numero_suivi` (+ `transporteur_suivi` deduced from the number's format), and `iban` — only its last 4 characters, never the full IBAN. Same shape and same effective rule as the tags route (`humain` first, else the most recent engine row). Each row carries `candidats`: what the regexes found in the message, i.e. the very options the engine was asked to pick from. **Response** `{ data: { messageId: string; fields: StoredField[]; effective: StoredField[] } }`.
+
+### `PUT /api/messages/[id]/fields` 🔑 Bearer (`tags:write`)
+**Body** `{ accountId: string; source?: string; model?: string; engineId?: string; fields: { champ, valeur }[] }` — same source/author rules as `PUT …/tags`. A value must be well-formed for its field (`montant` decimal, `devise` 3 letters, `echeance` an ISO date that exists, `iban` exactly 4 characters…); `422` names the offending `question` (the field) and `valeur` otherwise, `403` names a forbidden `source`. Requires the `organize` share permission. **Response** `{ data: { messageId, written: number, source, fields: StoredField[], effective: StoredField[] } }`.
+
 ### `GET /api/tags?account=&question=&valeur=&page=&origine=` 🔑 Bearer (`tags:read`)
 The messages whose **effective** tag for `question` is `valeur`, with their last known position — so a message corrected by hand no longer answers under the engine's old value. `origine` narrows to one origin — a source (`humain`) or an author id (one engine) — and the effective tag is then computed among that origin's rows only. `422` names an unknown `question` or a value the question does not allow (an empty page would be indistinguishable from "nothing carries this"). **Response** `{ data: { messages: { messageId, folder, uid, fromName, fromAddress, subject, date }[]; total: number; page: number } }`.
 
