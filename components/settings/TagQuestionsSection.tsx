@@ -20,7 +20,7 @@ import { RowMenu, ContextMenuItem, MENU_ICON } from '@/components/ui/ContextMenu
 import { SettingsSection, SaveBar, Toggle } from '@/components/settings/primitives'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
-import { RESERVED_ID_CODE, SCORE_LEVELS, SLUG_RE, engineBodyOf, type QuestionType, type TagOption, type TagQuestion } from '@/lib/tagging/questions'
+import { CONFIDENCE_THRESHOLD_DEFAULT, RESERVED_ID_CODE, SCORE_LEVELS, SLUG_RE, engineBodyOf, type QuestionType, type TagOption, type TagQuestion } from '@/lib/tagging/questions'
 import { QUESTIONS_ENDPOINT } from '@/lib/tagging/view'
 import type { StoredQuestion } from '@/lib/tagging/userQuestions'
 import type { Message } from '@/types/email'
@@ -32,7 +32,7 @@ const TYPES: QuestionType[] = ['choice', 'score', 'noul']
 type Draft = Omit<StoredQuestion, 'updatedAt'>
 
 const draftOf = (q?: StoredQuestion): Draft => q
-  ? { id: q.id, type: q.type, instructions: q.instructions, group: q.group, options: q.options ? q.options.map(o => ({ ...o, examples: o.examples ? [...o.examples] : undefined })) : undefined, listBadge: q.listBadge, enabled: q.enabled, version: q.version }
+  ? { id: q.id, type: q.type, instructions: q.instructions, group: q.group, options: q.options ? q.options.map(o => ({ ...o, examples: o.examples ? [...o.examples] : undefined })) : undefined, listBadge: q.listBadge, enabled: q.enabled, version: q.version, confidenceThreshold: q.confidenceThreshold }
   : { id: '', type: 'noul', instructions: '', group: 'general', enabled: true, version: 1 }
 
 const emptyOption = (): TagOption => ({ value: '', definition: '' })
@@ -70,9 +70,11 @@ export function TagQuestionsSection({ accountId, staleCounts }: {
     if (!draft) return
     setSaving(true); setSaved(false); setError(null)
     try {
+      // Un seuil effacé part en `null` (= retour au défaut) : `undefined` disparaîtrait du JSON et garderait l'ancien.
+      const body = { ...draft, confidenceThreshold: draft.confidenceThreshold ?? null }
       const { ok, json } = adding
-        ? await send('POST', QUESTIONS_ENDPOINT, draft)
-        : await send('PATCH', `${QUESTIONS_ENDPOINT}/${encodeURIComponent(draft.id)}`, draft)
+        ? await send('POST', QUESTIONS_ENDPOINT, body)
+        : await send('PATCH', `${QUESTIONS_ENDPOINT}/${encodeURIComponent(draft.id)}`, body)
       if (!ok) { setError(json.code === RESERVED_ID_CODE ? t('reservedId', { id: json.id ?? draft.id }) : json.error ?? t('saveFailed')); return }
       await mutate()
       // La question rendue porte sa nouvelle version : le brouillon se réaligne dessus, sinon
@@ -272,6 +274,16 @@ function Editor({ draft, setDraft, isNew, accountId, stale, t }: {
         ) : (
           <Toggle checked={draft.listBadge === true} onChange={v => update({ listBadge: v ? true : undefined })} label={t('listBadge')} />
         )}
+      </label>
+
+      {/* Vide = le défaut (`CONFIDENCE_THRESHOLD_DEFAULT`) : `undefined` dans le brouillon, `null` en base. */}
+      <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        {t('confidenceThreshold')}
+        <input type="number" min={0} max={1} step={0.05} data-field="confidenceThreshold"
+          value={draft.confidenceThreshold ?? ''} placeholder={String(CONFIDENCE_THRESHOLD_DEFAULT)}
+          onChange={e => update({ confidenceThreshold: e.target.value === '' ? undefined : Math.min(Math.max(Number(e.target.value), 0), 1) })}
+          className="h-8 w-20 rounded-md border border-input bg-background px-2 text-xs tabular-nums" />
+        <span className="text-[11px]">{t('confidenceThresholdHint', { value: CONFIDENCE_THRESHOLD_DEFAULT })}</span>
       </label>
 
       {!isNew && <TestOnMail question={draft} accountId={accountId} stale={stale} t={t} />}

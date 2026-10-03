@@ -15,7 +15,11 @@
  *   K3. la file « à valider » rend les tirés non jugés, et chaque validation l'en retire ;
  *   K4. l'exactitude, les confusions et la courbe par confiance ne comptent que l'AUDIT : une
  *       validation faite hors tirage compte en « validations », jamais en exactitude ;
- *   K5. l'accord JEV / Yumi One se lit sur les mails que les DEUX ont étiquetés.
+ *   K5. l'accord JEV / Yumi One se lit sur les mails que les DEUX ont étiquetés ;
+ *   K6. la file « À valider » au clavier (lot T15, décision 17) : une ligne par (mail, question)
+ *       par l'une des trois portes (audit, désaccord, confiance sous le seuil de la question),
+ *       jamais une étiquette déjà jugée par une main ni une version périmée ; l'audit d'abord ;
+ *       un seuil réglé par question déplace la porte « confiance » ; une validation la vide.
  */
 import './alias-resolver.mjs'
 import crypto from 'node:crypto'
@@ -44,7 +48,7 @@ const check = (label, ok, detail = '') => {
 const { initDb, query } = await import('../lib/db.ts')
 const store = await import('../lib/tagging/store.ts')
 const audit = await import('../lib/tagging/audit.ts')
-const { DEFAULT_SET, valuesOf } = await import('../lib/tagging/questions.ts')
+const { CONFIDENCE_THRESHOLD_DEFAULT, DEFAULT_SET, questionSet, valuesOf } = await import('../lib/tagging/questions.ts')
 
 const pool = new pg.Pool({ connectionString: DB_URL })
 const MID = n => `<banc-t14-${n}@exemple.invalid>`
@@ -170,6 +174,55 @@ try {
   check('K2d 300 mails sous une ancienne version : comptés « à retaguer », hors cible, jamais tirés',
     withStale.tagged === 2600 && withStale.stale === 300 && withStale.target === 52 && withStale.added === 0 && staleDrawn === 0,
     JSON.stringify({ withStale, staleDrawn }))
+
+  // ---- K6. la file « À valider » (lot T15) ----
+  // L'oracle : la même règle écrite à plat en SQL sur l'état courant de la boîte — tirés d'abord.
+  // Attendu : audit = 52 tirés − 10 jugés = 42 (fixe) ; désaccord = les mails 30-39 que le tirage
+  // n'a pas pris ; confiance = les mails 40-89 (i/120 < 0,75) ni tirés ni jugés — ces deux-là
+  // dépendent du tirage (aléatoire), donc l'oracle les recompte à chaque passage.
+  const oracle = async threshold => (await query(
+    `WITH last AS (
+       SELECT DISTINCT ON (message_id, auteur_id) message_id, valeur, confiance, cree_le FROM message_tags
+        WHERE account_id = $1 AND question = $2 AND source IN ('jev','one') AND question_version <> 'perimee00000'
+        ORDER BY message_id, auteur_id, cree_le DESC),
+     agg AS (SELECT message_id, COUNT(DISTINCT valeur) AS nv, (array_agg(confiance ORDER BY cree_le DESC))[1] AS conf FROM last GROUP BY message_id),
+     due AS (SELECT a.*, EXISTS (SELECT 1 FROM tag_audits x WHERE x.account_id = $1 AND x.message_id = a.message_id) AS audited FROM agg a
+              WHERE NOT EXISTS (SELECT 1 FROM message_tags h WHERE h.account_id = $1 AND h.message_id = a.message_id AND h.question = $2 AND h.source = 'humain'))
+     SELECT COUNT(*) FILTER (WHERE audited)::int AS audit,
+            COUNT(*) FILTER (WHERE NOT audited AND nv > 1)::int AS disagreement,
+            COUNT(*) FILTER (WHERE NOT audited AND nv = 1 AND conf < $3)::int AS confidence
+       FROM due`, [ACCOUNT, Q, threshold]))[0]
+  const want = await oracle(CONFIDENCE_THRESHOLD_DEFAULT)
+  const q1 = await audit.validationQueue(ACCOUNT, 1, 200)
+  const all = []
+  for (let page = 1; ; page++) { const p = await audit.validationQueue(ACCOUNT, page, 200); all.push(...p.items); if (!p.items.length || all.length >= p.total) break }
+  check('K6a la file compte exactement l’oracle : audit 42, désaccord ≤ 10 (> 0), confiance ≤ 50 (> 0)',
+    want.audit === 42 && want.disagreement > 0 && want.disagreement <= 10 && want.confidence > 0 && want.confidence <= 50
+      && q1.counts.audit === want.audit && q1.counts.disagreement === want.disagreement && q1.counts.confidence === want.confidence
+      && q1.total === want.audit + want.disagreement + want.confidence && all.length === q1.total,
+    JSON.stringify({ want, got: q1.counts, total: q1.total, fetched: all.length }))
+  const firstNonAudit = all.findIndex(i => i.reason !== 'audit')
+  check('K6b l’audit vient en tête, puis le reste ; aucune ligne jugée, périmée ou « humain seul »',
+    all.slice(0, want.audit).every(i => i.reason === 'audit') && (firstNonAudit === -1 || firstNonAudit === want.audit)
+      && !all.some(i => /stale-|humain-seul/.test(i.messageId)) && !all.some(i => drawnIds.has(i.messageId) && judged.some(j => j.messageId === i.messageId)),
+    JSON.stringify({ firstNonAudit, want: want.audit, sample: all.slice(0, 3).map(i => [i.messageId, i.reason, i.valeur, i.confiance]) }))
+  const disagree = all.filter(i => i.reason === 'disagreement')
+  check('K6c un désaccord porte les deux valeurs, la proposition est la ligne la plus récente (One, sans confiance)',
+    disagree.length === want.disagreement && disagree.every(i => i.valeurs.length === 2 && i.valeurs.includes(V0) && i.valeurs.includes(V1) && i.valeur === V1 && i.confiance === null),
+    JSON.stringify(disagree.slice(0, 2)))
+  // Un seuil réglé sur la question (0,5) : la porte « confiance » se referme sur i/120 < 0,5.
+  const custom = questionSet(DEFAULT_SET.all.map(q => q.id === Q ? { ...q, confidenceThreshold: 0.5 } : q))
+  const wantLow = await oracle(0.5)
+  const low = await audit.validationQueue(ACCOUNT, 1, 1, custom)
+  check('K6d le seuil par question déplace la porte « confiance » (0,5 → moins de lignes), audit et désaccord inchangés',
+    wantLow.confidence < want.confidence && low.counts.confidence === wantLow.confidence && low.counts.audit === want.audit && low.counts.disagreement === want.disagreement,
+    JSON.stringify({ wantLow, got: low.counts }))
+  // Une validation (ce que fait `Entrée`) retire la ligne : même route d'écriture que le panneau.
+  const target = all.find(i => i.reason === 'confidence')
+  await store.writeTags({ accountId: ACCOUNT, messageId: target.messageId, source: 'humain', auteur: { id: USER, nom: 'Banc' }, validePar: USER, tags: [{ question: Q, valeur: target.valeur }] })
+  const afterOne = await audit.validationQueue(ACCOUNT, 1, 1)
+  check('K6e une ligne `humain` écrite retire l’item de la file (total − 1, confiance − 1)',
+    afterOne.total === q1.total - 1 && afterOne.counts.confidence === want.confidence - 1, JSON.stringify({ before: q1.total, after: afterOne.total, counts: afterOne.counts }))
 } finally {
   if (ACCOUNT) await pool.query('DELETE FROM email_accounts WHERE id = $1', [ACCOUNT]).catch(() => {})
   await pool.query("DELETE FROM email_accounts WHERE email LIKE 'auditbench-%@bench.invalid'").catch(() => {})
