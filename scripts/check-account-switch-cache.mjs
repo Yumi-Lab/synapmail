@@ -29,6 +29,10 @@ if (!DEBOUNCE_MS) { console.error('HARNESS: SEARCH_DEBOUNCE_MS illisible dans se
 const SETTLE_MS = 800
 /** Le temps que la page de courrier ÉMETTE ses requêtes de liste (pas qu'elles répondent). */
 const REQUESTS_SETTLE_MS = 6000
+/** Le temps laissé à la page de courrier pour émettre sa PREMIÈRE requête de liste : sous
+ *  forte charge (load 190, 13 lanes en vérification) le montage dépasse 6 s — 0 requête en
+ *  6 s n'est pas un verdict produit, c'est une page pas encore montée (HARNESS). */
+const FIRST_REQUEST_MAX_MS = 90000
 const OMNIBAR_SEARCH = '[data-omnibar-search]'
 const omnibarAccount = id => `[data-omnibar-entry="account:${id}"]`
 
@@ -117,6 +121,9 @@ try {
   if (before === '/mail') { console.error(`HARNESS: déjà sur /mail avant le clic (débounce ${DEBOUNCE_MS} ms dépassé)`); process.exit(2) }
   await realClick(omnibarAccount(to.id))
   await page.waitForFunction(() => location.pathname === '/mail', { timeout: 25000 })
+  for (const t0 = Date.now(); !listCalls.length; await new Promise(r => setTimeout(r, 250))) {
+    if (Date.now() - t0 > FIRST_REQUEST_MAX_MS) { console.error(`HARNESS: aucune requête de liste émise en ${FIRST_REQUEST_MAX_MS} ms — page de courrier pas montée`); process.exit(2) }
+  }
   await new Promise(r => setTimeout(r, REQUESTS_SETTLE_MS))
 
   const toOld = listCalls.filter(c => c.account === from.id)
