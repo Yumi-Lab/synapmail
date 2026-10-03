@@ -9,8 +9,10 @@
  *    visuel ait 5 messages étiquetés à regarder.
  *
  * Aucun appel à un vrai moteur (la source `jev` est écrite par une CLÉ API de banc, décision 7),
- * aucune connexion IMAP, aucun crédit dépensé. Les 5 messages viennent de la base : ce sont ceux
- * que `/api/messages` sert déjà, pris en lecture seule.
+ * aucune connexion IMAP, aucun crédit dépensé. JAMAIS sur une boîte réelle (gate T12 du 03/10 :
+ * 401 lignes `bench-1.0` laissées sur nicolas@yumi-lab.com faussaient la priorité) : le banc crée
+ * SA boîte (`.invalid`, RFC 2606) pour la session de banc, y pose 5 lignes `messages_cache`, et
+ * supprime la boîte dans le `finally` (CASCADE sur étiquettes, positions, clé) — sauf `--seed`.
  */
 // `lib/` importe ses dépendances à l'alias `@/…`, que `node` ne résout pas seul : le banc
 // apprend l'alias au lieu de faire plier le code mesuré (voir scripts/alias-resolver.mjs).
@@ -84,24 +86,31 @@ const tagsPath = (mid, q = '') => `/api/messages/${encodeURIComponent(mid)}/tags
 let engineKeyId = null
 let accountId = null
 let taggedIds = []
-let startedAt = null
+const { query } = await import('../lib/db.ts')
 
 try {
-  // --- B. une boîte possédée, et 5 messages RÉELS pris en lecture seule --------------
+  // --- B. une boîte DE BANC pour la session, et 5 messages de banc dans son cache ------
+  const tag = crypto.randomBytes(4).toString('hex')
+  const benchEmail = `t6-${tag}@banc-t6.invalid`
+  const [acct] = await query(
+    `INSERT INTO email_accounts (user_id, name, email, imap_host, imap_port, imap_secure, smtp_host, smtp_port, smtp_secure, username, password_encrypted)
+     VALUES ($1, 'banc t6', $2, 'imap.banc-t6.invalid', 993, true, 'smtp.banc-t6.invalid', 587, false, $2, 'banc-not-a-real-secret') RETURNING id`,
+    [session.user.id, benchEmail])
+  accountId = acct.id
   const all = (await json('/api/accounts')).data ?? []
-  const owned = all.filter(a => !a.isShared)
-  check(owned.length > 0, 'B1 la session a une boîte possédée', `${all.length} boîte(s)`)
-  accountId = owned[0].id
+  check(all.some(a => a.id === accountId && !a.isShared), 'B1 la boîte de banc est possédée par la session', `${all.length} boîte(s)`)
 
+  const messages = []
+  for (const [i] of SEEDS.entries()) {
+    const messageId = `<banc-t6-${tag}-${i + 1}@banc-t6.invalid>`
+    await query(
+      `INSERT INTO messages_cache (account_id, folder, uid, message_id, from_address, from_name, subject, date, is_read)
+       VALUES ($1, 'INBOX', $2, $3, $4, 'Banc T6', $5, NOW() - make_interval(mins => $6), false)`,
+      [accountId, String(i + 1), messageId, `exp-${i + 1}@banc-t6.invalid`, `Banc T6 message ${i + 1}`, i + 1])
+    messages.push({ messageId, folder: 'INBOX', uid: i + 1, from: { name: 'Banc T6', address: `exp-${i + 1}@banc-t6.invalid` }, subject: `Banc T6 message ${i + 1}`, date: new Date().toISOString() })
+  }
   const list = await json(`/api/messages?folder=INBOX&filter=all&page=1&perPage=8&account=${accountId}`)
-  const messages = (list.messages ?? []).filter(m => m.messageId).slice(0, SEEDS.length)
-  check(messages.length === SEEDS.length, `B2 ${SEEDS.length} messages réels servent de support`, `${messages.length} trouvé(s)`)
-  if (messages.length < SEEDS.length) throw new Error('pas assez de messages pour le banc')
-
-  // L'horloge de la BASE borne ce que le banc a écrit : le nettoyage ne retire que ces lignes,
-  // jamais les étiquettes réelles (moteur ou main) que ces 5 mails portaient déjà.
-  const { query } = await import('../lib/db.ts')
-  startedAt = (await query('SELECT NOW() AS now'))[0].now
+  check(Array.isArray(list.messages ?? null) || !!list.error, `B2 ${SEEDS.length} messages de banc servent de support (boîte injoignable : la liste IMAP répond sans planter)`, JSON.stringify(list).slice(0, 120))
 
   // --- C. une clé API écrit la source d'un MOTEUR (décision 7) -----------------------
   // C'est la clé, et non la session, qui pose les étiquettes `jev` : une session n'a pas le
@@ -228,20 +237,17 @@ try {
   const mailRes = await get('/mail')
   check(mailRes.status === 200, 'H1 /mail se rend pour une session', `statut ${mailRes.status}`)
 } finally {
-  // Les étiquettes du banc sont RETIRÉES, sauf en mode graine : la boîte est réelle, le banc ne
-  // laisse rien derrière lui par défaut. Pas de route de suppression (aucune corbeille par
-  // étiquette, décision 11) : le nettoyage passe par la base, comme les autres bancs DB.
-  // Un `.gate-handoff` en attente signifie qu'un humain regarde CES étiquettes : les effacer
-  // viderait l'écran qu'il est en train de juger. Le banc se tait alors plutôt que de nettoyer.
-  if (!SEED && taggedIds.length && !existsSync('.gate-handoff')) {
-    const { query } = await import('../lib/db.ts')
-    await query('DELETE FROM message_tags WHERE account_id = $1 AND message_id = ANY($2::text[]) AND cree_le >= $3', [accountId, taggedIds, startedAt])
-    await query(`DELETE FROM tagged_messages t WHERE t.account_id = $1 AND t.message_id = ANY($2::text[])
-                   AND NOT EXISTS (SELECT 1 FROM message_tags m WHERE m.account_id = t.account_id AND m.message_id = t.message_id)`, [accountId, taggedIds])
-  }
+  // La boîte de banc est SUPPRIMÉE (CASCADE : cache, étiquettes, positions, droits de la clé),
+  // sauf en mode graine. Un `.gate-handoff` en attente signifie qu'un humain regarde CES
+  // étiquettes : les effacer viderait l'écran qu'il est en train de juger. Le banc se tait alors.
   if (engineKeyId) {
     await fetch(`${BASE}/api/api-keys/${engineKeyId}`, { method: 'DELETE', headers: { cookie } }).catch(() => {})
   }
+  if (!SEED && accountId && !existsSync('.gate-handoff')) {
+    await query('DELETE FROM email_accounts WHERE id = $1', [accountId]).catch(() => {})
+  }
+  const { default: pool } = await import('../lib/db.ts')
+  await pool.end().catch(() => {})
 }
 
 if (NEGATIVE) {
