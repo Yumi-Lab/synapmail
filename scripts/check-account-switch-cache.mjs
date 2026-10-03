@@ -33,8 +33,12 @@ const REQUESTS_SETTLE_MS = 6000
  *  forte charge (load 190, 13 lanes en vérification) le montage dépasse 6 s — 0 requête en
  *  6 s n'est pas un verdict produit, c'est une page pas encore montée (HARNESS). */
 const FIRST_REQUEST_MAX_MS = 90000
+/** Large : le serveur de développement COMPILE la page au premier passage (même valeur que
+ *  les bancs de badge) — à 30 s par défaut, `page.goto` meurt AVANT la première assertion. */
+const NAV_TIMEOUT_MS = 120000
 const OMNIBAR_SEARCH = '[data-omnibar-search]'
 const omnibarAccount = id => `[data-omnibar-entry="account:${id}"]`
+const accountBadge = id => `[data-account-badge="${id}"]`
 
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split('\n')) {
   const m = line.match(/^([A-Z_]+)=(.*)$/)
@@ -52,6 +56,7 @@ let page
 try {
   page = await browser.newPage()
   await page.setViewport(VIEWPORT)
+  page.setDefaultTimeout(NAV_TIMEOUT_MS)
   const hydrated = async (selector) => {
     await page.waitForSelector(selector, { timeout: 25000 })
     await page.waitForFunction(sel => {
@@ -107,6 +112,10 @@ try {
   }), { base: BASE, id: from.id })
   await page.goto(`${BASE}/settings/profile`, { waitUntil: 'domcontentloaded' })
   await hydrated(OMNIBAR_SEARCH)
+  // La bulle de la barre latérale et les entrées de boîte de l'omnibar lisent le MÊME cache
+  // `/api/accounts` : tant qu'elle n'est pas peinte, l'entrée visée n'existe pas, et la frappe
+  // ci-dessous finirait soumise comme recherche (sous charge, /api/accounts met 20-45 s).
+  await page.waitForSelector(accountBadge(from.id))
   await new Promise(r => setTimeout(r, SETTLE_MS))
   listCalls.length = 0
 
