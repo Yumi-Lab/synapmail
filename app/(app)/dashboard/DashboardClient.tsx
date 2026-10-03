@@ -450,10 +450,12 @@ export function DashboardClient() {
    * largeur (depuis la source unique), la poignée, et le dépôt. Un seul endroit :
    * neuf cartes ne peuvent pas diverger sur la façon d'être saisies.
    */
-  const cardProps = (id: DashboardCardId) => ({
+  const cardProps = (id: DashboardCardId, extraClassName?: string) => ({
     cardId: id,
     index: cardOrder.indexOf(id),
-    className: cardSpan(id),
+    // La largeur vient d'ici : un `className` posé APRÈS le spread l'écraserait et la carte
+    // tomberait à une colonne sur douze (carte « À traiter » à 87 px, gate du 03/10).
+    className: cn(cardSpan(id), extraClassName),
     draggable: true,
     dragging: draggedCard === id,
     dropTarget: dropCard === id && draggedCard !== id,
@@ -493,8 +495,7 @@ export function DashboardClient() {
   const cards: Record<DashboardCardId, React.ReactNode> = {
     focus: (
       <Card
-        {...cardProps('focus')}
-        className="bg-gradient-to-b from-card to-card/40"
+        {...cardProps('focus', 'bg-gradient-to-b from-card to-card/40')}
         icon={<Sparkles className="h-[15px] w-[15px]" />}
         title={<span>{t('focusTitle')} <span className="font-normal text-muted-foreground">— {t('focusSubtitle')}</span></span>}
         action={<Link href="/mail" className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('viewAll')}</Link>}
