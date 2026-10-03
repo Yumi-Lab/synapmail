@@ -10,10 +10,10 @@
  * est de la lecture de `message_tags`.
  */
 import { query } from '../db'
-import { ENGINES, HUMAN_SOURCE } from './engine'
+import { ENGINES, HUMAN_SOURCE, type EngineState } from './engine'
 import { questionVersion, type TaggedMessage } from './store'
 import { questionSetForAccount } from './userQuestions'
-import type { QuestionSet } from './questions'
+import { thresholdOf, type QuestionSet } from './questions'
 
 /** La part des mails étiquetés qu'on tire, et le plancher en dessous duquel un taux ne dit rien. */
 export const AUDIT_RATE = 0.02
@@ -115,6 +115,120 @@ export async function auditPending(accountId: string, page = 1, perPage = 50): P
     messages: rows.map(r => ({
       messageId: r.message_id, folder: r.folder, uid: r.uid, fromName: r.from_name,
       fromAddress: r.from_address, subject: r.subject, date: r.date,
+    })),
+  }
+}
+
+/** Pourquoi un item est dans la file « À valider » (décision 17), par priorité : l'audit est la mesure. */
+export const QUEUE_REASONS = ['audit', 'disagreement', 'confidence'] as const
+export type QueueReason = (typeof QUEUE_REASONS)[number]
+
+/** Un item de la file : UNE étiquette d'UN mail, avec ce qu'il faut pour la juger sans ouvrir le mail. */
+export interface QueueItem extends TaggedMessage {
+  question: string
+  /** La proposition du moteur : sa ligne la plus récente sous la définition courante. */
+  valeur: string
+  confiance: number | null
+  /** Toutes les valeurs que des moteurs ont données (plus d'une = désaccord). */
+  valeurs: string[]
+  reason: QueueReason
+  /** Le texte JUGÉ (`tag_states`), celui de la proposition quand il est connu ; `null` pour une ligne sans instantané. */
+  state: EngineState | null
+}
+
+export interface ValidationQueue {
+  items: QueueItem[]
+  total: number
+  counts: Record<QueueReason, number>
+}
+
+/**
+ * La file « À valider » (décision 17) : une ligne par (mail, question) qu'un moteur a étiquetée sous
+ * la définition COURANTE d'une question active, qu'aucune main n'a encore jugée sous cette
+ * définition, et qui mérite un regard pour l'une de ces raisons — par priorité : (1) le mail est
+ * dans l'audit aléatoire (la mesure non biaisée) ; (2) deux moteurs se contredisent ; (3) la
+ * confiance du moteur est sous le seuil de la question (`thresholdOf`). Un `noul` rendu sans
+ * confiance n'entre que par les deux premières portes.
+ *
+ * Rangée pour la main : l'audit d'abord, puis par mail (ses questions se suivent, dans l'ordre du
+ * jeu) — on lit un mail une fois et on tranche toutes ses étiquettes à la suite.
+ *
+ * ponytail: un balayage de toutes les étiquettes de la boîte par page, comme `reliability` ;
+ * une boîte de 160 000 mails × 53 questions appellera une vue matérialisée rafraîchie par le
+ * trieur. Rien avant la mesure.
+ */
+export async function validationQueue(accountId: string, page = 1, perPage = 50, set?: QuestionSet): Promise<ValidationQueue> {
+  const limit = Math.min(Math.max(perPage, 1), 200)
+  const offset = (Math.max(page, 1) - 1) * limit
+  const resolved = set ?? await questionSetForAccount(accountId)
+  const { ids, versions } = currentVersions(resolved)
+  const thresholds = resolved.enabled.map(thresholdOf)
+  const rows = await query<{
+    message_id: string; question: string; valeur: string; confiance: number | null; valeurs: string[]; reason: QueueReason
+    folder: string | null; uid: number | null; from_name: string | null; from_address: string | null; subject: string | null; date: Date | null
+    state: EngineState | null; total: string; n_audit: string; n_disagreement: string; n_confidence: string
+  }>(
+    `WITH cur AS (
+       SELECT question, version, threshold, ord
+         FROM unnest($2::text[], $3::text[], $4::real[]) WITH ORDINALITY AS c(question, version, threshold, ord)
+     ),
+     rows AS (
+       SELECT t.message_id, t.question, t.valeur, t.source, t.auteur_id, t.confiance, t.cree_le, t.state_hash, c.threshold, c.ord
+         FROM message_tags t JOIN cur c ON c.question = t.question AND c.version = t.question_version
+        WHERE t.account_id = $1
+     ),
+     engine AS (
+       SELECT DISTINCT ON (message_id, question, auteur_id) *
+         FROM rows WHERE source IN (${ENGINE_LIST})
+        ORDER BY message_id, question, auteur_id, cree_le DESC
+     ),
+     agg AS (
+       SELECT message_id, question, ord, threshold,
+              (array_agg(valeur ORDER BY cree_le DESC))[1] AS valeur,
+              (array_agg(confiance ORDER BY cree_le DESC))[1] AS confiance,
+              (array_agg(state_hash ORDER BY cree_le DESC))[1] AS state_hash,
+              array_agg(DISTINCT valeur) AS valeurs
+         FROM engine GROUP BY message_id, question, ord, threshold
+     ),
+     items AS (
+       SELECT a.*,
+              EXISTS (SELECT 1 FROM tag_audits au WHERE au.account_id = $1 AND au.message_id = a.message_id) AS audited
+         FROM agg a
+        WHERE NOT EXISTS (SELECT 1 FROM rows h WHERE h.message_id = a.message_id AND h.question = a.question AND h.source = '${HUMAN_SOURCE}')
+     ),
+     due AS (
+       SELECT i.*, CASE WHEN i.audited THEN 'audit' WHEN array_length(i.valeurs, 1) > 1 THEN 'disagreement' ELSE 'confidence' END AS reason
+         FROM items i
+        WHERE i.audited OR array_length(i.valeurs, 1) > 1 OR (i.confiance IS NOT NULL AND i.confiance < i.threshold)
+     )
+     SELECT d.message_id, d.question, d.valeur, d.confiance, d.valeurs, d.reason,
+            tm.folder, tm.uid, tm.from_name, tm.from_address, tm.subject, tm.date, st.state,
+            COUNT(*) OVER () AS total,
+            COUNT(*) FILTER (WHERE d.reason = 'audit') OVER () AS n_audit,
+            COUNT(*) FILTER (WHERE d.reason = 'disagreement') OVER () AS n_disagreement,
+            COUNT(*) FILTER (WHERE d.reason = 'confidence') OVER () AS n_confidence
+       FROM due d
+       LEFT JOIN tagged_messages tm ON tm.account_id = $1 AND tm.message_id = d.message_id
+       LEFT JOIN LATERAL (
+         SELECT state FROM tag_states s WHERE s.account_id = $1 AND s.message_id = d.message_id
+          ORDER BY (s.state_hash = d.state_hash) DESC, s.created_at DESC LIMIT 1
+       ) st ON true
+      ORDER BY d.audited DESC, tm.date DESC NULLS LAST, d.message_id, d.ord
+      LIMIT $5 OFFSET $6`,
+    [accountId, ids, versions, thresholds, limit, offset]
+  )
+  const first = rows[0]
+  return {
+    total: first ? Number(first.total) : 0,
+    counts: {
+      audit: first ? Number(first.n_audit) : 0,
+      disagreement: first ? Number(first.n_disagreement) : 0,
+      confidence: first ? Number(first.n_confidence) : 0,
+    },
+    items: rows.map(r => ({
+      messageId: r.message_id, folder: r.folder, uid: r.uid, fromName: r.from_name, fromAddress: r.from_address,
+      subject: r.subject, date: r.date, question: r.question, valeur: r.valeur, confiance: r.confiance,
+      valeurs: r.valeurs, reason: r.reason, state: r.state,
     })),
   }
 }

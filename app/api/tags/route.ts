@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
 import { getAccessibleAccount } from '@/lib/accountAccess'
-import { auditPending } from '@/lib/tagging/audit'
+import { auditPending, validationQueue } from '@/lib/tagging/audit'
 import { filterByTag, readEffectiveFor } from '@/lib/tagging/store'
 import { questionSetForAccount } from '@/lib/tagging/userQuestions'
 
@@ -18,7 +18,9 @@ export const dynamic = 'force-dynamic'
  *    affiche en pastilles, en UNE requête par page et jamais une par ligne (décision 11) ;
  *  - `?audit=1` → les mails de l'AUDIT ALÉATOIRE (lot T14) qu'aucune main n'a encore jugés,
  *    même forme que le filtre : la liste les montre comme un filtre, et chaque validation
- *    les en retire.
+ *    les en retire ;
+ *  - `?queue=1` → la FILE « À valider » (lot T15, décision 17) : une ligne par (mail, question)
+ *    à juger — audit, désaccord entre moteurs, confiance sous le seuil — avec le texte jugé.
  */
 async function getHandler(req: Request) {
   const gate = await authorize(req)
@@ -41,6 +43,10 @@ async function getHandler(req: Request) {
     if (searchParams.get('audit') === '1') {
       const { messages, total, drawn } = await auditPending(accountId, page)
       return NextResponse.json({ data: { messages, total, drawn, page: Math.max(page || 1, 1) } })
+    }
+    if (searchParams.get('queue') === '1') {
+      const { items, total, counts } = await validationQueue(accountId, page)
+      return NextResponse.json({ data: { items, total, counts, page: Math.max(page || 1, 1) } })
     }
 
     const question = searchParams.get('question')

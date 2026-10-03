@@ -27,6 +27,10 @@ export const TAG_FILTER_PARAM = 'tag'
 /** Émis par le panneau après chaque correction écrite : la liste en mode audit se relit dessus. */
 export const TAGS_CHANGED_EVENT = 'synapmail:tags-changed'
 
+/** L'écran « À valider » (lot T15, décision 17) : son chemin et le paramètre de la boîte. */
+export const VALIDATE_PATH = '/validate'
+export const VALIDATE_ACCOUNT_PARAM = 'account'
+
 /**
  * La route qui sert le JEU de questions de l'utilisateur (lot T-Q), écrite UNE fois : c'est la
  * clé SWR que la liste, le panneau et l'écran de réglages partagent (mêmes règles que

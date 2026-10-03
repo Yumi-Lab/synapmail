@@ -719,7 +719,9 @@
         "noMail": "收件箱中没有邮件",
         "bodyPreview": "发送给引擎的正文：{chars} 个字符",
         "saveFailed": "保存失败。",
-        "reservedId": "标识符“{id}”已保留给规则检测器，请换一个。"
+        "reservedId": "标识符“{id}”已保留给规则检测器，请换一个。",
+        "confidenceThreshold": "置信度阈值",
+        "confidenceThresholdHint": "低于此值时，引擎的回答进入校验队列（默认 {value}）。"
       },
       "rules": {
         "title": "标签规则",
@@ -779,7 +781,8 @@
         "groupRate": "{name}：{questions} 个问题，{rate} 的邮件触发",
         "groupRateUnknown": "{name}：{questions} 个问题，比例未知",
         "groupRateHint": "该比例基于已按所读问题当前定义标注的 {mails} 封邮件，而非整个邮箱。"
-      }
+      },
+      "validateKeyboard": "键盘校验"
     },
     "engines": {
       "title": "决策工具（System One）",
@@ -1120,7 +1123,9 @@
       "admin": "管理, 管理员, 用户, 角色, admin",
       "branding": "标签页, 图标, favicon, 标题, 站点名称, 标识",
       "tagging": "分类 标签 引擎 自动"
-    }
+    },
+    "validateQueue": "校验队列",
+    "validateQueueKeywords": "校验, 验证, 队列, 键盘, 标签, 抽检"
   },
   "tags": {
     "panelTitle": "标签",
@@ -1374,6 +1379,28 @@
     "filterOriginHuman": "人工确认",
     "sourceDetector": "内部规则 · {name}",
     "occurrences": "{count} 处",
-    "filterOriginRule": "内部规则"
+    "filterOriginRule": "内部规则",
+    "validate": {
+      "title": "待校验",
+      "description": "每行一个标签：用键盘确认、修正或跳过。",
+      "remaining": "{count, plural, =0 {没有待校验} other {# 条待校验}}",
+      "done": "{count, plural, other {已校验 # 条}}",
+      "reason_audit": "抽检",
+      "reason_disagreement": "引擎不一致",
+      "reason_confidence": "置信度低",
+      "loading": "正在加载队列…",
+      "loadError": "无法读取队列。",
+      "empty": "此邮箱没有待校验项：先抽取抽检样本，或让分类继续运行。",
+      "allDone": "{count, plural, other {已校验 # 条标签}}，队列已空。",
+      "noState": "未知判定文本（该标签早于快照）。",
+      "enginesSaid": "引擎的回答：{values}",
+      "writeFailed": "写入被拒绝（{status}）。",
+      "readOnly": "只读：此共享邮箱不允许您整理。",
+      "keyConfirm": "确认",
+      "keyChoose": "选择",
+      "keySkip": "跳过",
+      "keyUndo": "撤销",
+      "keyMove": "移动"
+    }
   }
 }

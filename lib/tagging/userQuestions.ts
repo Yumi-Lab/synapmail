@@ -57,16 +57,18 @@ interface Row {
   enabled: boolean
   position: number
   version: number
+  confidence_threshold: number | null
   updated_at: Date
 }
 
-const COLUMNS = 'id, type, instructions, criteria, list_badge, groupe, enabled, position, version, updated_at'
+const COLUMNS = 'id, type, instructions, criteria, list_badge, groupe, enabled, position, version, confidence_threshold, updated_at'
 
 const toQuestion = (r: Row): TagQuestion => ({
   id: r.id, type: r.type, instructions: r.instructions, group: r.groupe,
   ...(r.criteria ? { options: r.criteria } : {}),
   ...(r.list_badge !== null && r.list_badge !== undefined ? { listBadge: r.list_badge } : {}),
   enabled: r.enabled, version: r.version,
+  ...(r.confidence_threshold !== null && r.confidence_threshold !== undefined ? { confidenceThreshold: r.confidence_threshold } : {}),
 })
 
 /** Ce que le client reçoit : la question, plus la date de sa dernière modification. */
@@ -128,6 +130,7 @@ export interface QuestionInput {
   group?: unknown
   enabled?: unknown
   position?: unknown
+  confidenceThreshold?: unknown
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -161,6 +164,11 @@ export function validateQuestion(input: QuestionInput): TagQuestion {
 
   const q: TagQuestion = { id: input.id, type, instructions: input.instructions.trim(), group: (input.group as string | undefined) ?? 'general' }
   if (input.enabled !== undefined) q.enabled = input.enabled as boolean
+  if (input.confidenceThreshold !== undefined && input.confidenceThreshold !== null) {
+    const th = input.confidenceThreshold
+    if (typeof th !== 'number' || !(th >= 0 && th <= 1)) throw new InvalidQuestionError('confidenceThreshold', `confidenceThreshold: nombre entre 0 et 1 attendu, reçu ${JSON.stringify(th)}`)
+    q.confidenceThreshold = th
+  }
 
   if (type === 'noul') {
     if (input.options !== undefined && input.options !== null && !(Array.isArray(input.options) && input.options.length === 0)) {
@@ -204,11 +212,11 @@ export async function createQuestion(userId: string, input: QuestionInput): Prom
   const q = validateQuestion(input)
   await rows(userId)
   const inserted = await query<Row>(
-    `INSERT INTO tag_questions (user_id, id, type, instructions, criteria, list_badge, groupe, enabled, position, version)
-     SELECT $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, COALESCE(MAX(position), -1) + 1, 1 FROM tag_questions WHERE user_id = $1
+    `INSERT INTO tag_questions (user_id, id, type, instructions, criteria, list_badge, groupe, enabled, position, version, confidence_threshold)
+     SELECT $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, COALESCE(MAX(position), -1) + 1, 1, $9 FROM tag_questions WHERE user_id = $1
      ON CONFLICT (user_id, id) DO NOTHING
      RETURNING ${COLUMNS}`,
-    [userId, q.id, q.type, q.instructions, criteriaJson(q), badgeJson(q), q.group, q.enabled ?? true]
+    [userId, q.id, q.type, q.instructions, criteriaJson(q), badgeJson(q), q.group, q.enabled ?? true, q.confidenceThreshold ?? null]
   )
   if (!inserted.length) throw new DuplicateQuestionError(q.id)
   return toStored(inserted[0])
@@ -239,6 +247,8 @@ export async function updateQuestion(userId: string, id: string, input: Question
     id, type: input.type ?? was.type, instructions: input.instructions ?? was.instructions,
     options: input.options ?? was.options, listBadge: input.listBadge === undefined ? was.listBadge : input.listBadge,
     group: input.group ?? was.group, enabled: input.enabled ?? was.enabled,
+    // `null` remet le défaut ; absent garde le seuil réglé.
+    confidenceThreshold: input.confidenceThreshold === undefined ? was.confidenceThreshold : input.confidenceThreshold,
   })
   const bumps = JSON.stringify(engineBodyOf(q)) !== JSON.stringify(engineBodyOf(was))
   const position = input.position === undefined ? current.position : Number(input.position)
@@ -246,10 +256,10 @@ export async function updateQuestion(userId: string, id: string, input: Question
   const [updated] = await query<Row>(
     `UPDATE tag_questions
         SET type = $3, instructions = $4, criteria = $5::jsonb, list_badge = $6::jsonb, groupe = $7, enabled = $8,
-            position = $9, version = version + $10, updated_at = NOW()
+            position = $9, version = version + $10, confidence_threshold = $11, updated_at = NOW()
       WHERE user_id = $1 AND id = $2
       RETURNING ${COLUMNS}`,
-    [userId, id, q.type, q.instructions, criteriaJson(q), badgeJson(q), q.group, q.enabled ?? true, position, bumps ? 1 : 0]
+    [userId, id, q.type, q.instructions, criteriaJson(q), badgeJson(q), q.group, q.enabled ?? true, position, bumps ? 1 : 0, q.confidenceThreshold ?? null]
   )
   return toStored(updated)
 }

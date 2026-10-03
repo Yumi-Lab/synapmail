@@ -709,6 +709,9 @@ export async function initDb(): Promise<void> {
       PRIMARY KEY (user_id, id)
     )
   `)
+  // Le seuil de confiance par question (décision 17, lot T15) : NULL = le défaut de `questions.ts`
+  // (`CONFIDENCE_THRESHOLD_DEFAULT`), pour qu'un défaut changé se propage sans migration.
+  await query(`ALTER TABLE tag_questions ADD COLUMN IF NOT EXISTS confidence_threshold REAL CHECK (confidence_threshold IS NULL OR (confidence_threshold >= 0 AND confidence_threshold <= 1))`)
   // Une question par défaut corrigée dans `questions.ts` rejoint les jeux que l'utilisateur n'a
   // JAMAIS édités (`version = 1`) : sinon la correction ne vaudrait que pour un compte neuf.
   // Une question éditée garde sa consigne — c'est la sienne.

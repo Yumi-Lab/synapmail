@@ -72,6 +72,11 @@ export interface TagQuestion {
   enabled?: boolean
   /** Le compteur de version affiché : +1 à chaque changement de consigne ou de critères. Absent = 1. */
   version?: number
+  /**
+   * Sous cette confiance, une réponse du moteur entre dans la file « À valider » (décision 17).
+   * Absent = `CONFIDENCE_THRESHOLD_DEFAULT`. Ne fait pas partie du corps envoyé au moteur.
+   */
+  confidenceThreshold?: number
 }
 
 /**
@@ -98,6 +103,10 @@ export const SLUG_RE = /^[a-z0-9_]{2,40}$/
 /** Les bornes documentées du protocole : 255 options par `choice`, 2 à 10 niveaux par `score`. */
 export const CHOICE_MAX_OPTIONS = 255
 export const SCORE_LEVELS = { min: 2, max: 10 } as const
+
+/** Le seuil de confiance par défaut d'une question (décision 17) : en dessous, la file « À valider » la propose. */
+export const CONFIDENCE_THRESHOLD_DEFAULT = 0.75
+export const thresholdOf = (q: Pick<TagQuestion, 'confidenceThreshold'>): number => q.confidenceThreshold ?? CONFIDENCE_THRESHOLD_DEFAULT
 
 export const NOUL_YES = 'oui'
 export const NOUL_NO = 'non'

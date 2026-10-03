@@ -719,7 +719,9 @@
         "noMail": "No mail in the inbox",
         "bodyPreview": "Body sent to the engine: {chars} characters",
         "saveFailed": "Saving failed.",
-        "reservedId": "The id “{id}” is reserved for a rule detector: pick another one."
+        "reservedId": "The id “{id}” is reserved for a rule detector: pick another one.",
+        "confidenceThreshold": "Confidence threshold",
+        "confidenceThresholdHint": "Below this, the engine’s answer enters the validation queue (default {value})."
       },
       "rules": {
         "title": "Tagging rules",
@@ -779,7 +781,8 @@
         "groupRate": "{name}: {questions} questions, triggered on {rate} of messages",
         "groupRateUnknown": "{name}: {questions} questions, share unknown",
         "groupRateHint": "Share read on the {mails} messages already tagged under the current definition of the question it reads, not on the whole mailbox."
-      }
+      },
+      "validateKeyboard": "Validate with the keyboard"
     },
     "engines": {
       "title": "Decision engines (System One)",
@@ -1120,7 +1123,9 @@
       "admin": "admin, users, roles, accounts, administration",
       "branding": "tab, icon, favicon, title, site name, branding, logo",
       "tagging": "sorting tags labels engine classify automatic"
-    }
+    },
+    "validateQueue": "Validation queue",
+    "validateQueueKeywords": "validate, validation, queue, keyboard, tags, audit"
   },
   "tags": {
     "panelTitle": "Tags",
@@ -1374,6 +1379,28 @@
     "filterOriginHuman": "Confirmed by hand",
     "sourceDetector": "internal rule · {name}",
     "occurrences": "{count, plural, one {# occurrence} other {# occurrences}}",
-    "filterOriginRule": "Internal rule"
+    "filterOriginRule": "Internal rule",
+    "validate": {
+      "title": "To validate",
+      "description": "One tag per line: confirm, correct or skip, from the keyboard.",
+      "remaining": "{count, plural, =0 {Nothing to validate} one {# to validate} other {# to validate}}",
+      "done": "{count, plural, =0 {0 validated} one {# validated} other {# validated}}",
+      "reason_audit": "Audit",
+      "reason_disagreement": "Disagreement",
+      "reason_confidence": "Low confidence",
+      "loading": "Loading the queue…",
+      "loadError": "The queue could not be read.",
+      "empty": "Nothing to validate for this mailbox: draw an audit or let the sorter run.",
+      "allDone": "{count, plural, one {# tag validated} other {# tags validated}}, the queue is empty.",
+      "noState": "Judged text unknown (tag predates the snapshots).",
+      "enginesSaid": "Engines answered: {values}",
+      "writeFailed": "Write refused ({status}).",
+      "readOnly": "Read only: this shared mailbox does not let you organize.",
+      "keyConfirm": "confirm",
+      "keyChoose": "choose",
+      "keySkip": "skip",
+      "keyUndo": "undo",
+      "keyMove": "move"
+    }
   }
 }

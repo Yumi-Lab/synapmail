@@ -719,7 +719,9 @@
         "noMail": "Aucun mail dans la boîte de réception",
         "bodyPreview": "Corps envoyé au moteur : {chars} caractères",
         "saveFailed": "L’enregistrement a échoué.",
-        "reservedId": "L’identifiant « {id} » est réservé à un détecteur de règles : choisissez-en un autre."
+        "reservedId": "L’identifiant « {id} » est réservé à un détecteur de règles : choisissez-en un autre.",
+        "confidenceThreshold": "Seuil de confiance",
+        "confidenceThresholdHint": "Sous ce seuil, la réponse du moteur entre dans la file « À valider » (défaut {value})."
       },
       "rules": {
         "title": "Règles d’étiquetage",
@@ -779,7 +781,8 @@
         "groupRate": "{name} : {questions} questions, déclenché pour {rate} des mails",
         "groupRateUnknown": "{name} : {questions} questions, part inconnue",
         "groupRateHint": "Part lue sur les {mails} mails déjà étiquetés sous la définition courante de la question lue, pas sur toute la boîte."
-      }
+      },
+      "validateKeyboard": "Valider au clavier"
     },
     "engines": {
       "title": "Outils de décision (System One)",
@@ -1120,7 +1123,9 @@
       "admin": "admin, administration, utilisateurs, roles, comptes",
       "branding": "onglet, icône, favicon, titre, nom du site, identité, logo",
       "tagging": "tri étiquettes moteur classer automatique"
-    }
+    },
+    "validateQueue": "File « À valider »",
+    "validateQueueKeywords": "valider, validation, file, clavier, étiquettes, audit"
   },
   "tags": {
     "panelTitle": "Étiquettes",
@@ -1374,6 +1379,28 @@
     "filterOriginHuman": "Confirmé à la main",
     "sourceDetector": "règle interne · {name}",
     "occurrences": "{count, plural, one {# occurrence} other {# occurrences}}",
-    "filterOriginRule": "Règle interne"
+    "filterOriginRule": "Règle interne",
+    "validate": {
+      "title": "À valider",
+      "description": "Une étiquette par ligne : confirmez, corrigez ou passez, au clavier.",
+      "remaining": "{count, plural, =0 {Rien à valider} one {# à valider} other {# à valider}}",
+      "done": "{count, plural, =0 {0 validée} one {# validée} other {# validées}}",
+      "reason_audit": "Audit",
+      "reason_disagreement": "Désaccord",
+      "reason_confidence": "Confiance basse",
+      "loading": "Chargement de la file…",
+      "loadError": "La file n’a pas pu être lue.",
+      "empty": "Rien à valider pour cette boîte : tirez un audit ou laissez le tri avancer.",
+      "allDone": "{count, plural, one {# étiquette validée} other {# étiquettes validées}}, la file est vide.",
+      "noState": "Texte jugé inconnu (étiquette antérieure aux instantanés).",
+      "enginesSaid": "Les moteurs ont répondu : {values}",
+      "writeFailed": "Écriture refusée ({status}).",
+      "readOnly": "Lecture seule : cette boîte partagée ne vous laisse pas organiser.",
+      "keyConfirm": "confirmer",
+      "keyChoose": "choisir",
+      "keySkip": "passer",
+      "keyUndo": "défaire",
+      "keyMove": "se déplacer"
+    }
   }
 }

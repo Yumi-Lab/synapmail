@@ -8,7 +8,8 @@
  *
  * « Tirer l'audit » complète `tag_audits` jusqu'à la cible (`POST /api/tagging/run`, action
  * `audit`, sans appel moteur) ; « Valider » mène à la liste de courrier filtrée sur les mails
- * tirés non jugés (`/mail?tag=audit`), où le panneau de chaque mail corrige en un clic.
+ * tirés non jugés (`/mail?tag=audit`), où le panneau de chaque mail corrige en un clic ;
+ * « Valider au clavier » ouvre la file « À valider » (lot T15), qui enchaîne les étiquettes.
  */
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -18,7 +19,7 @@ import { Button } from '@/components/ui/button'
 import { SettingsSection } from '@/components/settings/primitives'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import { MAIL_PATH } from '@/lib/compose'
-import { AUDIT_FILTER, TAG_FILTER_PARAM } from '@/lib/tagging/view'
+import { AUDIT_FILTER, TAG_FILTER_PARAM, VALIDATE_ACCOUNT_PARAM, VALIDATE_PATH } from '@/lib/tagging/view'
 import type { AuditStatus, QuestionReliability } from '@/lib/tagging/audit'
 import { useAccountAccent } from '@/components/layout/AccountAvatar'
 
@@ -79,6 +80,12 @@ export function TagReliabilitySection({ accountId }: { accountId: string }) {
             {pending > 0 && (
               <Button type="button" size="sm" onClick={validate} data-audit-validate={pending}>
                 {t('auditValidate', { pending })}
+              </Button>
+            )}
+            {/* La file au clavier vaut aussi sans tirage : désaccords et confiances basses y entrent. */}
+            {audit.tagged > 0 && (
+              <Button type="button" variant="ghost" size="sm" onClick={() => router.push(`${VALIDATE_PATH}?${VALIDATE_ACCOUNT_PARAM}=${accountId}`)} data-audit-keyboard>
+                {t('validateKeyboard')}
               </Button>
             )}
           </span>
