@@ -11,24 +11,29 @@
  *     au moins un genre FORT (SIRET, TVA, IBAN réduit, regex). Deux dossiers, ou seulement une
  *     raison sociale : le document reste « À ranger » et ses dossiers candidats deviennent ses
  *     suggestions (calculées à la lecture, jamais stockées).
- *  4. **Les identifiants PROPRES de la boîte** (`ged_mailboxes.propres`) — ceux du destinataire, imprimés
- *     sur toute facture reçue — ne sont ni appris ni cherchés : mesuré sur la vraie boîte, la TVA du
- *     destinataire rangeait sinon un courrier d'école dans le dossier FedEx. Liste explicite (API G5,
- *     écran G6) ; pas de détection automatique : un identifiant vu dans deux dossiers est aussi le cas
- *     « doute » légitime de la décision 5.
+ *  4. **Les identifiants PROPRES de la boîte** (`ged_mailboxes.propres`) — ceux du destinataire (TVA,
+ *     SIRET, IBAN réduit), imprimés sur toute facture reçue — ne sont ni appris ni cherchés : mesuré
+ *     sur la vraie boîte, la TVA du destinataire rangeait sinon un courrier d'école dans le dossier
+ *     FedEx, et l'IBAN du groupe (sur les factures ET les demandes de RIB) faisait de même. Liste
+ *     explicite (API G5, écran G6) ; pas de détection automatique : un identifiant vu dans deux
+ *     dossiers est aussi le cas « doute » légitime de la décision 5.
  *  5. **Émetteur inconnu** : un document sans motif connu mais qui porte une raison sociale ou un
  *     identifiant fort reçoit un dossier PROPOSÉ (`auto=true`) sous « Nouveaux émetteurs », nommé
  *     par la raison sociale — à défaut par l'identifiant (« SIRET 196… » : un courrier d'école n'a
  *     pas de forme juridique en en-tête, mesuré sur la vraie boîte) —, rangé en `source=motif` à
- *     confiance basse, et qui apprend les identifiants du document : le prochain envoi du même
- *     émetteur le rejoint par motif. À renommer ou déplacer, jamais effacé par la chaîne.
+ *     confiance basse. Il n'apprend QUE l'identifiant qui le nomme : personne n'a validé ce dossier,
+ *     et apprendre tout le document lui donnait aussi les identifiants du destinataire oubliés de
+ *     `propres` (mesuré : l'IBAN du groupe appris par le dossier d'une école y rangeait une facture
+ *     FedEx). Nommé par un SIRET, le second envoi le rejoint par motif ; nommé par une raison sociale
+ *     (faible), il n'est que suggéré jusqu'à un rangement humain ou agent, qui apprend le reste.
+ *     À renommer ou déplacer, jamais effacé par la chaîne.
  */
 import { query } from '../db'
 import { EFFECTIVE_ORDER } from '../tagging/store'
 import { HUMAN_SOURCE } from '../tagging/engine'
 import { boundedRegex } from '../rulesEval'
 import type { FilingSource, PatternKind } from './model'
-import { identifiersOf, raisonSocialeOf, STRONG_KINDS, type Identifier } from './patterns'
+import { identifiersOf, STRONG_KINDS, type Identifier } from './patterns'
 
 /** Le dossier racine qui reçoit les dossiers proposés pour un émetteur inconnu (décision 3). */
 export const AUTO_ROOT_NAME = 'Nouveaux émetteurs'
@@ -107,11 +112,14 @@ export async function fileDocument(params: {
   return { filing, learned }
 }
 
-/** Écrit dans `ged_patterns` les identifiants du document pour ce dossier (déjà là = laissé tel quel). */
-export async function learnPatterns(documentId: string, folderId: string, author: Author): Promise<Identifier[]> {
+/**
+ * Écrit dans `ged_patterns` les identifiants du document pour ce dossier (déjà là = laissé tel quel) —
+ * tous ceux de l'émetteur, ou seulement `only` (le dossier proposé n'apprend que son nom).
+ */
+export async function learnPatterns(documentId: string, folderId: string, author: Author, only?: Identifier[]): Promise<Identifier[]> {
   const doc = await docText(documentId)
   if (!doc) return []
-  const ids = await emitterIdentifiers(doc.account_id, doc.ocr_text)
+  const ids = only ?? await emitterIdentifiers(doc.account_id, doc.ocr_text)
   for (const { genre, valeur } of ids) {
     await query(
       `INSERT INTO ged_patterns (folder_id, genre, valeur, appris_de, auteur_id, auteur_nom)
@@ -173,15 +181,15 @@ export async function autoFile(documentId: string): Promise<AutoFileOutcome> {
   if (suggestions.length) return { kind: 'doute', folderId: null, suggestions }
 
   const ids = await emitterIdentifiers(doc.account_id, doc.ocr_text)
-  const strongId = ids.find(i => STRONG_KINDS.includes(i.genre))
-  const nom = raisonSocialeOf(doc.ocr_text) ?? (strongId && `${strongId.genre.toUpperCase()} ${strongId.valeur}`)
-  if (!nom) return { kind: 'aucun', folderId: null, suggestions }
+  const namer = ids.find(i => i.genre === 'raison_sociale') ?? ids.find(i => STRONG_KINDS.includes(i.genre))
+  if (!namer) return { kind: 'aucun', folderId: null, suggestions }
+  const nom = namer.genre === 'raison_sociale' ? namer.valeur : `${namer.genre.toUpperCase()} ${namer.valeur}`
   const root = await autoRoot(doc.account_id)
   const [folder] = await query<{ id: string }>(
     `INSERT INTO ged_folders (account_id, parent_id, nom, auto) VALUES ($1, $2, $3, true)
      ON CONFLICT (account_id, parent_id, nom) DO UPDATE SET nom = EXCLUDED.nom RETURNING id`,
     [doc.account_id, root, nom.slice(0, 120)])
-  await learnPatterns(documentId, folder.id, PATTERN_AUTHOR)
+  await learnPatterns(documentId, folder.id, PATTERN_AUTHOR, [namer])
   await fileDocument({ documentId, folderId: folder.id, source: 'motif', author: PATTERN_AUTHOR, confidence: PROPOSED_CONFIDENCE })
   return { kind: 'propose', folderId: folder.id, suggestions }
 }

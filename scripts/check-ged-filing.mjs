@@ -10,14 +10,17 @@
  *   B. le rangement : une main range → les motifs sont appris ; un nouveau document qui porte un
  *      motif FORT est rangé seul (`source=motif`, touches +1) ; deux dossiers candidats ou une
  *      raison sociale seule → « À ranger » avec suggestions ; émetteur inconnu → dossier proposé
- *      sous « Nouveaux émetteurs », que le second envoi rejoint par motif ; l'effectif reste la
+ *      sous « Nouveaux émetteurs », que le second envoi rejoint par motif s'il est nommé par un SIRET
+ *      (sinon seulement suggéré jusqu'à ce qu'une main le confirme) ; l'effectif reste la
  *      main même après un motif ; un rangement par motif n'apprend rien ; les identifiants PROPRES
- *      de la boîte (`ged_mailboxes.propres`, ceux du destinataire) ne sont ni appris ni cherchés ;
+ *      de la boîte (`ged_mailboxes.propres`, ceux du destinataire — TVA, SIRET, IBAN réduit) ne sont ni
+ *      appris ni cherchés ; un dossier PROPOSÉ n'apprend QUE l'identifiant qui le nomme, si bien qu'un
+ *      document qui ne partage avec lui que l'IBAN du destinataire reste « À ranger » ;
  *   C. la chaîne : `runIntake` range au fil de l'OCR (`filed` / `proposed` dans son bilan).
  *
  * `--negative` : les clés des identifiants sont FAUSSES (un chiffre d'écart, comme un OCR qui lit
  * mal) — rien de FORT n'existe plus, seule la raison sociale (faible) reste : A1, A2, A3, B1, B3, B4,
- * B5, B6, B7, B10, B11b, B12, B14, C1 DOIVENT tomber (B8, Wanhao sans clé, tient dans les deux modes).
+ * B5, B6, B7, B11b, B12, B14, B17, C1 DOIVENT tomber (B8 et B10, raison sociale sans clé, tiennent dans les deux modes).
  */
 import './alias-resolver.mjs'
 import { existsSync, readFileSync } from 'node:fs'
@@ -60,9 +63,11 @@ const SIRET_A = NEGATIVE ? '912 345 678 00012' : '912 345 678 00011'
 const TVA_A   = NEGATIVE ? 'FR75912345678'     : 'FR74912345678'
 const IBAN_A  = NEGATIVE ? 'FR76 3000 6000 0112 3456 7890 180' : 'FR76 3000 6000 0112 3456 7890 189'
 const SIRET_B = NEGATIVE ? '845 210 367 00016' : '845 210 367 00015'
+/** L'IBAN du DESTINATAIRE (fictif) : imprimé sur ses factures reçues comme sur les demandes de RIB qu'on lui adresse. */
+const IBAN_OWN = NEGATIVE ? 'FR49 1234 5678 9012 3456 7890 123' : 'FR48 1234 5678 9012 3456 7890 123'
 const PAGE2 = '\fPage 2. Détail des prestations. '.repeat(3)
-const TEXT_FEDEX = n => `FEDEX EXPRESS FR SAS\n2 rue du Test, 75000 Paris\nSIRET ${SIRET_A}  TVA intracom. ${TVA_A}\nFacture n° ${n}  Total 40,89 EUR\nIBAN ${IBAN_A}${PAGE2}`
-const TEXT_ARTI  = n => `ARTILLERY3D SARL\nZone industrielle\nSIRET ${SIRET_B}\nFacture AR-${n}  Total 407,70 EUR${PAGE2}`
+const TEXT_FEDEX = n => `FEDEX EXPRESS FR SAS\n2 rue du Test, 75000 Paris\nSIRET ${SIRET_A}  TVA intracom. ${TVA_A}\nFacture n° ${n}  Total 12,34 EUR\nIBAN ${IBAN_A}${PAGE2}`
+const TEXT_ARTI  = n => `ARTILLERY3D SARL\nZone industrielle\nSIRET ${SIRET_B}\nFacture AR-${n}  Total 567,89 EUR${PAGE2}`
 const TEXT_WANHAO = n => `Wanhao Co., Ltd\nInvoice W-${n}\nTotal 199,00 USD${PAGE2}`
 const TEXT_NOHEAD = `Relevé sans en-tête.\nMontant 12,00 EUR${PAGE2}`
 const TEXT_MIXED = `Bordereau groupé\nSIRET ${SIRET_A} et SIRET ${SIRET_B}${PAGE2}`
@@ -159,7 +164,9 @@ try {
   check('B9 émetteur inconnu avec en-tête → dossier PROPOSÉ « ARTILLERY3D SARL » (auto) sous « Nouveaux émetteurs » (auto, racine), rangé `motif` à confiance 0.5', a4.kind === 'propose' && root?.auto && root.parent_id === null && prop?.auto && prop.parent_id === root.id && a4.folderId === prop.id && f4.length === 1 && f4[0].source === 'motif' && Number(f4[0].confiance) === PROPOSED_CONFIDENCE, JSON.stringify([a4.kind, root, prop, f4]))
   const d5 = await doc(TEXT_ARTI(2))
   const a5 = await autoFile(d5)
-  check('B10 le second envoi du même émetteur rejoint le dossier proposé par MOTIF (SIRET appris au dossier proposé)', a5.kind === 'motif' && a5.folderId === prop?.id, JSON.stringify(a5))
+  check('B10 le dossier proposé nommé par la raison sociale n’a appris QU’elle (faible) : le second envoi est SUGGÉRÉ, pas rangé, et aucun second dossier n’est créé', a5.kind === 'doute' && a5.suggestions.length === 1 && a5.suggestions[0].folderId === prop?.id && !a5.suggestions[0].strong && (await filings(d5)).length === 0 && (await patterns(prop.id)).map(x => x.genre).join(',') === 'raison_sociale', JSON.stringify([a5, prop && await patterns(prop.id)]))
+  // La main confirme le dossier proposé : c'est ELLE qui apprend le reste (SIRET) — le troisième envoi rejoint seul.
+  await fileDocument({ documentId: d5, folderId: prop.id, source: HUMAN_SOURCE, author: NICO })
   const d6 = await doc(TEXT_NOHEAD)
   const a6 = await autoFile(d6)
   check('B11 ni motif ni en-tête ni identifiant → rien : aucun dossier créé, aucun rangement', a6.kind === 'aucun' && (await folders()).length === fl.length && (await filings(d6)).length === 0, JSON.stringify(a6))
@@ -170,7 +177,7 @@ try {
   check('B11b un émetteur sans forme juridique en en-tête mais avec un SIRET → dossier proposé nommé « SIRET … » (renommable), le second envoi le rejoint', al.kind === 'propose' && lyceeProp?.auto && lyceeProp.parent_id === root?.id && (await autoFile(await doc(`Lycée\nSIRET ${SIRET_C}${PAGE2}`))).kind === 'motif', JSON.stringify([al, lyceeProp?.nom]))
   const d7 = await doc(TEXT_ARTI(3))
   const a7 = await autoFile(d7)
-  check('B12 un troisième envoi du même émetteur ne crée PAS un second dossier proposé (même nom, même parent)', a7.kind === 'motif' && (await folders()).filter(f => f.nom === 'ARTILLERY3D SARL').length === 1, JSON.stringify(a7))
+  check('B12 une fois le dossier proposé confirmé par la main (SIRET appris), le troisième envoi le rejoint par MOTIF ; toujours un seul dossier « ARTILLERY3D SARL »', a7.kind === 'motif' && a7.folderId === prop.id && (await folders()).filter(f => f.nom === 'ARTILLERY3D SARL').length === 1, JSON.stringify(a7))
 
   // Un motif `regex` posé à la main (ou par un agent) range aussi, tout seul.
   const lycee = await folder('Lycée')
@@ -188,6 +195,26 @@ try {
   check('B15 un identifiant PROPRE de la boîte (TVA du destinataire) n’est pas appris : le dossier n’a que la raison sociale', !r9.learned.some(i => i.genre === 'tva') && p9.map(x => x.genre).join(',') === 'raison_sociale', JSON.stringify(p9))
   const s9 = await suggestionsFor(ACCOUNT, `Inconnu\nTVA ${TVA_A} seule${PAGE2}`)
   check('B16 … ni cherché : un texte qui ne porte que la TVA du destinataire ne désigne AUCUN dossier (FedEx l’avait apprise avant)', s9.length === 0, JSON.stringify(s9))
+  await pool.query(`UPDATE ged_mailboxes SET propres = '[]'::jsonb WHERE account_id = $1`, [ACCOUNT])
+  // ORDRE PIÈGE : le dossier proposé d'un émetteur inconnu est créé AVANT l'arrivée d'un document qui ne
+  // partage avec lui que l'IBAN du destinataire. Le dossier proposé n'a appris que le SIRET qui le nomme…
+  const SIRET_D = NEGATIVE ? '196 712 345 00021' : '196 712 345 00020'
+  const dRib = await doc(`Collège Sans-Forme-Juridique\nSIRET ${SIRET_D}\nMerci de confirmer votre IBAN ${IBAN_OWN}${PAGE2}`)
+  const aRib = await autoFile(dRib)
+  const ribProp = (await folders()).find(f => f.nom === `SIRET ${SIRET_D.replace(/ /g, '')}`)
+  const pRib = ribProp ? await patterns(ribProp.id) : []
+  check('B17 un dossier PROPOSÉ n’apprend QUE l’identifiant qui le nomme (siret), pas l’IBAN du destinataire imprimé sur la demande de RIB', aRib.kind === 'propose' && pRib.map(x => x.genre).join(',') === 'siret', JSON.stringify([aRib.kind, pRib.map(x => x.genre)]))
+  // … donc un document arrivé APRÈS, qui ne partage avec lui que l'IBAN du destinataire, ne le rejoint pas —
+  // même avec `propres` encore vide (c'était l'état réel de la boîte).
+  const dRel = await doc(`Relevé\nIBAN ${IBAN_OWN}\nMontant 12,00 EUR${PAGE2}`)
+  const aRel = await autoFile(dRel)
+  check('B18 (propres vide) un document arrivé APRÈS, qui ne porte que l’IBAN du destinataire, n’est PAS rangé chez l’émetteur inconnu', aRel.kind !== 'motif' && !(await filings(dRel)).some(f => f.folder_id === ribProp?.id), JSON.stringify(aRel))
+  // Et l'IBAN réduit du destinataire figure dans `propres` (comme sa TVA et son SIRET) : un tel document reste « À ranger ».
+  await pool.query(`UPDATE ged_mailboxes SET propres = $2::jsonb WHERE account_id = $1`, [ACCOUNT, JSON.stringify(ibansOf(`IBAN ${IBAN_OWN}`).map(valeur => ({ genre: 'iban4', valeur })))])
+  const nFolders = (await folders()).length
+  const dRel2 = await doc(`Relevé bis\nIBAN ${IBAN_OWN}\nMontant 13,00 EUR${PAGE2}`)
+  const aRel2 = await autoFile(dRel2)
+  check('B19 (propres avec l’iban4 du destinataire) le même document reste « À ranger » : rien rangé, aucun dossier proposé', aRel2.kind === 'aucun' && (await filings(dRel2)).length === 0 && (await folders()).length === nFolders, JSON.stringify(aRel2))
   await pool.query(`UPDATE ged_mailboxes SET propres = '[]'::jsonb WHERE account_id = $1`, [ACCOUNT])
   const sug = await suggestionsFor(ACCOUNT, TEXT_FEDEX(9))
   check('B14 suggestionsFor lit TOUS les motifs de la boîte : le texte FedEx ne désigne que FedEx (Douane a été vidé)', sug.length === 1 && sug[0].folderId === fedex && sug[0].strong, JSON.stringify(sug))
@@ -210,7 +237,7 @@ try {
 }
 
 if (NEGATIVE) {
-  const expected = ['A1', 'A2', 'A3', 'B1', 'B3', 'B4', 'B5', 'B6', 'B7', 'B10', 'B11b', 'B12', 'B14', 'C1']
+  const expected = ['A1', 'A2', 'A3', 'B1', 'B3', 'B4', 'B5', 'B6', 'B7', 'B11b', 'B12', 'B14', 'B17', 'C1']
   const fell = expected.filter(p => failures.some(f => f.startsWith(p)))
   const unexpected = failures.filter(f => !expected.some(p => f.startsWith(p)))
   if (fell.length === expected.length && !unexpected.length) { console.log(`\ncontrôle négatif : ${fell.length} refus tombés (${fell.join(', ')}), comme attendu`); process.exit(0) }
