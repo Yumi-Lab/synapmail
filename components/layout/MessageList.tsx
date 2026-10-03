@@ -180,6 +180,10 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const focusText = useFocusText()
   const [page, setPage] = useState(1)
   const [accumulated, setAccumulated] = useState<Message[]>([])
+  // Le dernier total connu du dossier : à chaque page suivante la clé SWR change et `data`
+  // repasse à `undefined` le temps de l'aller-retour — sans ceci l'indication de tri disait
+  // « sur 0 dans le dossier » et la sentinelle affichait « fin de liste » (gate du 03/10, ~950 ms).
+  const [knownTotal, setKnownTotal] = useState(0)
   const [refreshKey, setRefreshKey] = useState(0)
   const [readUids, setReadUids] = useState<Set<string>>(new Set())
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
@@ -420,6 +424,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
 
   useEffect(() => {
     if (!data?.messages) return
+    setKnownTotal(data.total)
     if (page === 1) {
       setAccumulated(data.messages)
       // Le compteur monte APRÈS ce listage, pas en même temps. C'est lui qui
@@ -467,7 +472,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     [tagHits, accumulated, activeAccountId],
   )
   const messages = isSearchMode ? searchMessages : (isTagMode ? tagged.rows : accumulated)
-  const total = data?.total ?? 0
+  const total = data?.total ?? knownTotal
   // Le serveur peut avoir trouvé plus que ce qu'il rend (plafond SEARCH_RESULT_LIMIT) :
   // le bandeau annonce alors « X premiers sur N » au lieu de laisser croire à N = X.
   const searchTotal = isStreamingScope ? streamed.total : (searchData?.total ?? messages.length)
