@@ -13,21 +13,21 @@
 
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useSWR, { mutate as globalMutate } from 'swr'
 import { useFormatter, useLocale, useTranslations } from 'next-intl'
 import { ArrowLeft, ChevronDown, Download, FileText, FolderInput, Search, Sparkles, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAccountAccent } from '@/components/layout/AccountAvatar'
 import { ThinScroll } from '@/components/layout/ThinScroll'
-import { ContextMenuItem, ContextMenuSurface, MENU_ICON, MENU_MIN_WIDTH, type ContextMenuAnchor } from '@/components/ui/ContextMenu'
-import { foldersKey } from '@/components/layout/GedFolderTree'
+import { ContextMenuItem, ContextMenuSurface, MENU_ICON, type ContextMenuAnchor } from '@/components/ui/ContextMenu'
+import { foldersKey, type DocumentDrag } from '@/components/layout/GedFolderTree'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import { formatRowDate } from '@/lib/dates'
 import { HUMAN_SOURCE } from '@/lib/tagging/engine'
-import { DOCUMENTS_CHANGED_EVENT, DOCUMENTS_ENDPOINT, DOCUMENT_DRAG_TYPE, DOCUMENT_FOLDER_PARAM, DOCUMENT_ID_PARAM, DOCUMENT_QUERY_PARAM, DOCUMENTS_PATH, UNFILED, type FilingSource } from '@/lib/ged/model'
+import { DOCUMENTS_CHANGED_EVENT, DOCUMENTS_ENDPOINT, DOCUMENT_DRAG_TYPE, DOCUMENT_FOLDER_PARAM, DOCUMENT_ID_PARAM, DOCUMENT_QUERY_PARAM, DOCUMENTS_PATH, UNFILED } from '@/lib/ged/model'
 import { flattenTree, folderPath } from '@/lib/ged/tree'
-import type { GedDocumentDetail, GedDocumentSummary, GedFolder } from '@/lib/ged/documents'
+import type { GedDocumentDetail, GedDocumentSummary, GedFilingView, GedFolder } from '@/lib/ged/documents'
 import type { Suggestion } from '@/lib/ged/filing'
 import type { StoredField, StoredTag } from '@/lib/tagging/store'
 import { TAGGING_SETTINGS_HREF } from '@/components/settings/SettingsSidebar'
@@ -125,7 +125,7 @@ export function DocumentsClient() {
           {listError && <p className="px-3 py-4 text-xs text-destructive">{String(listError.message)}</p>}
           {!listError && !isLoading && documents.length === 0 && <p className="px-3 py-6 text-center text-xs text-muted-foreground" data-documents-empty>{q ? t('noMatch') : t('empty')}</p>}
           {documents.map(doc => (
-            <DocumentRow key={doc.id} doc={doc} tags={list?.data.tags[doc.tagMessageId] ?? []} fields={list?.data.fields[doc.tagMessageId] ?? []}
+            <DocumentRow key={doc.id} doc={doc} accountId={accountId!} tags={list?.data.tags[doc.tagMessageId] ?? []} fields={list?.data.fields[doc.tagMessageId] ?? []}
               folders={folders} locale={locale} selected={doc.id === selectedId} canOrganize={canOrganize} todayLabel={tTags.has('today') ? tTags('today') : t('today')}
               onOpen={() => setParams({ [DOCUMENT_ID_PARAM]: doc.id })} />
           ))}
@@ -144,12 +144,12 @@ export function DocumentsClient() {
 }
 
 /** Une ligne = un document : type · émetteur | montant · date · pages. Glissable vers un dossier de la barre. */
-function DocumentRow({ doc, tags, fields, folders, locale, selected, canOrganize, todayLabel, onOpen }: {
-  doc: GedDocumentSummary; tags: StoredTag[]; fields: StoredField[]; folders: GedFolder[]; locale: string
+function DocumentRow({ doc, accountId, tags, fields, folders, locale, selected, canOrganize, todayLabel, onOpen }: {
+  doc: GedDocumentSummary; accountId: string; tags: StoredTag[]; fields: StoredField[]; folders: GedFolder[]; locale: string
   selected: boolean; canOrganize: boolean; todayLabel: string; onOpen: () => void
 }) {
   const t = useTranslations('documents')
-  const { v } = useTagLabels()
+  const { v, f } = useTagLabels()
   const type = tags.find(x => x.question === LINE_TYPE)?.valeur
   const sender = tags.find(x => x.question === LINE_SENDER)?.valeur
   const amount = fields.find(f => f.question === LINE_AMOUNT)?.valeur
@@ -160,7 +160,7 @@ function DocumentRow({ doc, tags, fields, folders, locale, selected, canOrganize
     <div
       role="button" tabIndex={0}
       draggable={canOrganize}
-      onDragStart={e => { e.dataTransfer.setData(DOCUMENT_DRAG_TYPE, JSON.stringify({ ids: [doc.id], accountId: (doc as GedDocumentSummary & { accountId?: string }).accountId ?? undefined })); e.dataTransfer.effectAllowed = 'move' }}
+      onDragStart={e => { const drag: DocumentDrag = { ids: [doc.id], accountId }; e.dataTransfer.setData(DOCUMENT_DRAG_TYPE, JSON.stringify(drag)); e.dataTransfer.effectAllowed = 'move' }}
       onClick={onOpen}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}
       data-document-row={doc.id}
@@ -176,7 +176,7 @@ function DocumentRow({ doc, tags, fields, folders, locale, selected, canOrganize
       <span className="text-sm tabular-nums text-foreground/80 text-right">{amount ? `${amount}${currency ? ` ${currency}` : ''}` : ''}</span>
       <div className="min-w-0 flex items-center gap-1.5 text-[11px] text-muted-foreground">
         {where ? <span className="truncate" title={where}>{where}</span> : <span className="truncate text-amber-600 dark:text-amber-400">{t('unfiled')}</span>}
-        {doc.filingSource && doc.filingSource !== HUMAN_SOURCE && <Sparkles className="w-3 h-3 shrink-0 opacity-60" aria-label={t(`source.${doc.filingSource}`)} />}
+        {doc.filingSource && doc.filingSource !== HUMAN_SOURCE && <Sparkles className="w-3 h-3 shrink-0 opacity-60" aria-label={f(doc.filingSource)} />}
       </div>
       <span className="text-[11px] tabular-nums text-muted-foreground text-right whitespace-nowrap">
         {doc.recuLe ? formatRowDate(String(doc.recuLe), locale, todayLabel) : ''} · {t('pages', { count: doc.pages })}
@@ -189,11 +189,21 @@ function DocumentRow({ doc, tags, fields, folders, locale, selected, canOrganize
 function DocumentPane({ id, folders, canOrganize, onBack }: { id: string; folders: GedFolder[]; canOrganize: boolean; onBack: () => void }) {
   const t = useTranslations('documents')
   const format = useFormatter()
-  const { q: ql, v } = useTagLabels()
+  const { q: ql, v, f: fl, source: sl } = useTagLabels()
   const key = `${DOCUMENTS_ENDPOINT}/${id}`
   const { data, error, mutate } = useSWR<DetailResponse>(key, fetcher)
   const doc = data?.data
   const [zoom, setZoom] = useState<number | null>(null)
+  const zoomRef = useRef<HTMLDivElement>(null)
+  // Light-dismiss de l'agrandissement : un clic hors de la page agrandie la replie, et ce clic atteint sa cible.
+  useEffect(() => {
+    if (zoom === null) return
+    const onDown = (e: MouseEvent) => { if (!zoomRef.current?.contains(e.target as Node)) setZoom(null) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setZoom(null) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [zoom])
   const [menu, setMenu] = useState<ContextMenuAnchor | null>(null)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
@@ -216,8 +226,11 @@ function DocumentPane({ id, folders, canOrganize, onBack }: { id: string; folder
   const where = doc.folderId ? folderPath(folders, doc.folderId) : null
   const pageNumbers = Array.from({ length: doc.pages }, (_, i) => i + 1)
   const rows = flattenTree(folders)
-  const label = (tag: { auteurNom: string; source: FilingSource | string; creeLe: Date | string }) =>
-    `${t(`source.${tag.source}`)}${tag.auteurNom ? ` · ${tag.auteurNom}` : ''} · ${format.dateTime(new Date(tag.creeLe), { dateStyle: 'short', timeStyle: 'short' })}`
+  const label = (row: GedFilingView) =>
+    `${sl(row.source)}${row.auteurNom && row.auteurNom !== row.source ? ` · ${row.auteurNom}` : ''} · ${format.dateTime(new Date(row.creeLe), { dateStyle: 'short', timeStyle: 'short' })}`
+  /** Où la ligne a rangé : le chemin actuel, sinon le nom figé d'un dossier disparu (jamais une clé brute). */
+  const placeOf = (row: GedFilingView) =>
+    row.folderId ? folderPath(folders, row.folderId) || row.dossierNom : row.dossierNom ? t('deletedFolder', { name: row.dossierNom }) : t('unfiled')
 
   return (
     <ThinScroll className="h-full" viewportClassName="overscroll-contain">
@@ -270,7 +283,7 @@ function DocumentPane({ id, folders, canOrganize, onBack }: { id: string; folder
           ))}
         </div>
         {zoom && (
-          <div className="mt-3 rounded-lg border border-border bg-white p-1 overflow-auto" data-document-zoom={zoom}>
+          <div ref={zoomRef} className="mt-3 rounded-lg border border-border bg-white p-1 overflow-auto" data-document-zoom={zoom}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={pageUrl(doc.id, zoom, ZOOM_DPI)} alt={t('page', { n: zoom })} className="block max-w-full mx-auto" />
           </div>
@@ -283,7 +296,7 @@ function DocumentPane({ id, folders, canOrganize, onBack }: { id: string; folder
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5">
             {doc.fields.map(f => (
               <div key={f.question} className="contents">
-                <dt className="text-muted-foreground">{t.has(`field.${f.question}`) ? t(`field.${f.question}`) : f.question}</dt>
+                <dt className="text-muted-foreground">{fl(f.question)}</dt>
                 <dd className="tabular-nums text-foreground" data-field-value={f.question}>{f.valeur}</dd>
               </div>
             ))}
@@ -312,7 +325,7 @@ function DocumentPane({ id, folders, canOrganize, onBack }: { id: string; folder
           <ol className="space-y-0.5">
             {doc.filings.map((f, i) => (
               <li key={f.id} className={cn('flex items-center gap-2', i > 0 && 'text-muted-foreground')} data-filing={f.source}>
-                <span className="min-w-0 flex-1 truncate">{f.folderId ? folderPath(folders, f.folderId) || t('deletedFolder') : t('unfiled')}</span>
+                <span className="min-w-0 flex-1 truncate">{placeOf(f)}</span>
                 <span className="shrink-0 truncate text-muted-foreground">{label(f)}</span>
               </li>
             ))}
@@ -321,7 +334,7 @@ function DocumentPane({ id, folders, canOrganize, onBack }: { id: string; folder
       </section>
 
       {menu && (
-        <ContextMenuSurface anchor={menu} onClose={() => setMenu(null)} data-document-file-menu style={{ minWidth: MENU_MIN_WIDTH }}>
+        <ContextMenuSurface anchor={menu} onClose={() => setMenu(null)} data-document-file-menu>
           {rows.map(r => (
             <ContextMenuItem key={r.folder.id} itemKey={`file:${r.folder.id}`} icon={r.folder.auto ? <Sparkles className={MENU_ICON} /> : <span className={MENU_ICON} />}
               label={`${'\u00a0'.repeat(r.depth * 2)}${r.folder.nom}`} enabled={r.folder.id !== doc.folderId} onClose={() => setMenu(null)} onClick={() => void file(r.folder.id)} />

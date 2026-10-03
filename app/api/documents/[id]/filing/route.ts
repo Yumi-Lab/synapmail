@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
-import { getDocument } from '@/lib/ged/documents'
+import { getDocument, toFilingView } from '@/lib/ged/documents'
 import { fileDocument } from '@/lib/ged/filing'
 import { ACCOUNT_OF_DOCUMENT, ACCOUNT_OF_FOLDER, accountFor, accountOfObject, gedError, isResponse, readJson, writer } from '../../_shared'
 
@@ -30,7 +30,7 @@ async function postHandler(req: Request, { params }: { params: { id: string } })
     const { source, author } = await writer(gate.ctx, body.engineId)
     const { filing, learned } = await fileDocument({ documentId: params.id, folderId, source, author })
     const doc = await getDocument(account.id, params.id)
-    return NextResponse.json({ data: { filing: { id: String(filing.id), folderId: filing.folder_id, source: filing.source, auteurId: filing.auteur_id, auteurNom: filing.auteur_nom, creeLe: filing.cree_le }, learned, filings: doc?.filings ?? [] } })
+    return NextResponse.json({ data: { filing: toFilingView(filing), learned, filings: doc?.filings ?? [] } })
   } catch (err) {
     return gedError(err)
   }

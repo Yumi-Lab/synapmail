@@ -1375,7 +1375,13 @@
     "filterOriginHuman": "人工确认",
     "sourceDetector": "内部规则 · {name}",
     "occurrences": "{count} 处",
-    "filterOriginRule": "内部规则"
+    "filterOriginRule": "内部规则",
+    "source": {
+      "humain": "人工",
+      "agent": "代理",
+      "motif": "已学习的模式",
+      "moteur": "引擎"
+    }
   },
   "documents": {
     "title": "文档",
@@ -1389,7 +1395,7 @@
     "mergeConfirm": "将“{from}”合并到“{into}”？其 {count} 个文件夹、文档和已学习的规则都将移入。",
     "delete": "删除",
     "deleteConfirm": "删除“{name}”（{count} 个文件夹）？其文档将回到“待归档”。",
-    "deletedFolder": "已删除的文件夹",
+    "deletedFolder": "{name}（已删除的文件夹）",
     "loadFailed": "无法加载文件夹。",
     "actionFailed": "操作失败。",
     "searchPlaceholder": "搜索 OCR 文本…",

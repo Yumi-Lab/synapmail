@@ -28,7 +28,7 @@
  *     (faible), il n'est que suggéré jusqu'à un rangement humain ou agent, qui apprend le reste.
  *     À renommer ou déplacer, jamais effacé par la chaîne.
  */
-import { query } from '../db'
+import { query, transaction } from '../db'
 import { EFFECTIVE_ORDER } from '../tagging/store'
 import { HUMAN_SOURCE } from '../tagging/engine'
 import { boundedRegex } from '../rulesEval'
@@ -52,6 +52,8 @@ export interface FilingRow {
   source: FilingSource
   auteur_id: string
   auteur_nom: string
+  /** Le nom du dossier au moment du rangement : lisible même après sa suppression ou sa fusion. */
+  dossier_nom: string
   confiance: number | null
   cree_le: Date
 }
@@ -102,15 +104,19 @@ export async function fileDocument(params: {
   confidence?: number | null
 }): Promise<{ filing: FilingRow; learned: Identifier[] }> {
   const { documentId, folderId, source, author } = params
-  const [filing] = await query<FilingRow>(
-    `INSERT INTO ged_filings (document_id, folder_id, source, auteur_id, auteur_nom, confiance)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [documentId, folderId, source, author.id, author.nom, params.confidence ?? null]
-  )
+  const filing = await insertFiling(query, params)
   const learns = folderId && (source === HUMAN_SOURCE || source === 'agent')
   const learned = learns ? await learnPatterns(documentId, folderId, author) : []
   return { filing, learned }
 }
+
+/** La ligne d'historique elle-même, avec le nom du dossier figé (`q` = la connexion d'une transaction, ou `query`). */
+const insertFiling = async (q: typeof query, p: { documentId: string; folderId: string | null; source: FilingSource; author: Author; confidence?: number | null }): Promise<FilingRow> =>
+  (await q<FilingRow>(
+    `INSERT INTO ged_filings (document_id, folder_id, source, auteur_id, auteur_nom, dossier_nom, confiance)
+     VALUES ($1, $2, $3, $4, $5, COALESCE((SELECT nom FROM ged_folders WHERE id = $2), ''), $6) RETURNING *`,
+    [p.documentId, p.folderId, p.source, p.author.id, p.author.nom, p.confidence ?? null]
+  ))[0]
 
 /**
  * Écrit dans `ged_patterns` les identifiants du document pour ce dossier (déjà là = laissé tel quel) —
@@ -196,30 +202,33 @@ export async function autoFile(documentId: string): Promise<AutoFileOutcome> {
 
 /**
  * FUSIONNE un dossier dans un autre (remarque du gate G3/G4 : un dossier proposé « FEDEX EXPRESS FR
- * SAS » et un dossier « FedEx » tenu par une main coexistent pour le même émetteur). Les documents
- * dont `from` est le dossier effectif sont RANGÉS dans `into` — une nouvelle ligne chacun, par
- * `fileDocument`, donc la main ou l'agent qui fusionne apprend au passage ; les motifs de `from`
- * passent à `into` (un motif déjà là y reste tel quel) ; ses sous-dossiers passent sous `into` ;
- * `from` disparaît. `into` cesse d'être proposé : une main l'a choisi. L'appelant a vérifié que les
- * deux dossiers sont de la même boîte et distincts.
- * ponytail: pas de transaction (comme `fileDocument`) — un échec à mi-chemin laisse des documents déjà
- * rangés dans `into` et `from` encore là ; rejouer la fusion finit le travail.
+ * SAS » et un dossier « FedEx » tenu par une main coexistent pour le même émetteur), en UNE transaction :
+ * les documents dont `from` est le dossier effectif sont RANGÉS dans `into` (une nouvelle ligne chacun,
+ * rien n'est réappris) ; les motifs de `from` sont DÉPLACÉS vers `into` (un motif que `into` tient déjà
+ * reste le sien, la copie part avec `from`) — jamais réappris depuis les documents, parce que cela
+ * donnait à `into` des identifiants d'un AUTRE dossier (mesuré au gate G6 : l'IBAN4 d'un second dossier
+ * proposé, deux dossiers revendiquant le même identifiant) ; ses sous-dossiers passent sous `into` ;
+ * `from` disparaît et ses anciens rangements gardent son nom (`dossier_nom`, clé mise à NULL). `into`
+ * cesse d'être proposé : une main l'a choisi. L'appelant a vérifié que les deux dossiers sont de la
+ * même boîte et distincts.
  */
 export async function mergeFolder(params: { from: string; into: string; source: FilingSource; author: Author }): Promise<{ documents: number; patterns: number; folders: number }> {
   const { from, into } = params
-  // Les sous-dossiers d'abord : un nom déjà pris sous `into` (contrainte de la table) arrête tout avant le moindre rangement.
-  const folders = await query<{ id: string }>(`UPDATE ged_folders SET parent_id = $2 WHERE parent_id = $1 RETURNING id`, [from, into])
-  const docs = await query<{ document_id: string }>(
-    `SELECT document_id FROM (SELECT DISTINCT ON (document_id) document_id, folder_id FROM ged_filings ORDER BY document_id, ${EFFECTIVE_ORDER}) eff
-      WHERE folder_id = $1`, [from])
-  for (const { document_id } of docs) {
-    await fileDocument({ documentId: document_id, folderId: into, source: params.source, author: params.author })
-  }
-  const patterns = await query<{ id: string }>(
-    `UPDATE ged_patterns p SET folder_id = $2 WHERE p.folder_id = $1
-       AND NOT EXISTS (SELECT 1 FROM ged_patterns q WHERE q.folder_id = $2 AND q.genre = p.genre AND q.valeur = p.valeur)
-     RETURNING id`, [from, into])
-  await query(`UPDATE ged_folders SET auto = false WHERE id = $1`, [into])
-  await query(`DELETE FROM ged_folders WHERE id = $1`, [from])
-  return { documents: docs.length, patterns: patterns.length, folders: folders.length }
+  return transaction(async q => {
+    // Les sous-dossiers d'abord : un nom déjà pris sous `into` (contrainte de la table) arrête tout avant le moindre rangement.
+    const folders = await q<{ id: string }>(`UPDATE ged_folders SET parent_id = $2 WHERE parent_id = $1 RETURNING id`, [from, into])
+    const docs = await q<{ document_id: string }>(
+      `SELECT document_id FROM (SELECT DISTINCT ON (document_id) document_id, folder_id FROM ged_filings ORDER BY document_id, ${EFFECTIVE_ORDER}) eff
+        WHERE folder_id = $1`, [from])
+    for (const { document_id } of docs) {
+      await insertFiling(q, { documentId: document_id, folderId: into, source: params.source, author: params.author })
+    }
+    const patterns = await q<{ id: string }>(
+      `UPDATE ged_patterns p SET folder_id = $2 WHERE p.folder_id = $1
+         AND NOT EXISTS (SELECT 1 FROM ged_patterns q WHERE q.folder_id = $2 AND q.genre = p.genre AND q.valeur = p.valeur)
+       RETURNING id`, [from, into])
+    await q(`UPDATE ged_folders SET auto = false WHERE id = $1`, [into])
+    await q(`DELETE FROM ged_folders WHERE id = $1`, [from])
+    return { documents: docs.length, patterns: patterns.length, folders: folders.length }
+  })
 }

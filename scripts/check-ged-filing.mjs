@@ -51,7 +51,7 @@ const check = (label, ok, detail = '') => {
 const { initDb } = await import('../lib/db.ts')
 const { siretsOf, tvasOf, ibansOf, raisonSocialeOf, identifiersOf, luhnOk, tvaFrOk } = await import('../lib/ged/patterns.ts')
 const filing = await import('../lib/ged/filing.ts')
-const { fileDocument, effectiveFiling, suggestionsFor, autoFile, AUTO_ROOT_NAME, PATTERN_CONFIDENCE, PROPOSED_CONFIDENCE } = filing
+const { fileDocument, effectiveFiling, suggestionsFor, autoFile, mergeFolder, AUTO_ROOT_NAME, PATTERN_CONFIDENCE, PROPOSED_CONFIDENCE } = filing
 const { boundedRegex, evalCondition, MATCH_PATTERN_MAX } = await import('../lib/rulesEval.ts')
 const { runIntake, GED_FOLDER } = await import('../lib/ged/intake.ts')
 const { OCR_STATUS_DONE } = await import('../lib/ged/model.ts')
@@ -231,13 +231,53 @@ try {
   const chainDocs = (await pool.query(`SELECT d.id, f.folder_id, f.source FROM ged_documents d LEFT JOIN ged_filings f ON f.document_id = d.id WHERE d.uid IN (500, 501) ORDER BY d.uid`)).rows
   check('C1 runIntake : le PDF FedEx est rangé par motif (filed=1), l’inconnu reçoit un dossier proposé (proposed=1)', r.ocrDone === 2 && r.filed === 1 && r.proposed === 1 && chainDocs[0]?.folder_id === fedex && chainDocs[0].source === 'motif' && chainDocs[1]?.source === 'motif', JSON.stringify([r, chainDocs]))
   check('C2 le dossier proposé « NOUVEAU FOURNISSEUR EURL » existe sous « Nouveaux émetteurs »', (await folders()).some(f => f.nom === 'NOUVEAU FOURNISSEUR EURL' && f.parent_id === root?.id && f.auto))
+
+  console.log('D. la fusion d’un dossier proposé dans un dossier existant (gate G6)')
+  // Un dossier PROPOSÉ « SIRET banc » (motif siret, un document rangé `motif`), une cible tenue par une main qui
+  // n'a RIEN appris, et un tiers qui tient un IBAN4 : la fusion doit DÉPLACER le SIRET (même ligne), ne rien
+  // réapprendre, ne rien prendre au tiers, et garder l'historique du document. Fixtures en base, indépendantes des clés.
+  const SIRET_E = '19671234500038'
+  const propD = await folder('SIRET banc', root?.id)
+  await pool.query(`UPDATE ged_folders SET auto = true WHERE id = $1`, [propD])
+  await pool.query(`INSERT INTO ged_patterns (folder_id, genre, valeur, auteur_nom) VALUES ($1, 'siret', $2, 'motif')`, [propD, SIRET_E])
+  const dProp = await doc(`Collège bis\nSIRET ${SIRET_E}${PAGE2}`)
+  await fileDocument({ documentId: dProp, folderId: propD, source: 'motif', author: filing.PATTERN_AUTHOR, confidence: PROPOSED_CONFIDENCE })
+  const cible = await folder('Collège', fournisseurs)
+  const tiers = await folder('Tiers')
+  await pool.query(`INSERT INTO ged_patterns (folder_id, genre, valeur, auteur_nom) VALUES ($1, 'iban4', 'ZZ99…0001', 'banc')`, [tiers])
+  // En `--negative`, la cible a DÉJÀ appris ce SIRET d'un document : D3 ne peut plus distinguer « déplacé » de « réappris » et doit tomber.
+  const docCible = await doc(NEGATIVE ? `Collège\nSIRET ${SIRET_E}${PAGE2}` : `Collège Sans-Forme-Juridique\nAvis de rentrée${PAGE2}`)
+  await fileDocument({ documentId: docCible, folderId: cible, source: HUMAN_SOURCE, author: NICO })
+  const propIds = (await pool.query(`SELECT id FROM ged_patterns WHERE folder_id = $1`, [propD])).rows.map(r => r.id)
+  const histBefore = (await filings(dProp)).length
+  const m = await mergeFolder({ from: propD, into: cible, source: HUMAN_SOURCE, author: NICO })
+  const after = await filings(dProp)
+  const effProp = await effectiveFiling(dProp)
+  const pC = (await pool.query(`SELECT id, genre, valeur FROM ged_patterns WHERE folder_id = $1 ORDER BY genre`, [cible])).rows
+  const hist = (await pool.query(`SELECT folder_id, dossier_nom, source FROM ged_filings WHERE document_id = $1 ORDER BY id`, [dProp])).rows
+  check('D1 fusion : 1 document rangé dans la cible (effectif = cible, humain), le dossier proposé a disparu, la cible n’est plus proposée', m.documents === 1 && effProp?.folder_id === cible && effProp.source === HUMAN_SOURCE && !(await folders()).some(f => f.id === propD) && (await folders()).find(f => f.id === cible)?.auto === false, JSON.stringify([m, effProp]))
+  check('D2 l’historique est GARDÉ : la ligne `motif` vers le dossier fusionné reste, clé à NULL, nom du dossier figé', after.length === histBefore + 1 && hist[0].folder_id === null && hist[0].dossier_nom === 'SIRET banc' && hist[0].source === 'motif', JSON.stringify(hist))
+  check('D3 les motifs sont DÉPLACÉS, pas réappris : la cible tient le SIRET (même ligne, même id), rien de « Tiers » (pas d’iban4)', pC.filter(x => x.genre === 'siret').length === 1 && propIds.includes(pC.find(x => x.genre === 'siret').id) && !pC.some(x => x.genre === 'iban4'), JSON.stringify([propIds, pC]))
+  check('D4 un identifiant tenu par un autre dossier n’est jamais dupliqué : l’iban4 de « Tiers » n’existe qu’une fois dans la boîte', (await pool.query(`SELECT COUNT(*)::int AS n FROM ged_patterns p JOIN ged_folders f ON f.id = p.folder_id WHERE f.account_id = $1 AND p.genre = 'iban4' AND p.valeur = 'ZZ99…0001'`, [ACCOUNT])).rows[0].n === 1)
+  // Transaction : un sous-dossier qui porte le nom d'un sous-dossier de la cible fait TOUT échouer, rien n'est rangé.
+  const src = await folder('Source')
+  await folder('Doublon', src); await folder('Doublon', cible)
+  const dSrc = await doc(`Source\nPièce${PAGE2}`)
+  await fileDocument({ documentId: dSrc, folderId: src, source: HUMAN_SOURCE, author: NICO })
+  const nBefore = (await filings(dSrc)).length
+  const failed = await mergeFolder({ from: src, into: cible, source: HUMAN_SOURCE, author: NICO }).then(() => null, e => e)
+  check('D5 fusion = UNE transaction : un sous-dossier en conflit (23505) annule tout, aucun rangement écrit, « Source » toujours là', failed?.code === '23505' && (await filings(dSrc)).length === nBefore && (await folders()).some(f => f.id === src), JSON.stringify([failed?.code, (await filings(dSrc)).length, nBefore]))
+  // Suppression : même garantie d'historique.
+  await pool.query(`DELETE FROM ged_folders WHERE id = $1`, [src])
+  const histDel = (await pool.query(`SELECT folder_id, dossier_nom FROM ged_filings WHERE document_id = $1`, [dSrc])).rows
+  check('D6 supprimer un dossier garde ses rangements (clé NULL, nom figé) : le document retombe « À ranger »', histDel.length === 1 && histDel[0].folder_id === null && histDel[0].dossier_nom === 'Source' && (await effectiveFiling(dSrc))?.folder_id === null, JSON.stringify(histDel))
 } finally {
   await pool.query('DELETE FROM users WHERE id = $1', [USER]).catch(() => {})
   await pool.end()
 }
 
 if (NEGATIVE) {
-  const expected = ['A1', 'A2', 'A3', 'B1', 'B3', 'B4', 'B5', 'B6', 'B7', 'B11b', 'B12', 'B14', 'B17', 'C1']
+  const expected = ['A1', 'A2', 'A3', 'B1', 'B3', 'B4', 'B5', 'B6', 'B7', 'B11b', 'B12', 'B14', 'B17', 'C1', 'D3']
   const fell = expected.filter(p => failures.some(f => f.startsWith(p)))
   const unexpected = failures.filter(f => !expected.some(p => f.startsWith(p)))
   if (fell.length === expected.length && !unexpected.length) { console.log(`\ncontrôle négatif : ${fell.length} refus tombés (${fell.join(', ')}), comme attendu`); process.exit(0) }

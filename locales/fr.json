@@ -1375,7 +1375,13 @@
     "filterOriginHuman": "Confirmé à la main",
     "sourceDetector": "règle interne · {name}",
     "occurrences": "{count, plural, one {# occurrence} other {# occurrences}}",
-    "filterOriginRule": "Règle interne"
+    "filterOriginRule": "Règle interne",
+    "source": {
+      "humain": "à la main",
+      "agent": "agent",
+      "motif": "motif appris",
+      "moteur": "moteur"
+    }
   },
   "documents": {
     "title": "Documents",
@@ -1389,7 +1395,7 @@
     "mergeConfirm": "Fusionner « {from} » dans « {into} » ? Ses {count} dossier(s), documents et motifs appris y passent.",
     "delete": "Supprimer",
     "deleteConfirm": "Supprimer « {name} » ({count} dossier(s)) ? Ses documents reviennent dans « À ranger ».",
-    "deletedFolder": "dossier supprimé",
+    "deletedFolder": "{name} (dossier supprimé)",
     "loadFailed": "Les dossiers n’ont pas pu être chargés.",
     "actionFailed": "L’action a échoué.",
     "searchPlaceholder": "Rechercher dans le texte OCR…",

@@ -7937,6 +7937,7 @@
         "required": [
           "id",
           "folderId",
+          "dossierNom",
           "source",
           "auteurId",
           "auteurNom",
@@ -7951,6 +7952,10 @@
               "string",
               "null"
             ]
+          },
+          "dossierNom": {
+            "type": "string",
+            "description": "The folder's name when the row was written; still set once the folder is deleted or merged and folderId is null."
           },
           "source": {
             "type": "string",

@@ -201,7 +201,7 @@ try {
   const autoRoot = await dbFolder(ACCOUNT, AUTO_ROOT_NAME)
   const PROPOSED = await dbFolder(ACCOUNT, 'FEDEX EXPRESS FR SAS', autoRoot, true)
   const PROPOSED_SUB = await dbFolder(ACCOUNT, 'Relances', PROPOSED)
-  await pool.query(`INSERT INTO ged_filings (document_id, folder_id, source, auteur_nom, confiance) VALUES ($1, $2, 'motif', 'motif', 0.5)`, [D2, PROPOSED])
+  await pool.query(`INSERT INTO ged_filings (document_id, folder_id, source, auteur_nom, dossier_nom, confiance) VALUES ($1, $2, 'motif', 'motif', 'FEDEX EXPRESS FR SAS', 0.5)`, [D2, PROPOSED])
   // Le SIRET et la raison sociale sont DÉJÀ sur `into` (appris en D1) : seule la regex doit passer.
   await pool.query(`INSERT INTO ged_patterns (folder_id, genre, valeur, auteur_nom) VALUES ($1, 'siret', '91234567800011', 'motif'), ($1, 'raison_sociale', 'FEDEX EXPRESS FR SAS', 'motif'), ($1, 'regex', 'fedex\\s+express', 'motif')`, [PROPOSED])
   await pool.query(`UPDATE ged_folders SET auto = true WHERE id = $1`, [FEDEX])
@@ -218,8 +218,8 @@ try {
   check('E4 en base : `from` disparu, son sous-dossier sous `into`, `into` n’est plus proposé', gone.rows.length === 0 && sub.rows[0]?.parent_id === FEDEX && into.rows[0]?.auto === false, JSON.stringify({ gone: gone.rows.length, sub: sub.rows[0], into: into.rows[0] }))
   check('E5 `into` porte exactement un motif par (genre, valeur) : siret ×1, raison_sociale ×1, la regex arrivée', pats.rows.filter(p => p.genre === 'siret').length === 1 && pats.rows.filter(p => p.genre === 'raison_sociale').length === 1 && pats.rows.some(p => p.genre === 'regex'), JSON.stringify(pats.rows))
   const e6 = await call(`/api/documents/${D2}`, { cookie })
-  // Le rangement `motif` vers le dossier fusionné est parti AVEC lui (CASCADE de ged_filings.folder_id) : l'historique ne garde que la main.
-  check('E6 le document fusionné : effectif = `into`, historique = la main qui a fusionné', e6.status === 200 && e6.body?.data?.folderId === FEDEX && e6.body.data.filings.map(f => f.source).join() === HUMAN_SOURCE, brief(e6))
+  // L'historique est GARDÉ (décision 4) : la main qui a fusionné d'abord (effective), puis la ligne `motif` vers le dossier disparu, clé à NULL, nom figé.
+  check('E6 le document fusionné : effectif = `into`, historique = la main puis la ligne `motif` vers le dossier disparu (folderId null, dossierNom figé)', e6.status === 200 && e6.body?.data?.folderId === FEDEX && e6.body.data.filings.map(f => f.source).join() === `${HUMAN_SOURCE},motif` && e6.body.data.filings[1].folderId === null && e6.body.data.filings[1].dossierNom === 'FEDEX EXPRESS FR SAS', brief(e6))
 
   // ---- F. les motifs -------------------------------------------------------------------------
   console.log('F. les motifs')

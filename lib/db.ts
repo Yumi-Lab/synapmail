@@ -18,6 +18,22 @@ export async function query<T = Record<string, unknown>>(
   return rows as T[]
 }
 
+/** Plusieurs écritures qui tiennent ou tombent ENSEMBLE : `fn` reçoit un `query` lié à la même connexion. */
+export async function transaction<T>(fn: (q: typeof query) => Promise<T>): Promise<T> {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await fn(async (sql, values) => (await client.query(sql, values)).rows)
+    await client.query('COMMIT')
+    return result
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
 /** Une liste de valeurs du code, telle qu'un CHECK SQL l'attend. Les valeurs sont des
  * identifiants du code (pas des entrées d'utilisateur) ; le doublement des quotes garde
  * la fonction correcte même si l'une d'elles en contenait une. */
@@ -947,20 +963,30 @@ export async function initDb(): Promise<void> {
 
   // Un rangement = une NOUVELLE ligne (décision 4, comme `message_tags`) : l'historique reste,
   // l'effectif se lit « humain d'abord, puis le plus récent ». `folder_id` NULL = « hors de tout
-  // dossier » (une main qui défait un rangement). `auteur_nom` est un instantané, sans clé.
+  // dossier » (une main qui défait un rangement). `auteur_nom` et `dossier_nom` sont des
+  // instantanés, sans clé : un dossier supprimé ou fusionné laisse ses rangements en place
+  // (`ON DELETE SET NULL`, pas CASCADE — mesuré au gate G6 : la cascade effaçait l'historique),
+  // et l'écran lit encore le nom qu'il portait.
   await query(`
     CREATE TABLE IF NOT EXISTS ged_filings (
       id BIGSERIAL PRIMARY KEY,
       document_id UUID NOT NULL REFERENCES ged_documents(id) ON DELETE CASCADE,
-      folder_id UUID REFERENCES ged_folders(id) ON DELETE CASCADE,
+      folder_id UUID REFERENCES ged_folders(id) ON DELETE SET NULL,
       source VARCHAR(20) NOT NULL CHECK (source IN (${sqlList(FILING_SOURCES)})),
       auteur_id TEXT NOT NULL DEFAULT '',
       auteur_nom TEXT NOT NULL DEFAULT '',
+      dossier_nom TEXT NOT NULL DEFAULT '',
       confiance REAL,
       cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)
   await query(`CREATE INDEX IF NOT EXISTS ged_filings_document_idx ON ged_filings(document_id, cree_le DESC)`)
+  // Base déjà créée avec la cascade : on repose la clé étrangère (nom par défaut de Postgres) et on
+  // relit le nom des dossiers encore là dans les lignes qui ne l'ont pas.
+  await query(`ALTER TABLE ged_filings ADD COLUMN IF NOT EXISTS dossier_nom TEXT NOT NULL DEFAULT ''`)
+  await query(`ALTER TABLE ged_filings DROP CONSTRAINT IF EXISTS ged_filings_folder_id_fkey`)
+  await query(`ALTER TABLE ged_filings ADD CONSTRAINT ged_filings_folder_id_fkey FOREIGN KEY (folder_id) REFERENCES ged_folders(id) ON DELETE SET NULL`)
+  await query(`UPDATE ged_filings fl SET dossier_nom = f.nom FROM ged_folders f WHERE fl.folder_id = f.id AND fl.dossier_nom = ''`)
 
   // Les motifs appris d'un rangement (décision 5) : un identifiant stable de l'émetteur → un
   // dossier. La même valeur PEUT pointer deux dossiers (c'est le cas « doute » qui laisse le

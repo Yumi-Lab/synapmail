@@ -1375,7 +1375,13 @@
     "filterOriginHuman": "Confirmed by hand",
     "sourceDetector": "internal rule · {name}",
     "occurrences": "{count, plural, one {# occurrence} other {# occurrences}}",
-    "filterOriginRule": "Internal rule"
+    "filterOriginRule": "Internal rule",
+    "source": {
+      "humain": "by hand",
+      "agent": "agent",
+      "motif": "learned pattern",
+      "moteur": "engine"
+    }
   },
   "documents": {
     "title": "Documents",
@@ -1389,7 +1395,7 @@
     "mergeConfirm": "Merge \"{from}\" into \"{into}\"? Its {count} folder(s), documents and learned patterns move there.",
     "delete": "Delete",
     "deleteConfirm": "Delete \"{name}\" ({count} folder(s))? Its documents go back to \"To file\".",
-    "deletedFolder": "deleted folder",
+    "deletedFolder": "{name} (deleted folder)",
     "loadFailed": "Folders could not be loaded.",
     "actionFailed": "The action failed.",
     "searchPlaceholder": "Search the OCR text…",

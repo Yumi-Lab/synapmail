@@ -132,7 +132,7 @@ export function GedFolderTree({ accountId, currentFolder, onDocuments, collapsed
       {...extra}
     >
       <span className={ICON_COL}>
-        <span className="relative inline-flex" style={{ marginLeft: collapsed ? 0 : depth * INDENT_PX }}>
+        <span className="relative inline-flex" style={{ marginLeft: depth * INDENT_PX }}>
           {(() => { const Icon = icon; return <Icon className={cn('w-4 h-4', active && ACCENT.ink)} data-sidebar-icon /> })()}
           <UnreadBadge count={badge} />
         </span>

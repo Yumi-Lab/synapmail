@@ -12,6 +12,7 @@ import { EFFECTIVE_ORDER } from '../tagging/store'
 import { boundedRegex } from '../rulesEval'
 import { isIban } from '../tagging/fields'
 import { PATTERN_KINDS, UNFILED, type FilingSource, type PatternKind } from './model'
+import type { FilingRow } from './filing'
 import { documentMessageId } from './source'
 import { luhnOk, reducedIban, tvaFrOk, type Identifier } from './patterns'
 
@@ -111,8 +112,13 @@ export async function listDocuments(params: {
 export interface GedDocumentDetail extends GedDocumentSummary {
   ocrText: string
   pageTexts: Array<{ index: number; text: string; confidence: number; blank: boolean }> | null
-  filings: Array<{ id: string; folderId: string | null; source: FilingSource; auteurId: string; auteurNom: string; confiance: number | null; creeLe: Date }>
+  filings: GedFilingView[]
 }
+
+/** Une ligne d'historique telle que l'API la rend. `dossierNom` = le nom du dossier au moment du rangement (`''` = sorti de tout dossier) : lisible même si le dossier a disparu depuis (`folderId` NULL). */
+export interface GedFilingView { id: string; folderId: string | null; dossierNom: string; source: FilingSource; auteurId: string; auteurNom: string; confiance: number | null; creeLe: Date }
+export const toFilingView = (f: FilingRow): GedFilingView =>
+  ({ id: String(f.id), folderId: f.folder_id, dossierNom: f.dossier_nom, source: f.source, auteurId: f.auteur_id, auteurNom: f.auteur_nom, confiance: f.confiance, creeLe: f.cree_le })
 
 /** Un document avec son texte, ses pages et son historique de rangement — `null` s'il n'est pas de cette boîte. */
 export async function getDocument(accountId: string, id: string): Promise<GedDocumentDetail | null> {
@@ -122,13 +128,12 @@ export async function getDocument(accountId: string, id: string): Promise<GedDoc
        FROM ged_documents d LEFT JOIN eff ON eff.document_id = d.id
       WHERE d.account_id = $1 AND d.id = $2`, [accountId, id])
   if (!r) return null
-  const filings = await query<{ id: string; folder_id: string | null; source: FilingSource; auteur_id: string; auteur_nom: string; confiance: number | null; cree_le: Date }>(
-    `SELECT id, folder_id, source, auteur_id, auteur_nom, confiance, cree_le FROM ged_filings WHERE document_id = $1 ORDER BY ${EFFECTIVE_ORDER}`, [id])
+  const filings = await query<FilingRow>(`SELECT * FROM ged_filings WHERE document_id = $1 ORDER BY ${EFFECTIVE_ORDER}`, [id])
   return {
     ...toSummary(r),
     ocrText: r.ocr_text as string,
     pageTexts: (r.page_texts as GedDocumentDetail['pageTexts']) ?? null,
-    filings: filings.map(f => ({ id: String(f.id), folderId: f.folder_id, source: f.source, auteurId: f.auteur_id, auteurNom: f.auteur_nom, confiance: f.confiance, creeLe: f.cree_le })),
+    filings: filings.map(toFilingView),
   }
 }
 
