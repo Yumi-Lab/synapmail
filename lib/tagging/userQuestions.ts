@@ -17,7 +17,7 @@
  */
 import { query } from '../db'
 import {
-  CHOICE_MAX_OPTIONS, defaultQuestionColumns, RESERVED_ID_CODE, RESERVED_QUESTION_IDS, SCORE_LEVELS, SLUG_RE, engineBodyOf, questionSet,
+  CHOICE_MAX_OPTIONS, defaultQuestionColumns, GED_GROUP, RESERVED_ID_CODE, RESERVED_QUESTION_IDS, SCORE_LEVELS, SLUG_RE, engineBodyOf, questionSet,
   type QuestionSet, type QuestionType, type TagOption, type TagQuestion,
 } from './questions'
 
@@ -94,6 +94,12 @@ async function insertDefaults(userId: string): Promise<void> {
               AS q(id, type, instructions, criteria, list_badge, groupe, position)
      ON CONFLICT (user_id, id) DO NOTHING`,
     [userId, d.ids, d.types, d.instructions, d.criteria, d.listBadges, d.groups, d.positions]
+  )
+  // Le déclencheur du groupe GED arrive avec les défauts : sans lui, ses questions seraient du tronc.
+  await query(
+    `INSERT INTO tag_question_groups (user_id, id, name, condition_logic, conditions)
+     VALUES ($1, $2, $3, $4, $5::jsonb) ON CONFLICT (user_id, id) DO NOTHING`,
+    [userId, GED_GROUP.id, GED_GROUP.name, GED_GROUP.conditionLogic, JSON.stringify(GED_GROUP.conditions)]
   )
 }
 

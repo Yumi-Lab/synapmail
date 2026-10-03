@@ -15,7 +15,8 @@
  *      dernière page) ; un mail sans PDF n'est jamais posé au moteur ; un document `attente`
  *      arrête le lot avant lui.
  *
- * `--negative` : le faux OCR rend un texte VIDE pour tout PDF — A3/A4, C2/C4 DOIVENT tomber.
+ * `--negative` : le faux OCR rend un texte VIDE pour tout PDF — A3/A4, C2/C4 et C11/C12 (le groupe
+ * GED ne se déclenche pas sans texte) DOIVENT tomber.
  */
 import './alias-resolver.mjs'
 import { existsSync, readFileSync } from 'node:fs'
@@ -49,7 +50,8 @@ const { runIntake, GED_FOLDER, GED_BATCH_SIZE, isPdf } = intake
 const { gedMailSource, documentMessageId } = await import('../lib/ged/source.ts')
 const { OCR_STATUS_DONE, OCR_STATUS_FAILED, OCR_STATUS_PENDING } = await import('../lib/ged/model.ts')
 const { buildState, GED_STATE_BODY_CHARS, STATE_BODY_CHARS, assumedInputTokensPerMail } = await import('../lib/tagging/engine.ts')
-const { DEFAULT_SET, valuesOf } = await import('../lib/tagging/questions.ts')
+const { DEFAULT_SET, GED_GROUP, valuesOf } = await import('../lib/tagging/questions.ts')
+const { groupsForAccount, planPasses } = await import('../lib/tagging/questionGroups.ts')
 const runner = await import('../lib/tagging/runner.ts')
 const { messageIdOf } = await import('../lib/tagging/store.ts')
 const { optionId } = await import('../lib/tagging/fields.ts')
@@ -178,6 +180,22 @@ try {
   const tagged = (await pool.query(`SELECT DISTINCT message_id FROM message_tags WHERE account_id = $1 AND source = 'jev' ORDER BY 1`, [ACCOUNT])).rows.map(r => r.message_id)
   check('C6 en base : les étiquettes visent les 3 documents (mail 1, mail 3 pièce 0 et pièce 2), rien pour les mails 2 et 4', JSON.stringify(tagged) === JSON.stringify([MID(1), `${MID(3)}#p0`, `${MID(3)}#p2`]), JSON.stringify(tagged))
   check('C7 un mail sans PDF n’est jamais posé au moteur', !objects.some(s => s.objet === 'Bienvenue' || s.corps.includes('prête')))
+  // Le jeu de questions GED par défaut (décision 6) : quatre questions dans un groupe conditionnel
+  // déclenché par `texte_ocr is_true`, posées en SECONDE requête à un document — jamais au tronc.
+  const gedQs = DEFAULT_SET.enabled.filter(q => q.group === GED_GROUP.id).map(q => q.id)
+  const plan = planPasses(DEFAULT_SET, await groupsForAccount(ACCOUNT))
+  check('C10 le jeu par défaut porte 4 questions GED (type, émetteur, destinataire, marque), hors du tronc, dans le groupe `ged`', gedQs.length === 4 && gedQs.includes('type_document') && !plan.trunk.some(q => q.group === GED_GROUP.id) && plan.conditional.some(g => g.group.id === GED_GROUP.id && g.questions.length === 4), JSON.stringify([gedQs, plan.conditional.map(g => g.group.id)]))
+  const doc1Calls = asked.filter(a => a.state.corps.startsWith('Page 1 de la facture'))
+  check('C11 un document reçoit le tronc, PUIS les 4 questions GED (déclencheur `texte_ocr`), puis les valeurs T11', doc1Calls.length === 3 && JSON.stringify(doc1Calls[1].questions) === JSON.stringify(gedQs) && !doc1Calls[0].questions.some(q => gedQs.includes(q)), JSON.stringify(doc1Calls.map(c => c.questions.length)))
+  const gedTags = (await pool.query(`SELECT question, valeur FROM message_tags WHERE account_id = $1 AND message_id = $2 AND question = ANY($3::text[]) ORDER BY question`, [ACCOUNT, MID(1), gedQs])).rows
+  check('C12 en base : les 4 réponses GED du document, dans les valeurs de la taxonomie', gedTags.length === 4 && gedTags.every(t => valuesOf(DEFAULT_SET.questionById(t.question)).includes(t.valeur)), JSON.stringify(gedTags))
+  // Un mail ORDINAIRE de la même boîte (pas un document) : les 4 questions GED ne lui sont pas posées.
+  const plain = { folder: GED_FOLDER, uid: 999, messageId: MID('plain'), fromName: 'Ami', fromAddress: 'ami@exemple.invalid', subject: 'Bonjour', bodyPlain: 'Un mot sans pièce.', date: new Date() }
+  const plainSource = { async folders() { return [{ path: GED_FOLDER, uidValidity: '8', total: 1 }] }, async uids() { return [999] }, async fetch(f, after) { return after < 999 ? [plain] : [] }, async fetchUids() { return [plain] } }
+  await runner.startBulk(ACCOUNT, { restart: true })
+  await runner.runPass({ accountId: ACCOUNT, source: plainSource, engine, budgetMs: 10_000 })
+  const plainCalls = asked.filter(a => a.state.objet === 'Bonjour')
+  check('C13 un mail ordinaire (sans texte OCR) ne reçoit PAS les questions GED : une seule requête, le tronc', plainCalls.length === 1 && !plainCalls[0].questions.some(q => gedQs.includes(q)), JSON.stringify(plainCalls.map(c => c.questions.length)))
   // Un document `attente` arrête le lot AVANT lui : le trieur ne doit pas « finir » par-dessus.
   await pool.query(`INSERT INTO ged_documents (account_id, message_id, folder, uid, part_idx, filename, ocr_status) VALUES ($1, $2, $3, 150, 0, 'att.pdf', $4)`, [ACCOUNT, MID(5), GED_FOLDER, OCR_STATUS_PENDING])
   await pool.query(`INSERT INTO ged_documents (account_id, message_id, folder, uid, part_idx, filename, ocr_status, ocr_text) VALUES ($1, $2, $3, 160, 0, 'apres.pdf', $4, 'Document après.')`, [ACCOUNT, MID(6), GED_FOLDER, OCR_STATUS_DONE])
@@ -193,7 +211,7 @@ try {
 }
 
 if (NEGATIVE) {
-  const expected = ['A3', 'A4', 'C2', 'C4']
+  const expected = ['A3', 'A4', 'C2', 'C4', 'C11', 'C12']
   const fell = expected.filter(p => failures.some(f => f.startsWith(p)))
   const unexpected = failures.filter(f => !expected.some(p => f.startsWith(p)))
   if (fell.length === expected.length && !unexpected.length) { console.log(`\ncontrôle négatif : ${fell.length} refus tombés (${fell.join(', ')}), comme attendu`); process.exit(0) }

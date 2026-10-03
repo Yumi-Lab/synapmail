@@ -4,7 +4,7 @@ import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
 import { ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
 import { FILING_SOURCES, OCR_STATUSES, OCR_STATUS_PENDING, PATTERN_KINDS } from '@/lib/ged/model'
 import { BULK_STATES, ENGINES, HUMAN_SOURCE, PAUSE_REASONS, TAG_SOURCES } from '@/lib/tagging/engine'
-import { DEFAULT_QUESTIONS, RETIRED_DEFAULT_IDS, defaultQuestionColumns } from '@/lib/tagging/questions'
+import { DEFAULT_QUESTIONS, GED_GROUP, RETIRED_DEFAULT_IDS, defaultQuestionColumns } from '@/lib/tagging/questions'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -772,6 +772,16 @@ export async function initDb(): Promise<void> {
       PRIMARY KEY (user_id, id)
     )
   `)
+
+  // Le groupe GED (lot G3, décision 6) : les quatre questions `ged` ne sont posées qu'à un
+  // document porteur d'un texte OCR. Posé pour chaque utilisateur qui a déjà son jeu (le jeu
+  // neuf le reçoit avec ses défauts, `userQuestions.ts`) ; un groupe modifié reste le sien.
+  await query(
+    `INSERT INTO tag_question_groups (user_id, id, name, condition_logic, conditions)
+     SELECT u.user_id, $1, $2, $3, $4::jsonb FROM (SELECT DISTINCT user_id FROM tag_questions) u
+     ON CONFLICT (user_id, id) DO NOTHING`,
+    [GED_GROUP.id, GED_GROUP.name, GED_GROUP.conditionLogic, JSON.stringify(GED_GROUP.conditions)]
+  )
 
   // La dernière position CONNUE d'un mail tagué, pour que le filtre par étiquette montre des
   // mails absents de la page chargée. `messages_cache` ne suffit pas : il ne garde qu'une
