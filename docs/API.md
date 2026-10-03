@@ -657,8 +657,8 @@ Bulk-cleans low-signal contacts: `frequency < 2 AND is_manual = false AND is_sta
 `{ data: EmailRule[] }`, optionally filtered to one account client-side.
 
 ```ts
-type RuleField = 'from'|'to'|'cc'|'subject'|'body'|'has_attachments'|'list_unsubscribe'|'size'|'date_received'|'priority'|'header'
-type RuleOperator = 'contains'|'not_contains'|'equals'|'not_equals'|'starts_with'|'ends_with'|'is_true'|'is_false'|'greater_than'|'less_than'|'before'|'after'
+type RuleField = 'from'|'to'|'cc'|'subject'|'body'|'has_attachments'|'list_unsubscribe'|'size'|'date_received'|'priority'|'header'|'texte_ocr'
+type RuleOperator = 'contains'|'not_contains'|'equals'|'not_equals'|'starts_with'|'ends_with'|'is_true'|'is_false'|'greater_than'|'less_than'|'before'|'after'|'matches'  // matches: texte_ocr only, bounded regex (≤ 200 chars, case-insensitive)
 type RuleActionType = 'move'|'mark_read'|'mark_unread'|'mark_starred'|'mark_unstarred'|'delete'|'forward'
 
 interface EmailRule {

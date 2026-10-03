@@ -509,6 +509,7 @@
         "op_less_than": "inférieur à",
         "op_before": "avant le",
         "op_after": "après le",
+        "op_matches": "correspond au motif",
         "priority_1": "1 · Urgente",
         "priority_2": "2 · Haute",
         "priority_3": "3 · Normale",
@@ -516,7 +517,8 @@
         "priority_5": "5 · Très basse",
         "sizeUnit": "Ko",
         "sizePlaceholder": "Ko (ex : 5120 = 5 Mo)",
-        "valuePlaceholder": "Valeur…"
+        "valuePlaceholder": "Valeur…",
+        "regexPlaceholder": "Expression régulière (≤ 200 caractères)…"
       }
     },
     "ai": {

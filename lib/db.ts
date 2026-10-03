@@ -890,6 +890,10 @@ export async function initDb(): Promise<void> {
   // Le curseur de la chaîne de réception (lot G3) : `{ lastUid, uidValidity }` du dossier
   // surveillé. NULL = tout est à rattraper depuis le premier mail — l'OCR est local, donc gratuit.
   await query(`ALTER TABLE ged_mailboxes ADD COLUMN IF NOT EXISTS cursor JSONB`)
+  // Les identifiants PROPRES de la boîte (lot G4) : SIRET, TVA, IBAN réduit du destinataire, imprimés
+  // sur chaque facture reçue en tant que CLIENT. Jamais appris ni cherchés comme motif — sans cette
+  // liste, la TVA du destinataire rangerait tout émetteur dans le premier dossier qui l'a apprise.
+  await query(`ALTER TABLE ged_mailboxes ADD COLUMN IF NOT EXISTS propres JSONB NOT NULL DEFAULT '[]'`)
 
   // Un PDF = un document (décision 2) : la clé est la pièce jointe elle-même (mail + rang de la
   // partie), jamais l'UID IMAP seul, qui change à un déplacement. `page_texts` garde les pages

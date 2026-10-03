@@ -26,6 +26,7 @@ export type RuleOperator =
   | 'less_than'
   | 'before'
   | 'after'
+  | 'matches'
 
 export type RuleActionType =
   | 'move'

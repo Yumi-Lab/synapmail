@@ -509,6 +509,7 @@
         "op_less_than": "小于",
         "op_before": "早于",
         "op_after": "晚于",
+        "op_matches": "匹配正则",
         "priority_1": "1 · 紧急",
         "priority_2": "2 · 高",
         "priority_3": "3 · 普通",
@@ -516,7 +517,8 @@
         "priority_5": "5 · 最低",
         "sizeUnit": "千字节",
         "sizePlaceholder": "千字节（例：5120 = 5 MB）",
-        "valuePlaceholder": "值…"
+        "valuePlaceholder": "值…",
+        "regexPlaceholder": "正则表达式（≤ 200 字符）…"
       }
     },
     "ai": {

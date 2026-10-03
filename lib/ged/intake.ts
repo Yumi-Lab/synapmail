@@ -15,7 +15,8 @@
  *     ni le mail ni la boîte : le document reste visible dans « À ranger » avec son erreur.
  *  3. **Le mail reste INTACT** : la source est lue par `BODY.PEEK` (imapflow), aucun drapeau n'est
  *     posé, rien n'est déplacé. Les dossiers virtuels ne touchent jamais l'IMAP (GOAL).
- *  4. **Le moteur est un PLUS** : la chaîne ne l'appelle pas. C'est le trieur existant
+ *  4. **Le moteur est un PLUS** : la chaîne ne l'appelle pas. Elle appelle en revanche le
+ *     rangement par motifs (`./filing.ts` `autoFile`) dès qu'un OCR est fait. C'est le trieur existant
  *     (`lib/tagging/runner.ts`), par la source enrichie `gedMailSource` (`./source.ts`), qui lit
  *     le texte OCR à la place du corps (`buildState`) — avec son plafond, ses pauses et son saut
  *     du déjà-fait. Sans moteur, l'OCR et les motifs (G4) tournent quand même.
@@ -29,6 +30,7 @@ import type { SourceMail } from '../tagging/runner'
 import { messageIdOf } from '../tagging/store'
 import { OCR_STATUS_DONE, OCR_STATUS_FAILED, OCR_STATUS_PENDING } from './model'
 import { ocrPdf, type OcrResult } from './ocr'
+import { autoFile } from './filing'
 
 /** Le dossier d'une boîte GED que la chaîne surveille : le copieur n'écrit que là. */
 export const GED_FOLDER = 'INBOX'
@@ -75,6 +77,9 @@ export interface IntakeOutcome {
   ocrDone: number
   ocrFailed: number
   known: number
+  /** Documents rangés seuls par un motif connu / dossier proposé pour un émetteur inconnu (G4). */
+  filed: number
+  proposed: number
   /** Le passage s'est arrêté au budget : il reste des mails. */
   cut: boolean
 }
@@ -149,7 +154,7 @@ export async function runIntake(params: {
   const { accountId, source } = params
   const ocr = params.ocr ?? ((pdf: Buffer) => ocrPdf(pdf))
   const deadline = (params.now ?? Date.now()) + (params.budgetMs ?? GED_PASS_BUDGET_MS)
-  const out: IntakeOutcome = { mails: 0, documents: 0, ocrDone: 0, ocrFailed: 0, known: 0, cut: false }
+  const out: IntakeOutcome = { mails: 0, documents: 0, ocrDone: 0, ocrFailed: 0, known: 0, filed: 0, proposed: 0, cut: false }
 
   const [box] = await query<{ cursor: GedCursor | null }>(`SELECT cursor FROM ged_mailboxes WHERE account_id = $1 AND actif`, [accountId])
   if (!box) return out
@@ -174,8 +179,11 @@ export async function runIntake(params: {
         const { row, created } = await upsertDocument(accountId, mail, partIdx, a)
         if (!created) { out.known += 1; if (row.ocr_status !== OCR_STATUS_PENDING) continue }
         else out.documents += 1
-        if (await runOcr(row, a.content, ocr)) out.ocrDone += 1
-        else out.ocrFailed += 1
+        if (!(await runOcr(row, a.content, ocr))) { out.ocrFailed += 1; continue }
+        out.ocrDone += 1
+        const filed = await autoFile(row.id)
+        if (filed.kind === 'motif') out.filed += 1
+        else if (filed.kind === 'propose') out.proposed += 1
       }
       cursor = { lastUid: mail.uid, uidValidity: folder.uidValidity }
       await saveCursor(accountId, cursor)

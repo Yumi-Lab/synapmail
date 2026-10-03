@@ -29,7 +29,7 @@ const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
   priority:        ['equals','less_than','greater_than'],
   header:          ['contains','not_contains','equals'],
   tag:             ['equals','not_equals'],
-  texte_ocr:       ['is_true','is_false'],
+  texte_ocr:       ['is_true','is_false','matches'],
 }
 
 /** Les champs d'une règle. `tag` (une étiquette déjà obtenue) n'est offert qu'aux déclencheurs de groupe (lot T-Q3). */
@@ -40,7 +40,8 @@ const PRIORITIES = ['1', '2', '3', '4', '5'] as const
 /** Les libellés vivent dans `settings.rules.conditions` (fr/en/zh), partagés par les deux écrans. */
 const useConditionLabels = () => useTranslations('settings.rules.conditions')
 
-const BOOLEAN_FIELDS: RuleField[] = ['has_attachments', 'list_unsubscribe', 'texte_ocr']
+/** Une condition sans valeur : c'est l'OPÉRATEUR qui le dit (`texte_ocr` est présent… ou correspond à un motif). */
+const isBooleanOp = (op: RuleOperator): boolean => op === 'is_true' || op === 'is_false'
 
 const uid = () => Math.random().toString(36).slice(2)
 
@@ -55,7 +56,7 @@ export function useConditionText(): (c: RuleCondition) => string {
     const f = t(`field_${c.field}`)
     const o = t(`op_${c.operator}`)
     if (c.field === 'tag') return `${labelQ(c.tagQuestion ?? '')} ${o} ${labelV(c.value)}`
-    if (BOOLEAN_FIELDS.includes(c.field)) return `${f} ${o}`
+    if (isBooleanOp(c.operator)) return `${f} ${o}`
     if (c.field === 'date_received') return `${f} ${o} ${c.value}`
     if (c.field === 'size') return `${f} ${o} ${c.value} ${t('sizeUnit')}`
     return `${f} ${o} "${c.value}"`
@@ -76,7 +77,7 @@ export function ConditionRow({
 }) {
   const t = useConditionLabels()
   const operators = FIELD_OPERATORS[cond.field] ?? []
-  const isBoolean = BOOLEAN_FIELDS.includes(cond.field)
+  const isBoolean = isBooleanOp(cond.operator)
   const isDate    = cond.field === 'date_received'
   const isPriority = cond.field === 'priority'
   const isTag     = cond.field === 'tag'
@@ -130,7 +131,7 @@ export function ConditionRow({
           <Input
             value={cond.value}
             onChange={e => onChange({ ...cond, value: e.target.value })}
-            placeholder={cond.field === 'size' ? t('sizePlaceholder') : t('valuePlaceholder')}
+            placeholder={cond.field === 'size' ? t('sizePlaceholder') : cond.operator === 'matches' ? t('regexPlaceholder') : t('valuePlaceholder')}
             className="h-8 text-sm flex-1 min-w-[120px]"
           />
         )

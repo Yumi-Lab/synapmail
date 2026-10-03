@@ -372,7 +372,7 @@ async function processGedNow(): Promise<void> {
     try {
       const r = await runIntake({ accountId: box.account_id, source })
       if (r.mails || r.ocrFailed) {
-        console.log(`[scheduler/ged] ${box.account_id}: mails=${r.mails} documents=${r.documents} ocr=${r.ocrDone}/${r.ocrFailed} known=${r.known}${r.cut ? ' cut' : ''}`)
+        console.log(`[scheduler/ged] ${box.account_id}: mails=${r.mails} documents=${r.documents} ocr=${r.ocrDone}/${r.ocrFailed} known=${r.known} filed=${r.filed} proposed=${r.proposed}${r.cut ? ' cut' : ''}`)
       }
     } catch (err) {
       console.error(`[scheduler/ged] account ${box.account_id}:`, err)

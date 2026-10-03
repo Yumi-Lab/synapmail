@@ -283,7 +283,7 @@ const toStored = (r: TagRow): StoredTag => ({
  * fragment est la SOURCE UNIQUE de cette règle — les trois lectures ci-dessous s'en servent,
  * aucune ne réécrit un `ORDER BY`.
  */
-const EFFECTIVE_ORDER = `(source = '${HUMAN_SOURCE}') DESC, cree_le DESC`
+export const EFFECTIVE_ORDER = `(source = '${HUMAN_SOURCE}') DESC, cree_le DESC`
 const EFFECTIVE_RANK = `ROW_NUMBER() OVER (
   PARTITION BY account_id, message_id, question
   ORDER BY ${EFFECTIVE_ORDER}

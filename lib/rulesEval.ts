@@ -11,6 +11,21 @@ export interface RuleTag { question: string; valeur: string }
 
 const NO_TAGS: readonly RuleTag[] = []
 
+/** La longueur maximale d'un motif `matches` : au-delà, la condition est fausse, jamais une erreur. */
+export const MATCH_PATTERN_MAX = 200
+
+/**
+ * Le motif d'une condition `matches` ou d'un motif GED de genre `regex`, compilé : insensible à
+ * la casse, Unicode, SANS drapeau global (un `test` reste sans état). `null` si le motif est vide,
+ * trop long ou invalide — l'appelant le lit comme « ne correspond pas ».
+ * ponytail: borné par la longueur seulement ; un motif pathologique (quantificateurs imbriqués)
+ * peut encore coûter cher sur 20 000 caractères — si ça se mesure, passer par `re2`.
+ */
+export function boundedRegex(pattern: string): RegExp | null {
+  if (!pattern || pattern.length > MATCH_PATTERN_MAX) return null
+  try { return new RegExp(pattern, 'iu') } catch { return null }
+}
+
 // ---------------------------------------------------------------------------
 // Condition evaluation
 // ---------------------------------------------------------------------------
@@ -37,10 +52,11 @@ export function evalCondition(msg: Message, cond: RuleCondition, tags: readonly 
   }
 
   // Document GED (décision 6) : « porte un texte OCR » suffit à déclencher le groupe de
-  // questions GED ; le lot G4 y ajoute la recherche d'un motif (`matches`).
+  // questions GED ; `matches` y cherche un motif (regex bornée, décision 5).
   if (cond.field === 'texte_ocr') {
     if (cond.operator === 'is_true')  return !!msg.ocrText
     if (cond.operator === 'is_false') return !msg.ocrText
+    if (cond.operator === 'matches')  return boundedRegex(cond.value)?.test(msg.ocrText ?? '') ?? false
     return false
   }
 

@@ -509,6 +509,7 @@
         "op_less_than": "less than",
         "op_before": "before",
         "op_after": "after",
+        "op_matches": "matches pattern",
         "priority_1": "1 · Urgent",
         "priority_2": "2 · High",
         "priority_3": "3 · Normal",
@@ -516,7 +517,8 @@
         "priority_5": "5 · Lowest",
         "sizeUnit": "KB",
         "sizePlaceholder": "KB (e.g. 5120 = 5 MB)",
-        "valuePlaceholder": "Value…"
+        "valuePlaceholder": "Value…",
+        "regexPlaceholder": "Regular expression (≤ 200 chars)…"
       }
     },
     "ai": {
