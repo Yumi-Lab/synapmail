@@ -44,6 +44,27 @@ const fetcher = async (url: string) => {
   return res.json()
 }
 
+// Les pastilles d'une page : les `Message-ID` voyagent dans l'URL du GET existant, par LOTS
+// bornés en caractères — au-delà de ~250 mails chargés, une seule URL dépassait la taille
+// d'en-tête du serveur (HTTP 431, gate du 03/10) et plus aucune pastille ne se chargeait.
+// ponytail: un corps POST ferait une requête ; il exigerait une méthode, une portée et une
+// entrée de contrat de plus pour la même lecture. Quelques GET par centaine de mails suffisent.
+const PILL_QUERY_CHARS = 6000
+type PillKey = [endpoint: string, accountId: string, ids: string[]]
+async function fetchPills([endpoint, accountId, ids]: PillKey): Promise<{ data: { effective: Record<string, StoredTag[]> } }> {
+  const base = `${endpoint}?account=${encodeURIComponent(accountId)}`
+  const batches: string[] = []
+  let query = ''
+  for (const id of ids) {
+    const part = `&id=${encodeURIComponent(id)}`
+    if (query && query.length + part.length > PILL_QUERY_CHARS) { batches.push(query); query = '' }
+    query += part
+  }
+  if (query) batches.push(query)
+  const pages = await Promise.all(batches.map(q => fetcher(base + q)))
+  return { data: { effective: Object.assign({}, ...pages.map(p => p.data.effective)) } }
+}
+
 // Rectangle de sélection (lot M3c). Sous ce seuil, le geste reste un clic —
 // c'est aussi le seuil qu'utilise l'explorateur du système.
 const MARQUEE_MIN_PX = 4
@@ -509,11 +530,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     () => messages.map(m => m.messageId).filter(Boolean),
     [messages],
   )
-  const pillKey = activeAccountId && pillIds.length
-    ? `${TAGS_ENDPOINT}?account=${encodeURIComponent(activeAccountId)}` +
-      pillIds.map(id => `&id=${encodeURIComponent(id)}`).join('')
-    : null
-  const { data: pillsRes } = useSWR<{ data: { effective: Record<string, StoredTag[]> } }>(pillKey, fetcher)
+  const pillKey: PillKey | null = activeAccountId && pillIds.length ? [TAGS_ENDPOINT, activeAccountId, pillIds] : null
+  const { data: pillsRes } = useSWR(pillKey, fetchPills)
   const pills = pillsRes?.data.effective
 
   const loadError = !isSearchMode && !!error && accumulated.length === 0
