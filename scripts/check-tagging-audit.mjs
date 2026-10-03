@@ -151,6 +151,22 @@ try {
   const [{ n: kept }] = await query(`SELECT COUNT(*)::int AS n FROM tag_audits WHERE account_id = $1 AND message_id = ANY($2::text[])`, [ACCOUNT, Array.from(drawnIds)])
   check('K2c à 2 600 étiquetés la cible passe à 52 : 2 tirés de plus, les 50 premiers gardés',
     grown.tagged === 2600 && grown.target === 52 && grown.added === 2 && grown.drawn === 52 && kept === 50, JSON.stringify({ grown, kept }))
+
+  // ---- K2d. une ANCIENNE version de la question ne se mesure pas : ni tirée, ni comptée ----
+  // 300 mails étiquetés par JEV sous une version périmée de `categorie` (ce que laisse une
+  // consigne modifiée après un tri) : l'état les annonce « à retaguer », la cible les ignore,
+  // et un tirage n'en prend aucun — sinon on ferait valider des mails que `reliability` ne
+  // comparera jamais (gate T14, point 2).
+  await query(
+    `INSERT INTO message_tags (account_id, message_id, question, valeur, source, modele, auteur_id, auteur_nom, question_version, taxonomy_version)
+     SELECT $1, '<banc-t14-stale-' || g || '@exemple.invalid>', $2, $3, 'jev', 'jev-banc', $4, $5, 'perimee00000', t.taxonomy_version
+       FROM generate_series(1, 300) g, (SELECT taxonomy_version FROM message_tags WHERE account_id = $1 AND source = 'jev' LIMIT 1) t`,
+    [ACCOUNT, Q, V0, JEV.id, JEV.nom])
+  const withStale = await audit.drawAudit(ACCOUNT)
+  const [{ n: staleDrawn }] = await query(`SELECT COUNT(*)::int AS n FROM tag_audits WHERE account_id = $1 AND message_id LIKE '<banc-t14-stale-%'`, [ACCOUNT])
+  check('K2d 300 mails sous une ancienne version : comptés « à retaguer », hors cible, jamais tirés',
+    withStale.tagged === 2600 && withStale.stale === 300 && withStale.target === 52 && withStale.added === 0 && staleDrawn === 0,
+    JSON.stringify({ withStale, staleDrawn }))
 } finally {
   if (ACCOUNT) await pool.query('DELETE FROM email_accounts WHERE id = $1', [ACCOUNT]).catch(() => {})
   await pool.query("DELETE FROM email_accounts WHERE email LIKE 'auditbench-%@bench.invalid'").catch(() => {})

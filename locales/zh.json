@@ -653,6 +653,7 @@
       "auditComplete": "补足抽检样本（{missing}）",
       "auditValidate": "去验证（{pending}）",
       "auditNothing": "没有引擎标注过的邮件：无可抽检。",
+      "auditStale": "{count, plural, other {# 封邮件在旧版本问题下标注：重新标注前无法计入准确率}}",
       "reliabilityEmpty": "尚无人工验证。先抽取样本，再验证所列邮件。",
       "colQuestion": "问题",
       "colHuman": "验证数",

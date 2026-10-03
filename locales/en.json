@@ -653,6 +653,7 @@
       "auditComplete": "Complete the audit ({missing})",
       "auditValidate": "Validate ({pending})",
       "auditNothing": "No message tagged by an engine: nothing to audit.",
+      "auditStale": "{count, plural, one {# message tagged under an older version of a question: it cannot be measured until it is retagged} other {# messages tagged under an older version of a question: they cannot be measured until they are retagged}}",
       "reliabilityEmpty": "No human validation yet. Draw the audit, then validate the proposed messages.",
       "colQuestion": "Question",
       "colHuman": "Validations",

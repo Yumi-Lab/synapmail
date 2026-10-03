@@ -61,6 +61,11 @@ export function TagReliabilitySection({ accountId }: { accountId: string }) {
         <div className="flex flex-wrap items-center gap-2" data-audit-state={`${audit.drawn}/${audit.target}`}>
           <p className="text-xs text-muted-foreground tabular-nums">
             {audit.tagged === 0 ? t('auditNothing') : t('auditState', { ...audit })}
+            {audit.stale > 0 && (
+              <span className="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-400" data-audit-stale={audit.stale}>
+                {t('auditStale', { count: audit.stale })}
+              </span>
+            )}
           </p>
           <span className="ml-auto flex gap-2">
             {missing > 0 && (

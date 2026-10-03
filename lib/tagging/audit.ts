@@ -13,6 +13,7 @@ import { query } from '../db'
 import { ENGINES, HUMAN_SOURCE } from './engine'
 import { questionVersion, type TaggedMessage } from './store'
 import { questionSetForAccount } from './userQuestions'
+import type { QuestionSet } from './questions'
 
 /** La part des mails étiquetés qu'on tire, et le plancher en dessous duquel un taux ne dit rien. */
 export const AUDIT_RATE = 0.02
@@ -21,13 +22,26 @@ export const AUDIT_MIN = 50
 /** La cible du tirage pour N mails étiquetés : 2 %, au moins 50, jamais plus que N. */
 export const auditTarget = (tagged: number): number => Math.min(tagged, Math.max(AUDIT_MIN, Math.ceil(tagged * AUDIT_RATE)))
 
-/** Les mails qu'un MOTEUR a étiquetés : seuls eux ont une exactitude à mesurer. `$1` = account_id. */
-const ENGINE_TAGGED = `SELECT DISTINCT message_id FROM message_tags
-  WHERE account_id = $1 AND source IN (${ENGINES.map(e => `'${e}'`).join(', ')})`
+const ENGINE_LIST = ENGINES.map(e => `'${e}'`).join(', ')
+
+/** Les questions ACTIVES et leur version COURANTE, sous la forme que `unnest($2, $3)` attend. */
+const currentVersions = (set: QuestionSet) => ({ ids: set.enabled.map(q => q.id), versions: set.enabled.map(questionVersion) })
+
+/**
+ * Les mails qu'un MOTEUR a étiquetés sous la définition COURANTE d'au moins une question active :
+ * seuls eux ont une exactitude à mesurer, puisque `reliability` ne compare moteur et main que sous
+ * cette définition — tirer un mail étiqueté sous une ancienne version le ferait valider pour rien.
+ * `$1` = account_id, `$2`/`$3` = questions / versions courantes (`currentVersions`).
+ */
+const ENGINE_TAGGED = `SELECT DISTINCT t.message_id FROM message_tags t
+  JOIN unnest($2::text[], $3::text[]) AS c(question, version) ON c.question = t.question AND c.version = t.question_version
+  WHERE t.account_id = $1 AND t.source IN (${ENGINE_LIST})`
 
 export interface AuditStatus {
-  /** Les mails qu'un moteur a étiquetés dans cette boîte. */
+  /** Les mails qu'un moteur a étiquetés dans cette boîte sous la version courante : les mesurables. */
   tagged: number
+  /** Les mails qu'un moteur a étiquetés SEULEMENT sous une ancienne version : à retaguer avant de pouvoir les mesurer. */
+  stale: number
   /** La cible du tirage pour ce nombre (`auditTarget`). */
   target: number
   /** Les mails tirés jusqu'ici. */
@@ -36,16 +50,19 @@ export interface AuditStatus {
   validated: number
 }
 
-export async function auditStatus(accountId: string): Promise<AuditStatus> {
-  const [r] = await query<{ tagged: string; drawn: string; validated: string }>(
+export async function auditStatus(accountId: string, set?: QuestionSet): Promise<AuditStatus> {
+  const { ids, versions } = currentVersions(set ?? await questionSetForAccount(accountId))
+  const [r] = await query<{ tagged: string; stale: string; drawn: string; validated: string }>(
     `SELECT (SELECT COUNT(*) FROM (${ENGINE_TAGGED}) t) AS tagged,
+            (SELECT COUNT(DISTINCT message_id) FROM message_tags WHERE account_id = $1 AND source IN (${ENGINE_LIST})
+               AND message_id NOT IN (${ENGINE_TAGGED})) AS stale,
             (SELECT COUNT(*) FROM tag_audits WHERE account_id = $1) AS drawn,
             (SELECT COUNT(*) FROM tag_audits a WHERE a.account_id = $1
                AND EXISTS (SELECT 1 FROM message_tags h WHERE h.account_id = $1 AND h.message_id = a.message_id AND h.source = '${HUMAN_SOURCE}')) AS validated`,
-    [accountId]
+    [accountId, ids, versions]
   )
   const tagged = Number(r.tagged)
-  return { tagged, target: auditTarget(tagged), drawn: Number(r.drawn), validated: Number(r.validated) }
+  return { tagged, stale: Number(r.stale), target: auditTarget(tagged), drawn: Number(r.drawn), validated: Number(r.validated) }
 }
 
 /**
@@ -54,20 +71,22 @@ export async function auditStatus(accountId: string): Promise<AuditStatus> {
  * une seule requête. Rend l'état après tirage.
  */
 export async function drawAudit(accountId: string): Promise<AuditStatus & { added: number }> {
-  const before = await auditStatus(accountId)
+  const set = await questionSetForAccount(accountId)
+  const before = await auditStatus(accountId, set)
   const missing = before.target - before.drawn
   if (missing <= 0) return { ...before, added: 0 }
+  const { ids, versions } = currentVersions(set)
   const added = await query<{ message_id: string }>(
     `INSERT INTO tag_audits (account_id, message_id)
      SELECT $1, message_id FROM (${ENGINE_TAGGED}) t
       WHERE NOT EXISTS (SELECT 1 FROM tag_audits a WHERE a.account_id = $1 AND a.message_id = t.message_id)
-      ORDER BY random() LIMIT $2
+      ORDER BY random() LIMIT $4
      RETURNING message_id`,
-    [accountId, missing]
+    [accountId, ids, versions, missing]
   )
   // Relu après coup : un mail tiré peut déjà porter une ligne humaine (jugé avant le tirage),
   // et `validated` doit le compter — la file « à valider » l'exclut déjà.
-  return { ...(await auditStatus(accountId)), added: added.length }
+  return { ...(await auditStatus(accountId, set)), added: added.length }
 }
 
 /** Les mails tirés qu'aucune main n'a encore jugés, avec leur position connue — ce que la liste propose à valider. */
@@ -120,9 +139,7 @@ const CONFUSIONS_SHOWN = 3
  */
 export async function reliability(accountId: string): Promise<QuestionReliability[]> {
   const set = await questionSetForAccount(accountId)
-  const ids = set.enabled.map(q => q.id)
-  const versions = set.enabled.map(questionVersion)
-  const ENGINE_LIST = ENGINES.map(e => `'${e}'`).join(', ')
+  const { ids, versions } = currentVersions(set)
   const pairs = await query<{ question: string; humain: string; moteur: string | null; confiance: number | null; audited: boolean }>(
     `WITH cur AS (SELECT * FROM unnest($2::text[], $3::text[]) AS c(question, version)),
      rows AS (

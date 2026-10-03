@@ -653,6 +653,7 @@
       "auditComplete": "Compléter l’audit ({missing})",
       "auditValidate": "Valider ({pending})",
       "auditNothing": "Aucun mail étiqueté par un moteur : rien à auditer.",
+      "auditStale": "{count, plural, one {# mail étiqueté sous une ancienne version d’une question : il ne se mesure pas tant qu’il n’est pas retagué} other {# mails étiquetés sous une ancienne version d’une question : ils ne se mesurent pas tant qu’ils ne sont pas retagués}}",
       "reliabilityEmpty": "Aucune validation humaine pour l’instant. Tirez l’audit, puis validez les mails proposés.",
       "colQuestion": "Question",
       "colHuman": "Validations",
