@@ -32,7 +32,7 @@ import { valuesOf } from '@/lib/tagging/questions'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import { HUMAN_SOURCE, RULE_SOURCE } from '@/lib/tagging/engine'
-import { AUDIT_FILTER, TAGS_CHANGED_EVENT, TAGS_ENDPOINT, TAG_FILTER_PARAM, taggedRows } from '@/lib/tagging/view'
+import { AUDIT_FILTER, TAGS_CHANGED_EVENT, TAGS_ENDPOINT, taggedRows } from '@/lib/tagging/view'
 import { useFocusText } from '@/hooks/useFocusText'
 import type { StoredTag, TaggedMessage } from '@/lib/tagging/store'
 import type { DecisionEngine } from '@/lib/tagging/engines'
@@ -176,6 +176,8 @@ interface Props {
   search?: string
   searchScope?: SearchScope
   permissions?: MailPermissions
+  /** Filtre d'étiquette demandé par l'URL à l'ouverture (`AUDIT_FILTER`), lu UNE fois. */
+  initialTagFilter?: string
 }
 
 interface AppSettings {
@@ -185,7 +187,7 @@ interface AppSettings {
   active_account_id: string | null
 }
 
-export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, activeAccountId, search = '', searchScope = SCOPE_FOLDER, permissions }: Props) {
+export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, activeAccountId, search = '', searchScope = SCOPE_FOLDER, permissions, initialTagFilter = '' }: Props) {
   const perms = permissions ?? DEFAULT_PERMISSIONS
   const t = useTranslations('mail')
   const tTags = useTranslations('tags')
@@ -211,9 +213,9 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   // Filtre par étiquette : `question|valeur`, l'unique valeur que le sélecteur porte. Une seule
   // chaîne d'état plutôt que deux, parce qu'une question sans valeur ne filtre rien. Ou
   // `AUDIT_FILTER` : les mails de l'audit aléatoire à valider (lot T14) — l'écran « Fiabilité »
-  // y mène par l'URL, lue UNE fois au montage.
-  const [tagFilter, setTagFilter] = useState(() =>
-    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get(TAG_FILTER_PARAM) === AUDIT_FILTER ? AUDIT_FILTER : '')
+  // y mène par l'URL, que la page lit et passe ici (`initialTagFilter`) : la lire soi-même dans
+  // `window` au premier rendu donnait un HTML serveur (sans filtre) différent du client.
+  const [tagFilter, setTagFilter] = useState(initialTagFilter)
   // L'ORIGINE du filtre (décision 23) : `''` = toute origine, `humain` = ce qu'une main a
   // confirmé, sinon l'id d'un moteur. Il n'a de sens qu'avec une étiquette choisie.
   const [tagOrigin, setTagOrigin] = useState('')
