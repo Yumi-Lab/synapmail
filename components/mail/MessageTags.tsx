@@ -84,20 +84,27 @@ export function TagPills({ tags, compact }: { tags: readonly StoredTag[]; compac
 
   // Deux pastilles au plus : au-delà, la ligne ne dit plus rien de l'objet du mail. Le reste
   // se compte, et l'infobulle de ce compteur porte l'ENSEMBLE des étiquettes visibles du message.
+  // Dans une colonne étroite, une pastille se TRONQUE (`min-w-0` + `truncate` sur son texte) et
+  // l'ensemble cède avant ses voisins (`shrink-[3]`) ; le compteur, lui, ne cède jamais
+  // (`shrink-0`) — avec `shrink-0` sur les pastilles, elles sortaient de la colonne et « +N »
+  // passait hors écran à 390 px (gate du 03/10). ponytail: le plancher `min-w-[3.5rem]` est la
+  // place de deux pastilles vides + « +NN » (mesuré 48 px à 320 px) ; un flex ne connaît pas le
+  // minimum réel de ses enfants tronqués, sans ce plancher il écrasait le groupe sous ce seuil
+  // et « +N » débordait. Un « +NNN » déborderait de quelques pixels : élargir le plancher alors.
   const shown = pills.slice(0, compact ? 1 : 2)
   const hidden = visible.length - shown.length
   const all = visible.map(describe).join('\n')
 
   return (
-    <span className="flex min-w-0 items-center gap-1" data-tag-pills={pills.length}>
+    <span className="flex min-w-[3.5rem] shrink-[3] items-center gap-1" data-tag-pills={pills.length}>
       {shown.map(tag => (
         <span
           key={tag.question}
           data-tag-pill={tag.question}
           title={describe(tag)}
-          className="flex h-4 max-w-[10rem] shrink-0 items-center truncate rounded border border-border bg-muted/60 px-1 text-[10px] leading-none text-muted-foreground"
+          className="flex h-4 min-w-0 max-w-[10rem] items-center rounded border border-border bg-muted/60 px-1 text-[10px] leading-none text-muted-foreground"
         >
-          {v(tag.valeur)}
+          <span className="truncate">{v(tag.valeur)}</span>
         </span>
       ))}
       {hidden > 0 && (

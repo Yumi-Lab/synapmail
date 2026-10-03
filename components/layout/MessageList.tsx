@@ -1244,8 +1244,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
 
           {/* line 2 — objet, et les pastilles d'étiquettes À SA DROITE. Elles ne prennent
               JAMAIS de ligne à elles : un mail reste un item de hauteur CONSTANTE, étiqueté ou
-              non. C'est l'objet qui cède (`truncate` sur lui, `shrink-0` sur elles), et la
-              pastille tient dans la boîte de ligne de l'objet (voir `TagPills`). */}
+              non. L'objet cède jusqu'à 5rem, puis ce sont ELLES qui se tronquent (voir
+              `TagPills`) ; la pastille tient dans la boîte de ligne de l'objet. */}
           <div className={cn('flex items-center gap-2', compact ? '' : 'mb-0.5')}>
             <span className={cn('min-w-[5rem] flex-1 truncate text-xs', !isRead ? 'font-semibold text-foreground' : 'text-foreground/60')}>
               {thread.subject}
@@ -1253,12 +1253,13 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             {/* Par priorité (lot T12) : pastille à partir du seuil « à traiter » (une pièce jointe
                 seule ne la mérite pas), la composante la plus forte, chaque composante dans
                 l'infobulle. Sur CETTE ligne et pas celle de l'expéditeur : à 390 px elle y
-                écrasait le nom (gate du 03/10). Ici c'est ELLE qui cède en premier (`min-w-0`,
-                pas `shrink-0` comme les étiquettes) : l'objet garde au moins 5rem, et la liste
-                où elle paraît est déjà triée par priorité — sa place dit ce que son texte perd. */}
+                écrasait le nom (gate du 03/10). Ordre de sacrifice dans une colonne étroite :
+                l'objet jusqu'à 5rem, puis les étiquettes (`TagPills`, `shrink-[3]`, jusqu'à leur
+                plancher), puis elle jusqu'à 4rem — mesuré à 320 px : elle reste lisible et « +N »
+                reste dans la colonne. */}
             {msg.priority && msg.priority.score >= FOCUS_THRESHOLD && (
               <span title={focusText.describe(msg.priority)} data-focus-score={msg.priority.score}
-                className="inline-flex h-4 min-w-0 max-w-[7rem] items-center rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 text-[10px] font-semibold leading-none text-violet-600 dark:text-violet-400">
+                className="inline-flex h-4 min-w-[4rem] max-w-[7rem] items-center rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 text-[10px] font-semibold leading-none text-violet-600 dark:text-violet-400">
                 <span className="truncate">{focusText.label(msg.priority)}</span>
               </span>
             )}
