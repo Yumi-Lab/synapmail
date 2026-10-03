@@ -586,6 +586,22 @@ export async function initDb(): Promise<void> {
     )
   `)
   await query(`CREATE INDEX IF NOT EXISTS message_tags_filter_idx ON message_tags(account_id, question, valeur)`)
+  // L'INSTANTANÉ d'état (décision 14, lot T13) : l'état EXACT envoyé au moteur (`buildState`,
+  // corps ≤ STATE_BODY_CHARS), adressé par son hachage. Une ligne de `message_tags` y renvoie par
+  // `state_hash` — sans clé étrangère : la chaîne vide dit « texte jugé inconnu » (lignes
+  // antérieures au lot, ou mail illisible au moment d'une correction), ce qui vaut mieux que de
+  // lui prêter l'état d'aujourd'hui. Le même état (même hachage) n'est écrit qu'une fois par mail.
+  await query(`
+    CREATE TABLE IF NOT EXISTS tag_states (
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      state_hash VARCHAR(12) NOT NULL,
+      state JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (account_id, message_id, state_hash)
+    )
+  `)
+  await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS state_hash VARCHAR(12) NOT NULL DEFAULT ''`)
   // La VERSION de la question à laquelle chaque ligne répond (`lib/tagging/store.ts`
   // `questionVersion`). Sur une base antérieure au lot T10, les lignes existantes gardent la
   // chaîne vide : elles ont bien été écrites, mais sous une définition qu'on ne peut plus

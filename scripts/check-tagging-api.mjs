@@ -271,9 +271,23 @@ try {
   check('E2 la ligne du moteur reste visible à côté de la correction',
     engineRowStill?.valeur === CHOICE.values[0],
     `ligne moteur : ${JSON.stringify(engineRowStill ?? null).slice(0, 160)}`)
+  // Décision 14 (lot T13) : une correction humaine reconstruit l'instantané par IMAP quand le
+  // mail n'en a pas — ici la boîte est injoignable (`.invalid`), donc l'étiquette entre SANS
+  // instantané (hachage vide) au lieu d'être refusée : valider ne dépend jamais de la boîte distante.
+  check('E1b boîte injoignable : la correction entre quand même, avec un hachage d\'état vide',
+    humanWrite.status === 200 && humanRow?.stateHash === '', `reçu ${humanWrite.status} — stateHash=${JSON.stringify(humanRow?.stateHash)}`)
   check('E3 l\'effective est l\'humaine',
     effective?.source === HUMAN_SOURCE && effective?.valeur === corrected,
     `effective : ${JSON.stringify(effective ?? null).slice(0, 200)}`)
+
+  // Décision 14 (lot T13) : l'export HTTP rend l'état et la version avec CHAQUE ligne —
+  // `state: null` et hachage vide quand l'instantané est inconnu (boîte injoignable ici).
+  const exported = await call(`/api/tags/export?account=${accountId}`, { key: readerKey })
+  const exportRows = exported.body?.data?.tags ?? []
+  check('E5 l\'export rend `questionVersion`, `stateHash` et `state` sur chaque ligne',
+    exported.status === 200 && exportRows.length > 0
+      && exportRows.every(r => typeof r.questionVersion === 'string' && typeof r.stateHash === 'string' && 'state' in r && r.state === null),
+    `reçu ${exported.status} — ${exportRows.length} ligne(s) ${JSON.stringify(exportRows[0] ?? null).slice(0, 160)}`)
 
   // ---- F. le filtre et la lecture par liste ----------------------------------------
   const oldValue = await call(`/api/tags?account=${accountId}&question=${CHOICE.id}&valeur=${CHOICE.values[0]}`, { key: readerKey })

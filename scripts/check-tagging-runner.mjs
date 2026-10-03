@@ -94,6 +94,7 @@ const pool = new pg.Pool({ connectionString: DB_URL })
 const clean = async accountId => {
   await pool.query(`DELETE FROM message_tags WHERE ${MINE}`, MINE_ARGS)
   await pool.query(`DELETE FROM tagged_messages WHERE ${MINE}`, MINE_ARGS)
+  await pool.query(`DELETE FROM tag_states WHERE ${MINE}`, MINE_ARGS)
   if (accountId) await pool.query('DELETE FROM mailbox_tagging WHERE account_id = $1', [accountId])
 }
 
@@ -341,6 +342,16 @@ try {
     Number((await pool.query(
       `SELECT COUNT(*) AS n FROM message_tags WHERE account_id = $1 AND message_id LIKE '%@synapmail.local>'`,
       [ACCOUNT])).rows[0].n) > 0)
+  // Décision 14 (lot T13) : chaque ligne écrite par le trieur renvoie à un instantané d'état qui
+  // EXISTE, et un mail n'en a qu'un (toutes les passes ont jugé le même texte).
+  const snap = (await pool.query(
+    `SELECT COUNT(*) FILTER (WHERE t.state_hash = '' OR s.state IS NULL)::int AS orphelines,
+            (SELECT COUNT(*)::int FROM (SELECT message_id FROM tag_states WHERE account_id = $1 GROUP BY message_id HAVING COUNT(*) > 1) d) AS multi,
+            COUNT(*)::int AS lignes
+       FROM message_tags t LEFT JOIN tag_states s ON s.account_id = t.account_id AND s.message_id = t.message_id AND s.state_hash = t.state_hash
+      WHERE t.account_id = $1`, [ACCOUNT])).rows[0]
+  check('A5b chaque ligne du trieur renvoie à un instantané d’état qui existe, UN seul par mail',
+    snap.lignes > 0 && snap.orphelines === 0 && snap.multi === 0, JSON.stringify(snap))
 
   // A6 : LE point du lot T10c. Un lot coupé au délai ne fait pas avancer son curseur, donc le
   // passage suivant RELIT ses mails. Ceux-là sont déjà comptés en « tagués » — les compter aussi

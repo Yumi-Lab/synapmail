@@ -1211,7 +1211,7 @@ The messages whose **effective** tag for `question` is `valeur`, with their last
 The effective tags of a **list** of messages — what the message list paints as chips, in one request per page and never one per row. **Response** `{ data: { effective: Record<string, StoredTag[]> } }`, keyed by Message-ID.
 
 ### `GET /api/tags/export?account=&after=&limit=` 🔑 Bearer (`tags:read`)
-Every stored tag of one mailbox, all sources, paginated by `id` (`after` = the last id read, `limit` default 500, capped 5000). **Response** `{ data: { tags: (StoredTag & { id: number; messageId: string })[]; nextAfter: number | null } }`.
+Every stored tag of one mailbox, all sources, paginated by `id` (`after` = the last id read, `limit` default 500, capped 5000). Each row carries the version of its question (`questionVersion`) and the exact state the engine judged (`state` — sender, subject, body capped to 1 500 chars — the snapshot its `stateHash` names; `null` when unknown), so a training set re-reads without the mailbox. **Response** `{ data: { tags: (StoredTag & { id: number; messageId: string; state: EngineState | null })[]; nextAfter: number | null } }`.
 
 ### `GET /api/tagging/status?account=` 🔑 Bearer (`tags:read`)
 Where a mailbox's sorting stands: counters, spend, estimate, and the chosen engine — **never its key**, only `hasKey`.

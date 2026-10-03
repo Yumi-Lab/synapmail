@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
-import { getAccessibleAccount } from '@/lib/accountAccess'
-import { authorForWriter, readTags, sourceForWriter, writeTags,
+import { getAccessibleAccount, type AccessibleAccount } from '@/lib/accountAccess'
+import { toImapConfig } from '@/lib/accounts'
+import { getMessage } from '@/lib/imap'
+import { buildState, type EngineState } from '@/lib/tagging/engine'
+import { authorForWriter, latestState, readTags, sourceForWriter, writeTags,
   ForbiddenSourceError, InvalidTagError,
   type TagToWrite, type TaggedMessagePosition } from '@/lib/tagging/store'
 
@@ -24,11 +27,27 @@ const messageIdFrom = (params: { id: string }): string => params.id
  * clé la cherche déjà (`account` / `accountId`, `lib/apiKeyAccounts.ts`) : une route qui la
  * nommerait autrement échapperait à cette barrière.
  */
-async function denyUnreachable(accountId: string | null, userId: string, required: 'organize' | null): Promise<NextResponse | null> {
+async function denyUnreachable(accountId: string | null, userId: string, required: 'organize' | null): Promise<NextResponse | AccessibleAccount> {
   if (!accountId) return NextResponse.json({ error: 'account required' }, { status: 400 })
   const account = await getAccessibleAccount(accountId, userId, required ? [required] : [])
   if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
-  return null
+  return account
+}
+
+/**
+ * L'instantané d'état que porte une étiquette écrite par cette route (décision 14) : le MÊME
+ * que celui du moteur quand le mail a déjà été jugé (`latestState`) ; sinon, reconstruit avec
+ * `buildState` sur le mail relu par IMAP (`folder` + `uid` du corps). Sans position, ou si le
+ * mail n'est plus là, l'étiquette entre sans instantané (`state_hash` vide = « texte inconnu »)
+ * plutôt que d'être refusée : la validation ne doit jamais dépendre de la boîte distante.
+ */
+async function stateFor(account: AccessibleAccount, messageId: string, folder: unknown, uid: unknown): Promise<EngineState | null> {
+  const known = await latestState(account.id, messageId)
+  if (known) return known
+  if (typeof folder !== 'string' || !folder || uid === undefined || uid === null) return null
+  const message = await getMessage(toImapConfig(account), folder, String(uid)).catch(() => null)
+  if (!message) return null
+  return buildState({ fromName: message.from.name, fromAddress: message.from.address, subject: message.subject, bodyPlain: message.bodyPlain, bodyHtml: message.bodyHtml })
 }
 
 async function getHandler(req: Request, { params }: { params: { id: string } }) {
@@ -37,7 +56,7 @@ async function getHandler(req: Request, { params }: { params: { id: string } }) 
 
   const accountId = new URL(req.url).searchParams.get('account')
   const denied = await denyUnreachable(accountId, gate.ctx.id, null)
-  if (denied) return denied
+  if (denied instanceof NextResponse) return denied
 
   try {
     const messageId = messageIdFrom(params)
@@ -66,8 +85,8 @@ async function putHandler(req: Request, { params }: { params: { id: string } }) 
     } & TaggedMessagePosition
 
     const accountId = body.accountId ?? null
-    const denied = await denyUnreachable(accountId, gate.ctx.id, 'organize')
-    if (denied) return denied
+    const account = await denyUnreachable(accountId, gate.ctx.id, 'organize')
+    if (account instanceof NextResponse) return account
     if (!Array.isArray(body.tags) || !body.tags.length) {
       return NextResponse.json({ error: 'tags required' }, { status: 400 })
     }
@@ -85,6 +104,7 @@ async function putHandler(req: Request, { params }: { params: { id: string } }) 
       modele: body.model ?? null,
       validePar: session ? gate.ctx.id : null,
       position: Object.values(position).some(v => v !== undefined && v !== null) ? position : null,
+      state: await stateFor(account, messageId, body.folder, body.uid),
     })
 
     const { tags, effective } = await readTags(accountId!, messageId)
