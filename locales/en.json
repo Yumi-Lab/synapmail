@@ -129,6 +129,7 @@
     "reason_tag": "Tag",
     "sortByDate": "By date",
     "sortByPriority": "By priority",
+    "sortPriorityHint": "Sorted by priority across the {count} loaded messages (of {total} in this folder), not the whole mailbox.",
     "focus": "To handle",
     "priority": "Priority {score}",
     "urgencyWord": "Urgency word",

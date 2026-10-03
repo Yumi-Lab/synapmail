@@ -129,6 +129,7 @@
     "reason_tag": "标签",
     "sortByDate": "按日期",
     "sortByPriority": "按优先级",
+    "sortPriorityHint": "按优先级排序的是已加载的 {count} 封邮件（此文件夹共 {total} 封），并非整个邮箱。",
     "focus": "待处理",
     "priority": "优先级 {score}",
     "urgencyWord": "紧急措辞",

@@ -129,6 +129,7 @@
     "reason_tag": "Étiquette",
     "sortByDate": "Par date",
     "sortByPriority": "Par priorité",
+    "sortPriorityHint": "Trié par priorité parmi les {count} messages chargés (sur {total} dans le dossier), pas toute la boîte.",
     "focus": "À traiter",
     "priority": "Priorité {score}",
     "urgencyWord": "Mot d'urgence",

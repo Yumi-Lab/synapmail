@@ -1202,14 +1202,6 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
                 )
               })()}
               {thread.messages.some(m => m.hasAttachments) && <Paperclip className="w-3 h-3 text-muted-foreground" />}
-              {/* Par priorité (lot T12) : pastille à partir du seuil « à traiter » (une pièce jointe
-                  seule ne la mérite pas), la composante la plus forte, chaque composante dans l'infobulle. */}
-              {msg.priority && msg.priority.score >= FOCUS_THRESHOLD && (
-                <span title={focusText.describe(msg.priority)} data-focus-score={msg.priority.score}
-                  className="inline-flex max-w-[7rem] items-center rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 text-[10px] font-semibold leading-4 text-violet-600 dark:text-violet-400">
-                  <span className="truncate">{focusText.label(msg.priority)}</span>
-                </span>
-              )}
               {isSentFolder && (() => {
                 const receipt = trackingMap[msg.subject]
                 if (!receipt) return null
@@ -1232,9 +1224,21 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
               non. C'est l'objet qui cède (`truncate` sur lui, `shrink-0` sur elles), et la
               pastille tient dans la boîte de ligne de l'objet (voir `TagPills`). */}
           <div className={cn('flex items-center gap-2', compact ? '' : 'mb-0.5')}>
-            <span className={cn('min-w-0 flex-1 truncate text-xs', !isRead ? 'font-semibold text-foreground' : 'text-foreground/60')}>
+            <span className={cn('min-w-[5rem] flex-1 truncate text-xs', !isRead ? 'font-semibold text-foreground' : 'text-foreground/60')}>
               {thread.subject}
             </span>
+            {/* Par priorité (lot T12) : pastille à partir du seuil « à traiter » (une pièce jointe
+                seule ne la mérite pas), la composante la plus forte, chaque composante dans
+                l'infobulle. Sur CETTE ligne et pas celle de l'expéditeur : à 390 px elle y
+                écrasait le nom (gate du 03/10). Ici c'est ELLE qui cède en premier (`min-w-0`,
+                pas `shrink-0` comme les étiquettes) : l'objet garde au moins 5rem, et la liste
+                où elle paraît est déjà triée par priorité — sa place dit ce que son texte perd. */}
+            {msg.priority && msg.priority.score >= FOCUS_THRESHOLD && (
+              <span title={focusText.describe(msg.priority)} data-focus-score={msg.priority.score}
+                className="inline-flex h-4 min-w-0 max-w-[7rem] items-center rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 text-[10px] font-semibold leading-none text-violet-600 dark:text-violet-400">
+                <span className="truncate">{focusText.label(msg.priority)}</span>
+              </span>
+            )}
             <TagPills tags={rowPills} compact={compact} />
           </div>
 
@@ -1510,6 +1514,14 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
           </p>
         )}
 
+        {/* « Par priorité » trie ce qui est CHARGÉ (la page), pas toute la boîte : le dire, sinon
+            un mail urgent plus ancien que la page semble manquer. « À traiter » n'en a pas besoin :
+            il lit une fenêtre unique à `total` exact. */}
+        {byPriority && filter !== FOCUS_FILTER && !isSearchMode && !isTagMode && messages.length > 0 && (
+          <p className="px-4 py-2 text-[11px] text-muted-foreground/70" data-sort-hint>
+            {t('sortPriorityHint', { count: messages.length, total })}
+          </p>
+        )}
         {groupedThreads.map((group, gi) => (
           <div key={group.label ?? `g${gi}`}>
             {group.label && (
