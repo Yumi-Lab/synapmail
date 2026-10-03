@@ -28,7 +28,7 @@ import { query } from '../db'
 import type { ImapAccountRow } from '../accounts'
 import type { SourceMail } from '../tagging/runner'
 import { messageIdOf } from '../tagging/store'
-import { OCR_STATUS_DONE, OCR_STATUS_FAILED, OCR_STATUS_PENDING } from './model'
+import { OCR_STATUSES, OCR_STATUS_DONE, OCR_STATUS_FAILED, OCR_STATUS_PENDING, type OcrStatus } from './model'
 import { ocrPdf, type OcrResult } from './ocr'
 import { autoFile } from './filing'
 
@@ -204,4 +204,35 @@ export async function gedMailboxes(): Promise<Array<ImapAccountRow & { account_i
       FROM ged_mailboxes g JOIN email_accounts a ON a.id = g.account_id
      WHERE g.actif
   `)
+}
+
+/** Ce que l'écran et l'API lisent d'une boîte GED : déclarée ou non, son curseur, ses documents par état. */
+export interface GedMailboxStatus {
+  accountId: string
+  actif: boolean
+  cursor: GedCursor | null
+  documents: Record<OcrStatus, number>
+}
+
+export async function gedMailboxStatus(accountId: string): Promise<GedMailboxStatus> {
+  const [box] = await query<{ actif: boolean; cursor: GedCursor | null }>(`SELECT actif, cursor FROM ged_mailboxes WHERE account_id = $1`, [accountId])
+  const counts = await query<{ ocr_status: OcrStatus; n: string }>(`SELECT ocr_status, count(*) AS n FROM ged_documents WHERE account_id = $1 GROUP BY ocr_status`, [accountId])
+  const documents = Object.fromEntries(OCR_STATUSES.map(s => [s, 0])) as Record<OcrStatus, number>
+  for (const c of counts) documents[c.ocr_status] = Number(c.n)
+  return { accountId, actif: box?.actif ?? false, cursor: box?.cursor ?? null, documents }
+}
+
+/** Déclare (ou retire) une boîte GED. Retirer ne jette rien : les documents restent, la chaîne s'arrête. */
+export const setGedMailbox = (accountId: string, actif: boolean): Promise<unknown> =>
+  query(`INSERT INTO ged_mailboxes (account_id, actif) VALUES ($1, $2) ON CONFLICT (account_id) DO UPDATE SET actif = EXCLUDED.actif`, [accountId, actif])
+
+/**
+ * Le rattrapage des mails déjà présents : un ORDRE d'état, pas un passage synchrone (comme
+ * `POST /api/tagging/run`). Le curseur retombe à NULL — le prochain `processGed` relit tout le
+ * dossier (les PDF `fait` sont retrouvés par leur clé, jamais réocérisés) — et les OCR en `echec`
+ * repassent en `attente` : c'est la seule façon de rejouer un échec (banc G3, B2/B4).
+ */
+export async function requestCatchUp(accountId: string): Promise<void> {
+  await query(`UPDATE ged_documents SET ocr_status = $2, ocr_error = NULL WHERE account_id = $1 AND ocr_status = $3`, [accountId, OCR_STATUS_PENDING, OCR_STATUS_FAILED])
+  await query(`UPDATE ged_mailboxes SET cursor = NULL WHERE account_id = $1`, [accountId])
 }

@@ -657,6 +657,14 @@
       "pausedNoEngine": "该邮箱尚未选择引擎。",
       "live": "实时分类新邮件",
       "liveDesc": "只标记新邮件；历史邮件由完整分类处理。",
+      "ged": {
+        "toggle": "此邮箱为文档管理库",
+        "toggleDesc": "收到的每个 PDF 都在本地识别文字，归入虚拟文件夹并通过 API 开放。任何内容都不会离开实例。",
+        "catchup": "补读已有邮件",
+        "catchupDesc": "下次运行时（最多一分钟）重读整个文件夹并重试失败的识别。文档：{done} 已完成，{pending} 待处理，{failed} 失败。",
+        "catchupAction": "补读",
+        "catchupConfirm": "重读此邮箱的所有邮件？已识别的 PDF 不会重做。"
+      },
       "questions": {
         "title": "问题",
         "description": "{total} 个问题中有 {enabled} 个已启用。每封被分类的邮件会为每个启用的问题得到一个答案；修改指令或标准会生成新版本。",

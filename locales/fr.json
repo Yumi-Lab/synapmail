@@ -657,6 +657,14 @@
       "pausedNoEngine": "Aucun moteur n’est choisi pour cette boîte.",
       "live": "Trier au fil de l’eau",
       "liveDesc": "N’étiquette que les nouveaux messages ; l’historique est le travail du tri complet.",
+      "ged": {
+        "toggle": "Cette boîte est une GED",
+        "toggleDesc": "Chaque PDF reçu est océrisé sur place, rangé dans des dossiers virtuels et exposé par API. Rien ne sort de l’instance.",
+        "catchup": "Rattraper les mails existants",
+        "catchupDesc": "Relit tout le dossier au prochain passage (une minute au plus) et rejoue les OCR en échec. Documents : {done} faits, {pending} en attente, {failed} en échec.",
+        "catchupAction": "Rattraper",
+        "catchupConfirm": "Relire tous les mails de cette boîte ? Les PDF déjà océrisés ne sont pas refaits."
+      },
       "questions": {
         "title": "Questions",
         "description": "{enabled} questions actives sur {total}. Chaque mail trié reçoit une réponse par question active ; modifier une consigne ou ses critères crée une nouvelle version.",

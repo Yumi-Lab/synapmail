@@ -380,6 +380,24 @@ try {
   check('H5 `run` change l\'état sans trier lui-même (le travail reste au planificateur)',
     run.status === 200 && run.body?.data?.bulkState === 'running' && !leaks(run.text),
     `reçu ${run.status} — ${run.text.slice(0, 200)}`)
+
+  // ---- I. la boîte comme GED (lot G3) : interrupteur session seule, rattrapage par ordre d'état -------
+  const notGed = await call('/api/tagging/run', { method: 'POST', key: writerKey, body: { accountId, action: 'catchup' } })
+  check('I1 `catchup` sur une boîte qui n\'est pas une GED est refusé (409)',
+    notGed.status === 409 && run.body?.data?.ged?.actif === false, `reçu ${notGed.status} — ${notGed.text.slice(0, 160)}`)
+  const declare = await call('/api/tagging/settings', { method: 'PUT', cookie, body: { accountId, ged: true } })
+  check('I2 l\'interrupteur « cette boîte est une GED » prend, et l\'état le rend (session seule)',
+    declare.status === 200 && declare.body?.data?.ged?.actif === true && declare.body?.data?.ged?.cursor === null,
+    `reçu ${declare.status} — ${JSON.stringify(declare.body?.data?.ged ?? null)}`)
+  const badGed = await call('/api/tagging/settings', { method: 'PUT', cookie, body: { accountId, ged: 'oui' } })
+  check('I3 `ged` autre qu\'un booléen est refusé (400)', badGed.status === 400, `reçu ${badGed.status}`)
+  const catchup = await call('/api/tagging/run', { method: 'POST', key: writerKey, body: { accountId, action: 'catchup' } })
+  check('I4 `catchup` sur une GED répond l\'état, curseur à zéro — le planificateur fera le passage',
+    catchup.status === 200 && catchup.body?.data?.ged?.actif === true && catchup.body?.data?.ged?.cursor === null,
+    `reçu ${catchup.status} — ${JSON.stringify(catchup.body?.data?.ged ?? null)}`)
+  const withdraw = await call('/api/tagging/settings', { method: 'PUT', cookie, body: { accountId, ged: false } })
+  check('I5 retirer la boîte de la GED : `actif` retombe, la ligne reste',
+    withdraw.status === 200 && withdraw.body?.data?.ged?.actif === false, `reçu ${withdraw.status}`)
 } finally {
   // La base est rendue comme elle a été trouvée, même après un échec. Les étiquettes et la
   // ligne de tri partent avec la boîte (ON DELETE CASCADE).

@@ -15,6 +15,7 @@ import { chunkByBudget, groupsForAccount, planPasses, triggerRate, type Distribu
 import { estimateUsd, SAMPLE_SEED_DEFAULT, SAMPLE_SIZE_DEFAULT } from './runner'
 import { tagDistribution, taxonomyVersion } from './store'
 import { questionSetForAccount } from './userQuestions'
+import { gedMailboxStatus, setGedMailbox, type GedMailboxStatus } from '../ged/intake'
 import type { BulkState, EngineKind, PauseReason } from './engine'
 
 /** Ce qu'une boîte expose de son tri. Lu par l'écran, jamais écrit tel quel. */
@@ -54,6 +55,8 @@ export interface TaggingStatus {
   sampleDefaults: { size: number; seed: number }
   /** Ce que coûtent les passes (lot T-Q3) : par mail, tronc seul et avec les groupes, et le nombre de requêtes. */
   passes: PassEstimate
+  /** La boîte comme GED (lot G3) : déclarée ou non, curseur de réception, documents par état d'OCR. */
+  ged: GedMailboxStatus
 }
 
 /**
@@ -218,6 +221,7 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
       : estimateUsd({ mails: SAMPLE_SIZE_DEFAULT, questions, usdPerBillionInput: Number(r.engine_price), inputTokens, measuredMails }),
     sampleDefaults: { size: SAMPLE_SIZE_DEFAULT, seed: SAMPLE_SEED_DEFAULT },
     passes: passEstimate(plan, questions, distribution, { inputTokens, mails: measuredMails }, r.engine_price === null || r.engine_price === undefined ? null : Number(r.engine_price), remaining),
+    ged: await gedMailboxStatus(accountId),
   }
 }
 
@@ -226,6 +230,8 @@ export interface TaggingSettingsPatch {
   engineId?: string | null
   budgetUsd?: number
   live?: boolean
+  /** « Cette boîte est une GED » (décision 8) : déclarer ou retirer, sans rien jeter. */
+  ged?: boolean
 }
 
 /**
@@ -258,6 +264,7 @@ export async function writeTaggingSettings(accountId: string, userId: string, pa
     await query(`UPDATE mailbox_tagging SET live = $2, updated_at = NOW() WHERE account_id = $1`,
       [accountId, patch.live])
   }
+  if (patch.ged !== undefined) await setGedMailbox(accountId, patch.ged)
   return readTaggingStatus(accountId)
 }
 

@@ -657,6 +657,14 @@
       "pausedNoEngine": "No engine is chosen for this mailbox.",
       "live": "Sort as mail arrives",
       "liveDesc": "Tags new messages only; history is the job of the full sort.",
+      "ged": {
+        "toggle": "This mailbox is a document store",
+        "toggleDesc": "Every PDF received is OCR’d locally, filed into virtual folders and exposed through the API. Nothing leaves the instance.",
+        "catchup": "Catch up on existing mail",
+        "catchupDesc": "Re-reads the whole folder on the next pass (a minute at most) and retries failed OCRs. Documents: {done} done, {pending} pending, {failed} failed.",
+        "catchupAction": "Catch up",
+        "catchupConfirm": "Re-read every message in this mailbox? PDFs already OCR’d are not redone."
+      },
       "questions": {
         "title": "Questions",
         "description": "{enabled} of {total} questions enabled. Every sorted mail gets one answer per enabled question; editing the instructions or criteria creates a new version.",

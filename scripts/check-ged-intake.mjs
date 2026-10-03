@@ -46,7 +46,7 @@ const check = (label, ok, detail = '') => {
 
 const { initDb } = await import('../lib/db.ts')
 const intake = await import('../lib/ged/intake.ts')
-const { runIntake, GED_FOLDER, GED_BATCH_SIZE, isPdf } = intake
+const { runIntake, GED_FOLDER, GED_BATCH_SIZE, isPdf, gedMailboxStatus, setGedMailbox, requestCatchUp } = intake
 const { gedMailSource, documentMessageId } = await import('../lib/ged/source.ts')
 const { OCR_STATUS_DONE, OCR_STATUS_FAILED, OCR_STATUS_PENDING } = await import('../lib/ged/model.ts')
 const { buildState, GED_STATE_BODY_CHARS, STATE_BODY_CHARS, assumedInputTokensPerMail } = await import('../lib/tagging/engine.ts')
@@ -205,6 +205,27 @@ try {
   const withMails = [...moved, { ...MAILS[0], uid: 150, messageId: MID(5), attachments: [] }, { ...MAILS[0], uid: 160, messageId: MID(6), attachments: [] }]
   const afterFail = await gedMailSource(ACCOUNT, makeSource(withMails, '8')).fetch(GED_FOLDER, 104, 50)
   check('C9 un document en `echec` est SAUTÉ pour de bon : le suivant est rendu, avec son texte OCR', afterFail.length === 1 && messageIdOf(afterFail[0]) === MID(6) && afterFail[0].ocrText === 'Document après.', JSON.stringify(afterFail.map(m => m.messageId)))
+
+  // ---- D -------------------------------------------------------------------------------
+  console.log('D. l’interrupteur GED et le rattrapage (ordres d’état de l’écran / de l’API)')
+  // État hérité de B6 (curseur au dernier des 23 mails, uidValidity 9) et de C8/C9 (`apres.pdf` fait, `att.pdf` passé en échec).
+  const st1 = await gedMailboxStatus(ACCOUNT)
+  check('D1 l’état d’une boîte GED : déclarée, curseur posé, documents comptés par état d’OCR', st1.actif && st1.cursor?.lastUid === 222 && st1.documents.fait === 4 && st1.documents.echec === 2 && st1.documents.attente === 0, JSON.stringify(st1))
+  await requestCatchUp(ACCOUNT)
+  const st2 = await gedMailboxStatus(ACCOUNT)
+  check('D2 rattrapage : le curseur retombe à NULL et les OCR en échec repassent en attente (rien d’autre ne bouge)', st2.cursor === null && st2.documents.attente === 2 && st2.documents.echec === 0 && st2.documents.fait === 4, JSON.stringify(st2))
+  const before7 = ocrCalls.length
+  const r7 = await runIntake({ accountId: ACCOUNT, source: makeSource(moved, '8'), ocr: fakeOcr })
+  // Le PDF « casse » (uid 104) est dans la fausse boîte et échoue encore ; `att.pdf` (uid 150) n’y est pas : il reste en attente.
+  check('D3 le passage suivant relit tout, retrouve les 4 PDF (known=4) et ne rejoue QUE l’OCR remise en attente', r7.mails === 4 && r7.known === 4 && r7.documents === 0 && r7.ocrFailed === 1 && ocrCalls.length === before7 + 1, JSON.stringify(r7))
+  await setGedMailbox(ACCOUNT, false)
+  const r8 = await runIntake({ accountId: ACCOUNT, source: makeSource(moved, '8'), ocr: fakeOcr })
+  const st3 = await gedMailboxStatus(ACCOUNT)
+  check('D4 boîte retirée de la GED : la chaîne ne fait plus rien, les documents RESTENT', !st3.actif && r8.mails === 0 && st3.documents.fait === 4 && st3.documents.echec === 1 && st3.documents.attente === 1, JSON.stringify([st3, r8]))
+  await setGedMailbox(ACCOUNT, true)
+  check('D5 redéclarée : active à nouveau, même ligne (le curseur n’a pas été jeté)', (await gedMailboxStatus(ACCOUNT)).actif && JSON.stringify(await cursor()) === JSON.stringify({ lastUid: 104, uidValidity: '8' }), JSON.stringify(await cursor()))
+  const st0 = await gedMailboxStatus('00000000-0000-0000-0000-000000000000')
+  check('D6 une boîte jamais déclarée : état vide, aucune erreur', !st0.actif && st0.cursor === null && st0.documents.fait === 0, JSON.stringify(st0))
 } finally {
   await pool.query('DELETE FROM users WHERE id = $1', [USER]).catch(() => {})
   await pool.end()

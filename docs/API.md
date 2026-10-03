@@ -1237,13 +1237,15 @@ interface TaggingStatus {
     groups: { id: string; name: string; questions: number; requests: number; rate: number | null; measuredOn: number }[]
   }                                               // `withGroups`/`rate` are null until a sample has answered what the triggers read;
                                                   // `measuredOn` = how many already-tagged messages (current definition of the questions the trigger reads) the rate is read on — not the whole mailbox
+  ged: { accountId: string; actif: boolean; cursor: { lastUid: number; uidValidity: string } | null
+         documents: { attente: number; fait: number; echec: number } }   // the mailbox as a document store: declared or not, intake cursor, documents per OCR state
   distribution?: …                                // only with `?distribution=1`: value counts per question, each restricted to tags written under its CURRENT definition
   staleCounts?: Record<string, number>            // only with `?stale=1`: per question id, messages tagged under an OLDER version
 }
 ```
 
 ### `POST /api/tagging/run` 🔑 Bearer (`tags:write`)
-**Body** `{ accountId: string; action: 'start' | 'pause' | 'resume' | 'restart' }`. These are **state orders, not a synchronous sort**: the work itself stays with the scheduler, which holds the per-mailbox lock and a budget per pass. `start` resumes from the saved cursor (so re-running a finished sort costs nothing); `restart` clears it and the counters. `pause` records the reason `user`, which is what distinguishes it on screen from a budget cap or exhausted credit. Requires the `organize` share permission. **Response** `{ data: TaggingStatus }`.
+**Body** `{ accountId: string; action: 'start' | 'pause' | 'resume' | 'restart' | 'catchup' }`. These are **state orders, not a synchronous sort**: the work itself stays with the scheduler, which holds the per-mailbox lock and a budget per pass. `start` resumes from the saved cursor (so re-running a finished sort costs nothing); `restart` clears it and the counters. `pause` records the reason `user`, which is what distinguishes it on screen from a budget cap or exhausted credit. `catchup` is for a **document-store mailbox** (`ged.actif`): it drops the intake cursor so the scheduler re-reads the whole folder on its next pass — PDFs already OCR'd are found by their key, never OCR'd again — and puts failed OCRs back to `attente` so they are retried; `409` when the mailbox is not a document store. Requires the `organize` share permission. **Response** `{ data: TaggingStatus }`.
 
 ### `GET /api/tags/questions` 🔑 Bearer (`tags:read`)
 The caller's **sorting questions** — the taxonomy every engine call asks of each message. One set per user, not per mailbox; a user who never edited anything receives the default set of `lib/tagging/questions.ts`, inserted once on first read. **Response** `{ data: TagQuestion[] }`, in display order.
@@ -1336,7 +1338,7 @@ Removes the trigger: the group's questions go back to the trunk, no question is 
 Same `TaggingStatus` body as above. **Session only, owner only**: these settings point at an engine, therefore at a key, so a delegate does not read them and no API key reaches them.
 
 ### `PUT /api/tagging/settings` — session only
-**Body** `{ accountId: string; engineId?: string | null; budgetUsd?: number; live?: boolean }`. The engine must belong to the caller — `404` naming `engineId` otherwise. Enabling `live` sets no cursor here: the sorter places it on its first pass, so switching it on never back-fills history (and never opens an IMAP connection inside an HTTP request). **Response** `{ data: TaggingStatus }`.
+**Body** `{ accountId: string; engineId?: string | null; budgetUsd?: number; live?: boolean; ged?: boolean }`. `ged` declares (or withdraws) the mailbox as a document store — withdrawing discards nothing, the intake simply stops. The engine must belong to the caller — `404` naming `engineId` otherwise. Enabling `live` sets no cursor here: the sorter places it on its first pass, so switching it on never back-fills history (and never opens an IMAP connection inside an HTTP request). **Response** `{ data: TaggingStatus }`.
 
 ### `GET /api/decision-engines` — session only
 The caller's decision engines, oldest first. A **decision engine** is a tool you add (`jev`, `one`, `autre`), not a fixed choice: each mailbox then picks one in Settings → Automatic sorting. **Session only, owner only** — an engine carries a key, like a mailbox's credentials, so no API key reads or writes these routes. The key is **never** returned, in any form: only `hasKey`. **Response** `{ data: DecisionEngine[] }` where `DecisionEngine` is `{ id, name, kind, url, model, usdPerBillionInput, hasKey, createdAt }`.

@@ -3796,7 +3796,8 @@
                       "start",
                       "pause",
                       "resume",
-                      "restart"
+                      "restart",
+                      "catchup"
                     ]
                   }
                 }
@@ -5083,7 +5084,8 @@
           "total",
           "estimateUsd",
           "questions",
-          "passes"
+          "passes",
+          "ged"
         ],
         "properties": {
           "accountId": {
@@ -5194,6 +5196,62 @@
           },
           "passes": {
             "$ref": "#/components/schemas/PassEstimate"
+          },
+          "ged": {
+            "type": "object",
+            "required": [
+              "accountId",
+              "actif",
+              "cursor",
+              "documents"
+            ],
+            "description": "The mailbox as a document store: declared or not, intake cursor, documents per OCR state.",
+            "properties": {
+              "accountId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "actif": {
+                "type": "boolean"
+              },
+              "cursor": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "required": [
+                  "lastUid",
+                  "uidValidity"
+                ],
+                "properties": {
+                  "lastUid": {
+                    "type": "integer"
+                  },
+                  "uidValidity": {
+                    "type": "string"
+                  }
+                }
+              },
+              "documents": {
+                "type": "object",
+                "required": [
+                  "attente",
+                  "fait",
+                  "echec"
+                ],
+                "properties": {
+                  "attente": {
+                    "type": "integer"
+                  },
+                  "fait": {
+                    "type": "integer"
+                  },
+                  "echec": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
           }
         }
       },
