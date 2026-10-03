@@ -25,11 +25,16 @@ import type { ImapAccountRow } from '../accounts'
 import { query } from '../db'
 import { decrypt } from '../encrypt'
 import {
-  EngineError, askEngine, assumedInputTokensPerMail, buildState, costUsd,
+  EngineError, RULE_SOURCE, askEngine, assumedInputTokensPerMail, buildState, costUsd,
   type BulkState, type EngineResult, type EngineState, type MailForState, type PauseReason, type TagSource,
 } from './engine'
-import { alreadyTagged, messageIdOf, writeTags, type TagAuthor } from './store'
+import { alreadyTagged, messageIdOf, writeFields, writeTags, type TagAuthor } from './store'
+import { extractionFor, fieldsFromAnswers } from './fields'
+import { detect, detectorAuthor, tagOf } from './detectors'
+import { messageText } from '../html'
 import { questionSetForAccount } from './userQuestions'
+import { applyTagRules, remainingQuestions, rulesForAccount, type TagRule } from './tagRules'
+import { chunkByBudget, groupsForAccount, planPasses, triggeredQuestions, type PassPlan } from './questionGroups'
 import type { QuestionSet, TagQuestion } from './questions'
 
 /** Un mail tel que la source le rend : de quoi bâtir l'état ET le situer. */
@@ -39,6 +44,8 @@ export interface SourceMail extends MailForState {
   folder: string
   uid: number
   date?: Date | string | null
+  /** Les adresses To/Cc : ce qu'`email_tiers` EXCLUT (lot T11b). Absentes = aucune exclusion. */
+  recipients?: readonly string[]
 }
 
 /**
@@ -384,35 +391,104 @@ const remaining = (deadline: number): number => deadline - Date.now()
  * boîte (`credit`, `auth`) est remontée telle quelle — l'appelant pose la pause.
  */
 async function tagBatch(
-  params: { accountId: string; engine: TaggingEngine; mails: SourceMail[]; deadline: number; questions: QuestionSet }
+  params: { accountId: string; engine: TaggingEngine; mails: SourceMail[]; deadline: number; questions: QuestionSet; rules: readonly TagRule[]; plan: PassPlan }
 ): Promise<{ tagged: number; errors: number; calls: number; inputTokens: number; stop?: EngineError }> {
-  const { accountId, engine, mails, deadline, questions } = params
-  const posed = questions.posed()
+  const { accountId, engine, mails, deadline, questions, rules, plan } = params
   const queue = [...mails]
   let tagged = 0, errors = 0, calls = 0, inputTokens = 0
   let stop: EngineError | undefined
+
+  // UNE passe = les questions `ask`, coupées en requêtes qui tiennent sous le budget de jetons
+  // (décision 24.3) ; chaque réponse est écrite dès qu'elle arrive, et rendue pour que la passe
+  // suivante lise les étiquettes déjà obtenues. `null` = une requête a échoué (le mail compte
+  // en erreur) ; `stop` est posé par un refus qui arrête la boîte.
+  const runPassOn = async (mail: SourceMail, state: EngineState, ask: readonly TagQuestion[], position: Parameters<typeof writeTags>[0]['position']): Promise<EngineResult['tags'] | null> => {
+    const held: EngineResult['tags'] = []
+    for (const chunk of chunkByBudget(ask)) {
+      let result: EngineResult
+      calls += 1
+      try {
+        result = await engine.ask(state, chunk)
+      } catch (err) {
+        if (err instanceof EngineError && (err.kind === 'credit' || err.kind === 'auth')) stop = err
+        return null
+      }
+      inputTokens += result.inputTokens
+      if (!result.tags.length) return null
+      await writeTags({
+        accountId, messageId: messageIdOf(mail), source: engine.source, auteur: engine.auteur, modele: result.model,
+        tags: result.tags, questions, position, state,
+      })
+      held.push(...result.tags)
+    }
+    return held
+  }
 
   const worker = async (): Promise<void> => {
     for (;;) {
       if (stop || remaining(deadline) <= 0) return
       const mail = queue.shift()
       if (!mail) return
-      let result: EngineResult
-      calls += 1
-      try {
-        result = await engine.ask(buildState(mail), posed)
-      } catch (err) {
-        if (err instanceof EngineError && (err.kind === 'credit' || err.kind === 'auth')) { stop = err; return }
-        errors += 1
-        continue
+      // Les règles d'étiquetage passent AVANT le moteur (décision 24.1) : leurs étiquettes sont
+      // écrites en source `regle`, signées de la règle, et les questions qu'une règle « qui fait
+      // foi » a tranchées ne sont plus posées — un mail entièrement tranché ne coûte rien.
+      const decided = applyTagRules(rules, mail, questions)
+      const position = { folder: mail.folder, uid: mail.uid, fromName: mail.fromName, fromAddress: mail.fromAddress, subject: mail.subject, date: mail.date }
+      // UN état par mail (décision 14) : le même instantané pour toutes les passes et toutes les
+      // sources (règles, détecteurs, moteur) — c'est ce que l'export rend avec chaque ligne.
+      const state = buildState(mail)
+      for (const rule of Array.from(new Set(decided.tags.map(t => t.rule)))) {
+        await writeTags({
+          accountId, messageId: messageIdOf(mail), source: RULE_SOURCE, auteur: { id: rule.id, nom: rule.name },
+          tags: decided.tags.filter(t => t.rule === rule).map(({ question, valeur }) => ({ question, valeur })), questions, position, state,
+        })
       }
-      inputTokens += result.inputTokens
-      if (!result.tags.length) { errors += 1; continue }
-      await writeTags({
-        accountId, messageId: messageIdOf(mail), source: engine.source, auteur: engine.auteur, modele: result.model,
-        tags: result.tags, questions,
-        position: { folder: mail.folder, uid: mail.uid, fromName: mail.fromName, fromAddress: mail.fromAddress, subject: mail.subject, date: mail.date },
-      })
+      // Les DÉTECTEURS (lot T11b, étage A) : par programme, sur le corps ENTIER (pas l'état
+      // tronqué — un secret en fin de mail compte), source `regle`, un auteur par détecteur,
+      // jamais une valeur lue dans le mail. Coût nul, donc toujours, avant tout moteur.
+      const detected = detect({ subject: mail.subject, text: messageText({ bodyPlain: mail.bodyPlain, bodyHtml: mail.bodyHtml }), fromAddress: mail.fromAddress, recipients: mail.recipients })
+      for (const d of detected) {
+        await writeTags({ accountId, messageId: messageIdOf(mail), source: RULE_SOURCE, auteur: detectorAuthor(d.question), tags: [tagOf(d)], questions, position, state })
+      }
+      // Passe 1 : le tronc. Passe 2 : les groupes dont le déclencheur est vrai au vu des
+      // étiquettes déjà obtenues (règles + passe 1) — une requête de plus, pour ces mails
+      // seulement (décision 24.2).
+      const held: { question: string; valeur: string }[] = [...decided.tags, ...detected.map(tagOf)].map(({ question, valeur }) => ({ question, valeur }))
+      const trunk = remainingQuestions(plan.trunk, decided.settled)
+      if (trunk.length) {
+        const got = await runPassOn(mail, state, trunk, position)
+        if (!got) { if (stop) return; errors += 1; continue }
+        held.push(...got)
+      }
+      const second = remainingQuestions(triggeredQuestions(plan, mail, held), decided.settled)
+      if (second.length) {
+        const got = await runPassOn(mail, state, second, position)
+        if (!got) { if (stop) return; errors += 1; continue }
+        held.push(...got)
+      }
+      // Passe 3 : les VALEURS (décision 19) — une requête de plus SEULEMENT si les regex ont
+      // des candidats à faire désigner ; l'IBAN (4 derniers caractères) s'écrit sans moteur.
+      // Les réponses ne sont pas des étiquettes : elles vont dans `message_fields`, et une
+      // option hors liste est déjà rejetée par `parseAnswer`.
+      const extraction = extractionFor(`${state.objet}\n${state.corps}`, held, mail.date)
+      let fields = extraction.direct
+      let modele: string | null = null
+      if (extraction.questions.length) {
+        let result: EngineResult
+        calls += 1
+        try {
+          result = await engine.ask(state, extraction.questions)
+        } catch (err) {
+          if (err instanceof EngineError && (err.kind === 'credit' || err.kind === 'auth')) { stop = err; return }
+          errors += 1; continue
+        }
+        inputTokens += result.inputTokens
+        modele = result.model
+        fields = [...fields, ...fieldsFromAnswers(extraction, result.tags, held)]
+      }
+      if (fields.length) {
+        await writeFields({ accountId, messageId: messageIdOf(mail), source: engine.source, auteur: engine.auteur, modele, fields })
+      }
       tagged += 1
     }
   }
@@ -424,9 +500,11 @@ async function tagBatch(
 /** La dépense enregistrée après un lot. Un seul endroit l'écrit, pour qu'elle ne dérive pas. */
 async function chargeMailbox(accountId: string, inputTokens: number, usdPerBillionInput: number,
   counters: { tagged: number; skipped: number; errors: number }): Promise<number> {
+  // `input_mails` compte les mails DERRIÈRE `input_tokens` et suit la même vie : cumulé, jamais
+  // remis à zéro — contrairement à `tagged`, que chaque tri repart de zéro (lot T-Q2b).
   const rows = await query<{ spent_usd: number }>(
     `UPDATE mailbox_tagging
-        SET input_tokens = input_tokens + $2, spent_usd = spent_usd + $3,
+        SET input_tokens = input_tokens + $2, spent_usd = spent_usd + $3, input_mails = input_mails + $4,
             tagged = tagged + $4, skipped = skipped + $5, errors = errors + $6, updated_at = NOW()
       WHERE account_id = $1 RETURNING spent_usd`,
     [accountId, inputTokens, costUsd(usdPerBillionInput, inputTokens),
@@ -447,10 +525,14 @@ const saveLiveCursor = (accountId: string, cursor: LiveCursor): Promise<unknown>
  * L'estimation de ce que coûterait le tri d'une boîte : la moyenne MESURÉE de ses jetons
  * d'entrée si elle en a une, sinon la constante documentée. Rendu par l'écran de réglages
  * (lot T5) et par `GET /api/tagging/status`.
+ *
+ * `measuredMails` est `input_mails`, le compteur qui vit aussi longtemps que `input_tokens` —
+ * jamais `tagged`, remis à zéro à chaque tri : le quotient de deux compteurs de durées de vie
+ * différentes rendait 572,86 $ après un échantillon d'1 mail (lot T-Q2b).
  */
-export function estimateUsd(params: { mails: number; questions: number; usdPerBillionInput: number; inputTokens?: number; tagged?: number }): number {
-  const perMail = params.tagged && params.tagged > 0 && params.inputTokens
-    ? params.inputTokens / params.tagged
+export function estimateUsd(params: { mails: number; questions: number; usdPerBillionInput: number; inputTokens?: number; measuredMails?: number }): number {
+  const perMail = params.measuredMails && params.measuredMails > 0 && params.inputTokens
+    ? params.inputTokens / params.measuredMails
     : assumedInputTokensPerMail(params.questions)
   return costUsd(params.usdPerBillionInput, perMail * params.mails)
 }
@@ -485,6 +567,12 @@ export async function runPass(params: {
     // Le jeu de questions est relu UNE fois par passage : une question modifiée pendant un tri
     // s'applique au passage suivant (≤ 60 s), et tous les lots d'un passage posent le même jeu.
     const questions = await questionSetForAccount(accountId)
+    // Les règles d'étiquetage, relues au même rythme : une règle ajoutée pendant un tri
+    // s'applique au passage suivant.
+    const rules = await rulesForAccount(accountId)
+    // Les groupes conditionnels, au même rythme : le tronc et les groupes sont répartis une
+    // fois par passage.
+    const plan = planPasses(questions, await groupsForAccount(accountId))
 
     // Le plafond se vérifie AVANT tout appel : une boîte déjà au plafond ne paie pas un mail
     // de plus pour l'apprendre.
@@ -501,8 +589,8 @@ export async function runPass(params: {
       // Un échantillon est un tri en masse BORNÉ : même état, même verrou, même plafond, mêmes
       // pauses — seule la liste des mails diffère, donc un seul `if` les sépare.
       const res = row.sample_size === null
-        ? await advanceBulk({ row, source, engine, deadline, spent, budget: row.budget_usd, questions })
-        : await advanceSample({ row, source, engine, deadline, spent, budget: row.budget_usd, questions })
+        ? await advanceBulk({ row, source, engine, deadline, spent, budget: row.budget_usd, questions, rules, plan })
+        : await advanceSample({ row, source, engine, deadline, spent, budget: row.budget_usd, questions, rules, plan })
       acc.tagged += res.tagged; acc.skipped += res.skipped; acc.errors += res.errors; acc.calls += res.calls
       spent = res.spent
       acc.spentUsd = spent
@@ -512,7 +600,7 @@ export async function runPass(params: {
 
     if (row.live && remaining(deadline) > 0 && spent < row.budget_usd) {
       worked = true
-      const res = await advanceLive({ row, source, engine, deadline, spent, budget: row.budget_usd, questions })
+      const res = await advanceLive({ row, source, engine, deadline, spent, budget: row.budget_usd, questions, rules, plan })
       acc.tagged += res.tagged; acc.skipped += res.skipped; acc.errors += res.errors; acc.calls += res.calls
       spent = res.spent
       acc.spentUsd = spent
@@ -541,9 +629,9 @@ type Advance = {
  */
 async function processBatch(params: {
   accountId: string; engine: TaggingEngine; mails: SourceMail[]; deadline: number; spent: number; budget: number
-  sinceTagId: string | null; questions: QuestionSet
+  sinceTagId: string | null; questions: QuestionSet; rules: readonly TagRule[]; plan: PassPlan
 }): Promise<Advance & { lastUid: number; complete: boolean }> {
-  const { accountId, engine, mails, deadline, questions } = params
+  const { accountId, engine, mails, deadline, questions, rules, plan } = params
   const ids = mails.map(m => messageIdOf(m))
   const seen = await alreadyTagged(accountId, { source: engine.source, auteurId: engine.auteur.id, questions }, ids, params.sinceTagId)
   // Le même mail peut être classé dans deux dossiers, ou deux fois dans le même : il porte alors
@@ -567,7 +655,7 @@ async function processBatch(params: {
     return { tagged: 0, skipped, errors: 0, calls: 0, spent, lastUid, complete: true }
   }
 
-  const res = await tagBatch({ accountId, engine, mails: todo, deadline, questions })
+  const res = await tagBatch({ accountId, engine, mails: todo, deadline, questions, rules, plan })
   // Un lot INTERROMPU (délai épuisé, refus du moteur) laisse des mails non traités : l'appelant
   // ne doit alors PAS avancer son curseur, sinon ces mails ne seraient jamais redemandés. Les
   // reprendre au passage suivant ne coûte rien — ceux qui sont faits sont sautés par leur étiquette.
@@ -593,7 +681,7 @@ async function processBatch(params: {
  * tout ce qui a déjà été payé.
  */
 async function advanceBulk(params: {
-  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number; questions: QuestionSet
+  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number; questions: QuestionSet; rules: readonly TagRule[]; plan: PassPlan
 }): Promise<Advance> {
   const { row, source, engine, deadline } = params
   const accountId = row.account_id
@@ -637,7 +725,7 @@ async function advanceBulk(params: {
       continue
     }
 
-    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, sinceTagId: row.run_started_tag_id, questions: params.questions })
+    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, sinceTagId: row.run_started_tag_id, questions: params.questions, rules: params.rules, plan: params.plan })
     acc.tagged += res.tagged; acc.skipped += res.skipped; acc.errors += res.errors; acc.calls += res.calls
     acc.spent = res.spent
     if (res.complete) {
@@ -672,7 +760,7 @@ const saveSampleCursor = (accountId: string, cursor: SampleCursor): Promise<unkn
  * c'est une lecture d'en-têtes bornée aux mails tirés, pas un appel au moteur.
  */
 async function advanceSample(params: {
-  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number; questions: QuestionSet
+  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number; questions: QuestionSet; rules: readonly TagRule[]; plan: PassPlan
 }): Promise<Advance> {
   const { row, source, engine, deadline } = params
   const accountId = row.account_id
@@ -729,7 +817,7 @@ async function advanceSample(params: {
       continue
     }
 
-    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, sinceTagId: row.run_started_tag_id, questions: params.questions })
+    const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, sinceTagId: row.run_started_tag_id, questions: params.questions, rules: params.rules, plan: params.plan })
     acc.tagged += res.tagged; acc.skipped += res.skipped + missing; acc.errors += res.errors; acc.calls += res.calls
     acc.spent = res.spent
     if (missing) {
@@ -752,7 +840,7 @@ async function advanceSample(params: {
  * déclencherait un tri de tout l'historique, aux frais de l'utilisateur.
  */
 async function advanceLive(params: {
-  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number; questions: QuestionSet
+  row: TaggingRow; source: MailSource; engine: TaggingEngine; deadline: number; spent: number; budget: number; questions: QuestionSet; rules: readonly TagRule[]; plan: PassPlan
 }): Promise<Advance> {
   const { row, source, engine, deadline } = params
   const accountId = row.account_id
@@ -773,7 +861,7 @@ async function advanceLive(params: {
       if (remaining(deadline) <= 0 || acc.spent >= params.budget) return acc
       const mails = await source.fetch(f.path, after, BATCH_SIZE)
       if (!mails.length) break
-      const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, sinceTagId: row.run_started_tag_id, questions: params.questions })
+      const res = await processBatch({ accountId, engine, mails, deadline, spent: acc.spent, budget: params.budget, sinceTagId: row.run_started_tag_id, questions: params.questions, rules: params.rules, plan: params.plan })
       acc.tagged += res.tagged; acc.skipped += res.skipped; acc.errors += res.errors; acc.calls += res.calls
       acc.spent = res.spent
       if (res.complete) {

@@ -225,6 +225,15 @@ try {
   check('F2 le nombre de questions posées baisse de un, le jeu complet (`all`) la garde', afterOff.posed().length === before.posed().length - 1 && afterOff.all.length === before.all.length)
   check('F3 `taxonomyVersion` change avec l’activation : le trieur saura repartir', taxonomyVersion(before) !== taxonomyVersion(afterOff))
 
+  // Le badge « N ancienne version » compte : il se décline (ICU, comme `tags.filterCount`). Le zh n'a
+  // qu'une forme, `other` seul suffit.
+  const unplural = []
+  for (const locale of ['en', 'fr', 'zh']) {
+    const q = JSON.parse(readFileSync(`locales/${locale}.json`, 'utf8')).settings.tagging.questions
+    for (const key of ['stale', 'retagConfirm']) if (!/\{count, plural,/.test(NEGATIVE ? '{count} x' : q[key])) unplural.push(`${locale}:${key}`)
+  }
+  check('F4 les libellés qui comptent les mails sous ancienne version déclinent leur nombre (ICU)', unplural.length === 0, unplural.join(' '))
+
   // ---- H. une vraie jointure : anciennes versions, question désactivée ----------------
   console.log('H. anciennes versions et question désactivée, sur une vraie jointure')
   const acc = await pool.query(

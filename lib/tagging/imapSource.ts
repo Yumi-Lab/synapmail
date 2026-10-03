@@ -100,6 +100,7 @@ export function imapMailSource(account: ImapAccountRow): ImapMailSource {
         bodyPlain: parsed.text || undefined,
         bodyHtml: typeof parsed.html === 'string' ? parsed.html : undefined,
         date: messageDate(parsed.date, msg.envelope?.date, msg.internalDate),
+        recipients: [parsed.to, parsed.cc].flat().flatMap(a => a?.value ?? []).map(a => a.address ?? '').filter(Boolean),
       })
     }
     // IMAP rend les messages par UID croissant, mais le curseur en DÉPEND : on le garantit ici

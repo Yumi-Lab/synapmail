@@ -31,7 +31,11 @@
  *   I. l'ORIGINE est conservée (décision 23) : deux moteurs du même type → 2 lignes ; le même
  *      moteur sous une nouvelle version annoncée → 2 lignes ; la relance identique → 1 ligne ;
  *      deux humains → 2 lignes, l'effective = le plus récent ; un moteur supprimé garde son
- *      `auteur_nom` lisible ; le trieur ne saute que ce que CE moteur a déjà fait.
+ *      `auteur_nom` lisible ; le trieur ne saute que ce que CE moteur a déjà fait ;
+ *   J. l'INSTANTANÉ d'état (décision 14, lot T13) : l'état jugé est écrit UNE fois par mail et
+ *      référencé par chaque ligne ; une correction humaine porte le MÊME hachage que le moteur ;
+ *      l'export rend l'état et la version avec chaque ligne ; sans état, le hachage est vide et
+ *      l'export rend `null` — jamais l'état d'un autre mail.
  */
 import './alias-resolver.mjs'
 import { existsSync, readFileSync } from 'node:fs'
@@ -78,6 +82,7 @@ const pool = new pg.Pool({ connectionString: DB_URL })
 const clean = async () => {
   await pool.query('DELETE FROM message_tags WHERE message_id LIKE $1', [MID_LIKE])
   await pool.query('DELETE FROM tagged_messages WHERE message_id LIKE $1', [MID_LIKE])
+  await pool.query('DELETE FROM tag_states WHERE message_id LIKE $1', [MID_LIKE])
 }
 
 console.log('\nbanc du stockage des étiquettes\n')
@@ -346,6 +351,40 @@ try {
     check('I8 un redémarrage sur une base déjà migrée, moteur rattaché depuis : `initDb()` passe et ne prête rien à ce moteur',
       boot === null && inconnue.n === 1, boot ? `initDb : ${String(boot).split('\n')[0]}` : `${inconnue.n} ligne(s) restée(s) d'origine inconnue`)
   }
+
+  // ---- J. l'instantané d'état ----
+  console.log('\nJ. l’instantané d’état est écrit une fois, partagé par la correction, rendu par l’export')
+  const { buildState, STATE_BODY_CHARS } = await import('../lib/tagging/engine.ts')
+  const STATE = buildState({ fromName: 'Banc', fromAddress: 'banc@exemple.invalid', subject: 'Instantané', bodyPlain: 'x'.repeat(STATE_BODY_CHARS + 500) })
+  const HASH = store.stateHash(STATE)
+  await store.writeTags({ accountId: ACCOUNT, messageId: MID(10), source: 'jev', auteur: MOTEUR_A, modele: 'jev-1.13.0',
+    tags: [{ question: 'categorie', valeur: CATEGORIE }, { question: 'urgence', valeur: URGENCE }], state: STATE })
+  await store.writeTags({ accountId: ACCOUNT, messageId: MID(10), source: 'jev', auteur: MOTEUR_A, modele: 'jev-1.13.0',
+    tags: [{ question: 'categorie', valeur: CATEGORIE }], state: STATE })
+  const [states] = await query(`SELECT COUNT(*)::int AS n, MIN(state_hash) AS h, MIN(LENGTH(state->>'corps'))::int AS corps FROM tag_states WHERE account_id = $1 AND message_id = $2`, [ACCOUNT, MID(10)])
+  check('J1 deux écritures du même état → UN instantané, au hachage attendu, corps borné à STATE_BODY_CHARS',
+    states.n === 1 && states.h === HASH && states.corps === STATE_BODY_CHARS, JSON.stringify(states))
+  const engineRows = (await store.readTags(ACCOUNT, MID(10))).tags
+  check('J2 chaque ligne du moteur référence cet instantané', engineRows.length === 2 && engineRows.every(t => t.stateHash === HASH),
+    engineRows.map(t => t.stateHash).join(' '))
+  const rebuilt = await store.latestState(ACCOUNT, MID(10))
+  check('J3 `latestState` rend l’état EXACT (même hachage, même corps)', rebuilt !== null && store.stateHash(rebuilt) === HASH, JSON.stringify(rebuilt).slice(0, 120))
+  await store.writeTags({ accountId: ACCOUNT, messageId: MID(10), source: 'humain', auteur: HUMAIN(USER), validePar: USER,
+    tags: [{ question: 'categorie', valeur: TROISIEME }], state: rebuilt })
+  const humanRow = (await store.readTags(ACCOUNT, MID(10))).tags.find(t => t.source === 'humain')
+  const [statesAfter] = await query(`SELECT COUNT(*)::int AS n FROM tag_states WHERE account_id = $1 AND message_id = $2`, [ACCOUNT, MID(10)])
+  check('J4 la correction humaine porte le MÊME hachage, sans second instantané', humanRow?.stateHash === HASH && statesAfter.n === 1,
+    `humain=${humanRow?.stateHash} instantanés=${statesAfter.n}`)
+  await store.writeTags({ accountId: ACCOUNT, messageId: MID(11), source: 'humain', auteur: HUMAIN(USER), validePar: USER,
+    tags: [{ question: 'categorie', valeur: CATEGORIE }] })
+  const exported = (await store.exportTags({ accountId: ACCOUNT, limit: 5000 })).rows
+  const ex10 = exported.filter(r => r.messageId === MID(10))
+  const ex11 = exported.find(r => r.messageId === MID(11))
+  check('J5 l’export rend l’état et la version avec chaque ligne du mail jugé (moteur ET humain)',
+    ex10.length === 3 && ex10.every(r => r.state && store.stateHash(r.state) === HASH && r.questionVersion.length === 12 && r.stateHash === HASH),
+    ex10.map(r => `${r.source}:${r.stateHash}:${r.state ? 'état' : 'null'}`).join(' '))
+  check('J6 sans instantané, le hachage est vide et l’export rend `null` — pas l’état d’un autre mail',
+    ex11?.stateHash === '' && ex11?.state === null, JSON.stringify({ hash: ex11?.stateHash, state: ex11?.state }))
 } catch (e) {
   if (!NEGATIVE) throw e
   console.log(`  --   ${e.message}`)

@@ -4,6 +4,7 @@ import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
 import { ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
 import { BULK_STATES, ENGINES, HUMAN_SOURCE, PAUSE_REASONS, TAG_SOURCES } from '@/lib/tagging/engine'
 import { DELIVERY_STATUSES, ERROR_MAX, WEBHOOK_NAME_MAX } from '@/lib/webhooks'
+import { DEFAULT_QUESTIONS, RETIRED_DEFAULT_IDS, defaultQuestionColumns } from '@/lib/tagging/questions'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -137,6 +138,7 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sidebar_collapsed BOOLEAN NOT NULL DEFAULT false`)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS mail_density VARCHAR(20) NOT NULL DEFAULT 'comfortable'`)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS list_width INTEGER NOT NULL DEFAULT 320`)
+  await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS mail_sort_priority BOOLEAN NOT NULL DEFAULT false`)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS dashboard_account_id UUID REFERENCES email_accounts(id) ON DELETE SET NULL`)
   // Ordre des cartes du tableau de bord, rangees a la souris. NULL = ordre d'origine :
   // aucun tableau de bord existant ne bouge a la mise a jour. Les identites sont celles
@@ -598,6 +600,22 @@ export async function initDb(): Promise<void> {
     )
   `)
   await query(`CREATE INDEX IF NOT EXISTS message_tags_filter_idx ON message_tags(account_id, question, valeur)`)
+  // L'INSTANTANÉ d'état (décision 14, lot T13) : l'état EXACT envoyé au moteur (`buildState`,
+  // corps ≤ STATE_BODY_CHARS), adressé par son hachage. Une ligne de `message_tags` y renvoie par
+  // `state_hash` — sans clé étrangère : la chaîne vide dit « texte jugé inconnu » (lignes
+  // antérieures au lot, ou mail illisible au moment d'une correction), ce qui vaut mieux que de
+  // lui prêter l'état d'aujourd'hui. Le même état (même hachage) n'est écrit qu'une fois par mail.
+  await query(`
+    CREATE TABLE IF NOT EXISTS tag_states (
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      state_hash VARCHAR(12) NOT NULL,
+      state JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (account_id, message_id, state_hash)
+    )
+  `)
+  await query(`ALTER TABLE message_tags ADD COLUMN IF NOT EXISTS state_hash VARCHAR(12) NOT NULL DEFAULT ''`)
   // La VERSION de la question à laquelle chaque ligne répond (`lib/tagging/store.ts`
   // `questionVersion`). Sur une base antérieure au lot T10, les lignes existantes gardent la
   // chaîne vide : elles ont bien été écrites, mais sous une définition qu'on ne peut plus
@@ -657,6 +675,31 @@ export async function initDb(): Promise<void> {
     `)
   }
 
+  // Les VALEURS extraites d'un mail (lot T11, décision 19) : montant, échéance, n° de commande,
+  // n° de suivi — mêmes colonnes de traçabilité et même clé que `message_tags` (l'étiquette
+  // effective se calcule par le même fragment SQL). `question` est le nom du champ ; `valeur`
+  // est TEXT (un montant, une date ISO, un numéro) ; `candidats` garde ce que les regex avaient
+  // trouvé, pour que l'écran propose les mêmes choix qu'au moteur. Un IBAN n'y entre jamais en
+  // clair : seulement ses 4 derniers caractères (`lib/tagging/fields.ts`).
+  await query(`
+    CREATE TABLE IF NOT EXISTS message_fields (
+      id BIGSERIAL UNIQUE,
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      question VARCHAR(60) NOT NULL,
+      valeur TEXT NOT NULL,
+      candidats JSONB,
+      source VARCHAR(20) NOT NULL CHECK (source IN (${sqlList(TAG_SOURCES)})),
+      modele VARCHAR(100) NOT NULL DEFAULT '',
+      cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      valide_par UUID REFERENCES users(id) ON DELETE SET NULL,
+      question_version VARCHAR(12) NOT NULL DEFAULT '',
+      auteur_id TEXT NOT NULL DEFAULT '',
+      auteur_nom TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (account_id, message_id, question, source, auteur_id, modele, question_version)
+    )
+  `)
+
   // Les QUESTIONS de tri d'un utilisateur (lot T-Q, décision 22) : la source unique de sa
   // taxonomie. `lib/tagging/questions.ts` ne garde que les défauts, copiés ici à la première
   // lecture (`lib/tagging/userQuestions.ts`). `criteria` porte les options telles que le code les
@@ -676,6 +719,72 @@ export async function initDb(): Promise<void> {
       enabled BOOLEAN NOT NULL DEFAULT true,
       position INTEGER NOT NULL DEFAULT 0,
       version INTEGER NOT NULL DEFAULT 1,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, id)
+    )
+  `)
+  // Une question par défaut corrigée dans `questions.ts` rejoint les jeux que l'utilisateur n'a
+  // JAMAIS édités (`version = 1`) : sinon la correction ne vaudrait que pour un compte neuf.
+  // Une question éditée garde sa consigne — c'est la sienne.
+  await query(
+    `UPDATE tag_questions t SET instructions = d.instructions, criteria = d.criteria, updated_at = NOW()
+       FROM unnest($1::text[], $2::text[], $3::jsonb[]) AS d(id, instructions, criteria)
+      WHERE t.id = d.id AND t.version = 1
+        AND (t.instructions <> d.instructions OR t.criteria IS DISTINCT FROM d.criteria)`,
+    [DEFAULT_QUESTIONS.map(q => q.id), DEFAULT_QUESTIONS.map(q => q.instructions),
+      DEFAULT_QUESTIONS.map(q => (q.options ? JSON.stringify(q.options) : null))]
+  )
+  // Une question par défaut AJOUTÉE (lot T11b : cinq nouls de divulgation) rejoint les jeux
+  // déjà insérés — sinon seuls les comptes neufs la recevraient. ponytail: une question par
+  // défaut que l'utilisateur avait SUPPRIMÉE revient par le même chemin ; voie d'amélioration :
+  // mémoriser les suppressions. Une question par défaut RETIRÉE quitte les jeux jamais édités.
+  const d = defaultQuestionColumns()
+  await query(
+    `INSERT INTO tag_questions (user_id, id, type, instructions, criteria, list_badge, groupe, enabled, position, version)
+     SELECT u.user_id, q.id, q.type, q.instructions, q.criteria, q.list_badge, q.groupe, true, q.position, 1
+       FROM (SELECT DISTINCT user_id FROM tag_questions) u
+      CROSS JOIN unnest($1::text[], $2::text[], $3::text[], $4::jsonb[], $5::jsonb[], $6::text[], $7::int[])
+              AS q(id, type, instructions, criteria, list_badge, groupe, position)
+     ON CONFLICT (user_id, id) DO NOTHING`,
+    [d.ids, d.types, d.instructions, d.criteria, d.listBadges, d.groups, d.positions]
+  )
+  await query(`DELETE FROM tag_questions WHERE id = ANY($1::text[]) AND version = 1`, [RETIRED_DEFAULT_IDS])
+
+  // Les règles d'étiquetage SANS moteur (lot T-Q2, décision 24.1) : mêmes `conditions` que
+  // `email_rules`, évaluées par la même fonction ; `actions` = [{question, valeur}] ;
+  // `authoritative` = la question tranchée n'est pas posée au moteur. `account_id` NULL = toutes
+  // les boîtes de l'utilisateur.
+  await query(`
+    CREATE TABLE IF NOT EXISTS tag_rules (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      account_id UUID REFERENCES email_accounts(id) ON DELETE CASCADE,
+      name VARCHAR(255) NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      priority INTEGER NOT NULL DEFAULT 0,
+      condition_logic VARCHAR(10) NOT NULL DEFAULT 'all' CHECK (condition_logic IN ('all', 'any')),
+      conditions JSONB NOT NULL DEFAULT '[]',
+      actions JSONB NOT NULL DEFAULT '[]',
+      authoritative BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS tag_rules_user_idx ON tag_rules(user_id)`)
+
+  // Les groupes de questions CONDITIONNELS (lot T-Q3, décision 24.2) : `id` est le slug que
+  // porte `tag_questions.groupe` ; `conditions` = le déclencheur, même format que `tag_rules`
+  // plus le champ `tag` (une étiquette déjà obtenue). Vide = tronc, posé à chaque mail. Un slug
+  // sans ligne est du tronc aussi : les 49 questions d'origine n'ont donc aucune ligne ici.
+  await query(`
+    CREATE TABLE IF NOT EXISTS tag_question_groups (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      id VARCHAR(40) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      condition_logic VARCHAR(10) NOT NULL DEFAULT 'all' CHECK (condition_logic IN ('all', 'any')),
+      conditions JSONB NOT NULL DEFAULT '[]',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (user_id, id)
     )
@@ -708,6 +817,7 @@ export async function initDb(): Promise<void> {
       budget_usd REAL NOT NULL DEFAULT ${TAGGING_BUDGET_USD_DEFAULT},
       spent_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
       input_tokens BIGINT NOT NULL DEFAULT 0,
+      input_mails BIGINT NOT NULL DEFAULT 0,
       live BOOLEAN NOT NULL DEFAULT false,
       live_cursor JSONB,
       bulk_state VARCHAR(20) NOT NULL DEFAULT 'idle' CHECK (bulk_state IN (${sqlList(BULK_STATES)})),
@@ -735,6 +845,27 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_size INTEGER`)
   await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_seed BIGINT`)
   await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS sample_cursor JSONB`)
+
+  // Le nombre de mails DERRIÈRE `input_tokens` (lot T-Q2b). L'estimation divise les jetons cumulés
+  // par un nombre de mails : `tagged` ne convient pas, il est remis à zéro à chaque tri alors que
+  // `input_tokens` ne l'est jamais — après un échantillon d'1 mail, 13,6 M de jetons ÷ 1 donnait
+  // 572,86 $ pour 1 000 mails au lieu de 0,30 $ (gate T-Q2, 01/10/2026). Ce compteur suit la même
+  // vie que `input_tokens` : cumulé, jamais remis à zéro.
+  await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS input_mails BIGINT NOT NULL DEFAULT 0`)
+  // Une boîte triée AVANT cette colonne a des jetons sans mails derrière : laissée à 0, elle
+  // retombait bien sur la constante… jusqu'à son premier passage, où 13,6 M de jetons d'historique
+  // divisés par les 2 mails de ce passage donnaient 4,9 M de jetons par mail (gate T-Q3, 01/10/2026).
+  // Le dénominateur est donc rétro-rempli avec ce que l'historique sait : chaque tagage d'un mail
+  // par un moteur sous une taxonomie, ce que `tagged` aurait compté. Une seule fois (`input_mails = 0`).
+  // ponytail: un retagage sous la même version de question écrase sa ligne, l'historique sous-compte
+  // donc un peu (1,5× la mesure T8 sur la boîte de référence, dans la marge [0,5×, 2×] du gate) ;
+  // les passages suivants font converger la moyenne vers la mesure réelle.
+  await query(`
+    UPDATE mailbox_tagging m
+       SET input_mails = (SELECT COUNT(DISTINCT (t.message_id, t.auteur_id, t.taxonomy_version)) FROM message_tags t
+                           WHERE t.account_id = m.account_id AND t.source IN (${sqlList(ENGINES)}))
+     WHERE m.input_mails = 0 AND m.input_tokens > 0
+  `)
 
   // Le dernier `message_tags.id` qui existait quand le tri COURANT a été lancé (lot T10c). Il
   // sépare « déjà tagué avant ce tri » — un mail sauté pour de bon — de « tagué par ce tri

@@ -73,5 +73,27 @@ export function flagFromKeywords(flags: Iterable<string> | null | undefined): st
  * List filters. The value IS the i18n key (`mail.<value>`) and the value sent to the
  * API: a filter added here has nothing else to update.
  */
-export const MAIL_LIST_FILTERS = ['all', 'unread', 'flagged'] as const
+export const MAIL_LIST_FILTERS = ['all', 'unread', 'flagged', 'focus'] as const
 export type MailListFilter = (typeof MAIL_LIST_FILTERS)[number]
+
+/**
+ * Le tri par priorité (lot T12), côté CLIENT comme serveur. Le score lui-même est calculé
+ * dans `lib/focus.ts` (serveur : il lit la base) ; ce qui doit être partagé avec la liste
+ * vit ici, dans un module sans dépendance serveur — un composant client qui importerait
+ * `lib/focus.ts` embarquerait `pg` dans le navigateur.
+ */
+/** Le filtre de liste « à traiter » : les derniers non-lus dont la priorité atteint le seuil. */
+export const FOCUS_FILTER = 'focus' satisfies MailListFilter
+/** La valeur du paramètre `sort` de `/api/messages`, écrite une fois. */
+export const PRIORITY_SORT = 'priority'
+/**
+ * À partir de ce score un mail est « à traiter » — et porte une pastille dans la liste. Un signal
+ * faible seul (pièce jointe 1, « Re : » 2, contact fréquent 2) n'y suffit pas ; un signal fort
+ * (facture 3, échéance 4, drapeau 5, toute étiquette pesée ≥ 3) y suffit. Ici, et non dans
+ * `lib/focus.ts`, parce que la liste (client) le lit pour décider d'afficher la pastille.
+ */
+export const FOCUS_THRESHOLD = 3
+/** Colonne `user_settings` qui retient le tri choisi (`true` = par priorité), lue et écrite sous ce nom. */
+export const SORT_SETTING = 'mail_sort_priority'
+export const byPriorityThenDate = (a: { priority?: { score: number }; date: string }, b: { priority?: { score: number }; date: string }) =>
+  (b.priority?.score ?? 0) - (a.priority?.score ?? 0) || +new Date(b.date) - +new Date(a.date)

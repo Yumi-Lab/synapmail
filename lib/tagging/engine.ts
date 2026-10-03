@@ -29,11 +29,14 @@ import { NOUL_NO, NOUL_YES, engineBodyFor, valuesOf, type TagQuestion } from './
  * Les sources d'une étiquette : le TYPE du moteur qui l'a produite (décision 13, donc `autre`
  * comprise), ou la main qui l'a écrite.
  */
-export const TAG_SOURCES = ['jev', 'one', 'autre', 'humain', 'dossier'] as const
+export const TAG_SOURCES = ['jev', 'one', 'autre', 'humain', 'dossier', 'regle'] as const
 export type TagSource = (typeof TAG_SOURCES)[number]
 
 /** La main qui valide. Écrite par une session humaine, jamais par une clé (décision 7). */
 export const HUMAN_SOURCE: TagSource = 'humain'
+
+/** Une règle d'étiquetage (lot T-Q2) : signée de la règle, jamais d'un moteur ni d'une main. */
+export const RULE_SOURCE: TagSource = 'regle'
 
 /**
  * Les TYPES de moteur. `autre` (décision 13) couvre tout service qui parle le même protocole

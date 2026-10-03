@@ -1,7 +1,7 @@
 'use client'
 
 import { useTranslations } from 'next-intl'
-import { Star, Flag, MoreHorizontal, Paperclip, Download, X, FileText, Image as ImageIcon, MailX, CheckCircle2, AlertCircle, ShieldCheck, ShieldAlert, ShieldX, Filter, AlarmClock, CornerUpLeft, Users, ChevronRight } from 'lucide-react'
+import { Star, Flag, MoreHorizontal, Paperclip, Download, X, FileText, Image as ImageIcon, MailX, CheckCircle2, AlertCircle, ShieldCheck, ShieldAlert, ShieldX, Filter, AlarmClock, CornerUpLeft, Users, ChevronRight, Tag, CalendarClock } from 'lucide-react'
 import { AIToolbar } from '@/components/ai/AIToolbar'
 import useSWR from 'swr'
 import type { Message } from '@/types/email'
@@ -19,6 +19,8 @@ import { unreadRefresh, unreadShift } from '@/lib/unreadSignal'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { FlagPicker } from '@/components/mail/FlagPicker'
 import { TagsPanel } from '@/components/mail/MessageTags'
+import { useFocusText } from '@/hooks/useFocusText'
+import type { FocusItem, FocusReason } from '@/types/dashboard'
 import { ThinScroll } from './ThinScroll'
 
 const fetcher = async (url: string) => {
@@ -759,19 +761,6 @@ interface Props {
   permissions?: MailPermissions
 }
 
-type FocusReason = 'invoice' | 'deadline' | 'reply' | 'vip' | 'frequent' | 'starred' | 'attachment'
-interface FocusItem {
-  uid: string
-  accountId: string
-  accountName: string
-  accountColor: string
-  folder: string
-  subject: string
-  fromName: string | null
-  fromAddress: string | null
-  date: string
-  reason: FocusReason
-}
 
 const REASON_ICON: Record<FocusReason, React.ReactNode> = {
   invoice: <FileText className="w-3 h-3" />,
@@ -781,6 +770,9 @@ const REASON_ICON: Record<FocusReason, React.ReactNode> = {
   frequent: <Users className="w-3 h-3" />,
   starred: <Star className="w-3 h-3" />,
   attachment: <Paperclip className="w-3 h-3" />,
+  echeance: <CalendarClock className="w-3 h-3" />,
+  spam: <ShieldAlert className="w-3 h-3" />,
+  tag: <Tag className="w-3 h-3" />,
 }
 const REASON_CLASS: Record<FocusReason, string> = {
   invoice: 'text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10',
@@ -790,10 +782,14 @@ const REASON_CLASS: Record<FocusReason, string> = {
   frequent: 'text-blue-600 dark:text-blue-400 border-blue-500/30 bg-blue-500/10',
   starred: 'text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10',
   attachment: 'text-muted-foreground border-border bg-muted',
+  echeance: 'text-rose-600 dark:text-rose-400 border-rose-500/30 bg-rose-500/10',
+  spam: 'text-muted-foreground border-border bg-muted',
+  tag: 'text-violet-600 dark:text-violet-400 border-violet-500/30 bg-violet-500/10',
 }
 
 export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, onMessageLoaded, onAiReply, permissions }: Props) {
   const t = useTranslations('mail')
+  const focusText = useFocusText()
   const perms = permissions ?? DEFAULT_PERMISSIONS
   // `null` = pas encore touché dans cette session : la valeur du message fait foi.
   const [flagKey, setFlagKey] = useState<string | null | undefined>(undefined)
@@ -886,9 +882,13 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
                     onClick={() => openFocus(f)}
                     className="w-full flex items-start gap-3 px-3.5 py-3 text-left hover:bg-muted/50 transition-colors"
                   >
-                    <span className={cn('mt-0.5 shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-semibold', REASON_CLASS[f.reason])}>
+                    <span
+                      title={focusText.describe(f)}
+                      data-focus-score={f.score}
+                      className={cn('mt-0.5 shrink-0 inline-flex max-w-[11rem] items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-semibold', REASON_CLASS[f.reason])}
+                    >
                       {REASON_ICON[f.reason]}
-                      {t(`reason_${f.reason}`)}
+                      <span className="truncate">{focusText.label(f)}</span>
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-foreground">{f.subject || t('noSubject')}</span>
@@ -960,9 +960,9 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
           </h1>
           {urgencyWord && (
             <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 text-[11px] font-semibold border border-amber-500/30 mt-0.5"
-              title={`Mot d'urgence détecté : "${urgencyWord}"`}>
+              title={t('urgencyWordHint', { word: urgencyWord })}>
               <ShieldAlert className="w-3 h-3" />
-              Urgence
+              {t('urgencyWord')}
             </span>
           )}
         </div>

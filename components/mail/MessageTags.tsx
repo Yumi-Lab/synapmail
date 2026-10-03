@@ -16,12 +16,14 @@ import useSWR from 'swr'
 import { useFormatter, useTranslations } from 'next-intl'
 import { Tags } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { valuesOf } from '@/lib/tagging/questions'
-import { HUMAN_SOURCE } from '@/lib/tagging/engine'
+import { isRuleQuestionId, valuesOf } from '@/lib/tagging/questions'
+import { OCCURRENCES_KEY } from '@/lib/tagging/detectors'
+import { HUMAN_SOURCE, RULE_SOURCE } from '@/lib/tagging/engine'
 import { listPills, orderedTags, tagsByGroup } from '@/lib/tagging/view'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
-import type { StoredTag } from '@/lib/tagging/store'
+import type { StoredField, StoredTag } from '@/lib/tagging/store'
+import { CARRIERS, TYPE_ECHEANCE, TYPE_MONTANT, type FieldName } from '@/lib/tagging/fields'
 import type { Message } from '@/types/email'
 
 /**
@@ -32,11 +34,16 @@ import type { Message } from '@/types/email'
 function useOriginText() {
   const t = useTranslations('tags')
   const format = useFormatter()
-  return (tag: StoredTag): string => {
+  const { q } = useTagLabels()
+  return (tag: Pick<StoredTag, 'auteurNom' | 'modele' | 'source' | 'creeLe' | 'auteurId'>): string => {
     const name = tag.auteurNom || tag.modele || tag.source
+    // Une source `regle` est soit une règle d'étiquetage (nommée par l'utilisateur), soit un
+    // détecteur interne (lot T11b, `auteur_id` = l'id du détecteur) : les deux se disent en clair.
     const who = tag.source === HUMAN_SOURCE
       ? t('sourceHuman', { name })
-      : t('sourceEngine', { name, model: tag.modele ?? tag.source })
+      : tag.source === RULE_SOURCE
+        ? (isRuleQuestionId(tag.auteurId) ? t('sourceDetector', { name: q(tag.auteurId) }) : t('sourceRule', { name }))
+        : t('sourceEngine', { name, model: tag.modele ?? tag.source })
     return `${who} · ${format.dateTime(new Date(tag.creeLe), { dateStyle: 'short', timeStyle: 'short' })}`
   }
 }
@@ -44,11 +51,13 @@ function useOriginText() {
 /** Ce qu'une étiquette dit d'elle-même quand on s'arrête dessus : valeur, confiance, origine. */
 function useTagText() {
   const t = useTranslations('tags')
-  const { q, v } = useTagLabels()
+  const { pair } = useTagLabels()
   const origin = useOriginText()
   return (tag: StoredTag): string => {
-    const parts = [`${q(tag.question)} : ${v(tag.valeur)}`]
+    const parts = [pair(tag.question, tag.valeur)]
     if (tag.confiance !== null) parts.push(t('confidence', { percent: Math.round(tag.confiance * 100) }))
+    const occurrences = tag.probabilites?.[OCCURRENCES_KEY]
+    if (occurrences) parts.push(t('occurrences', { count: occurrences }))
     parts.push(origin(tag))
     return parts.join(' · ')
   }
@@ -75,20 +84,27 @@ export function TagPills({ tags, compact }: { tags: readonly StoredTag[]; compac
 
   // Deux pastilles au plus : au-delà, la ligne ne dit plus rien de l'objet du mail. Le reste
   // se compte, et l'infobulle de ce compteur porte l'ENSEMBLE des étiquettes visibles du message.
+  // Dans une colonne étroite, une pastille se TRONQUE (`min-w-0` + `truncate` sur son texte) et
+  // l'ensemble cède avant ses voisins (`shrink-[3]`) ; le compteur, lui, ne cède jamais
+  // (`shrink-0`) — avec `shrink-0` sur les pastilles, elles sortaient de la colonne et « +N »
+  // passait hors écran à 390 px (gate du 03/10). ponytail: le plancher `min-w-[3.5rem]` est la
+  // place de deux pastilles vides + « +NN » (mesuré 48 px à 320 px) ; un flex ne connaît pas le
+  // minimum réel de ses enfants tronqués, sans ce plancher il écrasait le groupe sous ce seuil
+  // et « +N » débordait. Un « +NNN » déborderait de quelques pixels : élargir le plancher alors.
   const shown = pills.slice(0, compact ? 1 : 2)
   const hidden = visible.length - shown.length
   const all = visible.map(describe).join('\n')
 
   return (
-    <span className="flex min-w-0 items-center gap-1" data-tag-pills={pills.length}>
+    <span className="flex min-w-[3.5rem] shrink-[3] items-center gap-1" data-tag-pills={pills.length}>
       {shown.map(tag => (
         <span
           key={tag.question}
           data-tag-pill={tag.question}
           title={describe(tag)}
-          className="flex h-4 max-w-[10rem] shrink-0 items-center truncate rounded border border-border bg-muted/60 px-1 text-[10px] leading-none text-muted-foreground"
+          className="flex h-4 min-w-0 max-w-[10rem] items-center rounded border border-border bg-muted/60 px-1 text-[10px] leading-none text-muted-foreground"
         >
-          {v(tag.valeur)}
+          <span className="truncate">{v(tag.valeur)}</span>
         </span>
       ))}
       {hidden > 0 && (
@@ -201,6 +217,64 @@ function TagRow({ tag, engine, history, correct, disabled }: {
   )
 }
 
+/** Les champs dont la valeur se choisit dans une liste FERMÉE ; les autres se lisent dans le mail. */
+const FIELD_CHOICES: Partial<Record<FieldName, readonly string[]>> = {
+  type_montant: TYPE_MONTANT, type_echeance: TYPE_ECHEANCE, transporteur_suivi: CARRIERS,
+}
+
+/**
+ * Une VALEUR extraite (décision 19) : libellé du champ, valeur, origine en infobulle, et de quoi
+ * la corriger en un clic — les candidats que les regex avaient trouvés (les mêmes que le
+ * moteur a vus), ou la liste fermée du champ, ou une valeur tapée (`prompt` natif : une
+ * saisie par an ne justifie pas une modale). Pas de bouton « Confirmer » : une valeur lue n'a
+ * rien à entraîner, la corriger suffit.
+ */
+function FieldRow({ field, correct, disabled }: { field: StoredField; correct: (champ: string, valeur: string) => Promise<boolean>; disabled: boolean }) {
+  const t = useTranslations('tags')
+  const origin = useOriginText()
+  const [busy, setBusy] = useState(false)
+  // La saisie que le serveur a REFUSÉE (422), montrée sous la ligne jusqu'à la prochaine tentative :
+  // un refus muet laissait croire que la correction avait pris (gate T11).
+  const [refused, setRefused] = useState<string | null>(null)
+  const champ = field.question as FieldName
+  const label = t.has(`f.${champ}`) ? t(`f.${champ}`) : champ
+  const fv = (v: string) => (t.has(`fv.${v}`) ? t(`fv.${v}`) : v)
+  const confirmed = field.source === HUMAN_SOURCE
+  const choices = FIELD_CHOICES[champ]
+  const options = choices ?? (field.candidats ?? []).map(c => c.valeur)
+
+  const run = async (valeur: string) => {
+    if (busy || valeur === '') return
+    const chosen = valeur === '*' ? window.prompt(t('fieldPrompt', { field: label }), field.valeur)?.trim() : valeur
+    if (!chosen) return
+    setBusy(true)
+    try { setRefused(await correct(champ, chosen) ? null : chosen) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="py-1 text-xs" data-field-row={champ}>
+    <div className="flex items-center gap-2">
+      <span className="min-w-0 flex-1 truncate text-muted-foreground" title={origin(field)}>{label}</span>
+      <span className={cn('shrink-0 truncate tabular-nums', confirmed ? 'font-semibold text-foreground' : 'text-foreground/80')}
+        title={origin(field)} data-field-value={field.valeur}>
+        {choices ? fv(field.valeur) : field.valeur}
+      </span>
+      {!disabled && (
+        <select value="" onChange={e => run(e.target.value)} disabled={busy} aria-label={t('change')} data-field-change={champ}
+          className="shrink-0 rounded border border-border bg-transparent px-1 py-0.5 text-[10px] text-muted-foreground disabled:opacity-50">
+          <option value="">{busy ? t('saving') : t('change')}</option>
+          {options.map(v => <option key={v} value={v}>{choices ? fv(v) : v}</option>)}
+          {!choices && <option value="*">{t('fieldOther')}</option>}
+        </select>
+      )}
+    </div>
+    {refused !== null && (
+      <p className="mt-0.5 text-[10px] text-destructive" role="alert" data-field-refused={champ}>{t('fieldRefused', { value: refused })}</p>
+    )}
+    </div>
+  )
+}
+
 /**
  * Le panneau du volet de lecture, replié. `<details>` natif : le pli est un état du navigateur,
  * donc rien à tenir en React, rien à ré-ouvrir à chaque message, et il reste ouvrable au
@@ -222,14 +296,19 @@ export function TagsPanel({ message, accountId, canOrganize }: {
   // `effective` = ce que le panneau affiche (décision 5) ; `tags` = toutes les sources, ce qui
   // fait tenir « le moteur a dit » en infobulle. Un mail sans `Message-ID` n'a pas de clé côté
   // client : rien n'est demandé (et la correction est refusée, voir plus bas).
+  const fetcher = async (url: string) => {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  }
   const { data, mutate } = useSWR<{ data: { tags: StoredTag[]; effective: StoredTag[] } }>(
     message.messageId ? `/api/messages/${encodeURIComponent(message.messageId)}/tags?account=${encodeURIComponent(accountId)}` : null,
-    async (url: string) => {
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      return res.json()
-    },
+    fetcher,
   )
+  // Les VALEURS extraites, lues à côté (décision 19) : même clé de message, même boîte.
+  const fieldsUrl = message.messageId ? `/api/messages/${encodeURIComponent(message.messageId)}/fields?account=${encodeURIComponent(accountId)}` : null
+  const { data: fieldsData, mutate: mutateFields } = useSWR<{ data: { effective: StoredField[] } }>(fieldsUrl, fetcher)
+  const fields = fieldsData?.data.effective ?? []
   // Le jeu ACTIF seulement : une question désactivée n'a ni ligne ni part au compteur.
   const tags = useMemo(() => orderedTags(set, data?.data.effective ?? []), [set, data])
   const groups = useMemo(() => tagsByGroup(set, tags), [set, tags])
@@ -265,16 +344,25 @@ export function TagsPanel({ message, accountId, canOrganize }: {
     })
     if (res.ok) mutate()
   }
+  const correctField = async (champ: string, valeur: string): Promise<boolean> => {
+    const res = await fetch(`/api/messages/${encodeURIComponent(message.messageId)}/fields`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId: message.accountId, fields: [{ champ, valeur }] }),
+    })
+    if (res.ok) mutateFields()
+    return res.ok
+  }
 
   return (
     <details className="group border-b border-border" data-tags-panel>
       <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50">
         <Tags className="h-3.5 w-3.5 shrink-0" />
         <span className="font-medium">{t('panelTitle')}</span>
-        <span className="tabular-nums text-muted-foreground/70">{tags.length || ''}</span>
+        <span className="tabular-nums text-muted-foreground/70">{(tags.length + fields.length) || ''}</span>
       </summary>
       <div className="px-4 pb-3">
-        {!tags.length ? (
+        {!tags.length && !fields.length ? (
           <p className="text-xs text-muted-foreground/70">{t('none')}</p>
         ) : (
           groups.map(({ group, tags: groupTags }) => (
@@ -292,6 +380,14 @@ export function TagsPanel({ message, accountId, canOrganize }: {
               ))}
             </div>
           ))
+        )}
+        {fields.length > 0 && (
+          <div className="mt-2" data-fields-panel={fields.length}>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60">{t('fieldsTitle')}</p>
+            {fields.map(field => (
+              <FieldRow key={field.question} field={field} correct={correctField} disabled={!canOrganize || !message.messageId} />
+            ))}
+          </div>
         )}
       </div>
     </details>

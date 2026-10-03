@@ -1,3 +1,5 @@
+import type { FocusScore } from './dashboard'
+
 export interface AuthResults {
   spf: 'pass' | 'fail' | 'none'
   dkim: 'pass' | 'fail' | 'none'
@@ -31,6 +33,8 @@ export interface Message {
   dispositionNotificationTo?: string
   size?: number       // message size in bytes (from IMAP)
   xPriority?: number  // X-Priority header value (1=highest, 5=lowest)
+  /** La priorité « à traiter » (lib/focus.ts), présente quand la liste est demandée `sort=priority`. */
+  priority?: FocusScore
 }
 
 export interface ReadReceipt {

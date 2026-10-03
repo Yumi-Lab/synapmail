@@ -18,6 +18,7 @@ interface UserSettings {
   active_account_id: string | null
   sidebar_collapsed: boolean
   mail_density: string
+  mail_sort_priority: boolean
   list_width: number
   dashboard_account_id: string | null
   dashboard_card_order: DashboardCardId[] | null
@@ -36,13 +37,14 @@ const DEFAULTS: UserSettings = {
   active_account_id: null,
   sidebar_collapsed: false,
   mail_density: 'comfortable',
+  mail_sort_priority: false,
   list_width: 320,
   dashboard_account_id: null,
   dashboard_card_order: null,
   update_dismissed_version: null,
 }
 
-const SETTINGS_COLUMNS = `theme, language, messages_per_page, thread_view, reading_pane, notifications, undo_send_delay, start_view, active_account_id, sidebar_collapsed, mail_density, list_width, dashboard_account_id, dashboard_card_order, update_dismissed_version`
+const SETTINGS_COLUMNS = `theme, language, messages_per_page, thread_view, reading_pane, notifications, undo_send_delay, start_view, active_account_id, sidebar_collapsed, mail_density, mail_sort_priority, list_width, dashboard_account_id, dashboard_card_order, update_dismissed_version`
 
 async function getHandler(req: Request) {
   const gate = await authorize(req)
@@ -71,7 +73,7 @@ async function patchHandler(req: Request) {
     const allowed: (keyof UserSettings)[] = [
       'theme', 'language', 'messages_per_page',
       'thread_view', 'reading_pane', 'notifications', 'undo_send_delay', 'start_view',
-      'active_account_id', 'sidebar_collapsed', 'mail_density', 'list_width', 'dashboard_account_id',
+      'active_account_id', 'sidebar_collapsed', 'mail_density', 'mail_sort_priority', 'list_width', 'dashboard_account_id',
       'dashboard_card_order',
       'update_dismissed_version',
     ]

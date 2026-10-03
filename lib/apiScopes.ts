@@ -149,6 +149,9 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'POST /api/ai/action': 'ai:use',
   'GET /api/messages/[id]/tags': 'tags:read',
   'PUT /api/messages/[id]/tags': 'tags:write',
+  // Les valeurs extraites (lot T11) : lues et corrigées comme des étiquettes.
+  'GET /api/messages/[id]/fields': 'tags:read',
+  'PUT /api/messages/[id]/fields': 'tags:write',
   'GET /api/tags': 'tags:read',
   'GET /api/tags/export': 'tags:read',
   'GET /api/tagging/status': 'tags:read',
@@ -170,6 +173,16 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'DELETE /api/tags/questions/[id]': 'tags:write',
   'POST /api/tags/questions/reset': 'tags:write',
   'POST /api/tags/questions/[id]/test': 'tags:write',
+  // Les règles d'étiquetage (lot T-Q2) : à l'utilisateur, comme les questions.
+  'GET /api/tags/rules': 'tags:read',
+  'POST /api/tags/rules': 'tags:write',
+  'PATCH /api/tags/rules/[id]': 'tags:write',
+  'DELETE /api/tags/rules/[id]': 'tags:write',
+  // Les groupes de questions conditionnels (lot T-Q3) : à l'utilisateur, comme les questions.
+  'GET /api/tags/groups': 'tags:read',
+  'POST /api/tags/groups': 'tags:write',
+  'PATCH /api/tags/groups/[id]': 'tags:write',
+  'DELETE /api/tags/groups/[id]': 'tags:write',
 }
 
 /**
@@ -214,6 +227,7 @@ export const ROUTE_ACCOUNT_PERMISSION: Record<string, AccountPermission> = {
   // Étiqueter, c'est RANGER : la même permission que marquer ou déplacer (décision 8).
   // La lecture n'en exige aucune — un partage actif EST l'accès en lecture.
   'PUT /api/messages/[id]/tags': 'organize',
+  'PUT /api/messages/[id]/fields': 'organize',
   'POST /api/tagging/run': 'organize',
   // Un webhook EST une règle vue de l'autre bout (décision 1) : le geste qu'un partage doit
   // autoriser pour l'écrire est donc le MÊME que pour une règle. Renvoyer un mail à un webhook

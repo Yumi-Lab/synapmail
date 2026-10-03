@@ -7,6 +7,7 @@ import { query } from '@/lib/db'
 import { getMessage } from '@/lib/imap'
 import { EngineError, askEngine, buildState } from '@/lib/tagging/engine'
 import { decrypt } from '@/lib/encrypt'
+import { isRuleQuestion } from '@/lib/tagging/questions'
 import { loadQuestionSet } from '@/lib/tagging/userQuestions'
 
 export const dynamic = 'force-dynamic'
@@ -29,7 +30,7 @@ async function postHandler(req: Request, { params }: { params: { id: string } })
 
     const set = await loadQuestionSet(gate.ctx.id)
     const question = set.questionById(params.id)
-    if (!question) return NextResponse.json({ error: `question inconnue: ${params.id}`, id: params.id }, { status: 404 })
+    if (!question || isRuleQuestion(question)) return NextResponse.json({ error: `question inconnue: ${params.id}`, id: params.id }, { status: 404 })
 
     const [engine] = await query<{ url: string; key_encrypted: string | null; model: string }>(
       `SELECT e.url, e.key_encrypted, e.model FROM mailbox_tagging m JOIN decision_engines e ON e.id = m.engine_id WHERE m.account_id = $1`,

@@ -12,18 +12,15 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { valuesOf } from '@/lib/tagging/questions'
-import { useQuestionSet } from '@/hooks/useQuestionSet'
-import { useTagLabels } from '@/hooks/useTagLabels'
 import { webhooksOfAccount } from '@/lib/webhookRoutes'
 import type { RulePrefill } from '@/lib/rulePrefill'
 import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
 import { RowMenu, ContextMenuItem, ContextMenuSeparator, MENU_ICON } from '@/components/ui/ContextMenu'
+import { ConditionRow, newCondition, useConditionText } from '@/components/settings/RuleConditions'
 import type {
-  EmailRule, RuleCondition, RuleAction, RuleField,
-  RuleOperator, RuleActionType, RuleTemplate,
+  EmailRule, RuleCondition, RuleAction,
+  RuleActionType, RuleTemplate,
 } from '@/types/rule'
-import { REGEX_PATTERN_MAX } from '@/types/rule'
 import type { Webhook } from '@/types/webhook'
 
 // ---------------------------------------------------------------------------
@@ -50,53 +47,6 @@ function formatRelative(dateStr: string | null | undefined): string {
 // Config maps
 // ---------------------------------------------------------------------------
 
-const FIELD_LABELS: Record<RuleField, string> = {
-  from:            'Expéditeur',
-  to:              'Destinataire',
-  cc:              'CC',
-  subject:         'Objet',
-  body:            'Corps du message',
-  has_attachments: 'Pièces jointes',
-  list_unsubscribe:'Liste de diffusion',
-  size:            'Taille (Ko)',
-  date_received:   'Date de réception',
-  priority:        'Priorité (X-Priority)',
-  header:          'En-tête personnalisé',
-  tag:             'Étiquette',
-}
-
-const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
-  from:            ['contains','not_contains','equals','not_equals','starts_with','ends_with','matches','not_matches'],
-  to:              ['contains','not_contains','equals','not_equals','matches','not_matches'],
-  cc:              ['contains','not_contains','equals','not_equals','matches','not_matches'],
-  subject:         ['contains','not_contains','equals','not_equals','starts_with','ends_with','matches','not_matches'],
-  body:            ['contains','not_contains','matches','not_matches'],
-  has_attachments: ['is_true','is_false'],
-  list_unsubscribe:['is_true','is_false'],
-  size:            ['greater_than','less_than'],
-  date_received:   ['before','after'],
-  priority:        ['equals','less_than','greater_than'],
-  header:          ['contains','not_contains','equals'],
-  tag:             ['equals','not_equals'],
-}
-
-const OPERATOR_LABELS: Record<RuleOperator, string> = {
-  contains:     'contient',
-  not_contains: 'ne contient pas',
-  equals:       'est exactement',
-  not_equals:   "n'est pas",
-  starts_with:  'commence par',
-  ends_with:    'se termine par',
-  is_true:      'est présent(e)',
-  is_false:     "n'est pas présent(e)",
-  greater_than: 'supérieur à',
-  less_than:    'inférieur à',
-  before:       'avant le',
-  after:        'après le',
-  matches:      'correspond au motif',
-  not_matches:  'ne correspond pas au motif',
-}
-
 const ACTION_LABELS: Record<RuleActionType, string> = {
   move:          'Déplacer vers',
   mark_read:     'Marquer comme lu',
@@ -111,7 +61,6 @@ const ACTION_LABELS: Record<RuleActionType, string> = {
 // `webhook` prend l'identifiant du webhook. Le sélecteur qui le CHOISIT vient avec l'écran des
 // webhooks (lot W5) ; en attendant, le champ générique le reçoit tel quel.
 const ACTIONS_NEEDING_VALUE: RuleActionType[] = ['move', 'forward', 'webhook']
-const BOOLEAN_FIELDS: RuleField[] = ['has_attachments', 'list_unsubscribe']
 
 // ---------------------------------------------------------------------------
 // Templates
@@ -192,144 +141,13 @@ const TEMPLATES: RuleTemplate[] = [
 // Plain-language summary
 // ---------------------------------------------------------------------------
 
-function conditionText(c: RuleCondition): string {
-  const f = FIELD_LABELS[c.field] ?? c.field
-  const o = OPERATOR_LABELS[c.operator] ?? c.operator
-  if (BOOLEAN_FIELDS.includes(c.field)) return `${f} ${o}`
-  if (c.field === 'date_received') return `${f} ${o} ${c.value}`
-  if (c.field === 'size') return `${f} ${o} ${c.value} Ko`
-  return `${f} ${o} "${c.value}"`
-}
-
-function ruleSummary(rule: EmailRule): string {
+function ruleSummary(rule: EmailRule, conditionText: (c: RuleCondition) => string): string {
   if (!rule.conditions.length) return '(aucune condition)'
   const lg   = rule.conditionLogic === 'all' ? 'ET' : 'OU'
   const cond = rule.conditions.slice(0, 2).map(conditionText).join(` ${lg} `)
   const more = rule.conditions.length > 2 ? ` +${rule.conditions.length - 2}` : ''
   const acts = rule.actions.map(a => ACTION_LABELS[a.type]).slice(0, 2).join(', ')
   return `Si ${cond}${more} → ${acts}`
-}
-
-// ---------------------------------------------------------------------------
-// Condition row
-// ---------------------------------------------------------------------------
-
-function ConditionRow({
-  cond, onChange, onRemove, canRemove,
-}: {
-  cond: RuleCondition
-  onChange: (c: RuleCondition) => void
-  onRemove: () => void
-  canRemove: boolean
-}) {
-  const { set } = useQuestionSet()
-  const { q: qLabel, v: vLabel } = useTagLabels()
-  const operators = FIELD_OPERATORS[cond.field] ?? []
-  const isBoolean = BOOLEAN_FIELDS.includes(cond.field)
-  const isDate    = cond.field === 'date_received'
-  const isPriority = cond.field === 'priority'
-  const isTag     = cond.field === 'tag'
-  const isRegex   = cond.operator === 'matches' || cond.operator === 'not_matches'
-  // Les questions et leurs valeurs viennent du jeu de l'utilisateur (lot T-Q), les libellés
-  // de `useTagLabels` : rien de la taxonomie n'est recopié ici.
-  const tagQuestion = set.questionById(cond.tagQuestion ?? '') ?? set.enabled[0]
-
-  const handleFieldChange = (field: RuleField) => {
-    const ops = FIELD_OPERATORS[field] ?? []
-    if (field === 'tag') {
-      const q = set.enabled[0]
-      onChange({ ...cond, field, operator: ops[0], tagQuestion: q?.id, value: q ? valuesOf(q)[0] : '' })
-      return
-    }
-    onChange({ ...cond, field, operator: ops[0], value: '', tagQuestion: undefined })
-  }
-
-  return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <select
-        value={cond.field}
-        onChange={e => handleFieldChange(e.target.value as RuleField)}
-        className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
-      >
-        {(Object.keys(FIELD_LABELS) as RuleField[]).map(f => (
-          <option key={f} value={f}>{FIELD_LABELS[f]}</option>
-        ))}
-      </select>
-
-      <select
-        value={cond.operator}
-        onChange={e => onChange({ ...cond, operator: e.target.value as RuleOperator })}
-        className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
-      >
-        {operators.map(op => (
-          <option key={op} value={op}>{OPERATOR_LABELS[op]}</option>
-        ))}
-      </select>
-
-      {isTag && tagQuestion && (
-        <select
-          value={tagQuestion.id}
-          onChange={e => {
-            const q = set.questionById(e.target.value) ?? tagQuestion
-            onChange({ ...cond, tagQuestion: q.id, value: valuesOf(q)[0] })
-          }}
-          className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
-        >
-          {set.enabled.map(q => (
-            <option key={q.id} value={q.id}>{qLabel(q.id)}</option>
-          ))}
-        </select>
-      )}
-
-      {!isBoolean && (
-        isTag ? (
-          <select
-            value={cond.value}
-            onChange={e => onChange({ ...cond, value: e.target.value })}
-            className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
-          >
-            {(tagQuestion ? valuesOf(tagQuestion) : []).map(v => (
-              <option key={v} value={v}>{vLabel(v)}</option>
-            ))}
-          </select>
-        ) : isDate ? (
-          <Input
-            type="date"
-            value={cond.value}
-            onChange={e => onChange({ ...cond, value: e.target.value })}
-            className="h-8 text-sm w-36"
-          />
-        ) : isPriority ? (
-          <select
-            value={cond.value}
-            onChange={e => onChange({ ...cond, value: e.target.value })}
-            className="h-8 rounded-lg border border-border bg-background text-sm px-2 text-foreground focus:ring-1 focus:ring-ring outline-none"
-          >
-            <option value="1">1 — Urgente</option>
-            <option value="2">2 — Haute</option>
-            <option value="3">3 — Normale</option>
-            <option value="4">4 — Basse</option>
-            <option value="5">5 — Très basse</option>
-          </select>
-        ) : (
-          <Input
-            value={cond.value}
-            onChange={e => onChange({ ...cond, value: e.target.value })}
-            maxLength={isRegex ? REGEX_PATTERN_MAX : undefined}
-            placeholder={isRegex ? 'Motif (ex : ^facture n°\\d+)' : cond.field === 'size' ? 'Ko (ex: 5120 = 5 Mo)' : 'Valeur…'}
-            className={cn('h-8 text-sm flex-1 min-w-[120px]', isRegex && 'font-mono')}
-          />
-        )
-      )}
-
-      {canRemove && (
-        <button type="button" onClick={onRemove}
-          className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0">
-          <X className="w-3.5 h-3.5" />
-        </button>
-      )}
-    </div>
-  )
 }
 
 // ---------------------------------------------------------------------------
@@ -419,7 +237,7 @@ function RuleEditor({ rule, accounts, onSave, onCancel, saving, error }: EditorP
   const [accountId, setAccountId] = useState(rule.accountId ?? accounts[0]?.id ?? '')
   const [logic, setLogic]         = useState<'all'|'any'>(rule.conditionLogic ?? 'all')
   const [conditions, setConditions] = useState<RuleCondition[]>(
-    rule.conditions?.length ? rule.conditions : [{ id: uid(), field: 'from', operator: 'contains', value: '' }]
+    rule.conditions?.length ? rule.conditions : [newCondition()]
   )
   const [actions, setActions]     = useState<RuleAction[]>(
     rule.actions?.length ? rule.actions : [{ id: uid(), type: 'mark_read' }]
@@ -509,7 +327,7 @@ function RuleEditor({ rule, accounts, onSave, onCancel, saving, error }: EditorP
                 canRemove={conditions.length > 1} />
             ))}
           </div>
-          <button type="button" onClick={() => setConditions(cs => [...cs, { id: uid(), field: 'from', operator: 'contains', value: '' }])}
+          <button type="button" onClick={() => setConditions(cs => [...cs, newCondition()])}
             className="mt-2 flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors">
             <Plus className="w-3.5 h-3.5" /> Ajouter une condition
           </button>
@@ -636,6 +454,7 @@ function RuleCard({
   onDrop: () => void
 }) {
   const tRow = useTranslations('settings.rowActions')
+  const conditionText = useConditionText()
 
   return (
     <div
@@ -671,7 +490,7 @@ function RuleCard({
               </span>
             )}
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5 truncate">{ruleSummary(rule)}</p>
+          <p className="text-xs text-muted-foreground mt-0.5 truncate">{ruleSummary(rule, conditionText)}</p>
 
           {/* Stats */}
           <div className="flex items-center gap-3 mt-1.5 flex-wrap">
@@ -775,17 +594,17 @@ export default function RulesClient({ prefill }: Props) {
     if (prefillAccountId) setSelectedAccount(prefillAccountId)
     const initialConditions: RuleCondition[] = []
     if (prefill.fromAddress) {
-      initialConditions.push({ id: uid(), field: 'from', operator: 'contains', value: prefill.fromAddress })
+      initialConditions.push({ ...newCondition(), value: prefill.fromAddress })
     }
     if (prefill.subject) {
-      initialConditions.push({ id: uid(), field: 'subject', operator: 'contains', value: prefill.subject })
+      initialConditions.push({ ...newCondition(), field: 'subject', value: prefill.subject })
     }
     setCreating(true)
     setEditing({
       accountId: prefillAccountId,
       name: prefill.fromName ? `De : ${prefill.fromName}` : prefill.fromAddress ? `De : ${prefill.fromAddress}` : '',
       conditionLogic: 'all',
-      conditions: initialConditions.length ? initialConditions : [{ id: uid(), field: 'from', operator: 'contains', value: '' }],
+      conditions: initialConditions.length ? initialConditions : [newCondition()],
       actions: [prefill.webhookId
         ? { id: uid(), type: 'webhook', value: prefill.webhookId }
         : { id: uid(), type: 'mark_read' }],
@@ -899,7 +718,7 @@ export default function RulesClient({ prefill }: Props) {
       accountId: effectiveAccount,
       name: tpl.name,
       conditionLogic: tpl.conditionLogic,
-      conditions: tpl.conditions.map(c => ({ ...c, id: uid() })),
+      conditions: tpl.conditions.map(c => ({ ...c, id: newCondition().id })),
       actions: tpl.actions.map(a => ({ ...a, id: uid() })),
       enabled: true,
       stopProcessing: false,

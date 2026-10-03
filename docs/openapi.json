@@ -3525,7 +3525,262 @@
                                 "one",
                                 "autre",
                                 "humain",
-                                "dossier"
+                                "dossier",
+                                "regle"
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "A value this question does not allow. The body names the question and the value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/messages/{id}/fields": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "readMessageFields",
+        "summary": "Read the values extracted from a message",
+        "description": "Every row of `message_fields` and the effective one per field (amount, currency, amount type, due date, due-date type, order number, tracking number, carrier deduced from the tracking format, last 4 characters of an IBAN — never the full IBAN). Requires the `tags:read` scope; a key without it gets 403 naming it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MessageIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The extracted values of that message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "messageId",
+                        "fields",
+                        "effective"
+                      ],
+                      "properties": {
+                        "messageId": {
+                          "type": "string"
+                        },
+                        "fields": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/StoredField"
+                          },
+                          "description": "Every row, all sources."
+                        },
+                        "effective": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/StoredField"
+                          },
+                          "description": "One per field: the human row when it exists, else the most recent engine row."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "writeMessageFields",
+        "summary": "Write the extracted values of one source on a message",
+        "description": "Same contract as the tags route: a session writes `humain`, a key writes an engine kind. A value must be well-formed for its field (a decimal amount, an ISO date that exists, a 3-letter currency, a 4-character IBAN tail) — 422 names the field otherwise. Requires the `tags:write` scope and the `organize` share permission.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MessageIdPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "fields"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "jev",
+                      "one",
+                      "autre"
+                    ],
+                    "description": "For a key: which engine it speaks for. A session must omit it or pass `humain`."
+                  },
+                  "model": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "engineId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Key callers only: the decision engine that signs these rows (must belong to the caller — 403 naming it otherwise). Without it the key signs as itself. Sessions always sign as their user."
+                  },
+                  "fields": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "champ",
+                        "valeur"
+                      ],
+                      "properties": {
+                        "champ": {
+                          "type": "string",
+                          "enum": [
+                            "montant",
+                            "devise",
+                            "type_montant",
+                            "echeance",
+                            "type_echeance",
+                            "numero_commande",
+                            "numero_suivi",
+                            "transporteur_suivi",
+                            "iban"
+                          ]
+                        },
+                        "valeur": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was written, and the rows as they now stand.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "allOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "messageId",
+                            "fields",
+                            "effective"
+                          ],
+                          "properties": {
+                            "messageId": {
+                              "type": "string"
+                            },
+                            "fields": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/StoredField"
+                              },
+                              "description": "Every row, all sources."
+                            },
+                            "effective": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/StoredField"
+                              },
+                              "description": "One per field: the human row when it exists, else the most recent engine row."
+                            }
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "required": [
+                            "written",
+                            "source"
+                          ],
+                          "properties": {
+                            "written": {
+                              "type": "integer"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "jev",
+                                "one",
+                                "autre",
+                                "humain",
+                                "dossier",
+                                "regle"
                               ]
                             }
                           }
@@ -3768,7 +4023,8 @@
                                 "type": "object",
                                 "required": [
                                   "id",
-                                  "messageId"
+                                  "messageId",
+                                  "state"
                                 ],
                                 "properties": {
                                   "id": {
@@ -3776,6 +4032,17 @@
                                   },
                                   "messageId": {
                                     "type": "string"
+                                  },
+                                  "state": {
+                                    "oneOf": [
+                                      {
+                                        "$ref": "#/components/schemas/EngineState"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "description": "The snapshot named by `stateHash`; null when unknown."
                                   }
                                 }
                               }
@@ -3821,9 +4088,33 @@
         "summary": "Read where a mailbox's sorting stands",
         "description": "Counters, spend, estimate and the chosen engine — never its key, only `hasKey`. Requires the `tags:read` scope; a key without it gets 403 naming it.",
         "parameters": [
-          {"$ref": "#/components/parameters/AccountQueryRequired"},
-          {"name": "distribution", "in": "query", "required": false, "schema": {"type": "string", "enum": ["1"]}, "description": "Add `distribution` (value counts per question) — a GROUP BY over every tag of the mailbox, so opt-in only."},
-          {"name": "stale", "in": "query", "required": false, "schema": {"type": "string", "enum": ["1"]}, "description": "Add `staleCounts`: per question id, how many messages carry a tag written under an OLDER version of that question than the caller’s current one. Human (`humain`) tags never count. Opt-in for the same reason as `distribution`."}
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          },
+          {
+            "name": "distribution",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "Add `distribution` (value counts per question, restricted per question to tags written under its CURRENT definition — the complement of `staleCounts`) — a GROUP BY over every tag of the mailbox, so opt-in only."
+          },
+          {
+            "name": "stale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "Add `staleCounts`: per question id, how many messages carry a tag written under an OLDER version of that question than the caller’s current one. Human (`humain`) tags never count. Opt-in for the same reason as `distribution`."
+          }
         ],
         "responses": {
           "200": {
@@ -4881,6 +5172,421 @@
           }
         }
       }
+    },
+    "/api/tags/rules": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "listTagRules",
+        "summary": "The caller's tagging rules",
+        "description": "Rules that set tags without an engine call (source `regle`, signed by the rule). One list per user, in application order. Requires the `tags:read` scope.",
+        "responses": {
+          "200": {
+            "description": "The rules, by priority then creation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TagRule"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "createTagRule",
+        "summary": "Add a tagging rule",
+        "description": "Validated against the caller's question set: `400` names the offending `field` (`actions[n].valeur` for a value outside the question's list, `accountId` for a mailbox that is not the caller's). Requires the `tags:write` scope.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagRuleInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The stored rule.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TagRule"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tags/rules/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "updateTagRule",
+        "summary": "Change a tagging rule",
+        "description": "Every field optional; the body is merged into the stored rule and the whole rule is revalidated. `404` names an unknown rule (another user's rule is unknown). Requires the `tags:write` scope.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagRuleInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rule after the change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TagRule"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "deleteTagRule",
+        "summary": "Remove a tagging rule",
+        "description": "Tags the rule already set stay in the database: they are history. `404` names an unknown rule. Requires the `tags:write` scope.",
+        "responses": {
+          "200": {
+            "description": "The removed id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tags/groups": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "listTagQuestionGroups",
+        "summary": "The caller's question-group triggers",
+        "description": "One row per question group that has a trigger. Groups without a row are trunk (asked on every message). Requires the `tags:read` scope.",
+        "responses": {
+          "200": {
+            "description": "The triggers, by position then slug.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TagQuestionGroup"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "createTagQuestionGroup",
+        "summary": "Give a question group a trigger",
+        "description": "Validated against the caller's question set: `400` names the offending `field` (`conditions[n].tagQuestion` for an unknown question, `conditions[n].value` for a value outside its list, `conditions[n].operator` when a `tag` condition uses something other than `equals` / `not_equals`). `409` when the slug already has a trigger. Requires the `tags:write` scope.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagQuestionGroupInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The stored trigger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TagQuestionGroup"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/tags/groups/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,40}$"
+          }
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "updateTagQuestionGroup",
+        "summary": "Change a group's trigger",
+        "description": "Every field optional; the body is merged into the stored row and the whole trigger is revalidated. The slug itself cannot change. `404` names an unknown group (another user's group is unknown). Requires the `tags:write` scope.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagQuestionGroupInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The trigger after the change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TagQuestionGroup"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Tags"
+        ],
+        "operationId": "deleteTagQuestionGroup",
+        "summary": "Remove a group's trigger",
+        "description": "The group's questions go back to the trunk; no question is deleted. `404` names an unknown group. Requires the `tags:write` scope.",
+        "responses": {
+          "200": {
+            "description": "The removed trigger's slug.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5170,7 +5876,8 @@
           "validePar",
           "questionVersion",
           "auteurId",
-          "auteurNom"
+          "auteurNom",
+          "stateHash"
         ],
         "properties": {
           "question": {
@@ -5200,7 +5907,8 @@
               "one",
               "autre",
               "humain",
-              "dossier"
+              "dossier",
+              "regle"
             ],
             "description": "The engine kind that produced it, or the hand that wrote it."
           },
@@ -5230,6 +5938,100 @@
           "auteurNom": {
             "type": "string",
             "description": "The author's name as it was at write time — a snapshot, readable after the engine is renamed or deleted."
+          },
+          "stateHash": {
+            "type": "string",
+            "description": "Hash of the exact state (sender, subject, body ≤ 1 500 chars) this row was judged on — the snapshot `GET /api/tags/export` returns as `state`. Empty when unknown (rows older than the snapshot, or a human correction on an unreachable mailbox)."
+          }
+        }
+      },
+      "StoredField": {
+        "type": "object",
+        "required": [
+          "question",
+          "valeur",
+          "source",
+          "modele",
+          "creeLe",
+          "validePar",
+          "questionVersion",
+          "auteurId",
+          "auteurNom",
+          "candidats"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "The field name: montant, devise, type_montant, echeance, type_echeance, numero_commande, numero_suivi, transporteur_suivi or iban."
+          },
+          "valeur": {
+            "type": "string",
+            "description": "The value as the code normalised it: a decimal amount, a 3-letter currency, an ISO date, an upper-case number, or the last 4 characters of an IBAN (never the full IBAN)."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "jev",
+              "one",
+              "autre",
+              "humain",
+              "dossier",
+              "regle"
+            ],
+            "description": "The engine kind that produced it, or the hand that wrote it."
+          },
+          "modele": {
+            "type": "string",
+            "nullable": true,
+            "description": "The model the engine announced (e.g. `jev-1.13.0`); null when none."
+          },
+          "creeLe": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validePar": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "The user who validated, for `humain`."
+          },
+          "questionVersion": {
+            "type": "string",
+            "description": "Hash of the exact wording of the question this row answered. Two rows with different versions answered two different definitions."
+          },
+          "auteurId": {
+            "type": "string",
+            "description": "Who signed: the decision engine id, the user id, or the API key id. Empty on rows migrated with no nameable author."
+          },
+          "auteurNom": {
+            "type": "string",
+            "description": "The author's name as it was at write time — a snapshot, readable after the engine is renamed or deleted."
+          },
+          "candidats": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "object",
+              "required": [
+                "valeur",
+                "texte"
+              ],
+              "properties": {
+                "valeur": {
+                  "type": "string"
+                },
+                "texte": {
+                  "type": "string"
+                },
+                "devise": {
+                  "type": "string"
+                },
+                "transporteur": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "What the regexes found in the message — the same options the engine was asked to pick from."
           }
         }
       },
@@ -5293,7 +6095,8 @@
           "errors",
           "total",
           "estimateUsd",
-          "questions"
+          "questions",
+          "passes"
         ],
         "properties": {
           "accountId": {
@@ -5401,6 +6204,9 @@
           "questions": {
             "type": "integer",
             "description": "How many questions each message is asked."
+          },
+          "passes": {
+            "$ref": "#/components/schemas/PassEstimate"
           }
         }
       },
@@ -6277,6 +7083,14 @@
           },
           "value": {
             "type": "string"
+          },
+          "headerName": {
+            "type": "string",
+            "description": "For `field: 'header'` — the header to read."
+          },
+          "tagQuestion": {
+            "type": "string",
+            "description": "For `field: 'tag'` (question-group triggers only) — the question whose already-obtained answer is compared to `value` with `equals` / `not_equals`."
           }
         }
       },
@@ -6684,6 +7498,323 @@
           "position": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "TagRuleInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "conditions",
+          "actions"
+        ],
+        "description": "A tagging rule: when the message matches the conditions (the same format and evaluator as an email rule), set the listed tags without calling the engine. Every `valeur` must be one of its question's values (`400` names `actions[n].valeur`). `authoritative` removes the settled questions from the engine call for that message.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "accountId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "One of the caller's mailboxes, or `null` for all of them."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "priority": {
+            "type": "integer",
+            "default": 0,
+            "description": "Lower runs first; on a shared question the first matching rule wins."
+          },
+          "conditionLogic": {
+            "type": "string",
+            "enum": [
+              "all",
+              "any"
+            ],
+            "default": "all"
+          },
+          "conditions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/RuleCondition"
+            }
+          },
+          "actions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "question",
+                "valeur"
+              ],
+              "properties": {
+                "question": {
+                  "type": "string"
+                },
+                "valeur": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "authoritative": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "TagRule": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TagRuleInput"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "accountId",
+              "enabled",
+              "priority",
+              "conditionLogic",
+              "authoritative",
+              "createdAt",
+              "updatedAt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ]
+      },
+      "TagQuestionGroupInput": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "description": "A trigger on a question group. `id` is the slug carried by each question's `group`. Empty `conditions` (or no row at all) = trunk: asked on every message. Non-empty = conditional: asked in a second request only for messages whose trigger is true after pass 1 (tagging rules + trunk answers). Conditions use the email-rule format and evaluator, plus `field: 'tag'` (`tagQuestion` + `value`, `equals` / `not_equals`) which reads an answer already obtained for the message.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{2,40}$"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name; defaults to the slug."
+          },
+          "position": {
+            "type": "integer",
+            "default": 0
+          },
+          "conditionLogic": {
+            "type": "string",
+            "enum": [
+              "all",
+              "any"
+            ],
+            "default": "all"
+          },
+          "conditions": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RuleCondition"
+            }
+          }
+        }
+      },
+      "TagQuestionGroup": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TagQuestionGroupInput"
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "position",
+              "conditionLogic",
+              "conditions",
+              "createdAt",
+              "updatedAt"
+            ],
+            "properties": {
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ]
+      },
+      "PassEstimate": {
+        "type": "object",
+        "required": [
+          "requestsPerMail",
+          "tokensPerMail",
+          "usdPerMail",
+          "usdRemaining",
+          "groups"
+        ],
+        "description": "What the passes cost BEFORE starting. `trunk` = pass 1 alone; `withGroups` = pass 1 plus each conditional group weighted by its trigger rate read from the sample's tag distribution — `null` until a sample has answered every question the triggers read. Tokens per question are the mailbox's own measure (`inputTokens / input_mails / questions`) when it has one, else the documented constant.",
+        "properties": {
+          "requestsPerMail": {
+            "type": "object",
+            "required": [
+              "trunk",
+              "max"
+            ],
+            "properties": {
+              "trunk": {
+                "type": "integer",
+                "description": "Requests for the trunk (more than 1 when the trunk exceeds the token budget)."
+              },
+              "max": {
+                "type": "integer",
+                "description": "Trunk requests plus one per conditional group that fires (each split by the same budget)."
+              }
+            }
+          },
+          "tokensPerMail": {
+            "type": "object",
+            "required": [
+              "trunk",
+              "withGroups"
+            ],
+            "properties": {
+              "trunk": {
+                "type": "number"
+              },
+              "withGroups": {
+                "type": "number",
+                "nullable": true
+              }
+            }
+          },
+          "usdPerMail": {
+            "type": "object",
+            "nullable": true,
+            "required": [
+              "trunk",
+              "withGroups"
+            ],
+            "properties": {
+              "trunk": {
+                "type": "number"
+              },
+              "withGroups": {
+                "type": "number",
+                "nullable": true
+              }
+            }
+          },
+          "usdRemaining": {
+            "type": "object",
+            "nullable": true,
+            "required": [
+              "trunk",
+              "withGroups"
+            ],
+            "properties": {
+              "trunk": {
+                "type": "number"
+              },
+              "withGroups": {
+                "type": "number",
+                "nullable": true
+              }
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "questions",
+                "requests",
+                "rate",
+                "measuredOn"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "questions": {
+                  "type": "integer"
+                },
+                "requests": {
+                  "type": "integer"
+                },
+                "rate": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Estimated share of messages that trigger the group (independence assumed between conditions; a condition on a message field counts as 1)."
+                },
+                "measuredOn": {
+                  "type": "integer",
+                  "description": "How many already-tagged messages (under the current definition of the questions the trigger reads) the rate is read on — not the whole mailbox."
+                }
+              }
+            }
+          }
+        }
+      },
+      "EngineState": {
+        "type": "object",
+        "required": [
+          "expediteur",
+          "objet",
+          "corps"
+        ],
+        "description": "The exact state sent to the decision engine, as built by lib/tagging/engine.ts buildState(): the mail is data, never an instruction.",
+        "properties": {
+          "expediteur": {
+            "type": "object",
+            "required": [
+              "nom",
+              "adresse"
+            ],
+            "properties": {
+              "nom": {
+                "type": "string"
+              },
+              "adresse": {
+                "type": "string"
+              }
+            }
+          },
+          "objet": {
+            "type": "string"
+          },
+          "corps": {
+            "type": "string",
+            "description": "Plain text of the body, whitespace collapsed, capped to 1 500 characters."
           }
         }
       }

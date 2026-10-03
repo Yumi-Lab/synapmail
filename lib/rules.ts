@@ -15,7 +15,8 @@ import { valuesOf, type QuestionSet } from './tagging/questions'
 import { messageIdOf, readEffectiveFor } from './tagging/store'
 import { queueRuleDelivery, type WebhookMessage } from './webhooks'
 import type { EmailRule, RuleCondition, RuleAction } from '@/types/rule'
-import { REGEX_BODY_MAX, REGEX_PATTERN_MAX, REGEX_TEXT_MAX } from '@/types/rule'
+import { REGEX_PATTERN_MAX } from '@/types/rule'
+import { NO_TAGS, REGEX_OPERATORS, compileRulePattern, evaluateRule, type RuleTag } from './rulesEval'
 
 // ---------------------------------------------------------------------------
 // Conditions regex : les bornes, écrites UNE fois
@@ -25,20 +26,6 @@ import { REGEX_BODY_MAX, REGEX_PATTERN_MAX, REGEX_TEXT_MAX } from '@/types/rule'
 // NAVIGATEUR, borne sa saisie sur la même valeur que le serveur. Les importer depuis ce
 // fichier-ci y tirait `lib/imap.ts`, donc `tls`, et l'écran des règles ne se rendait plus.
 export { REGEX_PATTERN_MAX, REGEX_TEXT_MAX, REGEX_BODY_MAX } from '@/types/rule'
-
-const REGEX_OPERATORS = new Set(['matches', 'not_matches'])
-
-/**
- * Le motif, compilé. Insensible à la casse par le DRAPEAU `i`, jamais par un `toLowerCase()`
- * du motif : minuscule, `\W` deviendrait `\w` et la condition changerait de sens.
- */
-export function compileRulePattern(pattern: string): RegExp | null {
-  if (typeof pattern !== 'string' || !pattern.length || pattern.length > REGEX_PATTERN_MAX) return null
-  try { return new RegExp(pattern, 'i') } catch { return null }
-}
-
-/** Ce qu'une étiquette effective porte, vue d'ici : une question et sa valeur. */
-export interface RuleTag { question: string; valeur: string }
 
 /**
  * Ce qu'une condition doit valoir AVANT d'être enregistrée. Rend le motif de l'erreur en
@@ -236,119 +223,8 @@ export async function getRecentLogs(
   return rows.map(r => ({ executedAt: r.executed_at, folder: r.folder, processed: r.processed, matched: r.matched }))
 }
 
-// ---------------------------------------------------------------------------
-// Condition evaluation
-// ---------------------------------------------------------------------------
-
-function evalCondition(msg: Message, cond: RuleCondition, tags: readonly RuleTag[]): boolean {
-  // Étiquette : la valeur EFFECTIVE (humain > moteur), résolue en amont et passée telle
-  // quelle — `evalCondition` reste synchrone et pure, elle ne lit pas la base.
-  if (cond.field === 'tag') {
-    const held = tags.some(t => t.question === cond.tagQuestion && t.valeur === cond.value)
-    if (cond.operator === 'equals')     return held
-    if (cond.operator === 'not_equals') return !held
-    return false
-  }
-
-  // Boolean fields
-  if (cond.field === 'has_attachments') {
-    if (cond.operator === 'is_true')  return msg.hasAttachments === true
-    if (cond.operator === 'is_false') return msg.hasAttachments !== true
-    return false
-  }
-
-  if (cond.field === 'list_unsubscribe') {
-    if (cond.operator === 'is_true')  return !!msg.listUnsubscribe
-    if (cond.operator === 'is_false') return !msg.listUnsubscribe
-    return false
-  }
-
-  // Numeric: size (in KB for readability, stored in bytes in message)
-  if (cond.field === 'size') {
-    const sizeKb = (msg.size ?? 0) / 1024
-    const threshold = parseFloat(cond.value) || 0
-    if (cond.operator === 'greater_than') return sizeKb > threshold
-    if (cond.operator === 'less_than')    return sizeKb < threshold
-    return false
-  }
-
-  // Numeric: priority (X-Priority header, 1=highest … 5=lowest)
-  if (cond.field === 'priority') {
-    const prio = msg.xPriority ?? 3
-    const threshold = parseInt(cond.value, 10) || 3
-    if (cond.operator === 'equals')        return prio === threshold
-    if (cond.operator === 'greater_than')  return prio > threshold   // lower number = higher importance
-    if (cond.operator === 'less_than')     return prio < threshold
-    return false
-  }
-
-  // Date
-  if (cond.field === 'date_received') {
-    const msgDate = new Date(msg.date).getTime()
-    const condDate = new Date(cond.value).getTime()
-    if (isNaN(msgDate) || isNaN(condDate)) return false
-    if (cond.operator === 'before') return msgDate < condDate
-    if (cond.operator === 'after')  return msgDate > condDate
-    return false
-  }
-
-  // Motif : le texte BRUT (borné), confronté au motif BRUT. Une branche à part, avant le
-  // `toLowerCase()` ci-dessous, qui abîmerait le motif autant que le texte.
-  if (REGEX_OPERATORS.has(cond.operator)) {
-    const re = compileRulePattern(cond.value)
-    if (!re) return false
-    const max = cond.field === 'body' ? REGEX_BODY_MAX : REGEX_TEXT_MAX
-    const hit = re.test(rawFieldText(msg, cond.field).slice(0, max))
-    return cond.operator === 'matches' ? hit : !hit
-  }
-
-  // Text fields
-  let fieldVal = ''
-  switch (cond.field) {
-    case 'from':    fieldVal = `${msg.from.name ?? ''} ${msg.from.address ?? ''}`.toLowerCase(); break
-    case 'to':      fieldVal = (msg.to ?? []).map(a => `${a.name ?? ''} ${a.address ?? ''}`).join(' ').toLowerCase(); break
-    case 'cc':      fieldVal = (msg.cc ?? []).map(a => `${a.name ?? ''} ${a.address ?? ''}`).join(' ').toLowerCase(); break
-    case 'subject': fieldVal = (msg.subject ?? '').toLowerCase(); break
-    case 'body':    fieldVal = (msg.bodyPlain ?? msg.bodyHtml ?? msg.preview ?? '').toLowerCase(); break
-    case 'header':  return false  // would need raw headers
-    default:        return false
-  }
-
-  const condVal = (cond.value ?? '').toLowerCase()
-  switch (cond.operator) {
-    case 'contains':     return fieldVal.includes(condVal)
-    case 'not_contains': return !fieldVal.includes(condVal)
-    case 'equals':       return fieldVal === condVal
-    case 'not_equals':   return fieldVal !== condVal
-    case 'starts_with':  return fieldVal.startsWith(condVal)
-    case 'ends_with':    return fieldVal.endsWith(condVal)
-    default:             return false
-  }
-}
-
-/** Le texte d'un champ tel qu'il est, sans mise en minuscule : ce que lit un motif. */
-function rawFieldText(msg: Message, field: RuleCondition['field']): string {
-  switch (field) {
-    case 'from':    return `${msg.from?.name ?? ''} ${msg.from?.address ?? ''}`.trim()
-    case 'to':      return (msg.to ?? []).map(a => `${a.name ?? ''} ${a.address ?? ''}`.trim()).join(' ')
-    case 'cc':      return (msg.cc ?? []).map(a => `${a.name ?? ''} ${a.address ?? ''}`.trim()).join(' ')
-    case 'subject': return msg.subject ?? ''
-    case 'body':    return msg.bodyPlain ?? msg.bodyHtml ?? msg.preview ?? ''
-    default:        return ''
-  }
-}
-
-const NO_TAGS: readonly RuleTag[] = []
-
-export function evaluateRule(msg: Message, rule: EmailRule, tags: readonly RuleTag[] = NO_TAGS): boolean {
-  if (!rule.enabled || !rule.conditions.length) return false
-  if (rule.conditionLogic === 'all') return rule.conditions.every(c => evalCondition(msg, c, tags))
-  return rule.conditions.some(c => evalCondition(msg, c, tags))
-}
-
-export function testRule(messages: Message[], rule: EmailRule, tagsByUid?: Map<string, RuleTag[]>): Message[] {
-  return messages.filter(msg => evaluateRule(msg, rule, tagsByUid?.get(msg.uid) ?? NO_TAGS))
-}
+// L'évaluation des conditions vit dans `lib/rulesEval.ts` (pure) ; ré-exportée ici pour les appelants historiques.
+export { evalCondition, evaluateRule, testRule, compileRulePattern, type RuleTag } from './rulesEval'
 
 // ---------------------------------------------------------------------------
 // Action execution

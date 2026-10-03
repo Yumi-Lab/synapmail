@@ -10,8 +10,10 @@
  */
 
 import { query } from '../db'
+import { costUsd, assumedInputTokensPerMail } from './engine'
+import { chunkByBudget, groupsForAccount, planPasses, triggerRate, type Distribution, type PassPlan } from './questionGroups'
 import { estimateUsd, SAMPLE_SEED_DEFAULT, SAMPLE_SIZE_DEFAULT } from './runner'
-import { taxonomyVersion } from './store'
+import { tagDistribution, taxonomyVersion } from './store'
 import { questionSetForAccount } from './userQuestions'
 import type { BulkState, EngineKind, PauseReason } from './engine'
 
@@ -50,6 +52,64 @@ export interface TaggingStatus {
   sampleEstimateUsd: number | null
   /** La taille et la graine proposées par défaut à l'écran, nommées en UN endroit. */
   sampleDefaults: { size: number; seed: number }
+  /** Ce que coûtent les passes (lot T-Q3) : par mail, tronc seul et avec les groupes, et le nombre de requêtes. */
+  passes: PassEstimate
+}
+
+/**
+ * Le coût des passes AVANT de lancer (décision 24.4). `trunk` = la passe 1 seule ; `withGroups`
+ * = passe 1 + les groupes conditionnels pondérés par leur taux de déclenchement lu dans la
+ * répartition de l'échantillon (T10b) — `null` tant qu'aucune étiquette ne renseigne un
+ * déclencheur. Les jetons par question sont ceux de la boîte (`input_tokens / input_mails`
+ * ramenés à sa passe de tronc) quand elle en a, sinon la constante.
+ */
+export interface PassEstimate {
+  /** Les requêtes par mail : celles du tronc pour tous, celles des groupes quand ils se déclenchent. */
+  requestsPerMail: { trunk: number; max: number }
+  /** Jetons d'entrée par mail : tronc seul, et avec les groupes pondérés. */
+  tokensPerMail: { trunk: number; withGroups: number | null }
+  /** En dollars, au tarif du moteur ; `null` sans moteur. Par mail et pour ce qui RESTE de la boîte. */
+  usdPerMail: { trunk: number; withGroups: number | null } | null
+  usdRemaining: { trunk: number; withGroups: number | null } | null
+  /**
+   * Par groupe conditionnel : ses questions, ses requêtes, son taux de déclenchement estimé, et
+   * sur combien de mails ce taux est lu (`measuredOn`) — les mails déjà étiquetés sous la
+   * définition courante des questions que lit le déclencheur, pas la boîte entière.
+   */
+  groups: Array<{ id: string; name: string; questions: number; requests: number; rate: number | null; measuredOn: number }>
+}
+
+/**
+ * Les jetons d'une passe, ramenés à ce que la boîte a MESURÉ : la moyenne mesurée est par mail
+ * pour le jeu ACTIF, donc `mesuré / questions actives` par question — le même quotient que
+ * `estimateUsd`. Sans mesure, la constante par question.
+ */
+function passEstimate(plan: PassPlan, enabled: number, distribution: Distribution | null, measured: { inputTokens: number; mails: number }, price: number | null, remaining: number): PassEstimate {
+  const perQuestion = measured.mails > 0 && measured.inputTokens > 0 && enabled > 0
+    ? measured.inputTokens / measured.mails / enabled
+    : assumedInputTokensPerMail(1)
+  const trunkTokens = perQuestion * plan.trunk.length
+  const mailsAnswering = (question: string) => distribution?.find(d => d.question === question)?.values.reduce((n, v) => n + v.count, 0) ?? 0
+  const groups = plan.conditional.map(({ group, questions }) => {
+    const read = group.conditions.filter(c => c.field === 'tag').map(c => mailsAnswering(c.tagQuestion ?? ''))
+    return {
+      id: group.id, name: group.name, questions: questions.length, requests: chunkByBudget(questions).length,
+      rate: distribution ? triggerRate(group, distribution) : null,
+      measuredOn: read.length ? Math.min(...read) : 0,
+    }
+  })
+  const known = groups.every(g => g.rate !== null)
+  const withGroups = known
+    ? trunkTokens + plan.conditional.reduce((n, g, i) => n + perQuestion * g.questions.length * (groups[i].rate ?? 0), 0)
+    : null
+  const usd = (tokens: number | null) => (tokens === null || price === null ? null : costUsd(price, tokens))
+  return {
+    requestsPerMail: { trunk: chunkByBudget(plan.trunk).length, max: chunkByBudget(plan.trunk).length + groups.reduce((n, g) => n + g.requests, 0) },
+    tokensPerMail: { trunk: trunkTokens, withGroups },
+    usdPerMail: price === null ? null : { trunk: usd(trunkTokens)!, withGroups: usd(withGroups) },
+    usdRemaining: price === null ? null : { trunk: usd(trunkTokens * remaining)!, withGroups: usd(withGroups === null ? null : withGroups * remaining) },
+    groups,
+  }
 }
 
 interface StatusRow {
@@ -63,6 +123,7 @@ interface StatusRow {
   budget_usd: number
   spent_usd: number
   input_tokens: string
+  input_mails: string
   live: boolean
   bulk_state: BulkState
   paused_reason: PauseReason | null
@@ -93,7 +154,7 @@ export async function ensureMailboxTagging(accountId: string): Promise<void> {
 export async function readTaggingStatus(accountId: string): Promise<TaggingStatus> {
   await ensureMailboxTagging(accountId)
   const rows = await query<StatusRow>(
-    `SELECT m.account_id, m.engine_id, m.budget_usd, m.spent_usd, m.input_tokens, m.live,
+    `SELECT m.account_id, m.engine_id, m.budget_usd, m.spent_usd, m.input_tokens, m.input_mails, m.live,
             m.bulk_state, m.paused_reason, m.paused_detail, m.tagged, m.skipped, m.errors, m.total,
             m.sample_size, m.sample_seed,
             jsonb_array_length(COALESCE(m.sample_cursor -> 'picks', '[]'::jsonb)) AS sample_drawn,
@@ -110,8 +171,13 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
   if (!r) throw new Error(`mailbox_tagging manquante pour ${accountId}`)
   const set = await questionSetForAccount(accountId)
   const questions = set.enabled.length
+  const plan = planPasses(set, await groupsForAccount(accountId))
+  // La répartition ne se lit que s'il y a un groupe à pondérer : c'est un GROUP BY sur toutes
+  // les étiquettes de la boîte, et l'écran redemande cet état toutes les 20 s pendant un tri.
+  const distribution = plan.conditional.length ? await tagDistribution(accountId) : null
 
   const inputTokens = Number(r.input_tokens)
+  const measuredMails = Number(r.input_mails)
   const remaining = Math.max(r.total - r.tagged - r.skipped, 0)
   return {
     accountId: r.account_id,
@@ -136,7 +202,7 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
     total: r.total,
     estimateUsd: r.engine_price === null || r.engine_price === undefined
       ? null
-      : estimateUsd({ mails: remaining, questions, usdPerBillionInput: Number(r.engine_price), inputTokens, tagged: r.tagged }),
+      : estimateUsd({ mails: remaining, questions, usdPerBillionInput: Number(r.engine_price), inputTokens, measuredMails }),
     questions,
     taxonomyVersion: taxonomyVersion(set),
     sample: r.sample_size === null ? null : {
@@ -149,8 +215,9 @@ export async function readTaggingStatus(accountId: string): Promise<TaggingStatu
     // défaut, pas sur le reste d'un tirage en cours — c'est le prix du bouton, pas de l'état.
     sampleEstimateUsd: r.engine_price === null || r.engine_price === undefined
       ? null
-      : estimateUsd({ mails: SAMPLE_SIZE_DEFAULT, questions, usdPerBillionInput: Number(r.engine_price), inputTokens, tagged: r.tagged }),
+      : estimateUsd({ mails: SAMPLE_SIZE_DEFAULT, questions, usdPerBillionInput: Number(r.engine_price), inputTokens, measuredMails }),
     sampleDefaults: { size: SAMPLE_SIZE_DEFAULT, seed: SAMPLE_SEED_DEFAULT },
+    passes: passEstimate(plan, questions, distribution, { inputTokens, mails: measuredMails }, r.engine_price === null || r.engine_price === undefined ? null : Number(r.engine_price), remaining),
   }
 }
 

@@ -5,7 +5,7 @@ import { useLocale, useTranslations } from 'next-intl'
 import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag, Info } from 'lucide-react'
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
 import { MAIL_ORIGIN_ATTR, groupByOrigin, groupsToMove, originKey, type MessageOrigin } from '@/lib/mailOrigin'
-import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } from '@/lib/flags'
+import { DEFAULT_FLAG_KEY, FOCUS_FILTER, FOCUS_THRESHOLD, MAIL_LIST_FILTERS, PRIORITY_SORT, SORT_SETTING, byPriorityThenDate, flagByKey, type MailListFilter } from '@/lib/flags'
 import { unreadRefresh, unreadShift } from '@/lib/unreadSignal'
 import {
   explorerSelect, gestureOf, isAllSelected, selectAll,
@@ -32,8 +32,9 @@ import { TagPills } from '@/components/mail/MessageTags'
 import { valuesOf } from '@/lib/tagging/questions'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
-import { HUMAN_SOURCE } from '@/lib/tagging/engine'
+import { HUMAN_SOURCE, RULE_SOURCE } from '@/lib/tagging/engine'
 import { TAGS_ENDPOINT, taggedRows } from '@/lib/tagging/view'
+import { useFocusText } from '@/hooks/useFocusText'
 import type { StoredTag, TaggedMessage } from '@/lib/tagging/store'
 import type { DecisionEngine } from '@/lib/tagging/engines'
 import { ENGINES_ENDPOINT } from '@/components/settings/DecisionEnginesSection'
@@ -42,6 +43,27 @@ const fetcher = async (url: string) => {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`Request failed: ${res.status}`)
   return res.json()
+}
+
+// Les pastilles d'une page : les `Message-ID` voyagent dans l'URL du GET existant, par LOTS
+// bornés en caractères — au-delà de ~250 mails chargés, une seule URL dépassait la taille
+// d'en-tête du serveur (HTTP 431, gate du 03/10) et plus aucune pastille ne se chargeait.
+// ponytail: un corps POST ferait une requête ; il exigerait une méthode, une portée et une
+// entrée de contrat de plus pour la même lecture. Quelques GET par centaine de mails suffisent.
+const PILL_QUERY_CHARS = 6000
+type PillKey = [endpoint: string, accountId: string, ids: string[]]
+async function fetchPills([endpoint, accountId, ids]: PillKey): Promise<{ data: { effective: Record<string, StoredTag[]> } }> {
+  const base = `${endpoint}?account=${encodeURIComponent(accountId)}`
+  const batches: string[] = []
+  let query = ''
+  for (const id of ids) {
+    const part = `&id=${encodeURIComponent(id)}`
+    if (query && query.length + part.length > PILL_QUERY_CHARS) { batches.push(query); query = '' }
+    query += part
+  }
+  if (query) batches.push(query)
+  const pages = await Promise.all(batches.map(q => fetcher(base + q)))
+  return { data: { effective: Object.assign({}, ...pages.map(p => p.data.effective)) } }
 }
 
 // Rectangle de sélection (lot M3c). Sous ce seuil, le geste reste un clic —
@@ -159,6 +181,7 @@ interface Props {
 
 interface AppSettings {
   thread_view: boolean; messages_per_page: number; mail_density: DensityMode
+  [SORT_SETTING]: boolean
   /** Boîte affichée, telle qu'enregistrée : ce qui dit si le compte reçu est le bon. */
   active_account_id: string | null
 }
@@ -173,8 +196,16 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   // État partagé : la liste est la SEULE à publier et à enregistrer des actions.
   const { publish, register } = useMailSelection()
   const [filter, setFilter] = useState<MailListFilter>('all')
+  // Tri de la liste : par date (IMAP) ou par priorité (lot T12, `lib/focus.ts`). « À traiter »
+  // est par priorité par nature ; le choix n'a pas de sens en recherche ni en filtre d'étiquette.
+  // Retenu dans `user_settings` comme la densité (jamais en localStorage).
+  const focusText = useFocusText()
   const [page, setPage] = useState(1)
   const [accumulated, setAccumulated] = useState<Message[]>([])
+  // Le dernier total connu du dossier : à chaque page suivante la clé SWR change et `data`
+  // repasse à `undefined` le temps de l'aller-retour — sans ceci l'indication de tri disait
+  // « sur 0 dans le dossier » et la sentinelle affichait « fin de liste » (gate du 03/10, ~950 ms).
+  const [knownTotal, setKnownTotal] = useState(0)
   const [refreshKey, setRefreshKey] = useState(0)
   const [readUids, setReadUids] = useState<Set<string>>(new Set())
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
@@ -200,6 +231,11 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     void saveSettings({ mail_density: mode })
   }
   const compact = density === 'compact'
+  const sortByPriority = settingsData?.data?.[SORT_SETTING] ?? false
+  const byPriority = sortByPriority || filter === FOCUS_FILTER
+  const changeSort = (priority: boolean) => {
+    void saveSettings({ [SORT_SETTING]: priority })
+  }
 
   // Bulk selection
   const [checkedKeys, setCheckedKeys] = useState<Set<string>>(new Set())
@@ -258,7 +294,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const { data, error, isValidating, mutate } = useSWR<{ messages: Message[]; total: number }>(
     isSearchMode
       ? null
-      : `/api/messages?folder=${encodeURIComponent(folder)}&filter=${filter}&page=${page}&perPage=${perPage}${accountParam}`,
+      : `/api/messages?folder=${encodeURIComponent(folder)}&filter=${filter}&page=${page}&perPage=${perPage}${accountParam}${byPriority ? `&sort=${PRIORITY_SORT}` : ''}`,
     fetcher,
     { refreshInterval: 60000 }
   )
@@ -398,6 +434,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
 
   useEffect(() => {
     if (!data?.messages) return
+    setKnownTotal(data.total)
     if (page === 1) {
       setAccumulated(data.messages)
       // Le compteur monte APRÈS ce listage, pas en même temps. C'est lui qui
@@ -445,7 +482,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     [tagHits, accumulated, activeAccountId],
   )
   const messages = isSearchMode ? searchMessages : (isTagMode ? tagged.rows : accumulated)
-  const total = data?.total ?? 0
+  const total = data?.total ?? knownTotal
   // Le serveur peut avoir trouvé plus que ce qu'il rend (plafond SEARCH_RESULT_LIMIT) :
   // le bandeau annonce alors « X premiers sur N » au lieu de laisser croire à N = X.
   const searchTotal = isStreamingScope ? streamed.total : (searchData?.total ?? messages.length)
@@ -482,11 +519,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     () => messages.map(m => m.messageId).filter(Boolean),
     [messages],
   )
-  const pillKey = activeAccountId && pillIds.length
-    ? `${TAGS_ENDPOINT}?account=${encodeURIComponent(activeAccountId)}` +
-      pillIds.map(id => `&id=${encodeURIComponent(id)}`).join('')
-    : null
-  const { data: pillsRes } = useSWR<{ data: { effective: Record<string, StoredTag[]> } }>(pillKey, fetcher)
+  const pillKey: PillKey | null = activeAccountId && pillIds.length ? [TAGS_ENDPOINT, activeAccountId, pillIds] : null
+  const { data: pillsRes } = useSWR(pillKey, fetchPills)
   const pills = pillsRes?.data.effective
 
   const loadError = !isSearchMode && !!error && accumulated.length === 0
@@ -527,6 +561,14 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const trackingMap = trackingData?.data ?? {}
 
   const threads = useMemo<ThreadGroup[]>(() => {
+    // Par priorité : le score d'un fil est celui de son dernier message, et les groupes de date
+    // n'ont plus de sens (un seul groupe, le tri commande).
+    if (byPriority) {
+      const grouped = threadView ? groupIntoThreads(messages) : messages.map(msg => ({
+        key: msg.uid, subject: displaySubject(msg.subject), messages: [msg], lastMessage: msg, hasUnread: !msg.isRead, count: 1,
+      }))
+      return grouped.sort((a, b) => byPriorityThenDate(a.lastMessage, b.lastMessage))
+    }
     if (!threadView) {
       return [...messages]
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -540,7 +582,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
         }))
     }
     return groupIntoThreads(messages)
-  }, [messages, threadView])
+  }, [messages, threadView, byPriority])
 
   // Direction B — bucket threads by recency for sticky date headers.
   const timeBucket = useCallback((iso: string): string => {
@@ -553,7 +595,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   }, [t])
 
   const groupedThreads = useMemo(() => {
-    if (isSearchMode) return [{ label: null as string | null, items: threads }]
+    if (isSearchMode || byPriority) return [{ label: null as string | null, items: threads }]
     const out: { label: string | null; items: ThreadGroup[] }[] = []
     for (const thread of threads) {
       const label = timeBucket(thread.lastMessage.date)
@@ -562,7 +604,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       else out.push({ label, items: [thread] })
     }
     return out
-  }, [threads, isSearchMode, timeBucket])
+  }, [threads, isSearchMode, byPriority, timeBucket])
 
   /**
    * L'origine d'une ligne : SON compte et SON dossier, pas ceux de l'écran. Une
@@ -1191,12 +1233,25 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
 
           {/* line 2 — objet, et les pastilles d'étiquettes À SA DROITE. Elles ne prennent
               JAMAIS de ligne à elles : un mail reste un item de hauteur CONSTANTE, étiqueté ou
-              non. C'est l'objet qui cède (`truncate` sur lui, `shrink-0` sur elles), et la
-              pastille tient dans la boîte de ligne de l'objet (voir `TagPills`). */}
+              non. L'objet cède jusqu'à 5rem, puis ce sont ELLES qui se tronquent (voir
+              `TagPills`) ; la pastille tient dans la boîte de ligne de l'objet. */}
           <div className={cn('flex items-center gap-2', compact ? '' : 'mb-0.5')}>
-            <span className={cn('min-w-0 flex-1 truncate text-xs', !isRead ? 'font-semibold text-foreground' : 'text-foreground/60')}>
+            <span className={cn('min-w-[5rem] flex-1 truncate text-xs', !isRead ? 'font-semibold text-foreground' : 'text-foreground/60')}>
               {thread.subject}
             </span>
+            {/* Par priorité (lot T12) : pastille à partir du seuil « à traiter » (une pièce jointe
+                seule ne la mérite pas), la composante la plus forte, chaque composante dans
+                l'infobulle. Sur CETTE ligne et pas celle de l'expéditeur : à 390 px elle y
+                écrasait le nom (gate du 03/10). Ordre de sacrifice dans une colonne étroite :
+                l'objet jusqu'à 5rem, puis les étiquettes (`TagPills`, `shrink-[3]`, jusqu'à leur
+                plancher), puis elle jusqu'à 4rem — mesuré à 320 px : elle reste lisible et « +N »
+                reste dans la colonne. */}
+            {msg.priority && msg.priority.score >= FOCUS_THRESHOLD && (
+              <span title={focusText.describe(msg.priority)} data-focus-score={msg.priority.score}
+                className="inline-flex h-4 min-w-[4rem] max-w-[7rem] items-center rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 text-[10px] font-semibold leading-none text-violet-600 dark:text-violet-400">
+                <span className="truncate">{focusText.label(msg.priority)}</span>
+              </span>
+            )}
             <TagPills tags={rowPills} compact={compact} />
           </div>
 
@@ -1270,6 +1325,18 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
               </button>
             ))}
           </div>
+          {/* Tri (lot T12) : par date ou par priorité — la MÊME fonction que « à traiter ». Masqué
+              sur « à traiter », qui est par priorité par nature. */}
+          {filter !== FOCUS_FILTER && (
+            <div className="flex rounded-lg overflow-hidden border border-border text-xs font-medium" data-sort={byPriority ? PRIORITY_SORT : 'date'}>
+              {([false, true] as const).map(p => (
+                <button key={String(p)} onClick={() => { changeSort(p); setPage(1); setAccumulated([]); loadingLockRef.current = 0 }}
+                  className={cn('px-2.5 py-1.5 transition-colors', sortByPriority === p ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-accent')}>
+                  {p ? t('sortByPriority') : t('sortByDate')}
+                </button>
+              ))}
+            </div>
+          )}
           {/* Filtre par étiquette : question → valeur. UN `<select>` natif et non deux, parce
               qu'une question sans valeur ne filtre rien — le choix est donc la PAIRE, groupée
               par question (`<optgroup>`). Natif : la liste est fermée, le navigateur la rend
@@ -1285,7 +1352,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             )}
           >
             <option value="">{tTags('filterAll')}</option>
-            {questionSet.enabled.map(q => (
+            {[...questionSet.enabled, ...questionSet.rules].map(q => (
               <optgroup key={q.id} label={labelQ(q.id)}>
                 {valuesOf(q).map(v => (
                   <option key={v} value={`${q.id}|${v}`}>{labelV(v)}</option>
@@ -1306,6 +1373,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             >
               <option value="">{tTags('filterOriginAll')}</option>
               <option value={HUMAN_SOURCE}>{tTags('filterOriginHuman')}</option>
+              <option value={RULE_SOURCE}>{tTags('filterOriginRule')}</option>
               {engines.map(e => (
                 <option key={e.id} value={e.id}>{e.name}</option>
               ))}
@@ -1459,6 +1527,14 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
           </p>
         )}
 
+        {/* « Par priorité » trie ce qui est CHARGÉ (la page), pas toute la boîte : le dire, sinon
+            un mail urgent plus ancien que la page semble manquer. « À traiter » n'en a pas besoin :
+            il lit une fenêtre unique à `total` exact. */}
+        {byPriority && filter !== FOCUS_FILTER && !isSearchMode && !isTagMode && messages.length > 0 && (
+          <p className="px-4 py-2 text-[11px] text-muted-foreground/70" data-sort-hint>
+            {t('sortPriorityHint', { count: messages.length, total })}
+          </p>
+        )}
         {groupedThreads.map((group, gi) => (
           <div key={group.label ?? `g${gi}`}>
             {group.label && (

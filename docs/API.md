@@ -1254,6 +1254,12 @@ Every row this message carries, all sources, plus the effective one per question
 
 Requires the `organize` share permission (tagging is filing). `422` names the offending `question` and `valeur` when a value is not one this question allows; `403` names the `source` when the caller may not write it (a key asking for `humain`, a session asking for anything else). **Response** `{ data: { messageId, written: number, source, tags: StoredTag[], effective: StoredTag[] } }`.
 
+### `GET /api/messages/[id]/fields?account=` 🔑 Bearer (`tags:read`)
+The VALUES extracted from this message (decision 19): `montant` (+ `devise`, `type_montant`), `echeance` (ISO date, + `type_echeance`), `numero_commande`, `numero_suivi` (+ `transporteur_suivi` deduced from the number's format), and `iban` — only its last 4 characters, never the full IBAN. Same shape and same effective rule as the tags route (`humain` first, else the most recent engine row). Each row carries `candidats`: what the regexes found in the message, i.e. the very options the engine was asked to pick from. **Response** `{ data: { messageId: string; fields: StoredField[]; effective: StoredField[] } }`.
+
+### `PUT /api/messages/[id]/fields` 🔑 Bearer (`tags:write`)
+**Body** `{ accountId: string; source?: string; model?: string; engineId?: string; fields: { champ, valeur }[] }` — same source/author rules as `PUT …/tags`. A value must be well-formed for its field (`montant` decimal, `devise` 3 letters, `echeance` an ISO date that exists, `iban` exactly 4 characters…); `422` names the offending `question` (the field) and `valeur` otherwise, `403` names a forbidden `source`. Requires the `organize` share permission. **Response** `{ data: { messageId, written: number, source, fields: StoredField[], effective: StoredField[] } }`.
+
 ### `GET /api/tags?account=&question=&valeur=&page=&origine=` 🔑 Bearer (`tags:read`)
 The messages whose **effective** tag for `question` is `valeur`, with their last known position — so a message corrected by hand no longer answers under the engine's old value. `origine` narrows to one origin — a source (`humain`) or an author id (one engine) — and the effective tag is then computed among that origin's rows only. `422` names an unknown `question` or a value the question does not allow (an empty page would be indistinguishable from "nothing carries this"). **Response** `{ data: { messages: { messageId, folder, uid, fromName, fromAddress, subject, date }[]; total: number; page: number } }`.
 
@@ -1261,7 +1267,7 @@ The messages whose **effective** tag for `question` is `valeur`, with their last
 The effective tags of a **list** of messages — what the message list paints as chips, in one request per page and never one per row. **Response** `{ data: { effective: Record<string, StoredTag[]> } }`, keyed by Message-ID.
 
 ### `GET /api/tags/export?account=&after=&limit=` 🔑 Bearer (`tags:read`)
-Every stored tag of one mailbox, all sources, paginated by `id` (`after` = the last id read, `limit` default 500, capped 5000). **Response** `{ data: { tags: (StoredTag & { id: number; messageId: string })[]; nextAfter: number | null } }`.
+Every stored tag of one mailbox, all sources, paginated by `id` (`after` = the last id read, `limit` default 500, capped 5000). Each row carries the version of its question (`questionVersion`) and the exact state the engine judged (`state` — sender, subject, body capped to 1 500 chars — the snapshot its `stateHash` names; `null` when unknown), so a training set re-reads without the mailbox. **Response** `{ data: { tags: (StoredTag & { id: number; messageId: string; state: EngineState | null })[]; nextAfter: number | null } }`.
 
 ### `GET /api/tagging/status?account=` 🔑 Bearer (`tags:read`)
 Where a mailbox's sorting stands: counters, spend, estimate, and the chosen engine — **never its key**, only `hasKey`.
@@ -1271,7 +1277,7 @@ Where a mailbox's sorting stands: counters, spend, estimate, and the chosen engi
 interface TaggingStatus {
   accountId: string; engineId: string | null
   engine: { id, name, kind, model, hasKey: boolean, usdPerBillionInput: number } | null
-  budgetUsd: number; spentUsd: number; inputTokens: number
+  budgetUsd: number; spentUsd: number; inputTokens: number   // spend and tokens are cumulative across runs (never reset)
   live: boolean                                   // sorting new mail as it arrives
   bulkState: 'idle' | 'running' | 'done'
   pausedReason: 'user' | 'budget' | 'credit' | 'auth' | 'no_engine' | null
@@ -1279,7 +1285,15 @@ interface TaggingStatus {
   tagged: number; skipped: number; errors: number; total: number
   estimateUsd: number | null                      // cost of what is LEFT, at the engine's price
   questions: number                               // how many are asked of each message
-  distribution?: …                                // only with `?distribution=1`: value counts per question
+  passes: {                                       // what the passes cost BEFORE starting (question groups)
+    requestsPerMail: { trunk: number; max: number }       // trunk requests for every message; + one per conditional group that fires
+    tokensPerMail: { trunk: number; withGroups: number | null }
+    usdPerMail: { trunk: number; withGroups: number | null } | null      // null without an engine
+    usdRemaining: { trunk: number; withGroups: number | null } | null    // × messages left
+    groups: { id: string; name: string; questions: number; requests: number; rate: number | null; measuredOn: number }[]
+  }                                               // `withGroups`/`rate` are null until a sample has answered what the triggers read;
+                                                  // `measuredOn` = how many already-tagged messages (current definition of the questions the trigger reads) the rate is read on — not the whole mailbox
+  distribution?: …                                // only with `?distribution=1`: value counts per question, each restricted to tags written under its CURRENT definition
   staleCounts?: Record<string, number>            // only with `?stale=1`: per question id, messages tagged under an OLDER version
 }
 ```
@@ -1319,6 +1333,60 @@ Replaces the caller's **whole** set (added questions included) with the defaults
 
 ### `POST /api/tags/questions/[id]/test` 🔑 Bearer (`tags:write`)
 **Body** `{ accountId: string; folder: string; uid: number | string }`. **One** engine call for **one** question on **one** message — what the engine answers before paying for a mailbox. The engine is the one chosen for `accountId` (`409` when none), the message is read from IMAP; requires the `organize` share permission. `404` names an unknown question or message; `502` carries the engine `failure` kind (`credit`, `auth`, `rate`, `unavailable`). **Response** `{ data: { question, ms, model, inputTokens, answer: StoredTag | null, rejected: boolean } }` — `rejected` is `true` when the engine answered outside the question's values.
+
+### `GET /api/tags/rules` 🔑 Bearer (`tags:read`)
+The caller's **tagging rules** — "when a message matches these conditions, write these tags", with no engine call. A rule belongs to the user, for all their mailboxes (`accountId: null`) or for one of them. The sorter evaluates them **before** the engine, in `priority` order, on every pass (backlog and live); the tags they write carry `source: 'regle'`, signed by the rule. **Response** `{ data: TagRule[] }`.
+
+```ts
+interface TagRule {
+  id: string
+  accountId: string | null                     // null = every mailbox of the user
+  name: string
+  enabled: boolean
+  priority: number                             // lower runs first
+  conditionLogic: 'all' | 'any'
+  conditions: RuleCondition[]                  // same shape and same evaluator as /api/rules conditions
+  actions: { question: string; valeur: string }[]   // one tag per question, value validated against the question
+  authoritative: boolean                       // the questions this rule settles are NOT asked of the engine for that message
+  createdAt: string
+  updatedAt: string
+}
+```
+
+### `POST /api/tags/rules` 🔑 Bearer (`tags:write`)
+**Body** `TagRule` minus `id`/`createdAt`/`updatedAt` (`enabled`, `priority`, `conditionLogic`, `authoritative` optional). Checked server-side — `400` names the offending `field` (`name`, `accountId` when the mailbox is not the caller's, `conditions[n].field`, `actions[n].valeur` when the value is outside the question's list, …). At least one condition and one action; two actions cannot name the same question. **Response** `{ data: TagRule }`, `201`.
+
+### `PATCH /api/tags/rules/[id]` 🔑 Bearer (`tags:write`)
+Same body, every field optional; the body is merged into the stored rule and the **whole** rule is revalidated, so a partial patch cannot leave it inconsistent. `404` names an unknown `id` — another user's rule is unknown, not forbidden. **Response** `{ data: TagRule }`.
+
+### `DELETE /api/tags/rules/[id]` 🔑 Bearer (`tags:write`)
+Removes the rule. Tags it already wrote stay in the database — they are history. `404` names an unknown `id`. **Response** `{ data: { id } }`.
+
+### `GET /api/tags/groups` 🔑 Bearer (`tags:read`)
+The caller's **question-group triggers**. Every question carries a `group` slug; a row here gives that slug a trigger. A group **without** a row (or with empty `conditions`) is the *trunk*: asked of every message in pass 1. A group **with** a trigger is *conditional*: its questions are asked in **one more request** (pass 2), only for the messages whose trigger is true once pass 1 (and the tagging rules) have answered. The default 49 questions have no row, so nothing changes until one is created. Each pass is split into as many requests as needed to keep the serialized `questions` body under a token budget (`PASS_TOKEN_BUDGET`, 24 000) — never a `max_tokens_exceeded`. **Response** `{ data: TagQuestionGroup[] }`, by position then slug.
+
+```ts
+interface TagQuestionGroup {
+  id: string                                   // the slug of `TagQuestion.group`
+  name: string
+  position: number
+  conditionLogic: 'all' | 'any'
+  conditions: RuleCondition[]                  // email-rule format and evaluator, plus field 'tag':
+                                               //   { field: 'tag', tagQuestion: string, operator: 'equals' | 'not_equals', value: string }
+                                               //   reads an answer already obtained for the message
+  createdAt: string
+  updatedAt: string
+}
+```
+
+### `POST /api/tags/groups` 🔑 Bearer (`tags:write`)
+**Body** `{ id: string; name?: string; position?: number; conditionLogic?: 'all' | 'any'; conditions?: RuleCondition[] }`. Checked against the caller's question set — `400` names the offending `field` (`id` for a bad slug, `conditions[n].tagQuestion` for an unknown question, `conditions[n].value` for a value outside its list, `conditions[n].operator` when a `tag` condition uses anything but `equals` / `not_equals`). `409` when the slug already has a trigger. **Response** `{ data: TagQuestionGroup }`, `201`.
+
+### `PATCH /api/tags/groups/[id]` 🔑 Bearer (`tags:write`)
+Same body, every field optional; merged into the stored row and revalidated whole. The slug cannot change. `404` names an unknown `id` — another user's group is unknown, not forbidden. **Response** `{ data: TagQuestionGroup }`.
+
+### `DELETE /api/tags/groups/[id]` 🔑 Bearer (`tags:write`)
+Removes the trigger: the group's questions go back to the trunk, no question is deleted. `404` names an unknown `id`. **Response** `{ data: { id } }`.
 
 ### `GET /api/tagging/settings?account=` — session only
 Same `TaggingStatus` body as above. **Session only, owner only**: these settings point at an engine, therefore at a key, so a delegate does not read them and no API key reaches them.

@@ -12,7 +12,11 @@ import {
 } from '@/components/settings/primitives'
 import { ENGINES_ENDPOINT } from '@/components/settings/DecisionEnginesSection'
 import { TagQuestionsSection } from '@/components/settings/TagQuestionsSection'
-import type { TaggingStatus } from '@/lib/tagging/mailbox'
+import { TagGroupsSection } from '@/components/settings/TagGroupsSection'
+import { TagRulesSection } from '@/components/settings/TagRulesSection'
+import { useTagLabels } from '@/hooks/useTagLabels'
+import type { PassEstimate, TaggingStatus } from '@/lib/tagging/mailbox'
+import { TAGGING_SETTINGS_ENDPOINT } from '@/lib/tagging/view'
 import type { tagDistribution } from '@/lib/tagging/store'
 import type { DecisionEngine } from '@/lib/tagging/engines'
 import type { EmailAccount } from '@/types/account'
@@ -23,7 +27,7 @@ const fetcher = (url: string) => fetch(url).then(r => r.json())
 type TagDistribution = Awaited<ReturnType<typeof tagDistribution>>
 
 /** Les routes de l'écran, écrites une fois. */
-const SETTINGS_ENDPOINT = '/api/tagging/settings'
+const SETTINGS_ENDPOINT = TAGGING_SETTINGS_ENDPOINT
 const RUN_ENDPOINT = '/api/tagging/run'
 const STATUS_ENDPOINT = '/api/tagging/status'
 
@@ -41,6 +45,7 @@ export default function TaggingSettingsPage() {
   const t = useTranslations('settings.tagging')
   const locale = useLocale()
   const tCommon = useTranslations('settings.common')
+  const { g: labelG } = useTagLabels()
 
   const { data: accountsData } = useSWR<{ data: EmailAccount[] }>('/api/accounts', fetcher)
   // Les boîtes PARTAGÉES sont écartées, comme dans l'écran Comptes : ces réglages désignent un
@@ -227,6 +232,13 @@ export default function TaggingSettingsPage() {
                   </span>
                 </SettingsRow>
 
+                {/*
+                  Le coût AVANT de lancer, selon les groupes (décision 24.4) : tronc seul, avec les
+                  groupes pondérés par la part des mails qui les déclenchent (répartition de
+                  l'échantillon), et le nombre de requêtes par mail. Lu tel quel dans `passes`.
+                */}
+                <PassCost passes={status.passes} remaining={remaining} count={count} labelG={labelG} />
+
                 <SettingsDivider />
 
                 <SettingsRow title={t('live')} description={t('liveDesc')}>
@@ -326,7 +338,58 @@ export default function TaggingSettingsPage() {
       <div className="mt-5">
         <TagQuestionsSection accountId={accountId} staleCounts={staleData?.data?.staleCounts ?? {}} />
       </div>
+      <div className="mt-5">
+        <TagGroupsSection />
+      </div>
+      <div className="mt-5">
+        <TagRulesSection accounts={accounts} />
+      </div>
     </SettingsPage>
+  )
+}
+
+/**
+ * Les requêtes et le coût PAR MAIL selon les groupes actifs (lot T-Q3). Deux lignes : le tronc
+ * seul (passe 1, sûr), et « avec les groupes » — `null` tant qu'aucun échantillon n'a mesuré
+ * la part des mails qui déclenchent chaque groupe : on le DIT plutôt que d'inventer un chiffre.
+ * Sans groupe conditionnel, la ligne « avec les groupes » n'a rien à dire et ne s'affiche pas.
+ */
+function PassCost({ passes, remaining, count, labelG }: {
+  passes: PassEstimate; remaining: number; count: (n: number) => string; labelG: (id: string) => string
+}) {
+  const t = useTranslations('settings.tagging.cost')
+  const usdOrTokens = (usd: number | null, tokens: number) => (usd === null ? `${count(Math.round(tokens))} tokens` : usd === 0 ? '' : usdOf(usd))
+  const usdOf = (v: number) => `$${v.toFixed(v > 0 && v < 0.01 ? 4 : 2)}`
+  const line = (label: string, tokens: number | null, perMail: number | null | undefined, total: number | null | undefined, requests: string) => (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5" data-pass-cost={label}>
+      <span className="text-sm">{label}</span>
+      <span className="text-xs text-muted-foreground">{requests}</span>
+      <span className="ml-auto text-sm tabular-nums">
+        {tokens === null ? t('withGroupsUnknown') : (
+          <>
+            {t('perMail', { cost: usdOrTokens(perMail ?? null, tokens) })}
+            {total !== null && total !== undefined && <span className="text-xs text-muted-foreground"> · {t('remaining', { cost: usdOf(total), mails: count(remaining) })}</span>}
+          </>
+        )}
+      </span>
+    </div>
+  )
+  return (
+    <SettingsRow title={t('passes')} description={t('passesDesc')}>
+      <div className="w-full space-y-1.5 sm:max-w-md" data-passes>
+        {line(t('trunk'), passes.tokensPerMail.trunk, passes.usdPerMail?.trunk, passes.usdRemaining?.trunk, t('requests', { count: passes.requestsPerMail.trunk }))}
+        {passes.groups.length > 0 && line(t('withGroups'), passes.tokensPerMail.withGroups, passes.usdPerMail?.withGroups, passes.usdRemaining?.withGroups,
+          t('requestsRange', { trunk: passes.requestsPerMail.trunk, max: passes.requestsPerMail.max }))}
+        {passes.groups.map(g => (
+          <p key={g.id} className="text-xs text-muted-foreground" data-pass-group={g.id} data-measured-on={g.measuredOn}
+            title={g.rate === null ? undefined : t('groupRateHint', { mails: count(g.measuredOn) })}>
+            {g.rate === null
+              ? t('groupRateUnknown', { name: labelG(g.id), questions: g.questions })
+              : t('groupRate', { name: labelG(g.id), questions: g.questions, rate: `${Math.round(g.rate * 100)} %` })}
+          </p>
+        ))}
+      </div>
+    </SettingsRow>
   )
 }
 
