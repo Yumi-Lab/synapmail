@@ -1,6 +1,7 @@
 import { Pool } from 'pg'
 import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
 import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
+import { ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
 import { BULK_STATES, ENGINES, HUMAN_SOURCE, PAUSE_REASONS, TAG_SOURCES } from '@/lib/tagging/engine'
 import { DEFAULT_QUESTIONS, RETIRED_DEFAULT_IDS, defaultQuestionColumns } from '@/lib/tagging/questions'
 
@@ -148,10 +149,6 @@ export async function initDb(): Promise<void> {
   // Couleur de badge choisie par l'utilisateur. NULL = couleur automatique par rang :
   // aucune boîte existante ne change d'apparence à la mise à jour.
   await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS badge_color VARCHAR(7)`)
-  // Moteur derrière le bouton « Traduire » (lib/quickTranslate.ts en porte les valeurs).
-  // Défaut « quick » : la traduction depuis le navigateur ne demande ni modèle ni réglage,
-  // donc le bouton marche dès l'installation. Se change, ou s'éteint, dans Réglages → IA.
-  await query(`ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS translate_mode VARCHAR(20) NOT NULL DEFAULT '${TRANSLATE_MODE_DEFAULT}'`)
   // Taille maximale d'un message ANNONCÉE par le serveur SMTP dans sa réponse EHLO
   // (`250 SIZE <octets>`), lue par lib/accountProbe.ts au moment où la connexion est
   // essayée. NULL = le serveur n'a rien annoncé, ou n'a pas encore été essayé : l'envoi
@@ -301,10 +298,15 @@ export async function initDb(): Promise<void> {
       feature_reply_draft BOOLEAN NOT NULL DEFAULT true,
       feature_improve BOOLEAN NOT NULL DEFAULT true,
       feature_translate BOOLEAN NOT NULL DEFAULT true,
-      translate_mode VARCHAR(20) NOT NULL DEFAULT '${TRANSLATE_MODE_DEFAULT}',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)
+  // Moteur derrière le bouton « Traduire » (lib/quickTranslate.ts en porte les valeurs).
+  // Défaut « quick » : la traduction depuis le navigateur ne demande ni modèle ni réglage,
+  // donc le bouton marche dès l'installation. Se change, ou s'éteint, dans Réglages → IA.
+  // ALTER après le CREATE TABLE ci-dessus : sur une base neuve, la table n'existe pas encore
+  // avant cette ligne (défaut n°1 de la revue amont — l'ALTER tournait avant le CREATE).
+  await query(`ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS translate_mode VARCHAR(20) NOT NULL DEFAULT '${TRANSLATE_MODE_DEFAULT}'`)
 
   // PGP end-to-end encryption — server stores public keys only.
   // Private keys are generated and kept exclusively in browser IndexedDB (lib/pgp/keystore.ts).
@@ -460,20 +462,10 @@ export async function initDb(): Promise<void> {
     )
   `)
 
-  // Migration : une clé qui existait avant cette barrière atteignait TOUTES les boîtes de
-  // son propriétaire. On lui coche exactement celles-là, sinon `yumi-ai` et `scripts-import`
-  // cessent de fonctionner en production. Les boîtes créées APRÈS ne sont accordées à
-  // personne : il faut les cocher. Le drapeau porte la date pour ne migrer qu'une fois —
-  // sans lui, un redémarrage re-cocherait ce que Nicolas vient de décocher.
+  // Le drapeau de la migration ci-dessous est posé ici (colonne créée avant d'être lue),
+  // mais la migration elle-même tourne plus bas : elle doit aussi backfill les boîtes
+  // PARTAGÉES actives (table account_shares), pas encore créée à ce point du fichier.
   await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS accounts_migrated_at TIMESTAMPTZ`)
-  await query(`
-    INSERT INTO api_key_accounts (api_key_id, account_id)
-    SELECT ak.id, a.id FROM api_keys ak
-      JOIN email_accounts a ON a.user_id = ak.user_id
-     WHERE ak.accounts_migrated_at IS NULL
-    ON CONFLICT DO NOTHING
-  `)
-  await query(`UPDATE api_keys SET accounts_migrated_at = NOW() WHERE accounts_migrated_at IS NULL`)
 
   // Invité en attente d'acceptation : bloque la connexion tant que le mot de passe placeholder
   // n'a pas été remplacé via /api/invites/[token] (voir account_shares ci-dessous)
@@ -512,6 +504,27 @@ export async function initDb(): Promise<void> {
     ON account_shares(account_id, invitee_user_id)
     WHERE status IN ('pending', 'active')
   `)
+
+  // Suite du backfill posé plus haut (colonne accounts_migrated_at) : une clé migrée doit
+  // aussi voir les boîtes qu'elle lisait déjà PAR PARTAGE actif (account_shares), sinon une
+  // clé qui lisait une boîte partagée perd l'accès (403) au déploiement — défaut n°6 de la
+  // revue amont. `sh` est l'alias attendu par ACTIVE_SHARE_SQL (source unique de la règle).
+  await query(`
+    INSERT INTO api_key_accounts (api_key_id, account_id)
+    SELECT ak.id, sh.account_id FROM api_keys ak
+      JOIN account_shares sh ON sh.invitee_user_id = ak.user_id
+     WHERE ak.accounts_migrated_at IS NULL
+       AND ${ACTIVE_SHARE_SQL}
+    ON CONFLICT DO NOTHING
+  `)
+  await query(`
+    INSERT INTO api_key_accounts (api_key_id, account_id)
+    SELECT ak.id, a.id FROM api_keys ak
+      JOIN email_accounts a ON a.user_id = ak.user_id
+     WHERE ak.accounts_migrated_at IS NULL
+    ON CONFLICT DO NOTHING
+  `)
+  await query(`UPDATE api_keys SET accounts_migrated_at = NOW() WHERE accounts_migrated_at IS NULL`)
 
   // Désabonnements effectués — pour qu'un agent ne recommence pas une lettre déjà quittée.
   // La clé de regroupement (List-Id ou adresse d'expéditeur) est stockée telle quelle :
