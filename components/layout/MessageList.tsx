@@ -483,7 +483,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     : `${TAGS_ENDPOINT}?account=${encodeURIComponent(activeAccountId!)}` +
       `&question=${encodeURIComponent(tagQuestion)}&valeur=${encodeURIComponent(tagValue)}` +
       (tagOrigin ? `&origine=${encodeURIComponent(tagOrigin)}` : '')
-  const { data: tagHits } = useSWR<{ data: { messages: TaggedMessage[]; total: number } }>(tagHitsKey, fetcher)
+  const { data: tagHits } = useSWR<{ data: { messages: TaggedMessage[]; total: number; drawn?: number } }>(tagHitsKey, fetcher)
   // Une validation retire le mail de l'audit : la liste se relit sur l'événement que le panneau
   // émet après chaque correction. En mode audit seulement, c'est là que ça change quelque chose.
   useEffect(() => {
@@ -1538,7 +1538,9 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
               <Search className="w-6 h-6 opacity-30" />
             </div>
             <p className="text-sm font-medium">
-              {isSearchMode ? t('noSearchResults') : isAuditMode ? tTags('filterAuditEmpty') : isTagMode ? tTags('filterEmpty') : t('noMessages')}
+              {isSearchMode ? t('noSearchResults')
+                : isAuditMode ? tTags(tagHits?.data.drawn === 0 ? 'filterAuditNone' : 'filterAuditEmpty')
+                : isTagMode ? tTags('filterEmpty') : t('noMessages')}
             </p>
           </div>
         )}

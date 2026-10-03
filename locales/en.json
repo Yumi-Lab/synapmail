@@ -1140,6 +1140,7 @@
     "filterClear": "Clear tag filter",
     "filterAudit": "Random audit",
     "filterAuditEmpty": "The whole audit is validated.",
+    "filterAuditNone": "No audit drawn for this mailbox.",
     "filterCount": "{count, plural, one {# tagged} other {# tagged}}",
     "filterEmpty": "No message carries this tag.",
     "unpositioned": "{count, plural, one {# hidden: its folder is unknown.} other {# hidden: their folder is unknown.}}",

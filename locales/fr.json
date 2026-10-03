@@ -1140,6 +1140,7 @@
     "filterClear": "Retirer le filtre",
     "filterAudit": "Audit aléatoire",
     "filterAuditEmpty": "Tout l’audit est validé.",
+    "filterAuditNone": "Aucun audit tiré pour cette boîte.",
     "filterCount": "{count, plural, one {# étiqueté} other {# étiquetés}}",
     "filterEmpty": "Aucun message ne porte cette étiquette.",
     "unpositioned": "{count, plural, one {# masqué : dossier inconnu.} other {# masqués : dossier inconnu.}}",

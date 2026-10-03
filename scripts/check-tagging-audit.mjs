@@ -87,6 +87,7 @@ try {
   await store.writeTags({ accountId: ACCOUNT, messageId: MID('humain-seul'), source: 'humain', auteur: { id: USER, nom: 'Banc' }, validePar: USER, tags: [{ question: Q, valeur: V0 }] })
 
   const before = await audit.auditStatus(ACCOUNT)
+  const queueBefore = await audit.auditPending(ACCOUNT)
   const first = await audit.drawAudit(ACCOUNT)
   const again = await audit.drawAudit(ACCOUNT)
   const [{ n: offTarget }] = await query(
@@ -101,6 +102,8 @@ try {
   const pending = await audit.auditPending(ACCOUNT)
   check('K3a la file rend les 50 tirés, avec leur position', pending.total === 50 && pending.messages.length === 50 && pending.messages.every(m => m.folder === 'INBOX' && m.uid >= 1000),
     `${pending.total} / ${pending.messages.length} ${JSON.stringify(pending.messages[0])}`)
+  check('K3a′ une file vide dit si c’est faute de tirage (drawn 0) ou parce que tout est jugé (drawn 50)',
+    queueBefore.total === 0 && queueBefore.drawn === 0 && pending.drawn === 50, JSON.stringify({ before: queueBefore.drawn, after: pending.drawn }))
   // 10 validations sur l'audit, prises parmi les mails que SEUL JEV a jugés (i ≥ 40) : la
   // réponse « moteur » est sa ligne la plus récente, et sur les 40 premiers c'est celle de One
   // (sans confiance, parfois en désaccord) — les prendre rendrait la mesure aléatoire.
@@ -121,7 +124,7 @@ try {
   const after = await audit.auditPending(ACCOUNT)
   const status = await audit.auditStatus(ACCOUNT)
   check('K3b chaque validation retire le mail de la file ; l’état compte les validés du tirage seulement',
-    after.total === 40 && status.validated === 10 && status.drawn === 50, JSON.stringify({ pending: after.total, status }))
+    after.total === 40 && after.drawn === 50 && status.validated === 10 && status.drawn === 50, JSON.stringify({ pending: after.total, drawn: after.drawn, status }))
 
   // ---- K4. l'exactitude sur l'audit SEULEMENT ----
   const table = await audit.reliability(ACCOUNT)

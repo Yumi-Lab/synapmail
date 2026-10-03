@@ -39,8 +39,8 @@ async function getHandler(req: Request) {
 
     const page = Number(searchParams.get('page') ?? '1')
     if (searchParams.get('audit') === '1') {
-      const { messages, total } = await auditPending(accountId, page)
-      return NextResponse.json({ data: { messages, total, page: Math.max(page || 1, 1) } })
+      const { messages, total, drawn } = await auditPending(accountId, page)
+      return NextResponse.json({ data: { messages, total, drawn, page: Math.max(page || 1, 1) } })
     }
 
     const question = searchParams.get('question')

@@ -89,10 +89,15 @@ export async function drawAudit(accountId: string): Promise<AuditStatus & { adde
   return { ...(await auditStatus(accountId, set)), added: added.length }
 }
 
-/** Les mails tirés qu'aucune main n'a encore jugés, avec leur position connue — ce que la liste propose à valider. */
-export async function auditPending(accountId: string, page = 1, perPage = 50): Promise<{ messages: TaggedMessage[]; total: number }> {
+/**
+ * Les mails tirés qu'aucune main n'a encore jugés, avec leur position connue — ce que la liste
+ * propose à valider. `drawn` (tous les tirés, jugés ou non) distingue une file vide parce que
+ * tout est validé d'une file vide parce que rien n'a été tiré.
+ */
+export async function auditPending(accountId: string, page = 1, perPage = 50): Promise<{ messages: TaggedMessage[]; total: number; drawn: number }> {
   const limit = Math.min(Math.max(perPage, 1), 200)
   const offset = (Math.max(page, 1) - 1) * limit
+  const [{ drawn }] = await query<{ drawn: string }>(`SELECT COUNT(*) AS drawn FROM tag_audits WHERE account_id = $1`, [accountId])
   const rows = await query<{ message_id: string; folder: string | null; uid: number | null; from_name: string | null
     from_address: string | null; subject: string | null; date: Date | null; total: string }>(
     `SELECT a.message_id, t.folder, t.uid, t.from_name, t.from_address, t.subject, t.date, COUNT(*) OVER () AS total
@@ -106,6 +111,7 @@ export async function auditPending(accountId: string, page = 1, perPage = 50): P
   )
   return {
     total: rows.length ? Number(rows[0].total) : 0,
+    drawn: Number(drawn),
     messages: rows.map(r => ({
       messageId: r.message_id, folder: r.folder, uid: r.uid, fromName: r.from_name,
       fromAddress: r.from_address, subject: r.subject, date: r.date,

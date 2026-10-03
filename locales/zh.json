@@ -1140,6 +1140,7 @@
     "filterClear": "清除筛选",
     "filterAudit": "随机抽检",
     "filterAuditEmpty": "抽检样本已全部验证。",
+    "filterAuditNone": "此邮箱尚未抽取抽检样本。",
     "filterCount": "{count, plural, other {已标记 # 封}}",
     "filterEmpty": "没有邮件带此标签。",
     "unpositioned": "{count, plural, other {# 封已隐藏：文件夹未知。}}",
