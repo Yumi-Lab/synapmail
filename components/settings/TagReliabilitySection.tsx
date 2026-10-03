@@ -12,7 +12,7 @@
  */
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useTranslations } from 'next-intl'
+import { useFormatter, useTranslations } from 'next-intl'
 import useSWR from 'swr'
 import { Button } from '@/components/ui/button'
 import { SettingsSection } from '@/components/settings/primitives'
@@ -26,10 +26,12 @@ const fetcher = (url: string) => fetch(url).then(r => r.json())
 const STATUS_ENDPOINT = '/api/tagging/status'
 const RUN_ENDPOINT = '/api/tagging/run'
 
-const pct = (correct: number, judged: number): string => `${Math.round((correct / judged) * 100)}%`
 
 export function TagReliabilitySection({ accountId }: { accountId: string }) {
   const t = useTranslations('settings.tagging')
+  const format = useFormatter()
+  // Pourcentages et décimales dans la langue de l'écran (« 50 % » et « 0,9 » en français).
+  const pct = (correct: number, judged: number) => format.number(correct / judged, { style: 'percent', maximumFractionDigits: 0 })
   const { q, v } = useTagLabels()
   const router = useRouter()
   const { switchAccount } = useAccountAccent()
@@ -108,7 +110,7 @@ export function TagReliabilitySection({ accountId }: { accountId: string }) {
                     {r.confusions.length ? r.confusions.map(c => t('confusionPair', { engine: v(c.moteur), human: v(c.humain), count: c.count })).join(', ') : '—'}
                   </td>
                   <td className="py-1.5 pr-3 tabular-nums text-muted-foreground">
-                    {r.byConfidence.length ? r.byConfidence.map(b => t('curveBucket', { bucket: b.bucket.toFixed(1), correct: b.correct, judged: b.judged })).join(' · ') : '—'}
+                    {r.byConfidence.length ? r.byConfidence.map(b => t('curveBucket', { bucket: format.number(b.bucket, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), correct: b.correct, judged: b.judged })).join(' · ') : '—'}
                   </td>
                   <td className="py-1.5 tabular-nums">
                     {r.engineAgreement ? `${pct(r.engineAgreement.agree, r.engineAgreement.both)} · ${t('agreementOf', { ...r.engineAgreement })}` : '—'}
