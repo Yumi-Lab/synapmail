@@ -65,7 +65,9 @@ export async function drawAudit(accountId: string): Promise<AuditStatus & { adde
      RETURNING message_id`,
     [accountId, missing]
   )
-  return { ...before, drawn: before.drawn + added.length, added: added.length }
+  // Relu après coup : un mail tiré peut déjà porter une ligne humaine (jugé avant le tirage),
+  // et `validated` doit le compter — la file « à valider » l'exclut déjà.
+  return { ...(await auditStatus(accountId)), added: added.length }
 }
 
 /** Les mails tirés qu'aucune main n'a encore jugés, avec leur position connue — ce que la liste propose à valider. */
