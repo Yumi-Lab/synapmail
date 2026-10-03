@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import useSWR from 'swr'
+import useSWR, { mutate as globalMutate } from 'swr'
 import { cn } from '@/lib/utils'
 import { accountColor, readableInk } from '@/lib/accountColor'
 import type { ColorableAccount } from '@/lib/accountColor'
@@ -103,15 +103,28 @@ export function useAccountAccent() {
   /**
    * Basculer de boite, en UN seul endroit : l'evenement part d'abord (l'accent
    * tourne sur le clic), l'etat local suit, la preference est ecrite ensuite. La
-   * barre laterale et l'omnibar (lot H3f) appellent CETTE fonction, jamais une copie.
+   * barre laterale, l'omnibar (lot H3f) et l'ecran « Fiabilite » (lot T14) appellent
+   * CETTE fonction, jamais une copie.
+   *
+   * Le cache SWR `/api/settings` est mis a jour dans le MEME geste (motif « UI state
+   * persistence ») : un ecran monte APRES le clic (la boite de courrier ouverte par
+   * `router.push`) lit la preference dans ce cache, pas dans l'evenement deja passe —
+   * sans ceci il ouvrait l'ANCIENNE boite (gate T14, point 4). La PATCH elle-meme EST
+   * la mutation : tant qu'elle n'a pas repondu, SWR jette toute revalidation concurrente
+   * de la cle (celle qu'un hook fraichement monte lance), qui sinon ecraserait la valeur
+   * optimiste par l'ANCIENNE lue en base avant l'ecriture.
    */
   const switchAccount = (id: string) => {
     window.dispatchEvent(new CustomEvent('synapmail:account-change', { detail: id }))
     setActiveAccountId(id)
-    fetch('/api/settings', {
+    globalMutate('/api/settings', fetch('/api/settings', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ active_account_id: id }),
+    }).then(r => r.json()), {
+      optimisticData: (curr?: { data: Record<string, unknown> }) =>
+        ({ data: { ...curr?.data, active_account_id: id } }),
+      revalidate: false,
     })
   }
   return { accounts, activeAccount, colorIndex, vars: accentVars(activeAccount, colorIndex), switchAccount }
