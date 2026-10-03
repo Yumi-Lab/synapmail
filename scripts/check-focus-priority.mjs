@@ -38,7 +38,7 @@ import './alias-resolver.mjs'
 const NEGATIVE = process.argv.includes('--negative')
 const focus = await import('../lib/focus.ts')
 const { DEFAULT_QUESTIONS, valuesOf } = await import('../lib/tagging/questions.ts')
-const { scoreFocus, TAG_WEIGHTS, FOCUS_THRESHOLD, SPAM_CEILING, AUTO_URGENCE_CAP, echeancePoints, imapFilterOf } = focus
+const { scoreFocus, TAG_WEIGHTS, FOCUS_THRESHOLD, SPAM_CEILING, AUTO_CAP, echeancePoints, imapFilterOf } = focus
 const { byPriorityThenDate } = await import('../lib/flags.ts')
 
 const failures = []
@@ -98,8 +98,16 @@ check('E4 somme des parts = score', sum(phishing.parts) === phishing.score, `par
 eq('E4 pastille = spam', phishing.reason, 'spam')
 // Un automatique « aujourd'hui » (code de connexion) : l'urgence plafonne, le mail reste sous le seuil.
 const otp = score(row('Your verification code', { has_attachments: true }), [{ question: 'automatique', valeur: 'oui' }, { question: 'urgence', valeur: 'aujourdhui' }])
-check('E5 automatique plafonne l\'urgence', otp.parts.find(p => p.kind === 'tag' && p.question === 'urgence')?.points === AUTO_URGENCE_CAP && otp.score < FOCUS_THRESHOLD, JSON.stringify(otp))
+check('E5 automatique plafonne l\'urgence', otp.parts.find(p => p.kind === 'tag' && p.question === 'urgence')?.points === AUTO_CAP && otp.score < FOCUS_THRESHOLD, JSON.stringify(otp))
 check('E5 somme des parts = score', sum(otp.parts) === otp.score, `parts=${sum(otp.parts)} score=${otp.score}`)
+// E6 (gate du 03/10, réserves) : une notification « agacée » ne pèse rien, et les mots d'échéance /
+// de facture en objet sont plafonnés comme l'urgence quand l'envoi est automatique.
+const angryBot = score(row('Mrcreatesuk sent you a message'), [{ question: 'automatique', valeur: 'oui' }, { question: 'frustration', valeur: 'agace' }])
+check('E6 frustration ignorée si automatique', !angryBot.parts.some(p => p.kind === 'tag' && p.question === 'frustration') && angryBot.score === TAG_WEIGHTS.automatique.oui, JSON.stringify(angryBot))
+const botDeadline = score(row('Action required: your invoice is ready'), [{ question: 'automatique', valeur: 'oui' }])
+eq('E6 échéance + facture d\'objet plafonnées si automatique', botDeadline.parts.filter(p => p.kind === 'reason').map(p => `${p.reason}:${p.points}`), [`invoice:${AUTO_CAP}`, `deadline:${AUTO_CAP}`])
+check('E6 … et sous le seuil', botDeadline.score < FOCUS_THRESHOLD && sum(botDeadline.parts) === botDeadline.score, `score=${botDeadline.score}`)
+eq('E6 témoin : humain non plafonné', score(row('Action required: your invoice is ready')).parts.map(p => p.points), [3, 4])
 
 // F. le tri et le filtre IMAP
 const d = (iso, s) => ({ date: iso, priority: s === undefined ? undefined : { score: s, reason: 'reply', parts: [] } })

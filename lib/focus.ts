@@ -25,8 +25,10 @@ export const REPLY_RE = /^\s*(re|ré|rép|tr|fwd|fw)\s*:/i
  * Deux étiquettes ne sont PAS de simples poids (gate du 03/10, mesuré sur la boîte réelle) :
  *  - `spam_hameconnage = oui` est un VETO (`SPAM_CEILING`) : un hameçonnage qui crie « urgent,
  *    fraude, juridique » est justement celui qui cumule le plus de points ;
- *  - `automatique = oui` PLAFONNE l'urgence (`AUTO_URGENCE_CAP`) et annule « fréquent » : un code
- *    de connexion « sous 48 h » ou une infolettre reçue chaque jour n'est pas à traiter.
+ *  - `automatique = oui` PLAFONNE les signaux excitables (`AUTO_CAP` : urgence, mot d'échéance ou
+ *    de facture en objet), annule « fréquent » et la frustration : un code de connexion « sous
+ *    48 h », une infolettre quotidienne ou une notification « agacée » n'est pas à traiter — une
+ *    plateforme n'a pas de ton (gate du 03/10, « Mrcreatesuk sent you a message » à +2 agacé).
  */
 export const TAG_WEIGHTS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
   urgence: { sous_48h: 4, aujourdhui: 8 },
@@ -45,8 +47,10 @@ export const TAG_WEIGHTS: Readonly<Record<string, Readonly<Record<string, number
  * marqué puisse atteindre (la somme des poids négatifs), donc toujours dernier du tri par priorité.
  */
 export const SPAM_CEILING = Object.values(TAG_WEIGHTS).flatMap(w => Object.values(w)).filter(p => p < 0).reduce((a, b) => a + b, 0) - 1
-/** Ce que l'urgence peut encore peser quand le mail est un envoi automatique. */
-export const AUTO_URGENCE_CAP = 2
+/** Ce qu'un signal plafonné (`AUTO_CAPPED`) peut encore peser quand le mail est un envoi automatique. */
+export const AUTO_CAP = 2
+/** Les composantes plafonnées par `automatique = oui` : une raison de surface ou une question. */
+export const AUTO_CAPPED: ReadonlySet<string> = new Set(['urgence', 'deadline', 'invoice'])
 
 /**
  * L'échéance EXTRAITE (`message_fields.echeance`, lot T11) pèse selon sa proximité : à J+2 elle
@@ -109,11 +113,12 @@ export function scoreFocus(
   const parts: FocusPart[] = []
   let score = 0
   let reason: FocusReason = 'reply'
-  const add = (r: Exclude<FocusReason, 'tag'>, points: number) => { score += points; parts.push({ kind: 'reason', reason: r, points }) }
 
   const said = (question: string) => tags.find(t => t.question === question)?.valeur
   const automatic = said('automatique') === NOUL_YES
   const spam = said('spam_hameconnage') === NOUL_YES
+  const capped = (key: string, points: number) => (automatic && AUTO_CAPPED.has(key) ? Math.min(points, AUTO_CAP) : points)
+  const add = (r: Exclude<FocusReason, 'tag'>, raw: number) => { const points = capped(r, raw); score += points; parts.push({ kind: 'reason', reason: r, points }) }
 
   if (row.is_starred) { add('starred', 5); reason = 'starred' }
   if (from && vip.has(from)) { add('vip', 4); reason = 'vip' }
@@ -129,8 +134,8 @@ export function scoreFocus(
   let topTag = 0
   for (const tag of tags) {
     const weight = TAG_WEIGHTS[tag.question]?.[tag.valeur]
-    if (weight === undefined) continue
-    const points = automatic && tag.question === 'urgence' ? Math.min(weight, AUTO_URGENCE_CAP) : weight
+    if (weight === undefined || (automatic && tag.question === 'frustration')) continue
+    const points = capped(tag.question, weight)
     score += points
     parts.push({ kind: 'tag', question: tag.question, valeur: tag.valeur, points })
     topTag = Math.max(topTag, points)
