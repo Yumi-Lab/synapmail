@@ -65,11 +65,37 @@ function parseTsv(tsv: string): { words: number; confidence: number } {
   return { words: confs.length, confidence: Math.round(confidence * 10) / 10 }
 }
 
+/** Une page du PDF en PNG (`<base>.png`), à la résolution demandée. */
+const rasterize = (pdfPath: string, index: number, dpi: number, base: string, timeout: number) =>
+  run('pdftoppm', ['-r', String(dpi), '-f', String(index), '-l', String(index), '-singlefile', '-png', pdfPath, base], { timeout })
+
+/** La résolution d'une page rendue pour l'ÉCRAN (vignette, agrandissement) — pas celle de l'OCR. */
+export const PAGE_RENDER_DPI = 110
+export const PAGE_RENDER_DPI_MAX = 200
+
+/**
+ * Rend UNE page d'un PDF en PNG, pour l'afficher (G5 `GET /api/documents/[id]/pages/[n]`, écran G6).
+ * Même `pdftoppm` que l'OCR, hors de sa file : rendre une page à 110 dpi pèse quelques dizaines de Mo
+ * et quelques centaines de ms, rien à voir avec tesseract.
+ */
+export async function renderPage(pdf: Buffer, index: number, dpi = PAGE_RENDER_DPI): Promise<Buffer> {
+  const dir = await mkdtemp(join(TMP_ROOT, 'synap-page-'))
+  try {
+    const pdfPath = join(dir, 'in.pdf')
+    await writeFile(pdfPath, pdf)
+    const base = join(dir, 'page')
+    await rasterize(pdfPath, index, Math.min(Math.max(dpi, 1), PAGE_RENDER_DPI_MAX), base, OCR_PAGE_TIMEOUT_MS)
+    return await readFile(`${base}.png`)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
 async function ocrPage(pdfPath: string, dir: string, index: number, pageTimeoutMs: number): Promise<OcrPage> {
   const base = join(dir, `p${index}`)
   const opts = { timeout: pageTimeoutMs }
   try {
-    await run('pdftoppm', ['-r', String(OCR_DPI), '-f', String(index), '-l', String(index), '-singlefile', '-png', pdfPath, base], opts)
+    await rasterize(pdfPath, index, OCR_DPI, base, pageTimeoutMs)
     await run('tesseract', [`${base}.png`, base, '-l', OCR_LANGS, '--psm', '1', 'txt', 'tsv'], opts)
   } catch (e) {
     if ((e as { killed?: boolean }).killed) throw new OcrTimeoutError(index)

@@ -19,6 +19,7 @@
 
 import { query } from './db'
 import { ACCESSIBLE_ACCOUNT_IDS } from './accountAccess'
+import { ACCOUNT_OF_DOCUMENT, ACCOUNT_OF_FOLDER, ACCOUNT_OF_PATTERN, isUuid } from './ged/documents'
 
 /**
  * Les noms sous lesquels une requête peut désigner une boîte. C'est l'inventaire
@@ -54,17 +55,21 @@ const ACCOUNT_PATH_EXCEPTIONS = ['test']
 const ACCOUNT_BY_OBJECT: { prefix: string; sql: string }[] = [
   { prefix: '/api/rules/', sql: 'SELECT account_id AS id FROM email_rules WHERE id = $1' },
   { prefix: '/api/signatures/', sql: 'SELECT account_id AS id FROM signatures WHERE id = $1' },
+  // Les objets GED (lane courrier) : les collections (`/folders`, `/patterns`, `/own`) ne sont
+  // pas des UUID et passent au suivant ; le préfixe nu vient en dernier pour la même raison.
+  { prefix: '/api/documents/folders/', sql: ACCOUNT_OF_FOLDER },
+  { prefix: '/api/documents/patterns/', sql: ACCOUNT_OF_PATTERN },
+  { prefix: '/api/documents/', sql: ACCOUNT_OF_DOCUMENT },
 ]
 
-/** Un identifiant d'objet est un UUID : tout le reste est un sous-chemin (`/run`, `/test`). */
-const OBJECT_ID = /^[0-9a-f-]{36}$/i
 
 /** La boîte visée à travers l'objet nommé dans le chemin, ou `null`. */
 async function accountIdFromObject(path: string): Promise<string | null> {
   for (const { prefix, sql } of ACCOUNT_BY_OBJECT) {
     if (!path.startsWith(prefix)) continue
-    const segment = path.slice(prefix.length)
-    if (!OBJECT_ID.test(segment)) continue
+    // Le PREMIER segment après le préfixe : `/api/documents/<id>/pages/3` vise le document <id>.
+    const segment = path.slice(prefix.length).split('/')[0]
+    if (!isUuid(segment)) continue
     const rows = await query<{ id: string | null }>(sql, [segment])
     return rows[0]?.id ?? null
   }

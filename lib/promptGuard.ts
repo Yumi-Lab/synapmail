@@ -32,6 +32,10 @@ export const UNTRUSTED_FIELDS = [
   'bodyHtml',
   'attachments[].filename',
   'headers',
+  // A scanned document (GED): its file name and the text OCR read off the paper.
+  'filename',
+  'ocrText',
+  'pageTexts[].text',
 ] as const
 
 export type UntrustedField = (typeof UNTRUSTED_FIELDS)[number]

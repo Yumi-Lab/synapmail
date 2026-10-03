@@ -193,3 +193,33 @@ export async function autoFile(documentId: string): Promise<AutoFileOutcome> {
   await fileDocument({ documentId, folderId: folder.id, source: 'motif', author: PATTERN_AUTHOR, confidence: PROPOSED_CONFIDENCE })
   return { kind: 'propose', folderId: folder.id, suggestions }
 }
+
+/**
+ * FUSIONNE un dossier dans un autre (remarque du gate G3/G4 : un dossier proposé « FEDEX EXPRESS FR
+ * SAS » et un dossier « FedEx » tenu par une main coexistent pour le même émetteur). Les documents
+ * dont `from` est le dossier effectif sont RANGÉS dans `into` — une nouvelle ligne chacun, par
+ * `fileDocument`, donc la main ou l'agent qui fusionne apprend au passage ; les motifs de `from`
+ * passent à `into` (un motif déjà là y reste tel quel) ; ses sous-dossiers passent sous `into` ;
+ * `from` disparaît. `into` cesse d'être proposé : une main l'a choisi. L'appelant a vérifié que les
+ * deux dossiers sont de la même boîte et distincts.
+ * ponytail: pas de transaction (comme `fileDocument`) — un échec à mi-chemin laisse des documents déjà
+ * rangés dans `into` et `from` encore là ; rejouer la fusion finit le travail.
+ */
+export async function mergeFolder(params: { from: string; into: string; source: FilingSource; author: Author }): Promise<{ documents: number; patterns: number; folders: number }> {
+  const { from, into } = params
+  // Les sous-dossiers d'abord : un nom déjà pris sous `into` (contrainte de la table) arrête tout avant le moindre rangement.
+  const folders = await query<{ id: string }>(`UPDATE ged_folders SET parent_id = $2 WHERE parent_id = $1 RETURNING id`, [from, into])
+  const docs = await query<{ document_id: string }>(
+    `SELECT document_id FROM (SELECT DISTINCT ON (document_id) document_id, folder_id FROM ged_filings ORDER BY document_id, ${EFFECTIVE_ORDER}) eff
+      WHERE folder_id = $1`, [from])
+  for (const { document_id } of docs) {
+    await fileDocument({ documentId: document_id, folderId: into, source: params.source, author: params.author })
+  }
+  const patterns = await query<{ id: string }>(
+    `UPDATE ged_patterns p SET folder_id = $2 WHERE p.folder_id = $1
+       AND NOT EXISTS (SELECT 1 FROM ged_patterns q WHERE q.folder_id = $2 AND q.genre = p.genre AND q.valeur = p.valeur)
+     RETURNING id`, [from, into])
+  await query(`UPDATE ged_folders SET auto = false WHERE id = $1`, [into])
+  await query(`DELETE FROM ged_folders WHERE id = $1`, [from])
+  return { documents: docs.length, patterns: patterns.length, folders: folders.length }
+}
