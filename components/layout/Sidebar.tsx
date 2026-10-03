@@ -20,6 +20,8 @@ import { accountDelimiter, isDescendant, sanitizeFolderName, type FolderAction }
 import { MAIL_PATH } from '@/lib/compose'
 import { ACCOUNT_PICKER_FILTER_FROM, AccountPickerFilter, AccountPickerText, useAccountPicker } from './AccountPicker'
 import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, mailboxSwitchHref } from '@/app/(app)/mail/mailboxUrl'
+import { GedFolderTree } from './GedFolderTree'
+import { DOCUMENTS_PATH, DOCUMENT_FOLDER_PARAM } from '@/lib/ged/model'
 import type { EmailAccount } from '@/types/account'
 
 /**
@@ -205,6 +207,8 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const t = useTranslations('mail')
   const pathname = usePathname()
   const [currentFolder, setCurrentFolder] = useState('INBOX')
+  /** Le dossier virtuel de la page `/documents` (`null` = tous) — lu de l'URL comme `currentFolder`. */
+  const [currentGedFolder, setCurrentGedFolder] = useState<string | null>(null)
   const [accountOpen, setAccountOpen] = useState(false)
   const accountBoxRef = useRef<HTMLDivElement>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
@@ -217,6 +221,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     setCurrentFolder(params.get(FOLDER_PARAM) ?? DEFAULT_FOLDER)
+    setCurrentGedFolder(params.get(DOCUMENT_FOLDER_PARAM))
   }, [pathname])
 
   // Un changement de boîte ramène l'URL sur la réception SANS changer de chemin :
@@ -683,6 +688,18 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
               folderRow(folder, folderGlyph(customInitials.get(folder.path) ?? '?'), folder.name, folder.path)
             )}
           </>
+        )}
+        {/* Une boîte GED (décision 8) : ses dossiers VIRTUELS sous ses dossiers IMAP — la même
+            barre, le même motif de ligne ; la section n'existe pas pour une boîte ordinaire. */}
+        {activeAccount?.isGed && resolvedAccountId && (
+          <GedFolderTree
+            accountId={resolvedAccountId}
+            currentFolder={currentGedFolder}
+            onDocuments={pathname === DOCUMENTS_PATH}
+            collapsed={collapsed}
+            canOrganize={canOrganize}
+            onNavigate={onClose}
+          />
         )}
         {naming && !collapsed && (
           <div className={cn(ROW, 'text-foreground')} data-folder-name-input>
