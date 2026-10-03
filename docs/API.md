@@ -1207,6 +1207,9 @@ The VALUES extracted from this message (decision 19): `montant` (+ `devise`, `ty
 ### `GET /api/tags?account=&question=&valeur=&page=&origine=` 🔑 Bearer (`tags:read`)
 The messages whose **effective** tag for `question` is `valeur`, with their last known position — so a message corrected by hand no longer answers under the engine's old value. `origine` narrows to one origin — a source (`humain`) or an author id (one engine) — and the effective tag is then computed among that origin's rows only. `422` names an unknown `question` or a value the question does not allow (an empty page would be indistinguishable from "nothing carries this"). **Response** `{ data: { messages: { messageId, folder, uid, fromName, fromAddress, subject, date }[]; total: number; page: number } }`.
 
+### `GET /api/tags?account=&audit=1&page=` 🔑 Bearer (`tags:read`)
+The messages of the **random audit** (lot T14) that no human has judged yet, with their last known position — same shape as the filter above. A human validation on any question removes the message from this list. **Response** `{ data: { messages: …[]; total: number; page: number } }`.
+
 ### `GET /api/tags?account=&id=<mid>&id=<mid>` 🔑 Bearer (`tags:read`)
 The effective tags of a **list** of messages — what the message list paints as chips, in one request per page and never one per row. **Response** `{ data: { effective: Record<string, StoredTag[]> } }`, keyed by Message-ID.
 
@@ -1239,11 +1242,21 @@ interface TaggingStatus {
                                                   // `measuredOn` = how many already-tagged messages (current definition of the questions the trigger reads) the rate is read on — not the whole mailbox
   distribution?: …                                // only with `?distribution=1`: value counts per question, each restricted to tags written under its CURRENT definition
   staleCounts?: Record<string, number>            // only with `?stale=1`: per question id, messages tagged under an OLDER version
+  reliability?: QuestionReliability[]             // only with `?reliability=1`: one row per active question (below)
+  audit?: { tagged: number; target: number; drawn: number; validated: number }  // only with `?reliability=1`: the random audit — target = max(50, 2 % of tagged), capped at tagged
+}
+interface QuestionReliability {               // lib/tagging/audit.ts — every measure reads the CURRENT definition of the question
+  question: string
+  humanCount: number                          // messages a human judged on this question, audit or not
+  audit: { judged: number; correct: number }  // on the RANDOM AUDIT only: engine-and-human judged, and agreeing — the unbiased accuracy
+  confusions: { moteur: string; humain: string; count: number }[]   // most frequent disagreements on the audit (top 3)
+  byConfidence: { bucket: number; judged: number; correct: number }[]   // audit accuracy per 0.1 confidence bucket, `bucket` = lower bound (0.9 = [0.9, 1])
+  engineAgreement: { both: number; agree: number } | null   // JEV vs Yumi One on the messages both tagged; null when none
 }
 ```
 
 ### `POST /api/tagging/run` 🔑 Bearer (`tags:write`)
-**Body** `{ accountId: string; action: 'start' | 'pause' | 'resume' | 'restart' }`. These are **state orders, not a synchronous sort**: the work itself stays with the scheduler, which holds the per-mailbox lock and a budget per pass. `start` resumes from the saved cursor (so re-running a finished sort costs nothing); `restart` clears it and the counters. `pause` records the reason `user`, which is what distinguishes it on screen from a budget cap or exhausted credit. Requires the `organize` share permission. **Response** `{ data: TaggingStatus }`.
+**Body** `{ accountId: string; action: 'start' | 'sample' | 'pause' | 'resume' | 'restart' | 'audit'; sampleSize?: number; sampleSeed?: number }`. `audit` is the one order that is not a sort: it draws, at random and in the database only (no engine call), the messages of the **random audit** (`tag_audits`) up to the target (2 % of engine-tagged messages, at least 50, never more than there are), completing a previous draw without replacing it, and answers `{ data: TaggingStatus & { audit: { tagged, target, drawn, validated, added } } }`. These are **state orders, not a synchronous sort**: the work itself stays with the scheduler, which holds the per-mailbox lock and a budget per pass. `start` resumes from the saved cursor (so re-running a finished sort costs nothing); `restart` clears it and the counters. `pause` records the reason `user`, which is what distinguishes it on screen from a budget cap or exhausted credit. Requires the `organize` share permission. **Response** `{ data: TaggingStatus }`.
 
 ### `GET /api/tags/questions` 🔑 Bearer (`tags:read`)
 The caller's **sorting questions** — the taxonomy every engine call asks of each message. One set per user, not per mailbox; a user who never edited anything receives the default set of `lib/tagging/questions.ts`, inserted once on first read. **Response** `{ data: TagQuestion[] }`, in display order.

@@ -32,7 +32,7 @@ import { valuesOf } from '@/lib/tagging/questions'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import { HUMAN_SOURCE, RULE_SOURCE } from '@/lib/tagging/engine'
-import { TAGS_ENDPOINT, taggedRows } from '@/lib/tagging/view'
+import { AUDIT_FILTER, TAGS_CHANGED_EVENT, TAGS_ENDPOINT, TAG_FILTER_PARAM, taggedRows } from '@/lib/tagging/view'
 import { useFocusText } from '@/hooks/useFocusText'
 import type { StoredTag, TaggedMessage } from '@/lib/tagging/store'
 import type { DecisionEngine } from '@/lib/tagging/engines'
@@ -209,8 +209,11 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const [readUids, setReadUids] = useState<Set<string>>(new Set())
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
   // Filtre par étiquette : `question|valeur`, l'unique valeur que le sélecteur porte. Une seule
-  // chaîne d'état plutôt que deux, parce qu'une question sans valeur ne filtre rien.
-  const [tagFilter, setTagFilter] = useState('')
+  // chaîne d'état plutôt que deux, parce qu'une question sans valeur ne filtre rien. Ou
+  // `AUDIT_FILTER` : les mails de l'audit aléatoire à valider (lot T14) — l'écran « Fiabilité »
+  // y mène par l'URL, lue UNE fois au montage.
+  const [tagFilter, setTagFilter] = useState(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get(TAG_FILTER_PARAM) === AUDIT_FILTER ? AUDIT_FILTER : '')
   // L'ORIGINE du filtre (décision 23) : `''` = toute origine, `humain` = ce qu'une main a
   // confirmé, sinon l'id d'un moteur. Il n'a de sens qu'avec une étiquette choisie.
   const [tagOrigin, setTagOrigin] = useState('')
@@ -470,16 +473,23 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   // raison d'être de cette table (décision 4), montrer un mail sorti de la fenêtre. Il ne
   // coexiste pas avec une recherche — deux jeux de résultats dans une colonne ne diraient plus
   // lequel commande.
-  const [tagQuestion, tagValue] = tagFilter ? tagFilter.split('|') : ['', '']
-  const isTagMode = !isSearchMode && !!tagQuestion && !!tagValue && !!activeAccountId
-  const { data: tagHits } = useSWR<{ data: { messages: TaggedMessage[]; total: number } }>(
-    isTagMode
-      ? `${TAGS_ENDPOINT}?account=${encodeURIComponent(activeAccountId!)}` +
-        `&question=${encodeURIComponent(tagQuestion)}&valeur=${encodeURIComponent(tagValue)}` +
-        (tagOrigin ? `&origine=${encodeURIComponent(tagOrigin)}` : '')
-      : null,
-    fetcher,
-  )
+  const isAuditMode = tagFilter === AUDIT_FILTER
+  const [tagQuestion, tagValue] = tagFilter && !isAuditMode ? tagFilter.split('|') : ['', '']
+  const isTagMode = !isSearchMode && !!activeAccountId && (isAuditMode || (!!tagQuestion && !!tagValue))
+  const tagHitsKey = !isTagMode ? null
+    : isAuditMode ? `${TAGS_ENDPOINT}?account=${encodeURIComponent(activeAccountId!)}&${AUDIT_FILTER}=1`
+    : `${TAGS_ENDPOINT}?account=${encodeURIComponent(activeAccountId!)}` +
+      `&question=${encodeURIComponent(tagQuestion)}&valeur=${encodeURIComponent(tagValue)}` +
+      (tagOrigin ? `&origine=${encodeURIComponent(tagOrigin)}` : '')
+  const { data: tagHits } = useSWR<{ data: { messages: TaggedMessage[]; total: number } }>(tagHitsKey, fetcher)
+  // Une validation retire le mail de l'audit : la liste se relit sur l'événement que le panneau
+  // émet après chaque correction. En mode audit seulement, c'est là que ça change quelque chose.
+  useEffect(() => {
+    if (!isAuditMode || !tagHitsKey) return
+    const handler = () => globalMutate(tagHitsKey)
+    window.addEventListener(TAGS_CHANGED_EVENT, handler)
+    return () => window.removeEventListener(TAGS_CHANGED_EVENT, handler)
+  }, [isAuditMode, tagHitsKey])
   // Les moteurs de l'utilisateur, pour nommer les origines possibles — même clé SWR que l'écran
   // de tri, donc aucune requête de plus quand il est ouvert. Demandés seulement en mode étiquette.
   const { data: engineData } = useSWR<{ data: DecisionEngine[] }>(isTagMode ? ENGINES_ENDPOINT : null, fetcher)
@@ -1363,6 +1373,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
             )}
           >
             <option value="">{tTags('filterAll')}</option>
+            <option value={AUDIT_FILTER}>{tTags('filterAudit')}</option>
             {[...questionSet.enabled, ...questionSet.rules].map(q => (
               <optgroup key={q.id} label={labelQ(q.id)}>
                 {valuesOf(q).map(v => (
@@ -1371,7 +1382,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
               </optgroup>
             ))}
           </select>
-          {isTagMode && (
+          {isTagMode && !isAuditMode && (
             <select
               value={tagOrigin}
               onChange={e => setTagOrigin(e.target.value)}
@@ -1525,7 +1536,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
               <Search className="w-6 h-6 opacity-30" />
             </div>
             <p className="text-sm font-medium">
-              {isSearchMode ? t('noSearchResults') : isTagMode ? tTags('filterEmpty') : t('noMessages')}
+              {isSearchMode ? t('noSearchResults') : isAuditMode ? tTags('filterAuditEmpty') : isTagMode ? tTags('filterEmpty') : t('noMessages')}
             </p>
           </div>
         )}

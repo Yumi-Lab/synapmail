@@ -14,6 +14,7 @@ import { ENGINES_ENDPOINT } from '@/components/settings/DecisionEnginesSection'
 import { TagQuestionsSection } from '@/components/settings/TagQuestionsSection'
 import { TagGroupsSection } from '@/components/settings/TagGroupsSection'
 import { TagRulesSection } from '@/components/settings/TagRulesSection'
+import { TagReliabilitySection } from '@/components/settings/TagReliabilitySection'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import type { PassEstimate, TaggingStatus } from '@/lib/tagging/mailbox'
 import { TAGGING_SETTINGS_ENDPOINT } from '@/lib/tagging/view'
@@ -329,6 +330,8 @@ export default function TaggingSettingsPage() {
                   </>
                 )}
               </SettingsSection>
+
+              <TagReliabilitySection accountId={accountId!} />
             </>
           )}
         </div>

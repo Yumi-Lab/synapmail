@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils'
 import { isRuleQuestionId, valuesOf } from '@/lib/tagging/questions'
 import { OCCURRENCES_KEY } from '@/lib/tagging/detectors'
 import { HUMAN_SOURCE, RULE_SOURCE } from '@/lib/tagging/engine'
-import { listPills, orderedTags, tagsByGroup } from '@/lib/tagging/view'
+import { TAGS_CHANGED_EVENT, listPills, orderedTags, tagsByGroup } from '@/lib/tagging/view'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import type { StoredField, StoredTag } from '@/lib/tagging/store'
@@ -342,7 +342,10 @@ export function TagsPanel({ message, accountId, canOrganize }: {
         subject: message.subject, date: message.date,
       }),
     })
-    if (res.ok) mutate()
+    if (res.ok) {
+      mutate()
+      window.dispatchEvent(new CustomEvent(TAGS_CHANGED_EVENT))
+    }
   }
   const correctField = async (champ: string, valeur: string): Promise<boolean> => {
     const res = await fetch(`/api/messages/${encodeURIComponent(message.messageId)}/fields`, {

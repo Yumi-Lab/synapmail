@@ -793,6 +793,19 @@ export async function initDb(): Promise<void> {
     )
   `)
 
+  // L'AUDIT ALÉATOIRE (décision 16, lot T14) : les mails tirés au hasard parmi les mails
+  // étiquetés d'une boîte, pour une validation humaine indépendante de la confiance — la seule
+  // mesure non biaisée de l'exactitude. Le tirage est ENREGISTRÉ, pas recalculé : la mesure
+  // doit savoir quels mails en font partie, et un mail tiré le reste. `drawn_at` dit quand.
+  await query(`
+    CREATE TABLE IF NOT EXISTS tag_audits (
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      drawn_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (account_id, message_id)
+    )
+  `)
+
   // Le tri d'une boîte : quel moteur, quel plafond, où en est-on. Une ligne par boîte.
   // `locked_until` est le verrou qui empêche deux passages du planificateur de travailler
   // la même boîte (claim par `UPDATE … WHERE locked_until < NOW() RETURNING`).

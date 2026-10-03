@@ -17,6 +17,17 @@ import type { StoredTag, TaggedMessage } from './store'
 export const TAGS_ENDPOINT = '/api/tags'
 
 /**
+ * Le filtre « audit aléatoire » (lot T14) : la valeur du sélecteur d'étiquettes de la liste ET
+ * le paramètre d'URL (`/mail?tag=audit`) par lequel l'écran « Fiabilité » y mène. Une seule
+ * chaîne, écrite ici, lue par les deux.
+ */
+export const AUDIT_FILTER = 'audit'
+export const TAG_FILTER_PARAM = 'tag'
+
+/** Émis par le panneau après chaque correction écrite : la liste en mode audit se relit dessus. */
+export const TAGS_CHANGED_EVENT = 'synapmail:tags-changed'
+
+/**
  * La route qui sert le JEU de questions de l'utilisateur (lot T-Q), écrite UNE fois : c'est la
  * clé SWR que la liste, le panneau et l'écran de réglages partagent (mêmes règles que
  * `/api/settings` : `{ data }`, un seul fetcher, une mutation la rafraîchit partout).

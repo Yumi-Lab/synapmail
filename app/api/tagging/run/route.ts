@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
 import { getAccessibleAccount } from '@/lib/accountAccess'
+import { drawAudit } from '@/lib/tagging/audit'
 import { pauseMailbox, resumeMailbox, startBulk, startSample } from '@/lib/tagging/runner'
 import { ensureMailboxTagging, readTaggingStatus } from '@/lib/tagging/mailbox'
 
@@ -12,8 +13,10 @@ export const dynamic = 'force-dynamic'
  * un tri synchrone. Le travail lui-même reste au planificateur (`lib/scheduler.ts`), qui
  * dispose d'un budget par passage et du verrou par boîte — lancer le tri ici, dans le temps
  * d'une requête HTTP, ferait un second chemin de tri à tenir d'accord avec le premier.
+ * `audit` (lot T14) est l'exception qui n'en est pas une : un tirage au hasard en base, sans
+ * appel moteur, qui complète `tag_audits` jusqu'à la cible et rend l'état comme les autres.
  */
-const ACTIONS = ['start', 'sample', 'pause', 'resume', 'restart'] as const
+const ACTIONS = ['start', 'sample', 'pause', 'resume', 'restart', 'audit'] as const
 type Action = (typeof ACTIONS)[number]
 const isAction = (v: unknown): v is Action => typeof v === 'string' && (ACTIONS as readonly string[]).includes(v)
 
@@ -53,6 +56,9 @@ async function postHandler(req: Request) {
     if (body.action === 'start') await startBulk(body.accountId)
     else if (body.action === 'sample') await startSample(body.accountId, sample)
     else if (body.action === 'restart') await startBulk(body.accountId, { restart: true })
+    else if (body.action === 'audit') {
+      return NextResponse.json({ data: { ...(await readTaggingStatus(body.accountId)), audit: await drawAudit(body.accountId) } })
+    }
     // La pause demandée par la main porte la raison `user` : c'est ce qui la distingue d'un
     // plafond ou d'un crédit épuisé à l'écran, et d'une reprise automatique.
     else if (body.action === 'pause') await pauseMailbox(body.accountId, 'user', 'mise en pause depuis l’écran de tri')
