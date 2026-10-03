@@ -56,6 +56,7 @@ A key that is valid but too narrow gets **`403`**, naming what it lacks — neve
 | `subscriptions:purge` | move a newsletter's whole history to the trash — destructive, never granted by unsubscribing |
 | `ai:use` | the assistance actions |
 | `tags:read` / `tags:write` | read the tags a message carries / write tags and drive the automatic sorter |
+| `documents:read` / `documents:write` | read the scanned documents of a GED mailbox — OCR text, pages, virtual folders, learned patterns / file them, manage their folders and patterns |
 
 A **human session is never limited by a scope**: scopes apply to keys only. Keys created before scopes existed keep exactly the routes they could already call; writing to mailboxes is granted to nobody by default and has to be ticked.
 
@@ -337,7 +338,7 @@ interface HiddenContentReport {
 }
 ```
 
-`untrustedFields` currently lists: `subject`, `from.name`, `from.address`, `to[].name`, `to[].address`, `cc[].name`, `cc[].address`, `replyTo.name`, `replyTo.address`, `preview`, `bodyPlain`, `bodyHtml`, `attachments[].filename`, `headers`.
+`untrustedFields` currently lists: `subject`, `from.name`, `from.address`, `to[].name`, `to[].address`, `cc[].name`, `cc[].address`, `replyTo.name`, `replyTo.address`, `preview`, `bodyPlain`, `bodyHtml`, `attachments[].filename`, `headers` — and, on the document routes below, `filename`, `ocrText`, `pageTexts[].text` (what the OCR read off a piece of paper someone else printed).
 
 `hiddenContent` is present only when the payload actually carries a body: a **single** report for `GET /api/messages/[id]`, and an object **keyed by message UID** for the list/search/thread routes (messages without a body are simply absent from it). `detected: false` with an empty `kinds` means none of the nine techniques above were found — not that the message is safe.
 
@@ -1354,6 +1355,74 @@ Removes the engine. Mailboxes that had chosen it keep their sorting row (`ON DEL
 
 ### `POST /api/decision-engines/[id]/test` — session only
 Sends **one** minimal request to the engine — a dummy state and a single question, not the 41 — to check a key before relying on it. This is the only place in the app where a human click spends an engine call. A refusal is relayed as-is (`502` with `failure`: `credit` / `auth` / `rate` / `unavailable` / `rejected`), which is what tells "wrong key" from "out of credit". **Response** `{ data: { ms, inputTokens, model } }`.
+
+---
+
+## Documents (GED — scanned mail)
+
+A **GED mailbox** (Settings → Automatic sorting → "this mailbox is a GED") receives scanned PDFs as attachments. Every PDF is **one document**: the scheduler reads it from IMAP (read-only, nothing flagged or moved), runs the self-hosted OCR, pre-tags it with the sorting engine, and **files** it into a **virtual folder** — a tree kept in the database, never in IMAP — by **learned patterns**: stable identifiers of the sender (SIRET, VAT number, reduced IBAN, company name, bounded regex) each pointing at a folder. A document whose patterns name one folder with at least one strong identifier is filed alone (`source: 'motif'`); two candidate folders or a company name alone leave it **unfiled** with `suggestions`; an unknown sender gets a **proposed** folder (`auto: true`) under "Nouveaux émetteurs".
+
+**Filing is a history, not a field**: every filing is a new row (`humain` first, then the most recent — the same rule as tags), so the effective folder of a document is the last human choice when there is one. **Who files decides the source**, never the body: a session files as `humain`, a key as `agent` (signed by the key, or by the decision engine it names with `engineId` — `403` otherwise, as for tags). Both learn the document's identifiers for the chosen folder. The **mailbox's own identifiers** (`PUT /api/documents/own`) — the recipient's VAT/SIRET/IBAN printed on every invoice it receives — are never learned nor searched.
+
+The OCR text, the page texts and the file name are **third-party data**: with a Bearer key they are listed in `aiSafety.untrustedFields` like a mail body. The PDF itself is **never stored**: `…/pdf` and `…/pages/[n]` re-read it from the mailbox on demand.
+
+```ts
+interface GedDocumentSummary {
+  id: string; messageId: string; folder: string; uid: number; partIdx: number
+  filename: string; fromAddress: string; fromName: string; subject: string; recuLe: string | null
+  pages: number; ocrStatus: 'attente' | 'fait' | 'echec'; ocrError: string | null; confiance: number | null
+  folderId: string | null                                   // the EFFECTIVE folder, null = unfiled
+  filingSource: 'humain' | 'agent' | 'motif' | 'moteur' | null
+}
+interface GedFolder { id: string; parentId: string | null; nom: string; position: number; auto: boolean; creeLe: string; documents: number; patterns: number }
+interface GedPattern { id: string; folderId: string; genre: 'siret' | 'tva' | 'iban4' | 'raison_sociale' | 'regex'; valeur: string; apprisDe: string | null; auteurNom: string; touches: number; creeLe: string }
+interface Identifier { genre: GedPattern['genre']; valeur: string }
+```
+
+### `GET /api/documents?account=&folder=&q=&page=&perPage=` 🔑 Bearer (`documents:read`)
+The documents of one mailbox, newest first, paginated (`perPage` default 50, capped 200). `folder=<id>` narrows to the documents whose **effective** folder it is; `folder=unfiled` to the ones with no effective folder ("À ranger"); `q` searches the OCR text (French `tsvector`, web syntax: words, quotes, `-word`). **Response** `{ data: { documents: GedDocumentSummary[]; total: number; page: number; perPage: number; unfiled: number } }`.
+
+### `GET /api/documents/[id]` 🔑 Bearer (`documents:read`)
+One document: `ocrText` (pages separated by `\f`), `pageTexts` (`{ index, text, confidence, blank }[]`), its effective `tags` and `fields` (the same rows the carrying mail got — the engine read the OCR text instead of the body), its `filings` history (`{ id, folderId, source, auteurId, auteurNom, confiance, creeLe }[]`, effective first) and, while unfiled, `suggestions` (`{ folderId, genres, patternIds, strong }[]`). The mailbox is deduced from the document — this is also what the key barrier reads. **Response** `{ data: GedDocumentSummary & { ocrText, pageTexts, tagMessageId, filings, tags, fields, suggestions } }`.
+
+### `GET /api/documents/[id]/pdf?download=` 🔑 Bearer (`documents:read`)
+The PDF itself, re-read from the mailbox (read-only) and served as `application/pdf`; `download=true` switches `Content-Disposition` to attachment. `404` when the attachment has left the mailbox, `502` when the mailbox does not answer. Not a JSON envelope.
+
+### `GET /api/documents/[id]/pages/[n]?dpi=` 🔑 Bearer (`documents:read`)
+Page `n` (from 1) rendered as `image/png` on demand by `pdftoppm` — the same binary the OCR uses — at `dpi` (default 110, max 200): one route for a thumbnail and for a zoom. `400` names a bad `page` or `dpi`, `404` a page beyond the document's `pages`. Nothing is cached server-side; `Cache-Control: private, max-age=3600` lets the client keep it.
+
+### `POST /api/documents/[id]/filing` 🔑 Bearer (`documents:write`)
+**Body** `{ folderId: string | null; engineId?: string }`. Files the document into `folderId` (a folder of the same mailbox — `404` names it otherwise) or takes it out of every folder (`null`). A new history row, never an update; `humain` for a session, `agent` for a key; both learn the document's identifiers for the folder (`learned`). Requires the `organize` share permission. **Response** `{ data: { filing: { id, folderId, source, auteurId, auteurNom, creeLe }; learned: Identifier[]; filings } }`.
+
+### `GET /api/documents/folders?account=` 🔑 Bearer (`documents:read`)
+The virtual folder tree of a mailbox, **flat** (`parentId` says where each one sits), each with the count of documents whose effective folder it is and of its patterns; plus the `unfiled` counter. **Response** `{ data: { folders: GedFolder[]; unfiled: number } }`.
+
+### `POST /api/documents/folders` 🔑 Bearer (`documents:write`)
+**Body** `{ accountId: string; nom: string; parentId?: string | null }`. Creates a folder (`201`); `nom` is trimmed and capped at 120 characters. `404` names an unknown `parentId`; `409` when a sibling already carries that name. Requires `organize`. **Response** `{ data: GedFolder }`.
+
+### `PATCH /api/documents/folders/[id]` 🔑 Bearer (`documents:write`)
+**Body** `{ nom?: string; parentId?: string | null }` — rename and/or move. A proposed folder (`auto: true`) a hand touches stops being proposed. `409` refuses moving a folder under itself or onto a sibling's name. Requires `organize`. **Response** `{ data: GedFolder }`.
+
+### `DELETE /api/documents/folders/[id]` 🔑 Bearer (`documents:write`)
+Removes the folder and its sub-folders; their filings and patterns go with them, so their documents fall back to "À ranger" — **the documents themselves are never deleted**. Requires `organize`. **Response** `{ data: { id } }`.
+
+### `POST /api/documents/folders/[id]/merge` 🔑 Bearer (`documents:write`)
+**Body** `{ into: string; engineId?: string }`. **Merges** folder `[id]` into `into` (another folder of the same mailbox — `404` names it otherwise, `409` for itself): every document whose effective folder is `[id]` is filed into `into` (one new row each, `humain` or `agent`, learning on the way), its patterns move over (a pattern already present on `into` stays as it is), its sub-folders are re-parented (`409` if one clashes with a sub-folder of `into`), `into` stops being proposed, and `[id]` disappears — with the history rows that pointed at it (the merged documents keep the new `humain`/`agent` row). This is how a proposed "FEDEX EXPRESS FR SAS" joins the "FedEx" folder a hand created. Requires `organize`. **Response** `{ data: { from, into, source, documents: number, patterns: number, folders: number } }`.
+
+### `GET /api/documents/patterns?account=&folder=` 🔑 Bearer (`documents:read`)
+The learned patterns of a mailbox, or of one folder. `iban4` values are **reduced IBANs** (`bank…last4`) — the full IBAN is never stored. **Response** `{ data: GedPattern[] }`.
+
+### `POST /api/documents/patterns` 🔑 Bearer (`documents:write`)
+**Body** `{ accountId: string; folderId: string; genre: GedPattern['genre']; valeur: string; engineId?: string }`. Puts a pattern on a folder by hand or by agent (`201`); an identical one already there is left as it is. The value is normalised and **checked as the OCR would have been**: a SIRET needs a valid Luhn key, a VAT number its 2-digit key, a regex must be valid and bounded, a full IBAN is reduced on entry — `422` names the `genre` and `valeur` refused. Requires `organize`. **Response** `{ data: GedPattern }`.
+
+### `DELETE /api/documents/patterns/[id]` 🔑 Bearer (`documents:write`)
+Removes a pattern: the folder no longer recognises that identifier. Requires `organize`. **Response** `{ data: { id } }`.
+
+### `GET /api/documents/own?account=` 🔑 Bearer (`documents:read`)
+The mailbox's **own identifiers** — the recipient's `siret`, `tva`, `iban4` printed on every invoice it receives — which the filing never learns nor searches. **Response** `{ data: { propres: Identifier[] } }`.
+
+### `PUT /api/documents/own` 🔑 Bearer (`documents:write`)
+**Body** `{ accountId: string; propres: Identifier[] }` — replaces the whole list (an empty list empties it); genres limited to `siret`, `tva`, `iban4`, each value checked like a pattern (`422`). `409` when the mailbox is not a GED. Requires `organize`. **Response** `{ data: { propres: Identifier[] } }`.
 
 ---
 
