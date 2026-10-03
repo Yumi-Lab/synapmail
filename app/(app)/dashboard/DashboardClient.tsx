@@ -10,7 +10,7 @@ import {
   Mail, Send, Eye, Clock, Sparkles, BarChart3, Users, Filter,
   PenSquare, RefreshCw, ArrowUpRight, Minus, CheckCheck,
   Paperclip, Star, FileText, AlarmClock, ChevronRight, ChevronDown, Check, MailX,
-  GripVertical, Undo2, Tag,
+  GripVertical, Undo2, Tag, CalendarClock, ShieldAlert,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AccountAvatar } from '@/components/layout/AccountAvatar'
@@ -289,6 +289,8 @@ const REASON_STYLE: Record<FocusReason, string> = {
   frequent: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
   starred: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
   attachment: 'bg-muted text-muted-foreground border-border',
+  echeance: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
+  spam: 'bg-muted text-muted-foreground border-border',
   tag: 'bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20',
 }
 const REASON_ICON: Record<FocusReason, React.ReactNode> = {
@@ -299,6 +301,8 @@ const REASON_ICON: Record<FocusReason, React.ReactNode> = {
   frequent: <Users className="h-3 w-3" />,
   starred: <Star className="h-3 w-3" />,
   attachment: <Paperclip className="h-3 w-3" />,
+  echeance: <CalendarClock className="h-3 w-3" />,
+  spam: <ShieldAlert className="h-3 w-3" />,
   tag: <Tag className="h-3 w-3" />,
 }
 

@@ -124,6 +124,8 @@
     "reason_frequent": "Frequent",
     "reason_starred": "Starred",
     "reason_attachment": "Attachment",
+    "reason_echeance": "Extracted due date",
+    "reason_spam": "Spam / phishing ceiling",
     "reason_tag": "Tag",
     "sortByDate": "By date",
     "sortByPriority": "By priority",
@@ -1102,6 +1104,7 @@
   },
   "tags": {
     "panelTitle": "Tags",
+    "pair": "{question}: {value}",
     "none": "Not sorted yet",
     "more": "+{count}",
     "confidence": "{percent}% confident",

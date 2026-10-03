@@ -124,6 +124,8 @@
     "reason_frequent": "Fréquent",
     "reason_starred": "Suivi",
     "reason_attachment": "Pièce jointe",
+    "reason_echeance": "Échéance extraite",
+    "reason_spam": "Plafond spam / hameçonnage",
     "reason_tag": "Étiquette",
     "sortByDate": "Par date",
     "sortByPriority": "Par priorité",
@@ -1102,6 +1104,7 @@
   },
   "tags": {
     "panelTitle": "Étiquettes",
+    "pair": "{question} : {value}",
     "none": "Pas encore trié",
     "more": "+{count}",
     "confidence": "confiance {percent} %",

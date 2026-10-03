@@ -124,6 +124,8 @@
     "reason_frequent": "常用联系人",
     "reason_starred": "已加星标",
     "reason_attachment": "附件",
+    "reason_echeance": "提取的截止日期",
+    "reason_spam": "垃圾/钓鱼邮件上限",
     "reason_tag": "标签",
     "sortByDate": "按日期",
     "sortByPriority": "按优先级",
@@ -1102,6 +1104,7 @@
   },
   "tags": {
     "panelTitle": "标签",
+    "pair": "{question}：{value}",
     "none": "尚未分类",
     "more": "另 {count} 项",
     "confidence": "置信度 {percent}%",

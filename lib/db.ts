@@ -136,6 +136,7 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sidebar_collapsed BOOLEAN NOT NULL DEFAULT false`)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS mail_density VARCHAR(20) NOT NULL DEFAULT 'comfortable'`)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS list_width INTEGER NOT NULL DEFAULT 320`)
+  await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS mail_sort_priority BOOLEAN NOT NULL DEFAULT false`)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS dashboard_account_id UUID REFERENCES email_accounts(id) ON DELETE SET NULL`)
   // Ordre des cartes du tableau de bord, rangees a la souris. NULL = ordre d'origine :
   // aucun tableau de bord existant ne bouge a la mise a jour. Les identites sont celles

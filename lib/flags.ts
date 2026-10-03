@@ -86,5 +86,14 @@ export type MailListFilter = (typeof MAIL_LIST_FILTERS)[number]
 export const FOCUS_FILTER = 'focus' satisfies MailListFilter
 /** La valeur du paramètre `sort` de `/api/messages`, écrite une fois. */
 export const PRIORITY_SORT = 'priority'
+/**
+ * À partir de ce score un mail est « à traiter » — et porte une pastille dans la liste. Un signal
+ * faible seul (pièce jointe 1, « Re : » 2, contact fréquent 2) n'y suffit pas ; un signal fort
+ * (facture 3, échéance 4, drapeau 5, toute étiquette pesée ≥ 3) y suffit. Ici, et non dans
+ * `lib/focus.ts`, parce que la liste (client) le lit pour décider d'afficher la pastille.
+ */
+export const FOCUS_THRESHOLD = 3
+/** Colonne `user_settings` qui retient le tri choisi (`true` = par priorité), lue et écrite sous ce nom. */
+export const SORT_SETTING = 'mail_sort_priority'
 export const byPriorityThenDate = (a: { priority?: { score: number }; date: string }, b: { priority?: { score: number }; date: string }) =>
   (b.priority?.score ?? 0) - (a.priority?.score ?? 0) || +new Date(b.date) - +new Date(a.date)

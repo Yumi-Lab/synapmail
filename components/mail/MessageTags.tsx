@@ -51,10 +51,10 @@ function useOriginText() {
 /** Ce qu'une étiquette dit d'elle-même quand on s'arrête dessus : valeur, confiance, origine. */
 function useTagText() {
   const t = useTranslations('tags')
-  const { q, v } = useTagLabels()
+  const { pair } = useTagLabels()
   const origin = useOriginText()
   return (tag: StoredTag): string => {
-    const parts = [`${q(tag.question)} : ${v(tag.valeur)}`]
+    const parts = [pair(tag.question, tag.valeur)]
     if (tag.confiance !== null) parts.push(t('confidence', { percent: Math.round(tag.confiance * 100) }))
     const occurrences = tag.probabilites?.[OCCURRENCES_KEY]
     if (occurrences) parts.push(t('occurrences', { count: occurrences }))

@@ -5,7 +5,7 @@ import { useLocale, useTranslations } from 'next-intl'
 import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag, Info } from 'lucide-react'
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
 import { MAIL_ORIGIN_ATTR, groupByOrigin, groupsToMove, originKey, type MessageOrigin } from '@/lib/mailOrigin'
-import { DEFAULT_FLAG_KEY, FOCUS_FILTER, MAIL_LIST_FILTERS, PRIORITY_SORT, byPriorityThenDate, flagByKey, type MailListFilter } from '@/lib/flags'
+import { DEFAULT_FLAG_KEY, FOCUS_FILTER, FOCUS_THRESHOLD, MAIL_LIST_FILTERS, PRIORITY_SORT, SORT_SETTING, byPriorityThenDate, flagByKey, type MailListFilter } from '@/lib/flags'
 import { unreadRefresh, unreadShift } from '@/lib/unreadSignal'
 import {
   explorerSelect, gestureOf, isAllSelected, selectAll,
@@ -159,6 +159,7 @@ interface Props {
 
 interface AppSettings {
   thread_view: boolean; messages_per_page: number; mail_density: DensityMode
+  [SORT_SETTING]: boolean
   /** Boîte affichée, telle qu'enregistrée : ce qui dit si le compte reçu est le bon. */
   active_account_id: string | null
 }
@@ -175,8 +176,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const [filter, setFilter] = useState<MailListFilter>('all')
   // Tri de la liste : par date (IMAP) ou par priorité (lot T12, `lib/focus.ts`). « À traiter »
   // est par priorité par nature ; le choix n'a pas de sens en recherche ni en filtre d'étiquette.
-  const [sortByPriority, setSortByPriority] = useState(false)
-  const byPriority = sortByPriority || filter === FOCUS_FILTER
+  // Retenu dans `user_settings` comme la densité (jamais en localStorage).
   const focusText = useFocusText()
   const [page, setPage] = useState(1)
   const [accumulated, setAccumulated] = useState<Message[]>([])
@@ -211,6 +211,17 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     }).then(() => globalMutate('/api/settings'))
   }
   const compact = density === 'compact'
+  const sortByPriority = settingsData?.data?.[SORT_SETTING] ?? false
+  const byPriority = sortByPriority || filter === FOCUS_FILTER
+  const changeSort = (priority: boolean) => {
+    globalMutate('/api/settings', (curr: { data: Record<string, unknown> } | undefined) =>
+      curr ? { data: { ...curr.data, [SORT_SETTING]: priority } } : curr, false)
+    fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [SORT_SETTING]: priority }),
+    }).then(() => globalMutate('/api/settings'))
+  }
 
   // Bulk selection
   const [checkedKeys, setCheckedKeys] = useState<Set<string>>(new Set())
@@ -1191,8 +1202,9 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
                 )
               })()}
               {thread.messages.some(m => m.hasAttachments) && <Paperclip className="w-3 h-3 text-muted-foreground" />}
-              {/* Par priorité (lot T12) : la composante la plus forte, chaque composante dans l'infobulle. */}
-              {msg.priority && msg.priority.score > 0 && (
+              {/* Par priorité (lot T12) : pastille à partir du seuil « à traiter » (une pièce jointe
+                  seule ne la mérite pas), la composante la plus forte, chaque composante dans l'infobulle. */}
+              {msg.priority && msg.priority.score >= FOCUS_THRESHOLD && (
                 <span title={focusText.describe(msg.priority)} data-focus-score={msg.priority.score}
                   className="inline-flex max-w-[7rem] items-center rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 text-[10px] font-semibold leading-4 text-violet-600 dark:text-violet-400">
                   <span className="truncate">{focusText.label(msg.priority)}</span>
@@ -1301,7 +1313,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
           {filter !== FOCUS_FILTER && (
             <div className="flex rounded-lg overflow-hidden border border-border text-xs font-medium" data-sort={byPriority ? PRIORITY_SORT : 'date'}>
               {([false, true] as const).map(p => (
-                <button key={String(p)} onClick={() => { setSortByPriority(p); setPage(1); setAccumulated([]); loadingLockRef.current = 0 }}
+                <button key={String(p)} onClick={() => { changeSort(p); setPage(1); setAccumulated([]); loadingLockRef.current = 0 }}
                   className={cn('px-2.5 py-1.5 transition-colors', sortByPriority === p ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-accent')}>
                   {p ? t('sortByPriority') : t('sortByDate')}
                 </button>

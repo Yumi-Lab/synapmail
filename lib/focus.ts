@@ -1,7 +1,8 @@
 import { query } from './db'
 import { listAccessibleAccounts } from './accountAccess'
-import { readEffectiveFor, type StoredTag } from './tagging/store'
-import { FOCUS_FILTER, type MailListFilter } from './flags'
+import { readEffectiveFor, readEffectiveFieldsFor, type StoredTag } from './tagging/store'
+import { NOUL_YES } from './tagging/questions'
+import { FOCUS_FILTER, FOCUS_THRESHOLD, type MailListFilter } from './flags'
 import type { Message } from '@/types/email'
 import type { FocusItem, FocusPart, FocusReason, FocusScore } from '@/types/dashboard'
 
@@ -20,8 +21,12 @@ export const REPLY_RE = /^\s*(re|ré|rép|tr|fwd|fw)\s*:/i
 
 /**
  * Le poids de chaque étiquette qui change la priorité : `question → valeur → points`. Une
- * valeur absente pèse 0 (le `non` d'un noul, `calme`, `aucune`…). Négatif = fait descendre :
- * un envoi automatique ou un hameçonnage n'est pas « à traiter », même avec « URGENT » en objet.
+ * valeur absente pèse 0 (le `non` d'un noul, `calme`, `aucune`…). Négatif = fait descendre.
+ * Deux étiquettes ne sont PAS de simples poids (gate du 03/10, mesuré sur la boîte réelle) :
+ *  - `spam_hameconnage = oui` est un VETO (`SPAM_CEILING`) : un hameçonnage qui crie « urgent,
+ *    fraude, juridique » est justement celui qui cumule le plus de points ;
+ *  - `automatique = oui` PLAFONNE l'urgence (`AUTO_URGENCE_CAP`) et annule « fréquent » : un code
+ *    de connexion « sous 48 h » ou une infolettre reçue chaque jour n'est pas à traiter.
  */
 export const TAG_WEIGHTS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
   urgence: { sous_48h: 4, aujourdhui: 8 },
@@ -36,11 +41,34 @@ export const TAG_WEIGHTS: Readonly<Record<string, Readonly<Record<string, number
 }
 
 /**
- * À partir de ce score un mail est « à traiter ». Un signal faible seul (pièce jointe 1,
- * « Re : » 2, contact fréquent 2) n'y suffit pas ; un signal fort (facture 3, échéance 4,
- * drapeau 5, toute étiquette pesée ≥ 3) y suffit.
+ * Score maximal d'un mail marqué spam/hameçonnage : sous le score le plus bas qu'un mail NON
+ * marqué puisse atteindre (la somme des poids négatifs), donc toujours dernier du tri par priorité.
  */
-export const FOCUS_THRESHOLD = 3
+export const SPAM_CEILING = Object.values(TAG_WEIGHTS).flatMap(w => Object.values(w)).filter(p => p < 0).reduce((a, b) => a + b, 0) - 1
+/** Ce que l'urgence peut encore peser quand le mail est un envoi automatique. */
+export const AUTO_URGENCE_CAP = 2
+
+/**
+ * L'échéance EXTRAITE (`message_fields.echeance`, lot T11) pèse selon sa proximité : à J+2 elle
+ * domine une facture, à J+7 elle vaut une échéance d'objet, passée depuis plus d'un mois elle ne
+ * pèse plus rien (on n'y fera rien). Entre les deux : poids d'un rappel.
+ */
+export const ECHEANCE_WEIGHTS: readonly { maxDays: number; points: number }[] = [
+  { maxDays: 2, points: 6 },
+  { maxDays: 7, points: 4 },
+  { maxDays: 30, points: 2 },
+]
+export const ECHEANCE_STALE_DAYS = 30
+const DAY_MS = 86_400_000
+
+export function echeancePoints(iso: string | null | undefined, now: Date = new Date()): number {
+  if (!iso) return 0
+  const days = Math.ceil((+new Date(`${iso}T00:00:00Z`) - +now) / DAY_MS)
+  if (Number.isNaN(days) || days < -ECHEANCE_STALE_DAYS) return 0
+  return ECHEANCE_WEIGHTS.find(w => days <= w.maxDays)?.points ?? 0
+}
+
+export { FOCUS_THRESHOLD }
 
 /**
  * Les non-lus les plus récents passés au score — pour le top-5 comme pour le filtre de liste
@@ -62,7 +90,10 @@ export interface FocusRow {
   has_attachments: boolean
 }
 
-export type FocusSignals = Pick<FocusRow, 'subject' | 'from_address' | 'is_starred' | 'has_attachments'>
+export type FocusSignals = Pick<FocusRow, 'subject' | 'from_address' | 'is_starred' | 'has_attachments'> & {
+  /** L'échéance extraite effective (`YYYY-MM-DD`), quand le mail en porte une. */
+  echeance?: string | null
+}
 
 /** Ce que le serveur IMAP reçoit pour un filtre de liste : « à traiter » se lit dans les non-lus. */
 export const imapFilterOf = (filter: MailListFilter): Exclude<MailListFilter, 'focus'> => (filter === FOCUS_FILTER ? 'unread' : filter)
@@ -80,19 +111,26 @@ export function scoreFocus(
   let reason: FocusReason = 'reply'
   const add = (r: Exclude<FocusReason, 'tag'>, points: number) => { score += points; parts.push({ kind: 'reason', reason: r, points }) }
 
+  const said = (question: string) => tags.find(t => t.question === question)?.valeur
+  const automatic = said('automatique') === NOUL_YES
+  const spam = said('spam_hameconnage') === NOUL_YES
+
   if (row.is_starred) { add('starred', 5); reason = 'starred' }
   if (from && vip.has(from)) { add('vip', 4); reason = 'vip' }
-  else if (from && frequent.has(from)) { add('frequent', 2); if (reason === 'reply') reason = 'frequent' }
+  else if (from && frequent.has(from) && !automatic) { add('frequent', 2); if (reason === 'reply') reason = 'frequent' }
   if (INVOICE_RE.test(subject)) { add('invoice', 3); reason = 'invoice' }
   if (DEADLINE_RE.test(subject)) { add('deadline', 4); reason = 'deadline' }
+  const echeance = echeancePoints(row.echeance)
+  if (echeance) { add('echeance', echeance); if (echeance >= 4) reason = 'echeance' }
   if (REPLY_RE.test(subject)) { add('reply', 2) }
   if (row.has_attachments) { add('attachment', 1); if (reason === 'reply') reason = 'attachment' }
 
   const topHeuristic = Math.max(0, ...parts.map(p => p.points))
   let topTag = 0
   for (const tag of tags) {
-    const points = TAG_WEIGHTS[tag.question]?.[tag.valeur]
-    if (points === undefined) continue
+    const weight = TAG_WEIGHTS[tag.question]?.[tag.valeur]
+    if (weight === undefined) continue
+    const points = automatic && tag.question === 'urgence' ? Math.min(weight, AUTO_URGENCE_CAP) : weight
     score += points
     parts.push({ kind: 'tag', question: tag.question, valeur: tag.valeur, points })
     topTag = Math.max(topTag, points)
@@ -101,28 +139,60 @@ export function scoreFocus(
   // de surface donne son nom au mail, sinon la raison de surface (ordre historique) reste.
   if (topTag > topHeuristic) reason = 'tag'
 
+  // Le veto : un hameçonnage ne remonte jamais, quoi qu'il cumule. L'infobulle montre l'écart
+  // comme une composante, pour que la somme des parts reste le score.
+  if (spam && score > SPAM_CEILING) {
+    parts.push({ kind: 'reason', reason: 'spam', points: SPAM_CEILING - score })
+    score = SPAM_CEILING
+    reason = 'spam'
+  }
+
   return { score, reason, parts }
 }
 
-/** Contact clé = contact étoilé ; fréquent = au-dessus du seuil d'échanges. Lu UNE fois par requête. */
+/**
+ * Contact clé = contact étoilé ; fréquent = un vrai CORRESPONDANT (on lui a déjà écrit,
+ * `sent_count > 0`) au-dessus du seuil d'échanges — jamais un expéditeur à sens unique, sinon
+ * chaque infolettre quotidienne devient « fréquente » (mesuré au gate du 03/10). Lu UNE fois par requête.
+ */
 export async function contactSignals(userId: string): Promise<{ vip: Set<string>; frequent: Set<string> }> {
-  const contactRows = await query<{ email: string; frequency: number; is_starred: boolean }>(
-    `SELECT email, frequency, is_starred FROM contacts WHERE user_id = $1`,
+  const contactRows = await query<{ email: string; frequency: number; sent_count: number; is_starred: boolean }>(
+    `SELECT email, frequency, sent_count, is_starred FROM contacts WHERE user_id = $1`,
     [userId],
   )
   const vip = new Set(contactRows.filter(c => c.is_starred).map(c => c.email.toLowerCase()))
   const freqThreshold = Math.max(5, ...contactRows.map(c => c.frequency))
   const frequent = new Set(
-    contactRows.filter(c => c.frequency >= Math.min(freqThreshold, 10)).map(c => c.email.toLowerCase()),
+    contactRows.filter(c => c.sent_count > 0 && c.frequency >= Math.min(freqThreshold, 10)).map(c => c.email.toLowerCase()),
   )
   return { vip, frequent }
 }
 
+/** Ce que la priorité lit d'un mail trié : ses étiquettes effectives et son échéance extraite. */
+export interface PriorityInputs { tags: StoredTag[]; echeance: string | null }
+const NO_INPUTS: PriorityInputs = { tags: [], echeance: null }
+
 /**
- * Les étiquettes effectives d'une liste de mails de PLUSIEURS boîtes : une requête par boîte
- * (`readEffectiveFor` est la source unique de la règle « effective »), jamais une par mail.
+ * Les entrées de priorité d'une liste de mails d'UNE boîte, en deux requêtes par page — jamais
+ * une par ligne. Restreint aux origines de CONFIANCE (`trusted` : main, trieur, moteur rattaché),
+ * à la différence de l'affichage : un moteur d'essai ne doit pas réordonner la boîte.
  */
-export async function effectiveTagsFor(rows: readonly Pick<FocusRow, 'account_id' | 'message_id'>[]): Promise<Map<string, StoredTag[]>> {
+export async function priorityInputsFor(accountId: string, messageIds: string[]): Promise<Map<string, PriorityInputs>> {
+  const [tags, fields] = await Promise.all([
+    readEffectiveFor(accountId, messageIds, { trusted: true }),
+    readEffectiveFieldsFor(accountId, messageIds),
+  ])
+  const out = new Map<string, PriorityInputs>()
+  tags.forEach((list, mid) => out.set(mid, { tags: list, echeance: null }))
+  fields.forEach((list, mid) => {
+    const echeance = list.find(f => f.question === 'echeance')?.valeur ?? null
+    out.set(mid, { tags: out.get(mid)?.tags ?? [], echeance })
+  })
+  return out
+}
+
+/** La même lecture pour des mails de PLUSIEURS boîtes : une paire de requêtes par boîte. */
+async function priorityInputsAcross(rows: readonly Pick<FocusRow, 'account_id' | 'message_id'>[]): Promise<Map<string, PriorityInputs>> {
   const byAccount = new Map<string, string[]>()
   for (const r of rows) {
     if (!r.message_id) continue
@@ -130,9 +200,9 @@ export async function effectiveTagsFor(rows: readonly Pick<FocusRow, 'account_id
     ids.push(r.message_id)
     byAccount.set(r.account_id, ids)
   }
-  const out = new Map<string, StoredTag[]>()
+  const out = new Map<string, PriorityInputs>()
   await Promise.all(Array.from(byAccount, async ([accountId, ids]) => {
-    (await readEffectiveFor(accountId, ids)).forEach((tags, mid) => out.set(tagKey(accountId, mid), tags))
+    (await priorityInputsFor(accountId, ids)).forEach((inputs, mid) => out.set(tagKey(accountId, mid), inputs))
   }))
   return out
 }
@@ -144,17 +214,20 @@ const tagKey = (accountId: string, messageId: string | null) => `${accountId}|${
  * signaux et les mêmes poids que « à traiter », en deux lectures par page — jamais une par ligne.
  */
 export async function withPriority(messages: readonly Message[], accountId: string, userId: string): Promise<Message[]> {
-  const [{ vip, frequent }, tags] = await Promise.all([
+  const [{ vip, frequent }, inputs] = await Promise.all([
     contactSignals(userId),
-    readEffectiveFor(accountId, messages.map(m => m.messageId).filter(Boolean)),
+    priorityInputsFor(accountId, messages.map(m => m.messageId).filter(Boolean)),
   ])
-  return messages.map(m => ({
-    ...m,
-    priority: scoreFocus(
-      { subject: m.subject, from_address: m.from.address, is_starred: m.isStarred, has_attachments: m.hasAttachments },
-      vip, frequent, tags.get(m.messageId) ?? [],
-    ),
-  }))
+  return messages.map(m => {
+    const { tags, echeance } = inputs.get(m.messageId) ?? NO_INPUTS
+    return {
+      ...m,
+      priority: scoreFocus(
+        { subject: m.subject, from_address: m.from.address, is_starred: m.isStarred, has_attachments: m.hasAttachments, echeance },
+        vip, frequent, tags,
+      ),
+    }
+  })
 }
 
 // Folder-name fragments that must NOT count as "inbox" mail. Includes Gmail's
@@ -193,12 +266,15 @@ export async function getFocusItems(userId: string, accountId?: string | null, l
     ),
     contactSignals(userId),
   ])
-  const tags = await effectiveTagsFor(focusRows)
+  const inputs = await priorityInputsAcross(focusRows)
 
   const accountById = new Map(accounts.map(a => [a.id, a]))
 
   return focusRows
-    .map(row => ({ row, ...scoreFocus(row, vip, frequent, tags.get(tagKey(row.account_id, row.message_id)) ?? []) }))
+    .map(row => {
+      const { tags, echeance } = inputs.get(tagKey(row.account_id, row.message_id)) ?? NO_INPUTS
+      return { row, ...scoreFocus({ ...row, echeance }, vip, frequent, tags) }
+    })
     .filter(x => x.score >= FOCUS_THRESHOLD)
     .sort((a, b) => b.score - a.score || +new Date(b.row.date) - +new Date(a.row.date))
     .slice(0, limit)

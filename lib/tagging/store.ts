@@ -18,7 +18,7 @@
  */
 import { createHash } from 'crypto'
 import { query } from '../db'
-import { HUMAN_SOURCE, isEngineKind, TAG_SOURCES, type TagSource } from './engine'
+import { HUMAN_SOURCE, RULE_SOURCE, isEngineKind, TAG_SOURCES, type TagSource } from './engine'
 import { engineBodyOf, isRuleQuestionId, type QuestionSet, type TagQuestion } from './questions'
 import { FIELDS, fieldTemplate, isFieldName, isValidFieldValue, type Candidate, type FieldValue } from './fields'
 import { questionSetForAccount } from './userQuestions'
@@ -289,6 +289,17 @@ const EFFECTIVE_RANK = `ROW_NUMBER() OVER (
   ORDER BY ${EFFECTIVE_ORDER}
 )`
 
+/**
+ * Les lignes qui ont le droit de PESER sur la priorité d'une boîte (lot T12, gate du 03/10) :
+ * une main, le trieur (`regle`), le moteur RATTACHÉ à la boîte, et les lignes d'origine inconnue
+ * (`auteur_id = ''`, antérieures aux auteurs — écrites par le moteur de la boîte d'alors). Jamais un
+ * moteur d'essai ni une clé de banc : mesuré sur la boîte réelle, 221 mails d'un moteur de test
+ * répondant « oui » presque partout dominaient « à traiter ». L'AFFICHAGE garde la règle de
+ * `GOAL.md` (effective sur toutes les lignes) ; seule la priorité se restreint. `$1` = account_id.
+ */
+const TRUSTED_ORIGIN = `(source IN ('${HUMAN_SOURCE}', '${RULE_SOURCE}') OR auteur_id = ''
+  OR auteur_id IN (SELECT engine_id::text FROM mailbox_tagging WHERE account_id = $1 AND engine_id IS NOT NULL))`
+
 /** Toutes les lignes d'un mail, toutes sources, plus l'effective par question. */
 export async function readTags(accountId: string, messageId: string): Promise<{ tags: StoredTag[]; effective: StoredTag[] }> {
   const rows = await query<TagRow & { rang: number }>(
@@ -304,13 +315,14 @@ export async function readTags(accountId: string, messageId: string): Promise<{ 
  * Les étiquettes effectives d'une LISTE de mails : ce que la liste affiche en pastilles, en UNE
  * requête par page — jamais une par ligne.
  */
-export async function readEffectiveFor(accountId: string, messageIds: string[]): Promise<Map<string, StoredTag[]>> {
+export async function readEffectiveFor(accountId: string, messageIds: string[], opts: { trusted?: boolean } = {}): Promise<Map<string, StoredTag[]>> {
   const byMessage = new Map<string, StoredTag[]>()
   if (!messageIds.length) return byMessage
   const rows = await query<TagRow & { message_id: string; rang: number }>(
     `SELECT * FROM (
        SELECT message_id, ${TAG_COLUMNS}, ${EFFECTIVE_RANK} AS rang
          FROM message_tags WHERE account_id = $1 AND message_id = ANY($2::text[])
+          ${opts.trusted ? `AND ${TRUSTED_ORIGIN}` : ''}
      ) r WHERE rang = 1 ORDER BY message_id, question`,
     [accountId, messageIds]
   )
@@ -526,6 +538,11 @@ type FieldRow = Omit<TagRow, 'probabilites' | 'confiance'> & { candidats: Candid
 
 const FIELD_COLUMNS = `question, valeur, candidats, source, modele, cree_le, valide_par, question_version, auteur_id, auteur_nom`
 
+const toField = (r: FieldRow): StoredField => ({
+  question: r.question, valeur: r.valeur, candidats: r.candidats, source: r.source, modele: r.modele || null,
+  creeLe: r.cree_le, validePar: r.valide_par, questionVersion: r.question_version, auteurId: r.auteur_id, auteurNom: r.auteur_nom,
+})
+
 /**
  * Toutes les valeurs d'un mail, toutes sources, plus l'effective par champ — même règle que
  * `readTags`. Dans l'ordre MÉTIER de `FIELDS` (montant, devise, type…), pas l'alphabétique.
@@ -537,9 +554,27 @@ export async function readFields(accountId: string, messageId: string): Promise<
       ORDER BY array_position($3::text[], question), ${EFFECTIVE_ORDER}`,
     [accountId, messageId, [...FIELDS]]
   )
-  const toField = (r: FieldRow): StoredField => ({
-    question: r.question, valeur: r.valeur, candidats: r.candidats, source: r.source, modele: r.modele || null,
-    creeLe: r.cree_le, validePar: r.valide_par, questionVersion: r.question_version, auteurId: r.auteur_id, auteurNom: r.auteur_nom,
-  })
   return { fields: rows.map(toField), effective: rows.filter(r => Number(r.rang) === 1).map(toField) }
+}
+
+/**
+ * Les valeurs effectives d'UNE LISTE de mails, pour la priorité (lot T12 : l'échéance extraite
+ * pèse) — même forme que `readEffectiveFor`, et toujours restreinte aux origines de confiance.
+ */
+export async function readEffectiveFieldsFor(accountId: string, messageIds: string[]): Promise<Map<string, StoredField[]>> {
+  const byMessage = new Map<string, StoredField[]>()
+  if (!messageIds.length) return byMessage
+  const rows = await query<FieldRow & { message_id: string; rang: number }>(
+    `SELECT * FROM (
+       SELECT message_id, ${FIELD_COLUMNS}, ${EFFECTIVE_RANK} AS rang
+         FROM message_fields WHERE account_id = $1 AND message_id = ANY($2::text[]) AND ${TRUSTED_ORIGIN}
+     ) r WHERE rang = 1 ORDER BY message_id, question`,
+    [accountId, messageIds]
+  )
+  for (const r of rows) {
+    const list = byMessage.get(r.message_id) ?? []
+    list.push(toField(r))
+    byMessage.set(r.message_id, list)
+  }
+  return byMessage
 }
