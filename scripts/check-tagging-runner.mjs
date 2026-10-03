@@ -3,10 +3,12 @@
  * Banc du lot T3 : ce que le trieur redemande, et ce qu'il ne redemande PAS.
  *
  * Banc DB + faux moteur. Il tourne sur la base de la lane (`DATABASE_URL` de `.env.local`), qui
- * contient des données RÉELLES : toutes ses lignes portent un identifiant de banc et sont
- * supprimées dans le `finally`, y compris après un échec. Il n'ouvre AUCUNE connexion IMAP (la
- * source de mails est fausse) et n'appelle AUCUN moteur réel (le faux moteur COMPTE ses appels) :
- * aucun crédit n'est dépensé, aucune boîte IONOS n'est touchée.
+ * contient des données RÉELLES : il crée SA boîte (`.invalid`) et SON moteur, toutes ses lignes
+ * portent un identifiant de banc, et tout est supprimé dans le `finally`, y compris après un
+ * échec. Il n'ouvre AUCUNE connexion IMAP (la source de mails est fausse) et n'appelle AUCUN
+ * moteur réel (le faux moteur COMPTE ses appels) : aucun crédit n'est dépensé, aucune boîte
+ * IONOS n'est touchée — ni par lui, ni par le planificateur du serveur dev qui prend toute boîte
+ * `running` (c'est pour ça que la boîte est la sienne).
  *
  *   node --experimental-strip-types scripts/check-tagging-runner.mjs
  *   node --experimental-strip-types scripts/check-tagging-runner.mjs --negative
@@ -51,6 +53,7 @@
  * T8), ni celui des routes HTTP (lot T4).
  */
 import './alias-resolver.mjs'
+import crypto from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import pg from 'pg'
 
@@ -297,10 +300,17 @@ console.log(`\nbanc du trieur${NEGATIVE ? ' — CONTRÔLE NÉGATIF (curseur non 
 
 await initDb()
 
-const [account] = await query('SELECT id, user_id FROM email_accounts ORDER BY created_at LIMIT 1')
-if (!account) harness("la base de la lane n'a aucune boîte : rien à trier")
-const ACCOUNT = account.id
-const USER = account.user_id
+// SA boîte (`.invalid`, RFC 2606), jamais une vraie : le banc la met en `running`, et le
+// planificateur du serveur dev (toutes les 60 s) prend TOUTE boîte `running` — sur une vraie
+// boîte il ouvrait une connexion IMAP réelle et y écrivait des étiquettes de détecteur (mesuré :
+// 1 000 lignes `regle` sur 200 vrais mails, A5b rouge). Supprimée en cascade dans le `finally`.
+const [owner] = await query('SELECT user_id FROM email_accounts ORDER BY created_at LIMIT 1')
+if (!owner) harness("la base de la lane n'a aucun utilisateur : rien à quoi rattacher une boîte")
+const USER = owner.user_id
+const ACCOUNT = (await pool.query(
+  `INSERT INTO email_accounts (user_id, name, email, imap_host, imap_port, imap_secure, smtp_host, smtp_port, smtp_secure, username, password_encrypted)
+   VALUES ($1, 'banc T3', $2, 'imap.banc-t3.invalid', 993, true, 'smtp.banc-t3.invalid', 587, false, $2, 'banc-not-a-real-secret') RETURNING id`,
+  [USER, `t3-${crypto.randomBytes(4).toString('hex')}@banc-t3.invalid`])).rows[0].id
 
 let ENGINE_ID = null
 try {
@@ -746,9 +756,9 @@ try {
     Math.abs(after5 - before5) / before5 < 0.01,
     `avant=${before5.toFixed(4)} $, après=${after5.toFixed(4)} $ (input_tokens=${row5.input_tokens}, input_mails=${row5.input_mails}, tagged=${row5.tagged})`)
 } finally {
-  await clean(ACCOUNT).catch(() => {})
-  // Par URL et pas seulement par id : un passage tué avant ce `finally` (plafond de tours) laisse
-  // sa ligne, le passage suivant la balaie. `.invalid` ne désigne jamais un vrai moteur (RFC 2606).
+  // Par motif et pas seulement par id : un passage tué avant ce `finally` (plafond de tours) laisse
+  // sa boîte et son moteur, le passage suivant les balaie. `.invalid` n'est jamais réel (RFC 2606).
+  await pool.query("DELETE FROM email_accounts WHERE id = $1 OR email LIKE 't3-%@banc-t3.invalid'", [ACCOUNT]).catch(() => {})
   await pool.query("DELETE FROM decision_engines WHERE id = $1 OR url LIKE 'http://banc.invalid/%'", [ENGINE_ID]).catch(() => {})
   await pool.end()
 }
