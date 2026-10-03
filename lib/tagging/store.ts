@@ -526,6 +526,11 @@ type FieldRow = Omit<TagRow, 'probabilites' | 'confiance'> & { candidats: Candid
 
 const FIELD_COLUMNS = `question, valeur, candidats, source, modele, cree_le, valide_par, question_version, auteur_id, auteur_nom`
 
+const toField = (r: FieldRow): StoredField => ({
+  question: r.question, valeur: r.valeur, candidats: r.candidats, source: r.source, modele: r.modele || null,
+  creeLe: r.cree_le, validePar: r.valide_par, questionVersion: r.question_version, auteurId: r.auteur_id, auteurNom: r.auteur_nom,
+})
+
 /**
  * Toutes les valeurs d'un mail, toutes sources, plus l'effective par champ — même règle que
  * `readTags`. Dans l'ordre MÉTIER de `FIELDS` (montant, devise, type…), pas l'alphabétique.
@@ -537,9 +542,24 @@ export async function readFields(accountId: string, messageId: string): Promise<
       ORDER BY array_position($3::text[], question), ${EFFECTIVE_ORDER}`,
     [accountId, messageId, [...FIELDS]]
   )
-  const toField = (r: FieldRow): StoredField => ({
-    question: r.question, valeur: r.valeur, candidats: r.candidats, source: r.source, modele: r.modele || null,
-    creeLe: r.cree_le, validePar: r.valide_par, questionVersion: r.question_version, auteurId: r.auteur_id, auteurNom: r.auteur_nom,
-  })
   return { fields: rows.map(toField), effective: rows.filter(r => Number(r.rang) === 1).map(toField) }
+}
+
+/** Les valeurs effectives d'une LISTE de mails (la liste des documents GED), en UNE requête — le pendant de `readEffectiveFor`. */
+export async function readEffectiveFieldsFor(accountId: string, messageIds: string[]): Promise<Map<string, StoredField[]>> {
+  const byMessage = new Map<string, StoredField[]>()
+  if (!messageIds.length) return byMessage
+  const rows = await query<FieldRow & { message_id: string; rang: number }>(
+    `SELECT * FROM (
+       SELECT message_id, ${FIELD_COLUMNS}, ${EFFECTIVE_RANK} AS rang
+         FROM message_fields WHERE account_id = $1 AND message_id = ANY($2::text[])
+     ) r WHERE rang = 1 ORDER BY message_id, array_position($3::text[], question)`,
+    [accountId, messageIds, [...FIELDS]]
+  )
+  for (const r of rows) {
+    const list = byMessage.get(r.message_id) ?? []
+    list.push(toField(r))
+    byMessage.set(r.message_id, list)
+  }
+  return byMessage
 }

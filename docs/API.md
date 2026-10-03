@@ -160,6 +160,7 @@ interface EmailAccount {
   createdAt: string
   unreadCount: number
   promptGuard: boolean   // prompt-injection guard for this mailbox, default true
+  isGed: boolean         // declared a document store (Settings → Automatic sorting → "this mailbox is a GED")
 }
 ```
 
@@ -1373,6 +1374,7 @@ interface GedDocumentSummary {
   pages: number; ocrStatus: 'attente' | 'fait' | 'echec'; ocrError: string | null; confiance: number | null
   folderId: string | null                                   // the EFFECTIVE folder, null = unfiled
   filingSource: 'humain' | 'agent' | 'motif' | 'moteur' | null
+  tagMessageId: string                                      // the key its tags and fields are stored under
 }
 interface GedFolder { id: string; parentId: string | null; nom: string; position: number; auto: boolean; creeLe: string; documents: number; patterns: number }
 interface GedPattern { id: string; folderId: string; genre: 'siret' | 'tva' | 'iban4' | 'raison_sociale' | 'regex'; valeur: string; apprisDe: string | null; auteurNom: string; touches: number; creeLe: string }
@@ -1380,7 +1382,7 @@ interface Identifier { genre: GedPattern['genre']; valeur: string }
 ```
 
 ### `GET /api/documents?account=&folder=&q=&page=&perPage=` 🔑 Bearer (`documents:read`)
-The documents of one mailbox, newest first, paginated (`perPage` default 50, capped 200). `folder=<id>` narrows to the documents whose **effective** folder it is; `folder=unfiled` to the ones with no effective folder ("À ranger"); `q` searches the OCR text (French `tsvector`, web syntax: words, quotes, `-word`). **Response** `{ data: { documents: GedDocumentSummary[]; total: number; page: number; perPage: number; unfiled: number } }`.
+The documents of one mailbox, newest first, paginated (`perPage` default 50, capped 200). `folder=<id>` narrows to the documents whose **effective** folder it is; `folder=unfiled` to the ones with no effective folder ("À ranger"); `q` searches the OCR text (French `tsvector`, web syntax: words, quotes, `-word`). `tags` and `fields` carry, keyed by each document's `tagMessageId`, its **effective** tags and extracted values (the same rows `GET /api/documents/[id]` returns) — what a list line shows (type, sender, amount) without one call per document. **Response** `{ data: { documents: GedDocumentSummary[]; total: number; page: number; perPage: number; unfiled: number; tags: Record<string, StoredTag[]>; fields: Record<string, StoredField[]> } }`.
 
 ### `GET /api/documents/[id]` 🔑 Bearer (`documents:read`)
 One document: `ocrText` (pages separated by `\f`), `pageTexts` (`{ index, text, confidence, blank }[]`), its effective `tags` and `fields` (the same rows the carrying mail got — the engine read the OCR text instead of the body), its `filings` history (`{ id, folderId, source, auteurId, auteurNom, confiance, creeLe }[]`, effective first) and, while unfiled, `suggestions` (`{ folderId, genres, patternIds, strong }[]`). The mailbox is deduced from the document — this is also what the key barrier reads. **Response** `{ data: GedDocumentSummary & { ocrText, pageTexts, tagMessageId, filings, tags, fields, suggestions } }`.

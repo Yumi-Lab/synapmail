@@ -22,6 +22,8 @@ export interface EmailAccount {
   /** Unread count in the account's top-level INBOX — authoritative IMAP SEARCH UNSEEN
    *  (mailbox_stats), falling back to cached-row count. GET /api/accounts only. */
   unreadCount?: number
+  /** True when the mailbox is declared a document store (GED, `ged_mailboxes.actif`). GET /api/accounts only. */
+  isGed?: boolean
   /** True when this account was shared with the current user rather than owned by them. GET /api/accounts only. */
   isShared?: boolean
   /** Id of the `account_shares` row granting this access — only set when `isShared`. */

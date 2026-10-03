@@ -11,7 +11,8 @@ import { query } from '../db'
 import { EFFECTIVE_ORDER } from '../tagging/store'
 import { boundedRegex } from '../rulesEval'
 import { isIban } from '../tagging/fields'
-import { PATTERN_KINDS, type FilingSource, type PatternKind } from './model'
+import { PATTERN_KINDS, UNFILED, type FilingSource, type PatternKind } from './model'
+import { documentMessageId } from './source'
 import { luhnOk, reducedIban, tvaFrOk, type Identifier } from './patterns'
 
 /**
@@ -41,8 +42,7 @@ const EFFECTIVE_FILINGS = `
 
 export const DOCUMENTS_PER_PAGE = 50
 export const DOCUMENTS_PER_PAGE_MAX = 200
-/** La valeur de `folder` qui veut dire « À ranger » : les documents sans dossier effectif. */
-export const UNFILED = 'unfiled'
+export { UNFILED }
 /** Le nom le plus long d'un dossier, le même que la colonne (`VARCHAR(120)`). */
 export const FOLDER_NAME_MAX = 120
 
@@ -63,6 +63,8 @@ export interface GedDocumentSummary {
   confiance: number | null
   folderId: string | null
   filingSource: FilingSource | null
+  /** Le `Message-ID` sous lequel ses étiquettes et valeurs sont stockées (`documentMessageId`). */
+  tagMessageId: string
 }
 
 const toSummary = (r: Record<string, unknown>): GedDocumentSummary => ({
@@ -72,7 +74,11 @@ const toSummary = (r: Record<string, unknown>): GedDocumentSummary => ({
   pages: r.pages as number, ocrStatus: r.ocr_status as string, ocrError: r.ocr_error as string | null,
   confiance: r.confiance as number | null, folderId: (r.folder_id as string | null) ?? null,
   filingSource: (r.filing_source as FilingSource | null) ?? null,
+  tagMessageId: documentMessageId(r.message_id as string, r.part_idx as number, r.parts as number),
 })
+
+/** Combien de PDF portait le mail : décide si le `Message-ID` du document est suffixé (`documentMessageId`). */
+const PARTS_OF_MAIL = `(SELECT COUNT(*) FROM ged_documents s WHERE s.account_id = d.account_id AND s.message_id = d.message_id)::int AS parts`
 
 /**
  * Les documents d'une boîte, du plus récent au plus ancien. `folder` = un dossier (ses documents
@@ -90,7 +96,7 @@ export async function listDocuments(params: {
     `WITH eff AS (${EFFECTIVE_FILINGS})
      SELECT d.id, d.message_id, d.folder, d.uid, d.part_idx, d.filename, d.from_address, d.from_name, d.subject,
             d.recu_le, d.pages, d.ocr_status, d.ocr_error, d.confiance, eff.folder_id, eff.source AS filing_source,
-            COUNT(*) OVER () AS total
+            ${PARTS_OF_MAIL}, COUNT(*) OVER () AS total
        FROM ged_documents d LEFT JOIN eff ON eff.document_id = d.id
       WHERE d.account_id = $1
         AND ($2::text IS NULL OR ($2 = $6 AND eff.folder_id IS NULL) OR eff.folder_id::text = $2)
@@ -105,8 +111,6 @@ export async function listDocuments(params: {
 export interface GedDocumentDetail extends GedDocumentSummary {
   ocrText: string
   pageTexts: Array<{ index: number; text: string; confidence: number; blank: boolean }> | null
-  /** Le `Message-ID` sous lequel ses étiquettes et valeurs sont stockées (`documentMessageId`). */
-  tagMessageId: string
   filings: Array<{ id: string; folderId: string | null; source: FilingSource; auteurId: string; auteurNom: string; confiance: number | null; creeLe: Date }>
 }
 
@@ -114,19 +118,16 @@ export interface GedDocumentDetail extends GedDocumentSummary {
 export async function getDocument(accountId: string, id: string): Promise<GedDocumentDetail | null> {
   const [r] = await query<Record<string, unknown>>(
     `WITH eff AS (${EFFECTIVE_FILINGS})
-     SELECT d.*, eff.folder_id, eff.source AS filing_source,
-            (SELECT COUNT(*) FROM ged_documents s WHERE s.account_id = d.account_id AND s.message_id = d.message_id)::int AS parts
+     SELECT d.*, eff.folder_id, eff.source AS filing_source, ${PARTS_OF_MAIL}
        FROM ged_documents d LEFT JOIN eff ON eff.document_id = d.id
       WHERE d.account_id = $1 AND d.id = $2`, [accountId, id])
   if (!r) return null
   const filings = await query<{ id: string; folder_id: string | null; source: FilingSource; auteur_id: string; auteur_nom: string; confiance: number | null; cree_le: Date }>(
     `SELECT id, folder_id, source, auteur_id, auteur_nom, confiance, cree_le FROM ged_filings WHERE document_id = $1 ORDER BY ${EFFECTIVE_ORDER}`, [id])
-  const parts = r.parts as number
   return {
     ...toSummary(r),
     ocrText: r.ocr_text as string,
     pageTexts: (r.page_texts as GedDocumentDetail['pageTexts']) ?? null,
-    tagMessageId: parts > 1 ? `${r.message_id as string}#p${r.part_idx as number}` : (r.message_id as string),
     filings: filings.map(f => ({ id: String(f.id), folderId: f.folder_id, source: f.source, auteurId: f.auteur_id, auteurNom: f.auteur_nom, confiance: f.confiance, creeLe: f.cree_le })),
   }
 }

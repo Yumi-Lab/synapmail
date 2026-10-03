@@ -4731,7 +4731,9 @@
                         "total",
                         "page",
                         "perPage",
-                        "unfiled"
+                        "unfiled",
+                        "tags",
+                        "fields"
                       ],
                       "properties": {
                         "documents": {
@@ -4751,6 +4753,26 @@
                         },
                         "unfiled": {
                           "type": "integer"
+                        },
+                        "tags": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/StoredTag"
+                            }
+                          },
+                          "description": "Effective tags per document, keyed by tagMessageId."
+                        },
+                        "fields": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/StoredField"
+                            }
+                          },
+                          "description": "Effective extracted values per document, keyed by tagMessageId."
                         }
                       }
                     }
@@ -6537,6 +6559,10 @@
                 "type": "boolean"
               }
             }
+          },
+          "isGed": {
+            "type": "boolean",
+            "description": "Declared a document store (GED)."
           }
         }
       },
@@ -7817,7 +7843,8 @@
           "pages",
           "ocrStatus",
           "folderId",
-          "filingSource"
+          "filingSource",
+          "tagMessageId"
         ],
         "properties": {
           "id": {
@@ -7898,6 +7925,10 @@
               "moteur",
               null
             ]
+          },
+          "tagMessageId": {
+            "type": "string",
+            "description": "The key its tags and fields are stored under."
           }
         }
       },
@@ -7994,7 +8025,6 @@
             "required": [
               "ocrText",
               "pageTexts",
-              "tagMessageId",
               "filings",
               "tags",
               "fields",
@@ -8027,9 +8057,6 @@
                     }
                   }
                 }
-              },
-              "tagMessageId": {
-                "type": "string"
               },
               "filings": {
                 "type": "array",

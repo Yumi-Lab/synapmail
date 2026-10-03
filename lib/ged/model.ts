@@ -24,3 +24,19 @@ export type FilingSource = (typeof FILING_SOURCES)[number]
 /** Les identifiants stables d'un émetteur qu'on apprend d'un rangement (décision 5). */
 export const PATTERN_KINDS = ['siret', 'tva', 'iban4', 'raison_sociale', 'regex'] as const
 export type PatternKind = (typeof PATTERN_KINDS)[number]
+
+/** La valeur de `folder` (URL de la liste, API) qui veut dire « À ranger » : les documents sans dossier effectif. */
+export const UNFILED = 'unfiled'
+
+/** Les routes de l'écran et de l'API documents, écrites UNE fois (barre latérale, page, bancs). */
+export const DOCUMENTS_PATH = '/documents'
+export const DOCUMENTS_ENDPOINT = '/api/documents'
+export const DOCUMENT_FOLDERS_ENDPOINT = `${DOCUMENTS_ENDPOINT}/folders`
+/** Paramètres d'URL de la page `/documents`. */
+export const DOCUMENT_FOLDER_PARAM = 'folder'
+export const DOCUMENT_QUERY_PARAM = 'q'
+export const DOCUMENT_ID_PARAM = 'doc'
+/** Type MIME du glisser-déposer d'un document vers un dossier virtuel (jamais confondu avec celui des mails). */
+export const DOCUMENT_DRAG_TYPE = 'application/synapmail-document'
+/** Émis après un rangement (dépôt, « Ranger… », fusion) : la liste et le volet de `/documents` se rafraîchissent. */
+export const DOCUMENTS_CHANGED_EVENT = 'synapmail:documents-changed'
