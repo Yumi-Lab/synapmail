@@ -6,6 +6,8 @@ import { upsertContactsFromAddresses } from './contacts'
 import { getEnabledRulesForAccount, applyRulesToMessages, logRuleExecution } from './rules'
 import { engineFromRow, mailboxesToSort, runPass } from './tagging/runner'
 import { imapMailSource } from './tagging/imapSource'
+import { gedMailboxes, runIntake } from './ged/intake'
+import { gedMailSource } from './ged/source'
 
 type AccountRow = {
   id: string; email: string; smtp_host: string; smtp_port: number; smtp_secure: boolean;
@@ -315,8 +317,15 @@ export async function processInboxSync(): Promise<void> {
 const TAGGING_INTERVAL_MS = 60_000
 
 export async function processTagging(): Promise<void> {
+  // Une boîte GED (décision 6) est triée DOCUMENT par document, texte OCR à la place du corps :
+  // même trieur, autre source. ponytail: un tri en masse lancé pendant que l'OCR est encore en
+  // attente s'arrête au premier PDF non océrisé et se croit fini ; le relancer (`restart`) rattrape
+  // le reste sans repayer ce qui est tagué. Voie d'amélioration : refuser `done` tant qu'un
+  // document de la boîte est en `attente`.
+  const ged = new Set((await gedMailboxes()).map(g => g.account_id))
   for (const box of await mailboxesToSort()) {
-    const source = imapMailSource(box)
+    const imap = imapMailSource(box)
+    const source = ged.has(box.account_id) ? gedMailSource(box.account_id, imap) : imap
     try {
       const outcome = await runPass({
         accountId: box.account_id,
@@ -333,6 +342,40 @@ export async function processTagging(): Promise<void> {
     } catch (err) {
       // Une boîte injoignable ne doit pas empêcher les autres d'être triées.
       console.error(`[scheduler/tagging] account ${box.account_id}:`, err)
+    } finally {
+      await imap.close().catch(() => {})
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Chaîne de réception GED (lot G3) — un passage par boîte GED : les nouveaux mails sont relus
+// en entier, chaque PDF devient un document océrisé (`lib/ged/intake.ts`). Aucun moteur ici :
+// le tri des documents passe par `processTagging` ci-dessus, avec la source GED.
+// ---------------------------------------------------------------------------
+
+const GED_INTERVAL_MS = 60_000
+
+// Un passage peut durer plus que l'intervalle (budget 120 s, OCR ~5 s la page) : le suivant
+// attend son tour au lieu de relire — et réocériser — les mêmes PDF en parallèle.
+let gedRunning = false
+
+export async function processGed(): Promise<void> {
+  if (gedRunning) return
+  gedRunning = true
+  try { await processGedNow() } finally { gedRunning = false }
+}
+
+async function processGedNow(): Promise<void> {
+  for (const box of await gedMailboxes()) {
+    const source = imapMailSource(box)
+    try {
+      const r = await runIntake({ accountId: box.account_id, source })
+      if (r.mails || r.ocrFailed) {
+        console.log(`[scheduler/ged] ${box.account_id}: mails=${r.mails} documents=${r.documents} ocr=${r.ocrDone}/${r.ocrFailed} known=${r.known}${r.cut ? ' cut' : ''}`)
+      }
+    } catch (err) {
+      console.error(`[scheduler/ged] account ${box.account_id}:`, err)
     } finally {
       await source.close().catch(() => {})
     }
@@ -417,6 +460,12 @@ export function startScheduler(): void {
   setInterval(() => {
     processTagging().catch(err => console.error('[scheduler/tagging]', err))
   }, TAGGING_INTERVAL_MS)
+
+  // Chaîne de réception GED — every 60s (a pass gives itself GED_PASS_BUDGET_MS; the OCR itself
+  // is serialised process-wide by lib/ged/ocr.ts, so an overrun only queues)
+  setInterval(() => {
+    processGed().catch(err => console.error('[scheduler/ged]', err))
+  }, GED_INTERVAL_MS)
 
   // API key request log cleanup — every 6 hours, plus one pass shortly after boot
   setInterval(() => {

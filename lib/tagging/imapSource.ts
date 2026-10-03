@@ -15,7 +15,7 @@
  *     premiers caractères (`STATE_BODY_CHARS`), donc télécharger un mail de 20 Mo pour en garder
  *     1 500 caractères serait payer une bande passante qu'on jette.
  */
-import { simpleParser } from 'mailparser'
+import { simpleParser, type Attachment } from 'mailparser'
 import type { ImapFlow } from 'imapflow'
 import { toImapConfig, type ImapAccountRow } from '../accounts'
 import { createClient, messageDate } from '../imap'
@@ -39,6 +39,12 @@ const SKIPPED_ROLES = new Set(['trash', 'drafts', 'sent'])
  * du serveur.
  */
 export interface ImapMailSource extends MailSource {
+  /**
+   * Les mails de `folder` dont l'UID est dans `uids`, source ENTIÈRE et pièces jointes
+   * décodées : ce que la chaîne GED (`lib/ged/intake.ts`) lit pour océriser un PDF. Même
+   * commande que `fetchUids`, sans la borne `SOURCE_MAX_BYTES`.
+   */
+  fetchFull(folder: string, uids: number[]): Promise<Array<SourceMail & { attachments: Attachment[] }>>
   close(): Promise<void>
 }
 
@@ -56,7 +62,9 @@ export function imapMailSource(account: ImapAccountRow): ImapMailSource {
   const open = async (folder: string): Promise<ImapFlow> => {
     const c = await connected()
     if (openFolder !== folder) {
-      await c.mailboxOpen(folder)
+      // EXAMINE, pas SELECT : ni le trieur ni la chaîne GED n'écrivent jamais dans la boîte, et
+      // `source` est lu en `BODY.PEEK` — aucun drapeau \\Seen posé (GOAL : lecture seule).
+      await c.mailboxOpen(folder, { readOnly: true })
       openFolder = folder
     }
     return c
@@ -77,14 +85,14 @@ export function imapMailSource(account: ImapAccountRow): ImapMailSource {
    * seule forme qui borne ce que le serveur transmet. Un UID disparu depuis est simplement
    * absent de la réponse — l'appelant le compte sauté.
    */
-  const fetchList = async (folder: string, uids: number[]): Promise<SourceMail[]> => {
+  const fetchList = async (folder: string, uids: number[], full = false): Promise<Array<SourceMail & { attachments: Attachment[] }>> => {
     if (!uids.length) return []
     const c = await open(folder)
     const keep = new Set(uids)
-    const out: SourceMail[] = []
+    const out: Array<SourceMail & { attachments: Attachment[] }> = []
     for await (const msg of c.fetch(
       uids.join(','),
-      { uid: true, envelope: true, internalDate: true, source: { maxLength: SOURCE_MAX_BYTES } },
+      { uid: true, envelope: true, internalDate: true, source: full ? true : { maxLength: SOURCE_MAX_BYTES } },
       { uid: true }
     )) {
       const uid = Number(msg.uid)
@@ -101,6 +109,7 @@ export function imapMailSource(account: ImapAccountRow): ImapMailSource {
         bodyHtml: typeof parsed.html === 'string' ? parsed.html : undefined,
         date: messageDate(parsed.date, msg.envelope?.date, msg.internalDate),
         recipients: [parsed.to, parsed.cc].flat().flatMap(a => a?.value ?? []).map(a => a.address ?? '').filter(Boolean),
+        attachments: full ? parsed.attachments ?? [] : [],
       })
     }
     // IMAP rend les messages par UID croissant, mais le curseur en DÉPEND : on le garantit ici
@@ -157,6 +166,10 @@ export function imapMailSource(account: ImapAccountRow): ImapMailSource {
 
     fetchUids(folder, uids) {
       return fetchList(folder, uids)
+    },
+
+    fetchFull(folder, uids) {
+      return fetchList(folder, uids, true)
     },
 
     async close() {

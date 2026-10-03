@@ -495,6 +495,7 @@
         "field_date_received": "接收日期",
         "field_priority": "优先级（X-Priority）",
         "field_header": "自定义邮件头",
+        "field_texte_ocr": "OCR 文本（文档）",
         "field_tag": "标签",
         "op_contains": "包含",
         "op_not_contains": "不包含",
@@ -1153,7 +1154,8 @@
       "support": "客服",
       "prospection": "商机",
       "security": "安全",
-      "finance": "财务"
+      "finance": "财务",
+      "ged": "文档管理"
     },
     "q": {
       "categorie": "类别",
@@ -1213,7 +1215,11 @@
       "email_tiers": "第三方邮箱地址",
       "iban": "IBAN",
       "carte_bancaire": "银行卡",
-      "secret_technique": "技术密钥"
+      "secret_technique": "技术密钥",
+      "type_document": "文档类型",
+      "emetteur_document": "文档出具方",
+      "destinataire_document": "文档收件方",
+      "marque_groupe": "集团品牌"
     },
     "v": {
       "oui": "是",
@@ -1340,7 +1346,18 @@
       "italie": "意大利",
       "royaume_uni": "英国",
       "chine": "中国",
-      "hong_kong": "香港"
+      "hong_kong": "香港",
+      "avoir": "贷项通知单",
+      "courrier": "信函",
+      "bon_livraison": "送货单",
+      "groupe": "本集团",
+      "client_du_groupe": "集团客户",
+      "tiers": "第三方",
+      "3d_expert": "3D-Expert",
+      "artillery3d": "Artillery3D",
+      "wanhao": "Wanhao",
+      "yumi_lab": "Yumi Lab",
+      "plusieurs": "多个"
     },
     "history": "{count} 条回答",
     "filterOrigin": "来源",

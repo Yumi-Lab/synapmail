@@ -495,6 +495,7 @@
         "field_date_received": "Date received",
         "field_priority": "Priority (X-Priority)",
         "field_header": "Custom header",
+        "field_texte_ocr": "OCR text (document)",
         "field_tag": "Tag",
         "op_contains": "contains",
         "op_not_contains": "does not contain",
@@ -1153,7 +1154,8 @@
       "support": "Support",
       "prospection": "Sales",
       "security": "Security",
-      "finance": "Finance"
+      "finance": "Finance",
+      "ged": "Document management"
     },
     "q": {
       "categorie": "Category",
@@ -1213,7 +1215,11 @@
       "email_tiers": "Third-party e-mail address",
       "iban": "IBAN",
       "carte_bancaire": "Payment card",
-      "secret_technique": "Technical secret"
+      "secret_technique": "Technical secret",
+      "type_document": "Document type",
+      "emetteur_document": "Document issuer",
+      "destinataire_document": "Document addressee",
+      "marque_groupe": "Group brand"
     },
     "v": {
       "oui": "Yes",
@@ -1340,7 +1346,18 @@
       "italie": "Italy",
       "royaume_uni": "United Kingdom",
       "chine": "China",
-      "hong_kong": "Hong Kong"
+      "hong_kong": "Hong Kong",
+      "avoir": "Credit note",
+      "courrier": "Letter",
+      "bon_livraison": "Delivery note",
+      "groupe": "The group",
+      "client_du_groupe": "Group customer",
+      "tiers": "Third party",
+      "3d_expert": "3D-Expert",
+      "artillery3d": "Artillery3D",
+      "wanhao": "Wanhao",
+      "yumi_lab": "Yumi Lab",
+      "plusieurs": "Several"
     },
     "history": "{count, plural, one {# answer} other {# answers}}",
     "filterOrigin": "Origin",

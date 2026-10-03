@@ -29,6 +29,7 @@ const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
   priority:        ['equals','less_than','greater_than'],
   header:          ['contains','not_contains','equals'],
   tag:             ['equals','not_equals'],
+  texte_ocr:       ['is_true','is_false'],
 }
 
 /** Les champs d'une règle. `tag` (une étiquette déjà obtenue) n'est offert qu'aux déclencheurs de groupe (lot T-Q3). */
@@ -39,7 +40,7 @@ const PRIORITIES = ['1', '2', '3', '4', '5'] as const
 /** Les libellés vivent dans `settings.rules.conditions` (fr/en/zh), partagés par les deux écrans. */
 const useConditionLabels = () => useTranslations('settings.rules.conditions')
 
-const BOOLEAN_FIELDS: RuleField[] = ['has_attachments', 'list_unsubscribe']
+const BOOLEAN_FIELDS: RuleField[] = ['has_attachments', 'list_unsubscribe', 'texte_ocr']
 
 const uid = () => Math.random().toString(36).slice(2)
 

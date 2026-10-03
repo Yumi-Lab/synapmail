@@ -27,6 +27,8 @@ export interface Message {
   accountId: string
   bodyHtml?: string
   bodyPlain?: string
+  /** Le texte OCR d'un document GED, quand le message en est un (lib/ged). */
+  ocrText?: string
   attachments?: Attachment[]
   listUnsubscribe?: string
   authResults?: AuthResults

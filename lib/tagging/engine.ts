@@ -77,6 +77,13 @@ export const costUsd = (usdPerBillionInput: number, inputTokens: number): number
 export const STATE_BODY_CHARS = 1500
 
 /**
+ * Pour un DOCUMENT GED (décision 6), le texte OCR remplace le corps et le moteur en lit bien plus
+ * qu'un mail : 12 000 caractères ≈ 3 pages A4 (mesuré en G0 : ~3 500 caractères par page de
+ * facture), soit ~4 000 jetons — sous le plafond de ~32 000 avec le jeu de questions entier.
+ */
+export const GED_STATE_BODY_CHARS = 12_000
+
+/**
  * Le coût supposé d'un mail tant qu'AUCUNE moyenne n'a été mesurée sur la boîte, exprimé PAR
  * QUESTION : une estimation figée par mail devient fausse dès qu'une question est ajoutée, ce
  * qu'a montré la mesure réelle (l'écran annonçait 0,21 $ mesurés à 41 questions, la taxonomie
@@ -101,6 +108,12 @@ export interface MailForState {
   subject?: string
   bodyPlain?: string
   bodyHtml?: string
+  /**
+   * Le texte OCR d'un document GED (décision 6) : présent, il REMPLACE le corps dans l'état du
+   * moteur (limite `GED_STATE_BODY_CHARS`), et l'extraction de valeurs comme les détecteurs le
+   * lisent EN ENTIER. C'est aussi ce que le champ de règle `texte_ocr` teste.
+   */
+  ocrText?: string
 }
 
 /** L'état envoyé au moteur. `expediteur` est DÉCOMPOSÉ : `usurpation_expediteur` compare le nom au domaine. */
@@ -113,11 +126,11 @@ export interface EngineState {
 export function buildState(m: MailForState): EngineState {
   // `messageText` SANS `subject` : l'objet est un champ de l'état à part entière, le
   // recopier dans le corps quand le mail est vide le ferait compter deux fois.
-  const body = messageText({ bodyPlain: m.bodyPlain, bodyHtml: m.bodyHtml }).replace(/\s+/g, ' ').trim()
+  const body = (m.ocrText ?? messageText({ bodyPlain: m.bodyPlain, bodyHtml: m.bodyHtml })).replace(/\s+/g, ' ').trim()
   return {
     expediteur: { nom: (m.fromName ?? '').trim(), adresse: (m.fromAddress ?? '').trim() },
     objet: (m.subject ?? '').trim(),
-    corps: body.slice(0, STATE_BODY_CHARS),
+    corps: body.slice(0, m.ocrText === undefined ? STATE_BODY_CHARS : GED_STATE_BODY_CHARS),
   }
 }
 

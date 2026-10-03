@@ -495,6 +495,7 @@
         "field_date_received": "Date de réception",
         "field_priority": "Priorité (X-Priority)",
         "field_header": "En-tête personnalisé",
+        "field_texte_ocr": "Texte OCR (document GED)",
         "field_tag": "Étiquette",
         "op_contains": "contient",
         "op_not_contains": "ne contient pas",
@@ -1153,7 +1154,8 @@
       "support": "Service",
       "prospection": "Prospection",
       "security": "Sécurité",
-      "finance": "Finance"
+      "finance": "Finance",
+      "ged": "Documents GED"
     },
     "q": {
       "categorie": "Catégorie",
@@ -1213,7 +1215,11 @@
       "email_tiers": "Adresse e-mail tierce",
       "iban": "IBAN",
       "carte_bancaire": "Carte bancaire",
-      "secret_technique": "Secret technique"
+      "secret_technique": "Secret technique",
+      "type_document": "Type de document",
+      "emetteur_document": "Émetteur du document",
+      "destinataire_document": "Destinataire du document",
+      "marque_groupe": "Marque du groupe"
     },
     "v": {
       "oui": "Oui",
@@ -1340,7 +1346,18 @@
       "italie": "Italie",
       "royaume_uni": "Royaume-Uni",
       "chine": "Chine",
-      "hong_kong": "Hong Kong"
+      "hong_kong": "Hong Kong",
+      "avoir": "Avoir",
+      "courrier": "Courrier",
+      "bon_livraison": "Bon de livraison",
+      "groupe": "Le groupe",
+      "client_du_groupe": "Client du groupe",
+      "tiers": "Tiers",
+      "3d_expert": "3D-Expert",
+      "artillery3d": "Artillery3D",
+      "wanhao": "Wanhao",
+      "yumi_lab": "Yumi Lab",
+      "plusieurs": "Plusieurs"
     },
     "history": "{count, plural, one {# réponse} other {# réponses}}",
     "filterOrigin": "Origine",

@@ -877,6 +877,9 @@ export async function initDb(): Promise<void> {
       cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)
+  // Le curseur de la chaîne de réception (lot G3) : `{ lastUid, uidValidity }` du dossier
+  // surveillé. NULL = tout est à rattraper depuis le premier mail — l'OCR est local, donc gratuit.
+  await query(`ALTER TABLE ged_mailboxes ADD COLUMN IF NOT EXISTS cursor JSONB`)
 
   // Un PDF = un document (décision 2) : la clé est la pièce jointe elle-même (mail + rang de la
   // partie), jamais l'UID IMAP seul, qui change à un déplacement. `page_texts` garde les pages
@@ -903,6 +906,11 @@ export async function initDb(): Promise<void> {
       UNIQUE (account_id, message_id, part_idx)
     )
   `)
+  // L'enveloppe du mail porteur (lot G3) : ce que le trieur montre d'un document dans la liste
+  // (`tagged_messages`), relu depuis la base sans rouvrir l'IMAP.
+  await query(`ALTER TABLE ged_documents ADD COLUMN IF NOT EXISTS from_address TEXT NOT NULL DEFAULT ''`)
+  await query(`ALTER TABLE ged_documents ADD COLUMN IF NOT EXISTS from_name TEXT NOT NULL DEFAULT ''`)
+  await query(`ALTER TABLE ged_documents ADD COLUMN IF NOT EXISTS subject TEXT NOT NULL DEFAULT ''`)
   await query(`CREATE INDEX IF NOT EXISTS ged_documents_account_idx ON ged_documents(account_id, recu_le DESC)`)
   await query(`CREATE INDEX IF NOT EXISTS ged_documents_tsv_idx ON ged_documents USING GIN (texte_tsv)`)
 

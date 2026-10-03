@@ -10,6 +10,8 @@ export const OCR_STATUSES = ['attente', 'fait', 'echec'] as const
 export type OcrStatus = (typeof OCR_STATUSES)[number]
 /** L'état d'un document qui vient d'être vu : son OCR n'a pas encore tourné. */
 export const OCR_STATUS_PENDING: OcrStatus = 'attente'
+export const OCR_STATUS_DONE: OcrStatus = 'fait'
+export const OCR_STATUS_FAILED: OcrStatus = 'echec'
 
 /**
  * Qui a rangé un document (décision 4) : une main humaine (même valeur que `message_tags`),

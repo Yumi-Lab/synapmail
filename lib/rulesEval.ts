@@ -36,6 +36,14 @@ export function evalCondition(msg: Message, cond: RuleCondition, tags: readonly 
     return false
   }
 
+  // Document GED (décision 6) : « porte un texte OCR » suffit à déclencher le groupe de
+  // questions GED ; le lot G4 y ajoute la recherche d'un motif (`matches`).
+  if (cond.field === 'texte_ocr') {
+    if (cond.operator === 'is_true')  return !!msg.ocrText
+    if (cond.operator === 'is_false') return !msg.ocrText
+    return false
+  }
+
   if (cond.field === 'list_unsubscribe') {
     if (cond.operator === 'is_true')  return !!msg.listUnsubscribe
     if (cond.operator === 'is_false') return !msg.listUnsubscribe
