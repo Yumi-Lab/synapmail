@@ -75,6 +75,8 @@ const call = async (path, { method = 'GET', key, cookie, body } = {}) => {
 const brief = r => `reçu ${r.status} — ${r.text.slice(0, 160)}`
 
 // Clés VRAIES (Luhn / TVA / mod 97), les mêmes fixtures que check-ged-filing.mjs.
+// L'IBAN en clair se cherche dans les `valeur` SEULEMENT : le corps entier porte des UUID aléatoires
+// (id, folderId) où la suite « 0112 » finit par tomber — F4 rouge sans qu'aucun IBAN ne fuie.
 const SIRET_A = '912 345 678 00011', TVA_A = 'FR74912345678', IBAN_A = 'FR76 3000 6000 0112 3456 7890 189', SIRET_B = '845 210 367 00015'
 const TEXT_FEDEX = n => `FEDEX EXPRESS FR SAS\n2 rue du Test, 75000 Paris\nSIRET ${SIRET_A}  TVA intracom. ${TVA_A}\nFacture n° ${n}  Total 12,34 EUR\nIBAN ${IBAN_A}\fPage 2. Détail des prestations.`
 const TEXT_ARTI = n => `ARTILLERY3D SARL\nZone industrielle\nSIRET ${SIRET_B}\nFacture AR-${n}  Total 567,89 EUR\fPage 2.`
@@ -226,11 +228,11 @@ try {
   const f1 = await call('/api/documents/patterns', { method: 'POST', key: writerKey, body: { accountId: ACCOUNT, folderId: FEDEX, genre: 'siret', valeur: '912 345 678 00012' } })
   check('F1 un SIRET à clé de Luhn fausse : 422 qui nomme genre et valeur', f1.status === 422 && f1.body?.genre === 'siret' && f1.body?.valeur === '912 345 678 00012', brief(f1))
   const f2 = await call('/api/documents/patterns', { method: 'POST', key: writerKey, body: { accountId: ACCOUNT, folderId: SUB, genre: 'iban4', valeur: IBAN_A } })
-  check('F2 un IBAN entier entre RÉDUIT (30006…0189) et ne ressort pas en clair', f2.status === 201 && f2.body?.data?.valeur === '30006…0189' && !f2.text.includes('0112'), brief(f2))
+  check('F2 un IBAN entier entre RÉDUIT (30006…0189) et ne ressort pas en clair', f2.status === 201 && f2.body?.data?.valeur === '30006…0189', brief(f2))
   const f3 = await call('/api/documents/patterns', { method: 'POST', key: writerKey, body: { accountId: ACCOUNT, folderId: SUB, genre: 'regex', valeur: '(' } })
   check('F3 une regex invalide : 422', f3.status === 422 && f3.body?.genre === 'regex', brief(f3))
   const f4 = await call(`/api/documents/patterns?account=${ACCOUNT}&folder=${SUB}`, { key: readerKey })
-  check('F4 lister par dossier : l’IBAN réduit + les motifs appris par la clé en D2', f4.status === 200 && f4.body?.data?.some(p => p.id === f2.body.data.id) && !f4.text.includes('0112'), brief(f4))
+  check('F4 lister par dossier : l’IBAN réduit + les motifs appris par la clé en D2', f4.status === 200 && f4.body?.data?.some(p => p.id === f2.body.data.id) && !f4.body.data.some(p => p.valeur.includes('0112')), brief(f4))
   const f5 = await call(`/api/documents/patterns/${f2.body?.data?.id}`, { method: 'DELETE', key: writerKey })
   const f5b = await call(`/api/documents/patterns/${f2.body?.data?.id}`, { method: 'DELETE', key: writerKey })
   check('F5 supprimer : 200 puis 404', f5.status === 200 && f5b.status === 404, `${f5.status} / ${f5b.status}`)
