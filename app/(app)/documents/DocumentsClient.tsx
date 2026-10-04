@@ -194,8 +194,9 @@ function DocumentPane({ id, folders, canOrganize, onBack }: { id: string; folder
   const { data, error, mutate } = useSWR<DetailResponse>(key, fetcher)
   const doc = data?.data
   const [zoom, setZoom] = useState<number | null>(null)
-  const zoomRef = useRef<HTMLDivElement>(null)
-  // Light-dismiss de l'agrandissement : un clic hors de la page agrandie la replie, et ce clic atteint sa cible.
+  const zoomRef = useRef<HTMLElement>(null)
+  // Light-dismiss de l'agrandissement : un clic hors de la section des pages la replie, et ce clic atteint sa cible.
+  // Les vignettes sont DANS la section : re-cliquer la vignette agrandie passe par son onClick (toggle), pas par ici.
   useEffect(() => {
     if (zoom === null) return
     const onDown = (e: MouseEvent) => { if (!zoomRef.current?.contains(e.target as Node)) setZoom(null) }
@@ -272,7 +273,7 @@ function DocumentPane({ id, folders, canOrganize, onBack }: { id: string; folder
       </header>
 
       {/* Vignettes : une par page, cliquer agrandit en dessous (pas de modale, pas de lib). */}
-      <section className="px-5 py-3 border-b border-border" data-document-pages={doc.pages}>
+      <section ref={zoomRef} className="px-5 py-3 border-b border-border" data-document-pages={doc.pages}>
         <div className="flex flex-wrap gap-2">
           {pageNumbers.map(n => (
             <button key={n} type="button" onClick={() => setZoom(zoom === n ? null : n)} title={t('page', { n })} aria-pressed={zoom === n}
@@ -283,7 +284,7 @@ function DocumentPane({ id, folders, canOrganize, onBack }: { id: string; folder
           ))}
         </div>
         {zoom && (
-          <div ref={zoomRef} className="mt-3 rounded-lg border border-border bg-white p-1 overflow-auto" data-document-zoom={zoom}>
+          <div className="mt-3 rounded-lg border border-border bg-white p-1 overflow-auto" data-document-zoom={zoom}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={pageUrl(doc.id, zoom, ZOOM_DPI)} alt={t('page', { n: zoom })} className="block max-w-full mx-auto" />
           </div>
