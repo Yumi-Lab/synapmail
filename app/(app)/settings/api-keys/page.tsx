@@ -17,6 +17,7 @@ import { AccountAvatar } from '@/components/layout/AccountAvatar'
 import type { EmailAccount } from '@/types/account'
 import { RowMenu, ContextMenuItem, MENU_ICON } from '@/components/ui/ContextMenu'
 import { cn } from '@/lib/utils'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
@@ -496,6 +497,7 @@ function ScopeEditor({ apiKey, accounts, onSave }: {
 export default function ApiKeysPage() {
   const tRow = useTranslations('settings.rowActions')
   const tDocs = useTranslations('settings.apiKeys')
+  const tCommon = useTranslations('common')
   const { data, mutate } = useSWR<{ data: ScopedApiKey[] }>('/api/api-keys', fetcher)
   const keys = data?.data ?? []
   // La MÊME liste que la barre latérale : son ORDRE décide de la couleur des pastilles,
@@ -517,6 +519,8 @@ export default function ApiKeysPage() {
   const [expandedKeyId, setExpandedKeyId] = useState<string | null>(null)
   const [revealingKeyId, setRevealingKeyId] = useState<string | null>(null)
   const [ipsKeyId, setIpsKeyId] = useState<string | null>(null)
+  const [revokeOpen, setRevokeOpen] = useState(false)
+  const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null)
 
   const createKey = async () => {
     if (!newName.trim()) { setError('Nom requis'); return }
@@ -556,9 +560,12 @@ export default function ApiKeysPage() {
     await mutate()
   }
 
-  const revokeKey = async (key: ApiKey) => {
-    if (!confirm(tRow('apiKeyRevokeConfirm', { name: key.name }))) return
-    await fetch(`/api/api-keys/${key.id}`, { method: 'DELETE' })
+  const revokeKey = (key: ApiKey) => { setRevokeTarget(key); setRevokeOpen(true) }
+
+  const confirmRevoke = async () => {
+    if (!revokeTarget) return
+    const res = await fetch(`/api/api-keys/${revokeTarget.id}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error('revoke failed')
     await mutate()
   }
 
@@ -758,6 +765,17 @@ export default function ApiKeysPage() {
           )
         })}
       </div>
+      <ConfirmDialog
+        open={revokeOpen}
+        onOpenChange={setRevokeOpen}
+        title={tRow('apiKeyRevokeTitle')}
+        description={tRow('apiKeyRevokeConfirm', { name: revokeTarget?.name ?? '' })}
+        cancelLabel={tCommon('cancel')}
+        confirmLabel={tRow('apiKeyRevokeAction')}
+        pendingLabel={tRow('apiKeyRevokePending')}
+        errorLabel={tRow('apiKeyRevokeError')}
+        onConfirm={confirmRevoke}
+      />
     </SettingsPage>
   )
 }
