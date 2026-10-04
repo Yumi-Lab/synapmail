@@ -24,7 +24,7 @@
  * « ce qui reste » ; les compteurs affichés (restants, par raison) partent de la DERNIÈRE réponse
  * du serveur et se décrémentent à chaque geste jusqu'à la suivante.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useFormatter, useTranslations } from 'next-intl'
 import useSWR from 'swr'
 import { ClipboardCheck } from 'lucide-react'
@@ -195,7 +195,9 @@ export function ValidateClient() {
     setLast(null)
   }, [last, accountId, busy, t, items.length])
 
-  useEffect(() => {
+  // Synchrone (avant le paint) : avec `useEffect`, une touche frappée juste après le rendu de la
+  // ligne suivante tombait sur l'ancien listener (`busy` encore vrai dans sa fermeture) et était perdue.
+  useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement
       if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable || e.metaKey || e.ctrlKey || e.altKey) return

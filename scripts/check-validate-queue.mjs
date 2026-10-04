@@ -43,7 +43,6 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const NAV_TIMEOUT_MS = 180000
 /** Le temps laissé à un geste pour se poser (PUT + re-rendu) avant de le compter bloqué. */
 const GESTURE_MAX_MS = 15000
-const SETTLE_MS = 300
 const PAGE_SIZE = 50
 const GESTURES = 100
 /** Assez de lignes pour deux pages et quelques-unes de plus (second tour des passées). */
@@ -111,7 +110,11 @@ try {
   const [prefs] = await query(`SELECT active_account_id FROM user_settings WHERE user_id = $1`, [u.id])
 
   await page.goto(`${BASE}/validate?account=${ACCOUNT}`, { waitUntil: 'domcontentloaded' })
-  await page.waitForFunction(a => document.querySelector(`[data-validate-account="${a}"]`) && document.querySelector('[data-validate-list]'), {}, ACCOUNT)
+  const rendered = () => page.waitForFunction(a => document.querySelector(`[data-validate-account="${a}"]`) && document.querySelector('[data-validate-list]'), {}, ACCOUNT)
+  // Juste après un commit qui touche l'écran, Next dev compile `/validate` à froid : sous charge (load
+  // > 150) cette première compilation a dépassé NAV_TIMEOUT (mesuré le 04/10 07:02, 180 s). La page est
+  // alors compilée : UN rechargement suffit, et il est dit — un banc qui meurt avant la mesure ne mesure rien.
+  try { await rendered() } catch { console.log('  (premier rendu > NAV_TIMEOUT : compilation à froid sous charge — rechargement unique)'); await page.reload({ waitUntil: 'domcontentloaded' }); await rendered() }
   await new Promise(r => setTimeout(r, 1500))
   const callsAtLoad = queueCalls.length
   blockQueue = true
