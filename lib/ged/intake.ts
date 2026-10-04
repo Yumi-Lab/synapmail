@@ -28,12 +28,17 @@ import { query } from '../db'
 import type { ImapAccountRow } from '../accounts'
 import type { SourceMail } from '../tagging/runner'
 import { messageIdOf } from '../tagging/store'
+import { IDLE_FOLDER } from '../stream'
 import { OCR_STATUSES, OCR_STATUS_DONE, OCR_STATUS_FAILED, OCR_STATUS_PENDING, type OcrStatus } from './model'
 import { ocrPdf, type OcrResult } from './ocr'
 import { autoFile } from './filing'
 
-/** Le dossier d'une boîte GED que la chaîne surveille : le copieur n'écrit que là. */
-export const GED_FOLDER = 'INBOX'
+/**
+ * Le dossier d'une boîte GED que la chaîne surveille : le copieur dépose ses scans là où le courrier
+ * arrive, c'est-à-dire dans la boîte suivie en temps réel par `/api/stream` — une seule source pour
+ * les deux, la GED n'a pas de dossier à elle (un mail rangé ailleurs par une règle n'est pas relu).
+ */
+export const GED_FOLDER = IDLE_FOLDER
 
 /** Les mails relus par passage : chacun peut porter un PDF de 8 pages à ~5 s la page. */
 export const GED_BATCH_SIZE = 10
