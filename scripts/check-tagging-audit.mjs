@@ -19,7 +19,10 @@
  *   K6. la file « À valider » au clavier (lot T15, décision 17) : une ligne par (mail, question)
  *       par l'une des trois portes (audit, désaccord, confiance sous le seuil de la question),
  *       jamais une étiquette déjà jugée par une main ni une version périmée ; l'audit d'abord ;
- *       un seuil réglé par question déplace la porte « confiance » ; une validation la vide.
+ *       un seuil réglé par question déplace la porte « confiance » ; une validation la vide ;
+ *   K7. « défaire » (gate T15, bloquant 2) : `removeHumanTag` SUPPRIME la ligne `humain` de cette
+ *       main sur cette question, l'item revient dans la file, les lignes des moteurs et celles
+ *       d'une autre main restent ; une main qui n'a rien écrit ne retire rien.
  */
 import './alias-resolver.mjs'
 import crypto from 'node:crypto'
@@ -223,6 +226,31 @@ try {
   const afterOne = await audit.validationQueue(ACCOUNT, 1, 1)
   check('K6e une ligne `humain` écrite retire l’item de la file (total − 1, confiance − 1)',
     afterOne.total === q1.total - 1 && afterOne.counts.confidence === want.confidence - 1, JSON.stringify({ before: q1.total, after: afterOne.total, counts: afterOne.counts }))
+
+  // ---- K7. « défaire » ----
+  // Une AUTRE main a aussi jugé un second item : la défaite de la première ne doit pas l'emporter.
+  const OTHER = '00000000-0000-4000-8000-0000000015c3'
+  const second = all.find(i => i.reason === 'confidence' && i.messageId !== target.messageId)
+  await store.writeTags({ accountId: ACCOUNT, messageId: second.messageId, source: 'humain', auteur: { id: USER, nom: 'Banc' }, validePar: USER, tags: [{ question: Q, valeur: second.valeur }] })
+  await store.writeTags({ accountId: ACCOUNT, messageId: second.messageId, source: 'humain', auteur: { id: OTHER, nom: 'Autre main' }, validePar: null, tags: [{ question: Q, valeur: second.valeur }] })
+  const rowsOf = mid => query(`SELECT source, auteur_id FROM message_tags WHERE account_id = $1 AND message_id = $2 AND question = $3 ORDER BY source, auteur_id`, [ACCOUNT, mid, Q])
+  const engineRowsBefore = (await rowsOf(target.messageId)).filter(r => r.source !== 'humain').length
+  const removed = await store.removeHumanTag(ACCOUNT, target.messageId, Q, USER)
+  const afterUndo = await audit.validationQueue(ACCOUNT, 1, 200)
+  const targetRows = await rowsOf(target.messageId)
+  check('K7a défaire retire exactement la ligne `humain` de cette main ; les lignes des moteurs restent ; l’item revient dans la file',
+    removed === 1 && !targetRows.some(r => r.source === 'humain') && targetRows.length === engineRowsBefore && engineRowsBefore > 0
+      && afterUndo.items.some(i => i.messageId === target.messageId) && afterUndo.total === afterOne.total,
+    JSON.stringify({ removed, targetRows, engineRowsBefore, back: afterUndo.items.some(i => i.messageId === target.messageId), total: [afterOne.total, afterUndo.total] }))
+  const removedSecond = await store.removeHumanTag(ACCOUNT, second.messageId, Q, USER)
+  const secondRows = await rowsOf(second.messageId)
+  const afterSecond = await audit.validationQueue(ACCOUNT, 1, 200)
+  check('K7b défaire ne touche pas la ligne d’une AUTRE main : elle reste, et l’item reste hors de la file',
+    removedSecond === 1 && secondRows.filter(r => r.source === 'humain').length === 1 && secondRows.some(r => r.source === 'humain' && r.auteur_id === OTHER)
+      && !afterSecond.items.some(i => i.messageId === second.messageId),
+    JSON.stringify({ removedSecond, secondRows }))
+  const removedNothing = await store.removeHumanTag(ACCOUNT, target.messageId, Q, USER)
+  check('K7c une main qui n’a rien écrit ne retire rien (0), et rien ne bouge', removedNothing === 0 && (await rowsOf(target.messageId)).length === engineRowsBefore, String(removedNothing))
 } finally {
   if (ACCOUNT) await pool.query('DELETE FROM email_accounts WHERE id = $1', [ACCOUNT]).catch(() => {})
   await pool.query("DELETE FROM email_accounts WHERE email LIKE 'auditbench-%@bench.invalid'").catch(() => {})

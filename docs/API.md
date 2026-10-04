@@ -1198,6 +1198,9 @@ Every row this message carries, all sources, plus the effective one per question
 
 Requires the `organize` share permission (tagging is filing). `422` names the offending `question` and `valeur` when a value is not one this question allows; `403` names the `source` when the caller may not write it (a key asking for `humain`, a session asking for anything else). **Response** `{ data: { messageId, written: number, source, tags: StoredTag[], effective: StoredTag[] } }`.
 
+### `DELETE /api/messages/[id]/tags?account=&question=` — session only
+"Undo" for the validation queue (`/validate`, lot T15): removes the `humain` row **this session** wrote on one `question` of this message — never an engine's row, never another person's. The item re-enters the validation queue since no human has judged it anymore. Requires the `organize` share permission. API keys cannot write `humain`, so they have nothing to undo here. **Response** `{ data: { messageId, removed: number, tags: StoredTag[], effective: StoredTag[] } }`.
+
 ### `GET /api/messages/[id]/fields?account=` 🔑 Bearer (`tags:read`)
 The VALUES extracted from this message (decision 19): `montant` (+ `devise`, `type_montant`), `echeance` (ISO date, + `type_echeance`), `numero_commande`, `numero_suivi` (+ `transporteur_suivi` deduced from the number's format), and `iban` — only its last 4 characters, never the full IBAN. Same shape and same effective rule as the tags route (`humain` first, else the most recent engine row). Each row carries `candidats`: what the regexes found in the message, i.e. the very options the engine was asked to pick from. **Response** `{ data: { messageId: string; fields: StoredField[]; effective: StoredField[] } }`.
 

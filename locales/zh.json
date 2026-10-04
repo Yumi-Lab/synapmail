@@ -721,7 +721,7 @@
         "saveFailed": "保存失败。",
         "reservedId": "标识符“{id}”已保留给规则检测器，请换一个。",
         "confidenceThreshold": "置信度阈值",
-        "confidenceThresholdHint": "低于此值时，引擎的回答进入校验队列（默认 {value}）。"
+        "confidenceThresholdHint": "低于此值时，引擎的回答进入校验队列（默认 {value, number}）。"
       },
       "rules": {
         "title": "标签规则",

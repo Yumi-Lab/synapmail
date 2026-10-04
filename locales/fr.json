@@ -721,7 +721,7 @@
         "saveFailed": "L’enregistrement a échoué.",
         "reservedId": "L’identifiant « {id} » est réservé à un détecteur de règles : choisissez-en un autre.",
         "confidenceThreshold": "Seuil de confiance",
-        "confidenceThresholdHint": "Sous ce seuil, la réponse du moteur entre dans la file « À valider » (défaut {value})."
+        "confidenceThresholdHint": "Sous ce seuil, la réponse du moteur entre dans la file « À valider » (défaut {value, number})."
       },
       "rules": {
         "title": "Règles d’étiquetage",

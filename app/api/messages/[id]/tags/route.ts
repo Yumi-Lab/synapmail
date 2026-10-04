@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server'
+import { auth } from '@/lib/auth'
 import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
 import { getAccessibleAccount, type AccessibleAccount } from '@/lib/accountAccess'
 import { toImapConfig } from '@/lib/accounts'
 import { getMessage } from '@/lib/imap'
 import { buildState, type EngineState } from '@/lib/tagging/engine'
-import { authorForWriter, latestState, readTags, sourceForWriter, writeTags,
+import { authorForWriter, latestState, readTags, removeHumanTag, sourceForWriter, writeTags,
   ForbiddenSourceError, InvalidTagError,
   type TagToWrite, type TaggedMessagePosition } from '@/lib/tagging/store'
 
@@ -120,6 +121,32 @@ async function putHandler(req: Request, { params }: { params: { id: string } }) 
       // sont un « tu ne signes pas de ce nom-là », et la réponse nomme ce qui a été refusé.
       return NextResponse.json({ error: err.message, source: err.source }, { status: 403 })
     }
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
+}
+
+/**
+ * « Défaire » (lot T15) : retire la ligne `humain` que CETTE session vient d'écrire sur UNE
+ * question (`?question=`). Session seule — une clé n'écrit jamais `humain`, elle n'a donc rien à
+ * défaire. La ligne d'un moteur n'est jamais touchée (décision 5) ; l'item revient dans la file.
+ * Hors `withApiLog` : le journal ne concerne que les clés, et il n'en passe aucune ici.
+ */
+export async function DELETE(req: Request, { params }: { params: { id: string } }) {
+  const session = await auth()
+  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { searchParams } = new URL(req.url)
+  const question = searchParams.get('question')
+  if (!question) return NextResponse.json({ error: 'question required' }, { status: 400 })
+  const account = await denyUnreachable(searchParams.get('account'), session.user.id, 'organize')
+  if (account instanceof NextResponse) return account
+
+  try {
+    const messageId = messageIdFrom(params)
+    const removed = await removeHumanTag(account.id, messageId, question, session.user.id)
+    const { tags, effective } = await readTags(account.id, messageId)
+    return NextResponse.json({ data: { messageId, removed, tags, effective } })
+  } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }

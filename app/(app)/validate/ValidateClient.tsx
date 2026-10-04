@@ -10,15 +10,19 @@
  *
  * Clavier : `Entrée` confirme la proposition, un chiffre (1-9, puis `0` = 10, `a`-`z` au-delà)
  * choisit une autre valeur, `s` passe, `↑`/`↓` se déplacent, `z` défait la dernière écriture
- * (on remet la valeur du moteur en `humain` : la ligne du moteur n'est jamais touchée,
- * décision 5). Chaque geste écrit une ligne `humain` par `PUT /api/messages/[id]/tags` — la
- * même route que le panneau du mail. Objectif : 100 étiquettes en moins de 5 minutes.
+ * (`DELETE …/tags?question=` retire la ligne `humain` qu'on vient d'écrire — jamais celle du
+ * moteur, décision 5 — et l'item revient à sa place). Chaque geste écrit une ligne `humain` par
+ * `PUT /api/messages/[id]/tags` — la même route que le panneau du mail. Objectif : 100 étiquettes
+ * en moins de 5 minutes.
  *
  * La file se lit par `GET /api/tags?queue=1` (lib/tagging/audit.ts `validationQueue`) et ne se
  * RECHARGE pas sous les doigts : un item jugé disparaît de la liste locale, un item passé aussi
- * (il revient dans un second tour, une fois tout le reste jugé) ; la suite se demande quand la
- * liste est vide — le serveur ne rend plus ce qui est jugé, donc la première page est toujours
- * « ce qui reste » (patch chirurgical, jamais un refetch à chaque geste).
+ * (il revient dans un second tour, une fois tout le reste jugé). La page suivante se demande
+ * quand UN GESTE vide la liste locale (`juger`/`passer` lèvent `exhausted`) — jamais sur
+ * l'identité de l'objet SWR, qui ne change pas quand le serveur rend la même page (gate T15,
+ * bloquant 1). Le serveur ne rend plus ce qui est jugé, donc la première page est toujours
+ * « ce qui reste » ; les compteurs affichés (restants, par raison) partent de la DERNIÈRE réponse
+ * du serveur et se décrémentent à chaque geste jusqu'à la suivante.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useFormatter, useTranslations } from 'next-intl'
@@ -76,48 +80,53 @@ export function ValidateClient() {
   }, [accounts.length])
 
   const key = accountId ? `${TAGS_ENDPOINT}?account=${encodeURIComponent(accountId)}&queue=1` : null
-  const { data, error, mutate, isValidating } = useSWR<{ data: ValidationQueue }>(key, fetcher, { revalidateOnFocus: false })
-
-  // La liste LOCALE : ce que le serveur a rendu, moins ce que la main a jugé ou passé.
+  // La liste LOCALE : ce que le serveur a rendu, moins ce que la main a jugé ou passé — et les
+  // compteurs tels que le serveur les a rendus, décrémentés à chaque geste (`judged`).
   const [items, setItems] = useState<QueueItem[]>([])
   const skipped = useRef(new Set<string>())
+  const judged = useRef<Record<QueueReason, number>>({ audit: 0, disagreement: 0, confidence: 0 })
+  const onPage = useCallback((page: ValidationQueue) => {
+    judged.current = { audit: 0, disagreement: 0, confidence: 0 }
+    setItems(prev => {
+      const seen = new Set(prev.map(keyFor))
+      const fresh = page.items.filter(i => !seen.has(keyFor(i)) && !skipped.current.has(keyFor(i)))
+      // Plus rien de neuf mais des items passés : second tour, ils reviennent.
+      if (!fresh.length && !prev.length && skipped.current.size) {
+        skipped.current.clear()
+        return page.items
+      }
+      return [...prev, ...fresh]
+    })
+  }, [])
+  const { data, error, mutate, isValidating } = useSWR<{ data: ValidationQueue }>(key, fetcher, { revalidateOnFocus: false, onSuccess: r => onPage(r.data) })
+  // Une page déjà en cache SWR (retour sur l'écran) ne repasse pas par `onSuccess` : on la pose une fois.
+  const seeded = useRef(false)
+  useEffect(() => { if (data && !seeded.current) { seeded.current = true; onPage(data.data) } }, [data, onPage])
   const [done, setDone] = useState(0)
   const [cursor, setCursor] = useState(0)
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState<string | null>(null)
   const [last, setLast] = useState<{ item: QueueItem; index: number } | null>(null)
-  const startedAt = useRef<number | null>(null)
+  const [startedAt, setStartedAt] = useState<number | null>(null)
   const [elapsed, setElapsed] = useState(0)
+  // Levé par un GESTE qui vide la liste locale : c'est lui, et lui seul, qui demande la suite.
+  const [exhausted, setExhausted] = useState(false)
 
-  useEffect(() => { setItems([]); skipped.current.clear(); setDone(0); setCursor(0); setLast(null); startedAt.current = null; setElapsed(0) }, [accountId])
+  useEffect(() => { setItems([]); skipped.current.clear(); seeded.current = false; setDone(0); setCursor(0); setLast(null); setStartedAt(null); setElapsed(0); setExhausted(false) }, [accountId])
   useEffect(() => {
-    if (!data) return
-    setItems(prev => {
-      const seen = new Set(prev.map(keyFor))
-      const fresh = data.data.items.filter(i => !seen.has(keyFor(i)) && !skipped.current.has(keyFor(i)))
-      // Plus rien de neuf mais des items passés : second tour, ils reviennent.
-      if (!fresh.length && !prev.length && skipped.current.size) {
-        skipped.current.clear()
-        return data.data.items
-      }
-      return [...prev, ...fresh]
-    })
-  }, [data])
-  // La suite quand la liste locale est épuisée : le serveur ne rend plus ce qui est jugé, la
-  // première page est donc toujours « ce qui reste ». Une réponse qui n'apporte rien arrête là.
-  const lastFetched = useRef<ValidationQueue | null>(null)
+    if (!exhausted) return
+    setExhausted(false)
+    void mutate()
+  }, [exhausted, mutate])
+  // Le chronomètre de l'objectif (100 en 5 min) : UN chrono de session, parti au premier geste,
+  // arrêté quand la file est vide.
+  const hasItems = items.length > 0
   useEffect(() => {
-    if (!data || isValidating || items.length) return
-    if (lastFetched.current === data.data) return
-    lastFetched.current = data.data
-    if (data.data.items.length) void mutate()
-  }, [items.length, data, isValidating, mutate])
-  // Le chronomètre de l'objectif (100 en 5 min) : démarre au premier geste, s'affiche ensuite.
-  useEffect(() => {
-    if (startedAt.current === null) return
-    const id = window.setInterval(() => setElapsed(Math.round((Date.now() - startedAt.current!) / 1000)), 1000)
-    return () => window.clearInterval(id)
-  }, [done])
+    if (startedAt === null || !hasItems) return
+    const tick = () => setElapsed(Math.round((Date.now() - startedAt) / 1000))
+    const id = window.setInterval(tick, 1000)
+    return () => { window.clearInterval(id); tick() }
+  }, [startedAt, hasItems])
 
   const current = items[Math.min(cursor, items.length - 1)] ?? null
   const question = current ? set.questionById(current.question) : undefined
@@ -142,35 +151,49 @@ export function ValidateClient() {
     } finally { setBusy(false) }
   }, [accountId, busy, t])
 
+  // Retire la ligne courante de la liste locale ; si c'était la dernière, demande la suite.
+  const drop = useCallback((item: QueueItem) => {
+    const index = items.indexOf(item)
+    const rest = items.filter(i => i !== item)
+    setItems(rest)
+    setCursor(Math.min(index, Math.max(rest.length - 1, 0)))
+    if (!rest.length) setExhausted(true)
+  }, [items])
+
   const judge = useCallback(async (valeur: string) => {
     if (!current) return
-    if (startedAt.current === null) startedAt.current = Date.now()
+    setStartedAt(t => t ?? Date.now())
     const index = items.indexOf(current)
     if (!(await write(current, valeur))) return
     setLast({ item: current, index })
-    setItems(prev => prev.filter(i => i !== current))
+    judged.current[current.reason] += 1
     setDone(n => n + 1)
-    setCursor(Math.min(index, Math.max(items.length - 2, 0)))
-  }, [current, items, write])
+    drop(current)
+  }, [current, items, write, drop])
 
   // Passer = retirer la ligne de ce tour sans rien écrire ; elle revient quand tout le reste est jugé.
   const skip = useCallback(() => {
     if (!current) return
     skipped.current.add(keyFor(current))
-    setItems(prev => prev.filter(i => i !== current))
-    setCursor(c => Math.min(c, Math.max(items.length - 2, 0)))
-  }, [current, items.length])
+    drop(current)
+  }, [current, drop])
 
-  // Défaire = réécrire la proposition du moteur en `humain` (la base garde l'historique), et
-  // remettre la ligne à sa place pour la rejuger.
+  // Défaire = SUPPRIMER la ligne `humain` qu'on vient d'écrire (la ligne du moteur n'est jamais
+  // touchée) et remettre la ligne à sa place pour la rejuger.
   const undo = useCallback(async () => {
-    if (!last) return
-    if (!(await write(last.item, last.item.valeur))) return
+    if (!last || !accountId || busy) return
+    setBusy(true); setFailed(null)
+    try {
+      const res = await fetch(`/api/messages/${encodeURIComponent(last.item.messageId)}/tags?account=${encodeURIComponent(accountId)}&question=${encodeURIComponent(last.item.question)}`, { method: 'DELETE' })
+      if (!res.ok) { setFailed(t('writeFailed', { status: res.status })); return }
+      window.dispatchEvent(new CustomEvent(TAGS_CHANGED_EVENT))
+    } finally { setBusy(false) }
     setItems(prev => { const next = [...prev]; next.splice(Math.min(last.index, next.length), 0, last.item); return next })
     setCursor(Math.min(last.index, items.length))
+    judged.current[last.item.reason] -= 1
     setDone(n => Math.max(n - 1, 0))
     setLast(null)
-  }, [last, write, items.length])
+  }, [last, accountId, busy, t, items.length])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -193,8 +216,11 @@ export function ValidateClient() {
   const rowRef = useRef<HTMLLIElement | null>(null)
   useEffect(() => { rowRef.current?.scrollIntoView({ block: 'nearest' }) }, [cursor, current])
 
-  const total = data?.data.total ?? 0
-  const remaining = Math.max(total - done, 0)
+  // Le serveur a rendu « ce qui reste » à sa dernière réponse ; on en retranche ce qui a été
+  // jugé depuis (jamais `total − done` : après une relance, `done` serait soustrait deux fois).
+  const counts = data?.data.counts
+  const countOf = (r: QueueReason) => Math.max((counts?.[r] ?? 0) - judged.current[r], 0)
+  const remaining = (Object.keys(REASON_CLASS) as QueueReason[]).reduce((n, r) => n + countOf(r), 0)
   const pct = (n: number) => format.number(n, { style: 'percent', maximumFractionDigits: 0 })
   const clock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
 
@@ -224,9 +250,9 @@ export function ValidateClient() {
           {done > 0 && <span data-validate-clock={elapsed}>{clock}</span>}
           {data && (
             <span className="flex gap-2">
-              {(Object.keys(REASON_CLASS) as QueueReason[]).map(r => data.data.counts[r] > 0 && (
-                <span key={r} className={cn('rounded-full px-2 py-0.5 text-[11px]', REASON_CLASS[r])} data-validate-reason-count={r}>
-                  {t(`reason_${r}`)} · {data.data.counts[r]}
+              {(Object.keys(REASON_CLASS) as QueueReason[]).map(r => countOf(r) > 0 && (
+                <span key={r} className={cn('rounded-full px-2 py-0.5 text-[11px]', REASON_CLASS[r])} data-validate-reason-count={r} data-validate-reason-n={countOf(r)}>
+                  {t(`reason_${r}`)} · {countOf(r)}
                 </span>
               ))}
             </span>
@@ -235,7 +261,7 @@ export function ValidateClient() {
 
         {error ? (
           <p className="text-sm text-destructive" role="alert">{t('loadError')}</p>
-        ) : !data ? (
+        ) : !data || (!items.length && (isValidating || exhausted)) ? (
           <p className="text-sm text-muted-foreground">{t('loading')}</p>
         ) : !items.length ? (
           <p className="text-sm text-muted-foreground" data-validate-empty>{done ? t('allDone', { count: done }) : t('empty')}</p>

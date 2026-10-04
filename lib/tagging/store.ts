@@ -272,6 +272,24 @@ export async function writeTags(params: {
   return tags.length
 }
 
+/**
+ * Retire la ligne `humain` qu'UNE main vient d'écrire sur UNE question (« défaire », lot T15) :
+ * seulement la sienne (`auteur_id`), jamais celle d'un moteur ni d'une autre main. L'item
+ * revient dans la file « À valider » puisque plus aucune main ne l'a jugé. ponytail: si cette
+ * main avait déjà jugé la question avant (même clé → `ON CONFLICT` l'a remplacée), c'est cette
+ * ligne remplacée qui part aussi — la file ne propose que des items sans ligne humaine, donc le
+ * cas n'arrive pas depuis l'écran ; restaurer l'ancienne valeur demanderait un historique des
+ * écrasements qui n'existe pas.
+ */
+export async function removeHumanTag(accountId: string, messageId: string, question: string, userId: string): Promise<number> {
+  const rows = await query<{ id: string }>(
+    `DELETE FROM message_tags WHERE account_id = $1 AND message_id = $2 AND question = $3
+       AND source = '${HUMAN_SOURCE}' AND auteur_id = $4 RETURNING id`,
+    [accountId, messageId, question, userId]
+  )
+  return rows.length
+}
+
 /** Un instantané n'est écrit qu'une fois par mail : le même texte revenu (relance, correction) ne coûte rien. */
 const writeState = (accountId: string, messageId: string, hash: string, state: EngineState): Promise<unknown> =>
   query(

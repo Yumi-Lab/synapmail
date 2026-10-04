@@ -721,7 +721,7 @@
         "saveFailed": "Saving failed.",
         "reservedId": "The id “{id}” is reserved for a rule detector: pick another one.",
         "confidenceThreshold": "Confidence threshold",
-        "confidenceThresholdHint": "Below this, the engine’s answer enters the validation queue (default {value})."
+        "confidenceThresholdHint": "Below this, the engine’s answer enters the validation queue (default {value, number})."
       },
       "rules": {
         "title": "Tagging rules",

@@ -12,7 +12,7 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
-import { useTranslations } from 'next-intl'
+import { useFormatter, useTranslations } from 'next-intl'
 import { ChevronDown, ChevronRight, FlaskConical, GripVertical, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -190,6 +190,7 @@ type T = ReturnType<typeof useTranslations<'settings.tagging.questions'>>
 function Editor({ draft, setDraft, isNew, accountId, stale, t }: {
   draft: Draft; setDraft: (f: (d: Draft | null) => Draft | null) => void; isNew: boolean; accountId: string | null; stale: number; t: T
 }) {
+  const format = useFormatter()
   const update = (patch: Partial<Draft>) => setDraft(d => d && { ...d, ...patch })
   const setType = (type: QuestionType) => update({ type, options: type === 'noul' ? undefined : (draft.type === 'noul' ? [emptyOption(), emptyOption()] : draft.options), listBadge: undefined })
   const options = draft.options ?? []
@@ -276,12 +277,13 @@ function Editor({ draft, setDraft, isNew, accountId, stale, t }: {
         )}
       </label>
 
-      {/* Vide = le défaut (`CONFIDENCE_THRESHOLD_DEFAULT`) : `undefined` dans le brouillon, `null` en base. */}
+      {/* Vide = le défaut (`CONFIDENCE_THRESHOLD_DEFAULT`) : `undefined` dans le brouillon, `null` en base.
+          Une saisie partielle (« 0. », champ vidé) n'est jamais lue comme 0 : seul un nombre fini entre. */}
       <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {t('confidenceThreshold')}
         <input type="number" min={0} max={1} step={0.05} data-field="confidenceThreshold"
-          value={draft.confidenceThreshold ?? ''} placeholder={String(CONFIDENCE_THRESHOLD_DEFAULT)}
-          onChange={e => update({ confidenceThreshold: e.target.value === '' ? undefined : Math.min(Math.max(Number(e.target.value), 0), 1) })}
+          value={draft.confidenceThreshold ?? ''} placeholder={format.number(CONFIDENCE_THRESHOLD_DEFAULT)}
+          onChange={e => { const n = e.target.valueAsNumber; update({ confidenceThreshold: Number.isFinite(n) ? Math.min(Math.max(n, 0), 1) : undefined }) }}
           className="h-8 w-20 rounded-md border border-input bg-background px-2 text-xs tabular-nums" />
         <span className="text-[11px]">{t('confidenceThresholdHint', { value: CONFIDENCE_THRESHOLD_DEFAULT })}</span>
       </label>
