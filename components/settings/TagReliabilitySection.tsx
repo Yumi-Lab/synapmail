@@ -19,13 +19,11 @@ import { Button } from '@/components/ui/button'
 import { SettingsSection } from '@/components/settings/primitives'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import { MAIL_PATH } from '@/lib/compose'
-import { AUDIT_FILTER, TAG_FILTER_PARAM, VALIDATE_ACCOUNT_PARAM, VALIDATE_PATH } from '@/lib/tagging/view'
+import { AUDIT_FILTER, TAG_FILTER_PARAM, TAGGING_RUN_ENDPOINT, TAGGING_STATUS_ENDPOINT, VALIDATE_ACCOUNT_PARAM, VALIDATE_PATH } from '@/lib/tagging/view'
 import type { AuditStatus, QuestionReliability } from '@/lib/tagging/audit'
 import { useAccountAccent } from '@/components/layout/AccountAvatar'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
-const STATUS_ENDPOINT = '/api/tagging/status'
-const RUN_ENDPOINT = '/api/tagging/run'
 
 
 export function TagReliabilitySection({ accountId }: { accountId: string }) {
@@ -38,7 +36,7 @@ export function TagReliabilitySection({ accountId }: { accountId: string }) {
   const { switchAccount } = useAccountAccent()
   const [busy, setBusy] = useState(false)
   const { data, mutate } = useSWR<{ data: { reliability: QuestionReliability[]; audit: AuditStatus } }>(
-    `${STATUS_ENDPOINT}?account=${accountId}&reliability=1`, fetcher,
+    `${TAGGING_STATUS_ENDPOINT}?account=${accountId}&reliability=1`, fetcher,
   )
   const audit = data?.data?.audit ?? null
   const rows = data?.data?.reliability ?? []
@@ -48,7 +46,7 @@ export function TagReliabilitySection({ accountId }: { accountId: string }) {
   async function draw() {
     setBusy(true)
     try {
-      await fetch(RUN_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId, action: 'audit' }) })
+      await fetch(TAGGING_RUN_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId, action: 'audit' }) })
       await mutate()
     } finally { setBusy(false) }
   }

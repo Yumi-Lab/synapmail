@@ -46,6 +46,9 @@ export const TAG_GROUPS_ENDPOINT = '/api/tags/groups'
 
 /** Le statut et les réglages d'une boîte (`?account=`) — clé SWR de l'écran de tri, aussi revalidée par les groupes. */
 export const TAGGING_SETTINGS_ENDPOINT = '/api/tagging/settings'
+/** Le trieur d'une boîte : où il en est (`?account=`), et l'ordre qu'on lui donne (`POST { accountId, action }`). */
+export const TAGGING_STATUS_ENDPOINT = '/api/tagging/status'
+export const TAGGING_RUN_ENDPOINT = '/api/tagging/run'
 
 /** L'ordre d'affichage d'une étiquette : celui du jeu de l'utilisateur, jamais celui du SQL. */
 const byQuestionOrder = (set: QuestionSet) => (a: StoredTag, b: StoredTag) => set.rankOf(a.question) - set.rankOf(b.question)

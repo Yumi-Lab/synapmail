@@ -372,6 +372,9 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
   const runSuggestion = (index: number) => {
     const picked = suggestions[index]
     if (!picked) return
+    // Choisir une entrée annule la recherche en attente : sinon, 400 ms plus tard, la frappe
+    // partait quand même en `/mail?q=…` par-dessus l'écran que l'entrée venait d'ouvrir.
+    if (debounce.current) clearTimeout(debounce.current)
     closePanel()
     setQuery('')
     inputRef.current?.blur()

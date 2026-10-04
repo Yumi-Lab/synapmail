@@ -125,7 +125,9 @@ try {
   // Le clic part AVANT que la frappe ne soit soumise comme recherche : passé le débounce,
   // l'omnibar navigue elle-même vers /mail?q=… et le banc mesurerait alors une page de
   // courrier montée AVANT le changement de boîte (qui lit, à bon droit, l'ancienne).
-  await new Promise(r => setTimeout(r, DEBOUNCE_MS / 4))
+  // L'entrée est attendue HYDRATÉE avant la lecture de l'URL : sous charge (load 195) cette
+  // attente seule dépasse le débounce, et une URL lue avant elle ne dit rien du moment du clic.
+  await hydrated(omnibarAccount(to.id))
   const before = await page.evaluate(() => location.pathname)
   if (before === '/mail') { console.error(`HARNESS: déjà sur /mail avant le clic (débounce ${DEBOUNCE_MS} ms dépassé)`); process.exit(2) }
   await realClick(omnibarAccount(to.id))

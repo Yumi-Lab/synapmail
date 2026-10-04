@@ -16,6 +16,7 @@
  *     question.
  */
 import { query } from '../db'
+import { HUMAN_SOURCE } from './engine'
 import {
   CHOICE_MAX_OPTIONS, defaultQuestionColumns, RESERVED_ID_CODE, RESERVED_QUESTION_IDS, SCORE_LEVELS, SLUG_RE, engineBodyOf, questionSet,
   type QuestionSet, type QuestionType, type TagOption, type TagQuestion,
@@ -286,7 +287,7 @@ export async function staleCounts(accountId: string, set: QuestionSet, versionOf
     `SELECT m.question, COUNT(DISTINCT m.message_id) AS n
        FROM message_tags m
        JOIN unnest($2::text[], $3::text[]) AS v(question, version) ON v.question = m.question
-      WHERE m.account_id = $1 AND m.source <> 'humain' AND m.question_version <> v.version
+      WHERE m.account_id = $1 AND m.source <> '${HUMAN_SOURCE}' AND m.question_version <> v.version
       GROUP BY m.question`,
     [accountId, set.all.map(q => q.id), set.all.map(versionOf)]
   )

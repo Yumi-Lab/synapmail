@@ -285,6 +285,8 @@ export function ValidateClient() {
                     <span className="min-w-0 flex-1 truncate" title={item.fromAddress ?? ''}>
                       <span className="font-medium">{item.fromName || item.fromAddress || '—'}</span>
                       <span className="text-muted-foreground"> · {item.subject || '—'}</span>
+                      {/* Étroit : la question passe SOUS l'expéditeur, sinon elle sortirait de la ligne (gate T15, 390 px). */}
+                      <span className="block truncate text-muted-foreground sm:hidden">{q(item.question)}</span>
                     </span>
                     <span className="hidden shrink-0 text-muted-foreground sm:inline">{q(item.question)}</span>
                     <span className="shrink-0 font-semibold" data-validate-value={item.valeur}>{v(item.valeur)}</span>
@@ -298,7 +300,6 @@ export function ValidateClient() {
                   {active && (
                     <div className="mt-2 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(14rem,20rem)]" data-validate-detail>
                       <div className="min-w-0">
-                        <p className="text-muted-foreground sm:hidden">{q(item.question)}</p>
                         <p className="font-medium">{question?.instructions}</p>
                         {item.state ? (
                           <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-2 font-sans text-[11px] leading-snug text-foreground/90" data-validate-state>

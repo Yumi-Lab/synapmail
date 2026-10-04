@@ -21,7 +21,7 @@ import { SettingsSection, SaveBar, Toggle } from '@/components/settings/primitiv
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import { CONFIDENCE_THRESHOLD_DEFAULT, RESERVED_ID_CODE, SCORE_LEVELS, SLUG_RE, engineBodyOf, type QuestionType, type TagOption, type TagQuestion } from '@/lib/tagging/questions'
-import { QUESTIONS_ENDPOINT } from '@/lib/tagging/view'
+import { QUESTIONS_ENDPOINT, TAGGING_RUN_ENDPOINT } from '@/lib/tagging/view'
 import type { StoredQuestion } from '@/lib/tagging/userQuestions'
 import type { Message } from '@/types/email'
 import { cn } from '@/lib/utils'
@@ -209,7 +209,7 @@ function Editor({ draft, setDraft, isNew, accountId, stale, t }: {
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="space-y-1 text-xs text-muted-foreground">
           {t('id')}
-          <Input value={draft.id} disabled={!isNew} placeholder="ma_question" data-field="id"
+          <Input value={draft.id} disabled={!isNew} placeholder={t('idPlaceholder')} data-field="id"
             onChange={e => update({ id: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })} />
         </label>
         <label className="space-y-1 text-xs text-muted-foreground">
@@ -278,12 +278,15 @@ function Editor({ draft, setDraft, isNew, accountId, stale, t }: {
       </label>
 
       {/* Vide = le défaut (`CONFIDENCE_THRESHOLD_DEFAULT`) : `undefined` dans le brouillon, `null` en base.
-          Une saisie partielle (« 0. », champ vidé) n'est jamais lue comme 0 : seul un nombre fini entre. */}
+          Une saisie partielle (« 0. », champ vidé) n'est jamais lue comme 0 : seul un nombre fini entre. Le 0 reste
+          permis PENDANT la frappe (« 0 » puis « .5 »), mais un 0 laissé en quittant le champ (le « 0 » d'un Retour
+          arrière sur « 0. ») redevient vide : un seuil nul n'alimenterait jamais la file, rien à enregistrer. */}
       <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {t('confidenceThreshold')}
         <input type="number" min={0} max={1} step={0.05} data-field="confidenceThreshold"
           value={draft.confidenceThreshold ?? ''} placeholder={format.number(CONFIDENCE_THRESHOLD_DEFAULT)}
           onChange={e => { const n = e.target.valueAsNumber; update({ confidenceThreshold: Number.isFinite(n) ? Math.min(Math.max(n, 0), 1) : undefined }) }}
+          onBlur={() => { if (draft.confidenceThreshold === 0) update({ confidenceThreshold: undefined }) }}
           className="h-8 w-20 rounded-md border border-input bg-background px-2 text-xs tabular-nums" />
         <span className="text-[11px]">{t('confidenceThresholdHint', { value: CONFIDENCE_THRESHOLD_DEFAULT })}</span>
       </label>
@@ -329,7 +332,7 @@ function TestOnMail({ question, accountId, stale, t }: { question: Draft; accoun
 
   async function retag() {
     if (!accountId || !window.confirm(t('retagConfirm', { count: stale }))) return
-    await fetch('/api/tagging/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId, action: 'start' }) })
+    await fetch(TAGGING_RUN_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId, action: 'start' }) })
     setResult(t('retagStarted'))
   }
 

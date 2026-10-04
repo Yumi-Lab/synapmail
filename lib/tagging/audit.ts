@@ -23,6 +23,8 @@ export const AUDIT_MIN = 50
 export const auditTarget = (tagged: number): number => Math.min(tagged, Math.max(AUDIT_MIN, Math.ceil(tagged * AUDIT_RATE)))
 
 const ENGINE_LIST = ENGINES.map(e => `'${e}'`).join(', ')
+/** L'accord JEV / Yumi One (décision 16) ne compare que ces deux moteurs : un `autre` n'a pas de pair désigné. */
+const [JEV, ONE] = ENGINES
 
 /** Les questions ACTIVES et leur version COURANTE, sous la forme que `unnest($2, $3)` attend. */
 const currentVersions = (set: QuestionSet) => ({ ids: set.enabled.map(q => q.id), versions: set.enabled.map(questionVersion) })
@@ -283,11 +285,11 @@ export async function reliability(accountId: string): Promise<QuestionReliabilit
   const agreements = await query<{ question: string; both: string; agree: string }>(
     `WITH rows AS (
        SELECT message_id, question, valeur, source, cree_le FROM message_tags
-        WHERE account_id = $1 AND source IN ('jev', 'one')
+        WHERE account_id = $1 AND source IN ('${JEV}', '${ONE}')
           AND (question, question_version) IN (SELECT * FROM unnest($2::text[], $3::text[]))
      ),
-     jev AS (SELECT DISTINCT ON (message_id, question) message_id, question, valeur FROM rows WHERE source = 'jev' ORDER BY message_id, question, cree_le DESC),
-     one AS (SELECT DISTINCT ON (message_id, question) message_id, question, valeur FROM rows WHERE source = 'one' ORDER BY message_id, question, cree_le DESC)
+     jev AS (SELECT DISTINCT ON (message_id, question) message_id, question, valeur FROM rows WHERE source = '${JEV}' ORDER BY message_id, question, cree_le DESC),
+     one AS (SELECT DISTINCT ON (message_id, question) message_id, question, valeur FROM rows WHERE source = '${ONE}' ORDER BY message_id, question, cree_le DESC)
      SELECT j.question, COUNT(*) AS both, COUNT(*) FILTER (WHERE j.valeur = o.valeur) AS agree
        FROM jev j JOIN one o ON o.message_id = j.message_id AND o.question = j.question
       GROUP BY j.question`,
