@@ -1392,7 +1392,7 @@
     "folderNamePlaceholder": "Nom du dossier",
     "rename": "Renommer",
     "mergeInto": "Fusionner dans…",
-    "mergeConfirm": "Fusionner « {from} » dans « {into} » ? Ses {count, plural, one {# document} other {# documents}} et ses motifs appris y passent.",
+    "mergeConfirm": "Fusionner « {from} » dans « {into} » ? {count, plural, =0 {Ses motifs appris} one {Son document et ses motifs appris} other {Ses # documents et ses motifs appris}} y passent.",
     "delete": "Supprimer",
     "deleteConfirm": "Supprimer « {name} » ({count, plural, =0 {aucun document} one {# document} other {# documents}}) ? Ses documents reviennent dans « À ranger ».",
     "deletedFolder": "{name} (dossier supprimé)",

@@ -17,7 +17,7 @@ const LOCALES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'locales
 const REFERENCE = 'en'
 
 /** next-intl interpolation, e.g. `{count}` — the set must be identical across locales. */
-const PLACEHOLDER = /\{(\w+)[^}]*\}/g
+const PLACEHOLDER = /\{(\w+)\s*(?:,[^}]*)?\}/g
 
 /**
  * Locales whose values must not remain in English. A locale is flagged as
