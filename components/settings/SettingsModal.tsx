@@ -13,6 +13,7 @@ import { Dialog, DialogPortal, DialogOverlay } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { SettingsModalPanel } from './SettingsModalPanel'
 import { useIsAdmin } from '@/hooks/useIsAdmin'
+import { ADMIN_HREF, SETTINGS_ROOT } from './SettingsSidebar'
 
 const NAV_ITEMS = [
   { seg: 'profile',       key: 'profile',       icon: User },
@@ -36,7 +37,14 @@ export function SettingsModal() {
   const t = useTranslations('settings.nav')
   const isAdmin = useIsAdmin()
 
-  const segment = pathname.replace(/^\/settings\/?/, '').split('/')[0] || 'profile'
+  // L'onglet se lit d'un chemin de RÉGLAGES, et de rien d'autre. L'URL peut quitter
+  // les réglages pendant que cette fenêtre est ouverte, par l'API d'historique et donc
+  // sans navigation — rien ne la démonte alors. L'ancien `replace(/^\/settings\/?/)`
+  // rendait '' pour `/mail` comme pour `/admin/users`, et le `|| 'profile'` en faisait
+  // « Profil » : la fenêtre sautait sur un onglet que l'URL ne nomme pas, en effaçant
+  // ce que l'utilisateur était en train de remplir. Hors des réglages, elle se retire.
+  const inSettings = pathname === SETTINGS_ROOT || pathname.startsWith(`${SETTINGS_ROOT}/`)
+  const segment = pathname.slice(SETTINGS_ROOT.length + 1).split('/')[0] || 'profile'
 
   const close = () => router.back()
 
@@ -47,6 +55,8 @@ export function SettingsModal() {
         ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300 font-medium'
         : 'text-muted-foreground hover:bg-accent hover:text-foreground',
     )
+
+  if (!inSettings) return null
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) close() }}>
@@ -76,7 +86,7 @@ export function SettingsModal() {
             {NAV_ITEMS.map(({ seg, key, icon: Icon }) => (
               // `replace` : changer d'onglet ne doit pas empiler d'entrée d'historique, sinon la croix
               // (un seul retour arrière) ramène à l'onglet précédent au lieu de fermer la fenêtre.
-              <Link key={seg} href={`/settings/${seg}`} replace className={linkClass(segment === seg)}>
+              <Link key={seg} href={`${SETTINGS_ROOT}/${seg}`} replace className={linkClass(segment === seg)}>
                 <Icon className="h-4 w-4 shrink-0" />
                 <span>{t(key)}</span>
               </Link>
@@ -84,7 +94,7 @@ export function SettingsModal() {
             {isAdmin && (
               <>
                 <div className="my-1 hidden border-t border-border sm:block" />
-                <Link href="/admin/users" onClick={close} className={linkClass(false)}>
+                <Link href={ADMIN_HREF} onClick={close} className={linkClass(false)}>
                   <ShieldCheck className="h-4 w-4 shrink-0" />
                   <span>{t('admin')}</span>
                 </Link>
