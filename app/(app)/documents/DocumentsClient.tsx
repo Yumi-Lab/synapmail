@@ -215,7 +215,7 @@ function DocumentPane({ id, folders, canOrganize, onBack }: { id: string; folder
     try {
       const res = await fetch(`${key}/filing`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folderId }) })
       const body = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(body?.error || t('actionFailed'))
+      if (!res.ok) throw new Error(res.status < 500 && body?.error ? body.error : t('actionFailed'))
       await mutate()
       window.dispatchEvent(new CustomEvent(DOCUMENTS_CHANGED_EVENT))
     } catch (err) { setFailure(err instanceof Error ? err.message : t('actionFailed')) } finally { setBusy(false) }

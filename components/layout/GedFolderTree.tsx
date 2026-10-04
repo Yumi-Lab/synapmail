@@ -76,7 +76,7 @@ export function GedFolderTree({ accountId, currentFolder, onDocuments, collapsed
   const call = async (input: string, init: RequestInit) => {
     const res = await fetch(input, { headers: { 'Content-Type': 'application/json' }, ...init })
     const body = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(body?.error || t('actionFailed'))
+    if (!res.ok) throw new Error(res.status < 500 && body?.error ? body.error : t('actionFailed'))
     await mutate()
     return body?.data
   }

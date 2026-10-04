@@ -46,7 +46,8 @@ export async function writer(ctx: AuthContext, engineId?: unknown): Promise<{ so
 export function gedError(err: unknown): NextResponse {
   if (err instanceof GedInputError) return NextResponse.json({ error: err.message, ...err.extra }, { status: err.status })
   if (err instanceof ForbiddenSourceError) return NextResponse.json({ error: err.message }, { status: 403 })
-  return NextResponse.json({ error: String(err) }, { status: 500 })
+  console.error('[ged]', err)
+  return NextResponse.json({ error: 'internal error' }, { status: 500 })
 }
 
 export const readJson = async (req: Request): Promise<Record<string, unknown>> => {
