@@ -1,18 +1,19 @@
 "use client"
 
 import * as React from "react"
-import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
+  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogOverlay,
-  DialogPortal,
   DialogTitle,
 } from "@/components/ui/dialog"
+
+const TABBABLE =
+  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
 
 interface ConfirmDialogProps {
   open: boolean
@@ -39,6 +40,7 @@ function ConfirmDialog({
 }: ConfirmDialogProps) {
   const [pending, setPending] = React.useState(false)
   const [failed, setFailed] = React.useState(false)
+  const id = React.useId()
 
   React.useEffect(() => {
     if (open) setFailed(false)
@@ -48,6 +50,57 @@ function ConfirmDialog({
     if (pending) return
     onOpenChange(next)
   }
+
+  const handleOpenChangeRef = React.useRef(handleOpenChange)
+  handleOpenChangeRef.current = handleOpenChange
+
+  // modal="trap-focus" keeps the page behind clickable (modal=true would make
+  // it inert), which is what lets one click both close the dialog and hit its
+  // target. Measured with a real mouse on the full /settings/api-keys page
+  // (not the intercepted settings window), base-ui's own outside-press
+  // dismissal and focus trap did not hold in that mode, so both are enforced
+  // here: close on a capture-phase pointerdown outside the popup (no
+  // preventDefault, so the click still reaches its target) and wrap Tab inside
+  // the popup. Escape stays with base-ui's onOpenChange. Both are inert while
+  // pending via handleOpenChange.
+  React.useEffect(() => {
+    if (!open) return
+    const selector = `[data-confirm-dialog="${id}"]`
+    const onPointerDown = (e: PointerEvent) => {
+      if ((e.target as Element | null)?.closest(selector)) return
+      handleOpenChangeRef.current(false)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return
+      const popup = document.querySelector<HTMLElement>(selector)
+      if (!popup) return
+      const tabbables = Array.from(popup.querySelectorAll<HTMLElement>(TABBABLE))
+      const active = document.activeElement
+      if (tabbables.length === 0) {
+        e.preventDefault()
+        popup.focus()
+        return
+      }
+      const first = tabbables[0]
+      const last = tabbables[tabbables.length - 1]
+      if (!popup.contains(active)) {
+        e.preventDefault()
+        ;(e.shiftKey ? last : first).focus()
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener("pointerdown", onPointerDown, true)
+    document.addEventListener("keydown", onKeyDown, true)
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true)
+      document.removeEventListener("keydown", onKeyDown, true)
+    }
+  }, [open, id])
 
   const handleConfirm = async () => {
     setPending(true)
@@ -64,31 +117,29 @@ function ConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange} modal="trap-focus">
-      <DialogPortal>
-        <DialogOverlay className="pointer-events-none" />
-        <DialogPrimitive.Popup
-          data-slot="dialog-content"
-          className="fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
-        >
-          <DialogHeader>
-            <DialogTitle>{title}</DialogTitle>
-            <DialogDescription>{description}</DialogDescription>
-          </DialogHeader>
-          {failed && (
-            <p role="alert" className="text-sm text-destructive">
-              {errorLabel}
-            </p>
-          )}
-          <DialogFooter>
-            <Button variant="outline" disabled={pending} onClick={() => handleOpenChange(false)}>
-              {cancelLabel}
-            </Button>
-            <Button variant="destructive" disabled={pending} onClick={handleConfirm}>
-              {pending ? pendingLabel : confirmLabel}
-            </Button>
-          </DialogFooter>
-        </DialogPrimitive.Popup>
-      </DialogPortal>
+      <DialogContent
+        showCloseButton={false}
+        overlayClassName="pointer-events-none"
+        data-confirm-dialog={id}
+      >
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        {failed && (
+          <p role="alert" className="text-sm text-destructive">
+            {errorLabel}
+          </p>
+        )}
+        <DialogFooter>
+          <Button variant="outline" disabled={pending} onClick={() => handleOpenChange(false)}>
+            {cancelLabel}
+          </Button>
+          <Button variant="destructive" disabled={pending} onClick={handleConfirm}>
+            {pending ? pendingLabel : confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
   )
 }
