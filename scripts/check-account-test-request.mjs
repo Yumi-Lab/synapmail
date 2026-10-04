@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Measures lot C4b in the browser: what the "Test connection" button actually PUTS ON THE
+ * Measures in the browser what the "Test connection" button actually PUTS ON THE
  * WIRE from the edit screen, and what the password field tells the browser about itself.
  *
  * Also covers the refusal that protects the saved password: it only ever travels to the

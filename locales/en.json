@@ -124,9 +124,12 @@
     "reason_frequent": "Frequent",
     "reason_starred": "Starred",
     "reason_attachment": "Attachment",
+    "reason_echeance": "Extracted due date",
+    "reason_spam": "Spam / phishing ceiling",
     "reason_tag": "Tag",
     "sortByDate": "By date",
     "sortByPriority": "By priority",
+    "sortPriorityHint": "Sorted by priority across the {count} loaded messages (of {total} in this folder), not the whole mailbox.",
     "focus": "To handle",
     "priority": "Priority {score}",
     "urgencyWord": "Urgency word",
@@ -290,7 +293,8 @@
       "apiKeys": "API Keys",
       "admin": "Administration",
       "branding": "Tab name and icon",
-      "tagging": "Automatic sorting"
+      "tagging": "Automatic sorting",
+      "webhooks": "Webhooks"
     },
     "common": {
       "save": "Save",
@@ -312,7 +316,9 @@
       "pgpKeyDelete": "Delete this key…",
       "pgpKeyDeleteConfirm": "Delete {name}'s public key? You will no longer be able to encrypt messages to them until you import it again.",
       "ruleDelete": "Delete this rule…",
-      "ruleDeleteConfirm": "Delete the rule \"{name}\"? Messages it already sorted stay where they are, but the rule cannot be restored."
+      "ruleDeleteConfirm": "Delete the rule \"{name}\"? Messages it already sorted stay where they are, but the rule cannot be restored.",
+      "webhookDelete": "Delete this webhook…",
+      "webhookDeleteConfirm": "Delete the webhook \"{name}\"? Its triggers stop calling it and its delivery log is lost."
     },
     "accounts": {
       "title": "Email accounts",
@@ -510,6 +516,7 @@
         "op_before": "before",
         "op_after": "after",
         "op_matches": "matches pattern",
+        "op_not_matches": "does not match pattern",
         "priority_1": "1 · Urgent",
         "priority_2": "2 · High",
         "priority_3": "3 · Normal",
@@ -518,7 +525,7 @@
         "sizeUnit": "KB",
         "sizePlaceholder": "KB (e.g. 5120 = 5 MB)",
         "valuePlaceholder": "Value…",
-        "regexPlaceholder": "Regular expression (≤ 200 chars)…"
+        "patternPlaceholder": "Pattern (e.g. ^invoice no\\. \\d+)"
       }
     },
     "ai": {
@@ -801,6 +808,41 @@
       "kindJev": "JEV (TypeSafe)",
       "kindOne": "Yumi One",
       "kindAutre": "Other"
+    },
+    "webhooks": {
+      "title": "Webhooks",
+      "description": "Have a rule call an address of yours as soon as a message matches it.",
+      "name": "Name",
+      "namePlaceholder": "Order bot",
+      "url": "Address",
+      "urlPlaceholder": "https://n8n.example.com/webhook/orders",
+      "account": "Mailbox",
+      "create": "Create",
+      "save": "Save",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "new": "New webhook",
+      "empty": "No webhook yet. Create one, then add a trigger to it.",
+      "noAccount": "Add a mailbox first: a webhook is fired by the messages of one.",
+      "enabled": "Active",
+      "disabled": "Paused",
+      "enable": "Resume",
+      "disable": "Pause",
+      "never": "Never called",
+      "test": "Send a test",
+      "testQueued": "Test queued. It leaves within the minute, and shows up in this log.",
+      "rotate": "Regenerate the secret…",
+      "rotateConfirm": "Regenerate the secret of \"{name}\"? Whatever checks its signature with the old one stops accepting the calls right away.",
+      "secretWarn": "Treat this secret like a password: it signs every call, and it is shown here only once.",
+      "secretCopy": "Copy",
+      "secretCopied": "Copied",
+      "secretDone": "I have copied the secret",
+      "triggers": "Triggers",
+      "triggersNone": "No rule calls this webhook yet.",
+      "triggersAdd": "Add a trigger",
+      "deliveries": "Deliveries",
+      "deliveriesNone": "Nothing sent yet.",
+      "retry": "Send again"
     }
   },
   "admin": {
@@ -1108,11 +1150,13 @@
       "apiKeys": "api, key, token, bearer, mcp, agent, integration",
       "admin": "admin, users, roles, accounts, administration",
       "branding": "tab, icon, favicon, title, site name, branding, logo",
-      "tagging": "sorting tags labels engine classify automatic"
+      "tagging": "sorting tags labels engine classify automatic",
+      "webhooks": "webhook, http, callback, bot, n8n, integration, trigger"
     }
   },
   "tags": {
     "panelTitle": "Tags",
+    "pair": "{question}: {value}",
     "none": "Not sorted yet",
     "more": "+{count}",
     "confidence": "{percent}% confident",

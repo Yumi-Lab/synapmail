@@ -1,35 +1,38 @@
 /**
- * Transfert de messages ENTIERS en pièces jointes (lot M5) — la frontière de
- * confiance.
+ * Forwarding WHOLE messages as attachments — the trust boundary.
  *
- * Le client annonce un compte, un dossier et des uid : rien de tout cela n'est
- * digne de foi. Ce module tient, à UN seul endroit, ce que la route accepte,
- * ce qu'elle refuse, et sous quel code — le même code habille l'erreur côté
- * serveur et choisit la phrase traduite côté fenêtre de rédaction.
+ * The client announces an account, a folder and some uids: none of it is
+ * trustworthy. This module holds, in ONE single place, what the route accepts,
+ * what it rejects, and under which code — the same code shapes the error on the
+ * server and picks the translated sentence in the compose window.
  */
 
 /**
- * Nombre maximal de messages joints en une fois. Calibré sur l'usage visé
- * (« je coche quelques mails et je les fais suivre »), pas sur une capacité
- * machine : au-delà, c'est une exportation de boîte, pas un transfert.
+ * Maximum number of messages attached at once. Calibrated on the intended use
+ * ("tick a few messages and pass them on"), not on a machine capacity: beyond
+ * that, it is a mailbox export, not a forward.
  */
 export const FORWARD_MAX_MESSAGES = 25
 
 /**
- * Plafond de la somme des sources relues, mesuré AVANT de charger le moindre
- * octet en mémoire. 25 Mio est la limite de pièce jointe la plus répandue chez
- * les serveurs SMTP (IONOS, Gmail, Outlook) : au-delà, l'envoi serait de
- * toute façon refusé après avoir fait gonfler le processus.
+ * An IMAP uid is a positive decimal integer written canonically: `1:*` is a
+ * sequence SET, `0` is not a uid, and `007` is not how any server spells 7.
+ * Exported: the same shape serves every route that receives a uid in its URL
+ * (`/api/messages/draft/[uid]`), not only the forward.
  */
-export const FORWARD_MAX_TOTAL_BYTES = 25 * 1024 * 1024
+export const UID_PATTERN = /^[1-9]\d*$/
 
-/** Un uid IMAP est un entier décimal. `1:*` est un JEU de séquences valide : il est donc refusé ici. */
-const UID_PATTERN = /^\d+$/
-
-/** Codes d'erreur — le serveur les renvoie, la fenêtre de rédaction les traduit. */
+/** Error codes — the server returns them, the compose window translates them. */
 export const FORWARD_ERROR = {
   invalid: 'forward_invalid',
   tooMany: 'forward_too_many',
+  /**
+   * The re-read sources, measured on their announced size BEFORE loading a
+   * single byte, exceed the message ceiling — the one the SMTP server announced
+   * (`lib/smtpSize.ts`), the same that bounds every other attachment. There is
+   * no separate forward ceiling: a second number would either waste an IMAP
+   * fetch or let through what the final check refuses.
+   */
   tooLarge: 'forward_too_large',
   missing: 'forward_missing',
   originDenied: 'forward_origin_denied',
@@ -37,7 +40,7 @@ export const FORWARD_ERROR = {
 
 export type ForwardErrorCode = (typeof FORWARD_ERROR)[keyof typeof FORWARD_ERROR]
 
-/** Ce que le client DOIT fournir : le compte d'ORIGINE de la sélection, son dossier, ses uid. */
+/** What the client MUST supply: the selection's ORIGIN account, its folder, its uids. */
 export interface ForwardedMessages {
   accountId: string
   folder: string
@@ -49,9 +52,9 @@ export type ForwardCheck<T> =
   | { ok: false; status: number; code: ForwardErrorCode; detail?: number }
 
 /**
- * Valide la demande de transfert telle qu'elle arrive du réseau. Les uid sont
- * dédoublonnés en conservant l'ordre de la sélection : c'est cet ordre-là que
- * l'oeil a coché, et donc celui des pièces jointes.
+ * Validates the forward request exactly as it arrives from the network. The uids are
+ * de-duplicated while preserving the selection order: that is the order the user
+ * ticked, and therefore the order of the attachments.
  */
 export function parseForwardedMessages(raw: unknown): ForwardCheck<ForwardedMessages> {
   const deny = (code: ForwardErrorCode, status = 400, detail?: number): ForwardCheck<ForwardedMessages> =>
@@ -74,14 +77,14 @@ export function parseForwardedMessages(raw: unknown): ForwardCheck<ForwardedMess
 }
 
 /**
- * Le compte où les sources sont RELUES. L'expéditeur choisi dans « De » et le
- * compte d'origine de la sélection sont deux choses différentes : lire dans le
- * premier reviendrait à joindre les messages qui portent les mêmes uid dans une
- * AUTRE boîte — les uid d'une boîte de réception sont de petits entiers, ils
- * existent des deux côtés. L'accès à l'origine se contrôle donc séparément.
+ * The account the sources are RE-READ from. The sender picked in "From" and the
+ * selection's origin account are two different things: reading from the former
+ * would attach the messages carrying the same uids in ANOTHER mailbox — inbox uids
+ * are small integers, they exist on both sides. Access to the origin is therefore
+ * checked separately.
  *
- * `loadAccount` est injecté pour que la décision se vérifie sans base de
- * données (voir `scripts/check-forward-decision.mjs`).
+ * `loadAccount` is injected so the decision can be verified without a database
+ * (see `scripts/check-forward-decision.mjs`).
  */
 export async function resolveForwardOrigin<A extends { id: string }>(
   senderAccount: A,

@@ -8,23 +8,23 @@ import { cn } from '@/lib/utils'
 
 const ICONS: Record<Theme, LucideIcon> = { light: Sun, dark: Moon, system: Monitor }
 
-/** Durée UNIQUE du glissement du curseur (ms). `prefers-reduced-motion` la neutralise. */
+/** The SINGLE duration of the thumb slide (ms). `prefers-reduced-motion` cancels it. */
 export const THEME_TOGGLE_TRANSITION_MS = 180
 
 /**
- * Côté d'une case, en unités Tailwind (`h-8`/`w-8` = 2rem). La case est CARRÉE et
- * de taille identique dans les deux orientations : c'est ce qui rend la piste
- * verticale assez étroite pour une barre repliée, et le calcul du curseur exact.
+ * Side of one cell, in Tailwind units (`h-8`/`w-8` = 2rem). The cell is SQUARE and the
+ * same size in both orientations: that is what keeps the vertical track narrow enough
+ * for a collapsed sidebar, and the thumb calculation exact.
  */
 const CELL = 'h-8 w-8'
-/** Rembourrage de la piste, des deux côtés — repris tel quel dans le calcul du curseur. */
+/** Track padding, on both sides — reused verbatim in the thumb calculation. */
 const TRACK_PAD_PX = 2
 
 /**
- * Toggle de thème unique de l'application : 3 icônes, aucun libellé (le nom vit
- * dans `aria-label`/`title`), et un curseur unique qui GLISSE d'une case à l'autre.
- * `compact` (barre repliée) = UNE seule case, l'icône du mode actif ; un clic
- * passe au mode suivant (clair → sombre → système) et l'icône fait un flip.
+ * The application's single theme toggle: 3 icons, no visible label (the name lives in
+ * `aria-label`/`title`), and one thumb that SLIDES from cell to cell. `compact`
+ * (collapsed sidebar) = a SINGLE cell showing the active mode's icon; a click advances
+ * to the next mode (light -> dark -> system) and the icon flips.
  */
 export function ThemeToggle({ className, compact }: { className?: string; compact?: boolean }) {
   const t = useTranslations('settings.appearance')
@@ -48,8 +48,8 @@ export function ThemeToggle({ className, compact }: { className?: string; compac
           className
         )}
       >
-        {/* `key={theme}` remonte l'icône à chaque changement : c'est ce qui rejoue
-            le flip (animation définie dans globals.css, même durée que le curseur). */}
+        {/* `key={theme}` remounts the icon on every change: that is what replays the
+            flip (animation defined in globals.css, same duration as the thumb). */}
         <span
           key={theme}
           className={cn('flex items-center justify-center rounded-[7px]', CELL, 'theme-flip motion-reduce:animate-none')}
@@ -66,26 +66,26 @@ export function ThemeToggle({ className, compact }: { className?: string; compac
       role="radiogroup"
       aria-label={t('theme')}
       className={cn(
-        // `w-max` (et JAMAIS `w-fit`/`w-full`) : la piste garde sa largeur
-        // INTRINSÈQUE — 3 cases carrées + rembourrage — même dans une colonne
-        // étroite. Avec `fit-content`, des pistes en `1fr` (min-content = 0) se
-        // comprimaient sous 3 cases et les icônes se chevauchaient à 390 px.
+        // `w-max` (and NEVER `w-fit`/`w-full`): the track keeps its INTRINSIC width
+        // — 3 square cells + padding — even inside a narrow column. With
+        // `fit-content`, `1fr` tracks (min-content = 0) collapsed below 3 cells and
+        // the icons overlapped at 390 px.
         'relative isolate grid w-max rounded-lg border border-border bg-muted/40 p-0.5',
         className
       )}
-      // Pistes en `auto` : chaque colonne (ou rangée) prend la taille de sa case
-      // et ne se comprime pas. Le nombre vient de THEMES — aucune valeur en dur.
+      // `auto` tracks: each column (or row) takes the size of its cell and does not
+      // shrink. The count comes from THEMES — no hard-coded value.
       style={{ gridTemplateColumns: `repeat(${THEMES.length}, auto)` }}
     >
-      {/* Curseur : SEUL élément qui bouge. Sa taille vaut exactement une case, donc
-          `translate(index * 100%)` l'amène pile sur la case active, sans valeur
-          magique à maintenir. Les cases, elles, ne changent jamais de peinture. */}
+      {/* Thumb: the ONLY element that moves. Its size is exactly one cell, so
+          `translate(index * 100%)` lands it precisely on the active cell, with no magic
+          value to maintain. The cells themselves never change their paint. */}
       <span
         aria-hidden
         className={cn(
           'pointer-events-none absolute -z-10 rounded-[7px] bg-background shadow-sm',
-          // En sombre `bg-background` est la couleur de la page : un voile blanc
-          // détache le curseur de la piste (contraste mesuré par check-segmented).
+          // In dark mode `bg-background` is the page color: a white veil separates the
+          // thumb from the track (contrast measured by check-segmented).
           'dark:bg-white/15',
           'ease-out transition-[left] motion-reduce:transition-none'
         )}

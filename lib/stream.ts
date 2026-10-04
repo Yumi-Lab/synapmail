@@ -1,14 +1,14 @@
 /**
- * Contrat du flux SSE `/api/stream`, partagé par le serveur et le navigateur.
- * Séparé de `lib/idle.ts` : la surveillance IMAP est du code serveur (`tls`), un
- * composant client ne peut pas l'importer pour lire une simple constante.
+ * Contract of the `/api/stream` SSE feed, shared by the server and the browser.
+ * Kept apart from `lib/idle.ts`: IMAP watching is server code (`tls`), so a client
+ * component cannot import it just to read a plain constant.
  */
 
-/** Type d'événement poussé quand la boîte surveillée a changé. */
+/** Event type pushed when the watched mailbox has changed. */
 export const MAILBOX_CHANGED = 'mailbox_changed'
 
-/** Paramètre de `/api/stream` qui désigne le compte à surveiller. */
+/** `/api/stream` parameter naming the account to watch. */
 export const STREAM_ACCOUNT_PARAM = 'account'
 
-/** Boîte surveillée en temps réel : celle qui reçoit le courrier. */
+/** Folder watched in real time: the one that receives incoming mail. */
 export const IDLE_FOLDER = 'INBOX'

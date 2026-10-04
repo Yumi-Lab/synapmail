@@ -68,8 +68,8 @@ export function AccountSharesPanel({ accountId }: { accountId: string; accountEm
     }
   }
 
-  // La confirmation NOMME l'invité : sur un compte partagé avec plusieurs personnes,
-  // « Retirer l'accès ? » ne dit pas lequel part.
+  // The confirmation NAMES the invitee: on an account shared with several people,
+  // "Revoke access?" does not say which one is being removed.
   const handleRevoke = async (share: AccountShare) => {
     if (!confirm(t('revokeNamed', { email: share.inviteeEmail }))) return
     await fetch(`/api/accounts/${accountId}/shares/${share.id}`, { method: 'DELETE' })

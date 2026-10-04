@@ -27,14 +27,14 @@ export function isLocale(value: string | undefined): value is Locale {
   return !!value && (LOCALE_CODES as readonly string[]).includes(value)
 }
 
-/** Un an, en secondes : le choix de langue doit survivre a la session. */
+/** One year, in seconds: the language choice must outlive the session. */
 export const LOCALE_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
 
 /**
- * Changer la langue, en UN seul endroit : le cookie que `lib/i18n.ts` relit, la
- * preference enregistree, puis un rechargement (next-intl choisit la langue au
- * rendu serveur, il n'y a rien a reactualiser cote client). Les reglages
- * Apparence et l'omnibar (lot H3f) appellent CETTE fonction, jamais une copie.
+ * Changing the language, in ONE place: the cookie `lib/i18n.ts` reads back, the
+ * stored preference, then a reload (next-intl picks the language during server
+ * rendering, so there is nothing to refresh client-side). The Appearance
+ * settings and the omnibar call THIS function, never a copy.
  */
 export async function setLocale(code: Locale): Promise<void> {
   document.cookie = `${LOCALE_COOKIE}=${code}; path=/; max-age=${LOCALE_COOKIE_MAX_AGE}; SameSite=Lax`

@@ -10,18 +10,20 @@ import { useEffect } from 'react'
 import { X } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import { valuesOf } from '@/lib/tagging/questions'
 import type { StoredQuestion } from '@/lib/tagging/userQuestions'
 import type { RuleCondition, RuleField, RuleOperator } from '@/types/rule'
+import { REGEX_PATTERN_MAX } from '@/types/rule'
 
 const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
-  from:            ['contains','not_contains','equals','not_equals','starts_with','ends_with'],
-  to:              ['contains','not_contains','equals','not_equals'],
-  cc:              ['contains','not_contains','equals','not_equals'],
-  subject:         ['contains','not_contains','equals','not_equals','starts_with','ends_with'],
-  body:            ['contains','not_contains'],
+  from:            ['contains','not_contains','equals','not_equals','starts_with','ends_with','matches','not_matches'],
+  to:              ['contains','not_contains','equals','not_equals','matches','not_matches'],
+  cc:              ['contains','not_contains','equals','not_equals','matches','not_matches'],
+  subject:         ['contains','not_contains','equals','not_equals','starts_with','ends_with','matches','not_matches'],
+  body:            ['contains','not_contains','matches','not_matches'],
   has_attachments: ['is_true','is_false'],
   list_unsubscribe:['is_true','is_false'],
   size:            ['greater_than','less_than'],
@@ -81,6 +83,7 @@ export function ConditionRow({
   const isDate    = cond.field === 'date_received'
   const isPriority = cond.field === 'priority'
   const isTag     = cond.field === 'tag'
+  const isRegex   = cond.operator === 'matches' || cond.operator === 'not_matches'
 
   const handleFieldChange = (field: RuleField) => {
     const ops = FIELD_OPERATORS[field] ?? []
@@ -131,8 +134,9 @@ export function ConditionRow({
           <Input
             value={cond.value}
             onChange={e => onChange({ ...cond, value: e.target.value })}
-            placeholder={cond.field === 'size' ? t('sizePlaceholder') : cond.operator === 'matches' ? t('regexPlaceholder') : t('valuePlaceholder')}
-            className="h-8 text-sm flex-1 min-w-[120px]"
+            maxLength={isRegex ? REGEX_PATTERN_MAX : undefined}
+            placeholder={isRegex ? t('patternPlaceholder') : cond.field === 'size' ? t('sizePlaceholder') : t('valuePlaceholder')}
+            className={cn('h-8 text-sm flex-1 min-w-[120px]', isRegex && 'font-mono')}
           />
         )
       )}

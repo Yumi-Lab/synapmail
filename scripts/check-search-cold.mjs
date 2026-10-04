@@ -5,7 +5,7 @@
  * a reload and a shared link all do), not typed into a field on a page where the
  * active account is already known.
  *
- * Why this bench exists: the human gate of lot S2 found that on this exact path
+ * Why this bench exists: a manual review found that on this exact path
  * the Stop button and the "N folders out of M" progress never appeared, and the
  * banner claimed "0 result" as a final state for three seconds. Two causes, both
  * invisible to a bench that types into the field:

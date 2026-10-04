@@ -71,7 +71,7 @@ export function detectSpecials<T extends FolderLike>(folders: T[]): Map<string, 
       ? INBOX_TYPE
       : NAME_PATTERNS.find(([, re]) => re.test(name))?.[0]
     // A role is claimed ONCE: the first folder to take it wins, so a mailbox holding both
-    // "Trash" and "Deleted Items" (or "Sent" and "Envoyés") still shows a single special row.
+    // "Trash" and "Deleted Items" (or two localized names for Sent) still shows a single special row.
     if (!type || declared.has(type)) { resolved.set(f.path, null); continue }
     declared.add(type)
     resolved.set(f.path, type)

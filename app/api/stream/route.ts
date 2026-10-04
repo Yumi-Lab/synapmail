@@ -14,16 +14,21 @@ export async function GET(req: Request) {
   const userId = session.user?.id ?? ''
   const encoder = new TextEncoder()
 
-  // Compte à surveiller en temps réel. Absent ou inaccessible → le flux garde
-  // ses événements de planificateur, sans surveillance IMAP (pas d'erreur :
-  // le temps réel est un supplément, la relecture périodique reste le filet).
+  // Account to watch in real time. Missing, inaccessible or unresolvable (transient DB
+  // error) → the stream keeps its scheduler events, with no IMAP watch (not an error:
+  // real time is an extra, the periodic refresh remains the safety net).
   const accountId = new URL(req.url).searchParams.get(STREAM_ACCOUNT_PARAM)
-  const account = accountId ? await getAccessibleAccount(accountId, userId) : null
+  const account = accountId
+    ? await getAccessibleAccount(accountId, userId).catch((err: unknown) => {
+        console.error('[stream] account lookup failed, streaming without IMAP watch:', err)
+        return null
+      })
+    : null
 
-  // Démontage du flux. `start()` retournait une fonction de nettoyage, que l'API
-  // des flux n'appelle jamais : les écouteurs restaient posés et, désormais, la
-  // connexion IMAP resterait ouverte à chaque onglet fermé. `cancel()` est le
-  // rappel effectivement invoqué quand le client se déconnecte.
+  // Stream teardown. `start()` used to return a cleanup function, which the streams API
+  // never calls: the listeners stayed attached and, now, the IMAP connection would stay
+  // open for every closed tab. `cancel()` is the callback actually invoked when the
+  // client disconnects.
   let cleanup = () => {}
 
   const stream = new ReadableStream({
@@ -74,9 +79,9 @@ export async function GET(req: Request) {
       }
       schedulerEvents.on('account_share_accepted', onShareAccepted)
 
-      // Temps réel : une connexion IMAP en IDLE sur la boîte du compte actif.
-      // Le serveur ne dit pas CE qui a changé, seulement QUE quelque chose a
-      // changé : le client relit sa liste, il a déjà tout ce qu'il faut pour ça.
+      // Real time: one IMAP connection in IDLE on the active account's mailbox. The
+      // server does not report WHAT changed, only THAT something changed: the client
+      // reloads its list, which is all it needs to do.
       let watcher: MailboxWatcher | null = null
       if (account) {
         watcher = watchMailbox(

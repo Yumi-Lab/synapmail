@@ -19,6 +19,10 @@
  * CE QUE CETTE POSITION NE DIT PAS : où est la PERSONNE. Un VPN, un relais mobile ou un
  * hébergeur déplacent l'adresse de plusieurs milliers de kilomètres sans que rien ne le
  * signale. L'écran le dit à l'utilisateur, en une phrase.
+ *
+ * `IP_GEOLOCATION_ENABLED=false` coupe cet appel sortant : chaque adresse reste affichée
+ * en liste sans point, comme un échec de transport, et rien n'est jamais écrit dans
+ * `ip_locations`. Actif par défaut (même convention que `REGISTRATION_ENABLED`).
  */
 import { query } from '@/lib/db'
 
@@ -43,6 +47,11 @@ export interface IpLocation {
 const IP_API_FIELDS = 'status,message,country,countryCode,regionName,city,lat,lon,query'
 const IP_API_URL = 'http://ip-api.com/json'
 const IP_API_TIMEOUT_MS = 4000
+
+/** Coupe-circuit : off arrête tout appel sortant vers ip-api.com. Actif par défaut. */
+function geolocationEnabled(): boolean {
+  return process.env.IP_GEOLOCATION_ENABLED !== 'false'
+}
 
 type IpApiResponse = {
   status?: string
@@ -97,6 +106,8 @@ export async function readCachedLocations(ips: string[]): Promise<Map<string, Ip
  * cas-là ne se mémorise pas, on réessaiera.
  */
 async function askService(ip: string): Promise<IpLocation | null> {
+  if (!geolocationEnabled()) return null
+
   let body: IpApiResponse
   try {
     const res = await fetch(`${IP_API_URL}/${encodeURIComponent(ip)}?fields=${IP_API_FIELDS}`, {

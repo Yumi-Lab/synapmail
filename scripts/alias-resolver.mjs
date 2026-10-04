@@ -40,6 +40,14 @@ registerHooks({
       if (!resolved) break
       return next(pathToFileURL(resolved).href, context)
     }
+    // Un module de `lib/` importé par ce biais peut lui-même importer un voisin en relatif
+    // et sans extension (`./db`) — la convention normale du code produit. Node exige
+    // l'extension pour un chemin relatif ; même filet que ci-dessus, hors alias.
+    if ((specifier.startsWith('./') || specifier.startsWith('../')) && context.parentURL) {
+      const base = fileURLToPath(new URL(specifier, context.parentURL))
+      const resolved = [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`].find(existsSync)
+      if (resolved) return next(pathToFileURL(resolved).href, context)
+    }
     return next(specifier, context)
   },
 })

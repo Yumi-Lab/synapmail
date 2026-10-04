@@ -1,45 +1,45 @@
 /**
- * Ce qu'on a le droit de faire à un dossier — source UNIQUE, lue des deux côtés du
- * contrat : les routes `/api/folders*` refusent (403 / 400) exactement ce que le menu
- * contextuel de la barre grise. Écrire la règle deux fois, c'est promettre un jour à
- * l'utilisateur une entrée cliquable que le serveur refusera.
+ * What is allowed on a folder: the SINGLE source, read on both sides of the
+ * contract: the `/api/folders*` routes refuse (403 / 400) exactly what the sidebar
+ * context menu greys out. Writing the rule twice means promising the user, one day,
+ * a clickable entry that the server will refuse.
  *
- * La règle ne connaît QUE deux choses : le rôle du dossier (`lib/specialFolders.ts`)
- * et les permissions du compte (`lib/accountAccess.ts`). Aucun chemin en dur.
+ * The rule knows ONLY two things: the folder role (`lib/specialFolders.ts`)
+ * and the account permissions (`lib/accountAccess.ts`). No hardcoded paths.
  */
 import type { SpecialType } from './specialFolders'
 
 export const FOLDER_ACTIONS = ['create', 'createChild', 'rename', 'markRead', 'empty', 'remove'] as const
 export type FolderAction = (typeof FOLDER_ACTIONS)[number]
 
-/** Les seuls dossiers qu'on vide : ceux dont c'est la fonction de se vider. */
+/** The only folders that get emptied: the ones whose purpose is to be emptied. */
 export const EMPTYABLE: ReadonlySet<SpecialType> = new Set<SpecialType>(['trash', 'spam'])
 
-/** Ce que la règle a besoin de savoir du dossier visé et de la session. */
+/** What the rule needs to know about the targeted folder and the session. */
 export interface FolderContext {
-  /** Rôle RFC 6154 résolu par `detectSpecials`, `null` pour un dossier ordinaire. */
+  /** RFC 6154 role resolved by `detectSpecials`, `null` for an ordinary folder. */
   special: SpecialType
-  /** Vrai si un autre dossier est rangé SOUS celui-ci : on ne supprime pas un parent. */
+  /** True if another folder is filed UNDER this one: a parent is never deleted. */
   hasChildren: boolean
-  /** Permission « organiser » du compte (créer, renommer, marquer lu). */
+  /** The account's "organize" permission (create, rename, mark read). */
   canOrganize: boolean
-  /** Permission « supprimer » du compte (supprimer le dossier, le vider). */
+  /** The account's "delete" permission (delete the folder, empty it). */
   canDelete: boolean
 }
 
 export type FolderCapabilities = Record<FolderAction, boolean>
 
 /**
- * Un dossier spécial porte un rôle que le serveur déclare (RFC 6154) et que le client
- * suppose partout : le renommer ou le supprimer casse la boîte, pas seulement la barre.
+ * A special folder carries a role that the server declares (RFC 6154) and that the
+ * client assumes everywhere: renaming or deleting it breaks the mailbox, not just the sidebar.
  */
 const isSpecial = (special: SpecialType) => special !== null
 
 /**
- * Les actions PROPOSÉES pour ce dossier. « Vider » ne concerne que les dossiers dont
- * c'est la fonction : l'afficher grisé sur chacun des vingt autres est du bruit
- * permanent, pas une information. Grisé veut dire « ici, mais pas pour vous » ;
- * absent veut dire « ça n'existe pas pour ce dossier ».
+ * The actions OFFERED for this folder. "Empty" only concerns the folders whose
+ * purpose that is: showing it greyed out on each of the twenty others is permanent
+ * noise, not information. Greyed out means "here, but not for you";
+ * absent means "this does not exist for this folder".
  */
 export function offeredActions(special: SpecialType): FolderAction[] {
   return FOLDER_ACTIONS.filter(a => a !== 'empty' || EMPTYABLE.has(special))
@@ -59,15 +59,20 @@ export function folderCapabilities(ctx: FolderContext): FolderCapabilities {
 }
 
 /**
- * Un nom de dossier saisi par l'utilisateur, rendu sûr AVANT d'atteindre IMAP : le
- * délimiteur du serveur y placerait une hiérarchie qu'il n'a pas demandée, et les
- * caractères de contrôle cassent la commande elle-même. Retourne `null` si le nom ne
- * peut pas être accepté — l'appelant répond alors 400, il ne « répare » rien.
+ * A folder name typed by the user, made safe BEFORE it reaches IMAP: the
+ * server delimiter would place a hierarchy in it that the user never asked for,
+ * control characters break the command itself, and `.` / `..` are directory
+ * traversal on a Maildir server that maps mailbox names onto real paths. Returns
+ * `null` if the name cannot be accepted: the caller then answers 400, it does not
+ * "repair" anything.
  */
 export const FOLDER_NAME_MAX = 255
 
-// eslint-disable-next-line no-control-regex -- c'est précisément ce qu'on refuse
+// eslint-disable-next-line no-control-regex -- that is precisely what we refuse
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/
+
+/** The delimiter is refused inside a name, so a name IS one path segment: only these two traverse. */
+const TRAVERSAL_SEGMENTS = new Set(['.', '..'])
 
 export function sanitizeFolderName(raw: unknown, delimiter: string): string | null {
   if (typeof raw !== 'string') return null
@@ -75,58 +80,67 @@ export function sanitizeFolderName(raw: unknown, delimiter: string): string | nu
   if (!name || name.length > FOLDER_NAME_MAX) return null
   if (CONTROL_CHARS.test(name)) return null
   if (delimiter && name.includes(delimiter)) return null
+  if (TRAVERSAL_SEGMENTS.has(name)) return null
   return name
 }
 
-/** Chemin complet d'un dossier créé sous `parent` (racine si `parent` est vide). */
+/** Full path of a folder created under `parent` (root if `parent` is empty). */
 export function joinFolderPath(parent: string, name: string, delimiter: string): string {
   return parent ? `${parent}${delimiter}${name}` : name
 }
 
-/** Chemin du dossier renommé : il reste chez son parent, seul son dernier segment change. */
+/** Path of the renamed folder: it stays with its parent, only its last segment changes. */
 export function renamedPath(path: string, name: string, delimiter: string): string {
   const cut = path.lastIndexOf(delimiter)
   return cut < 0 ? name : `${path.slice(0, cut)}${delimiter}${name}`
 }
 
-/** Vrai si `child` est rangé sous `parent` — jamais vrai pour le dossier lui-même. */
+/**
+ * True if `child` is filed under `parent`: never true for the folder itself. Same
+ * Unicode normalisation as `samePath()`: a server may list the child in NFD while the
+ * parent came from the keyboard in NFC, and a child missed here lets its parent be
+ * deleted (orphan) or skips its cache rewrite on rename.
+ */
 export function isDescendant(child: string, parent: string, delimiter: string): boolean {
-  return child.startsWith(`${parent}${delimiter}`)
+  return child.normalize('NFC').startsWith(`${parent}${delimiter}`.normalize('NFC'))
 }
 
 /**
- * Chemin de `path` APRÈS le renommage de `from` en `to`. IMAP renomme toute la
- * hiérarchie d'un coup : un dossier rangé sous celui qu'on renomme change de chemin
- * lui aussi. Sans ça, ses lignes de cache restent sous l'ancien chemin — compteurs de
- * non-lus faux, puis lignes mortes. Un chemin étranger au sous-arbre ressort intact.
+ * Path of `path` AFTER renaming `from` to `to`. IMAP renames the whole
+ * hierarchy at once: a folder filed under the one being renamed changes path
+ * too. Without this, its cache rows stay under the old path: wrong unread
+ * counters, then dead rows. A path outside the subtree comes back intact.
  */
 export function rewritePath(path: string, from: string, to: string, delimiter: string): string {
-  if (path === from) return to
-  return isDescendant(path, from, delimiter) ? to + path.slice(from.length) : path
+  if (samePath(path, from)) return to
+  if (!isDescendant(path, from, delimiter)) return path
+  // Slice on the normalised form: `from` and `path` may differ in length before it.
+  return to + path.normalize('NFC').slice(from.normalize('NFC').length)
 }
 
 /**
- * Deux chemins désignent-ils le MÊME dossier ? Un serveur IMAP peut lister un nom en
- * Unicode DÉCOMPOSÉ (NFD : « société ») là où un nom tapé au clavier arrive composé
- * (NFC). Comparer les chaînes brutes laisserait alors créer un doublon invisible.
+ * Do two paths designate the SAME folder? An IMAP server may list a name in
+ * DECOMPOSED Unicode (NFD: an accented letter as base letter plus combining mark)
+ * where a name typed on the keyboard arrives composed (NFC). Comparing the raw
+ * strings would then let an invisible duplicate be created.
  */
 export function samePath(a: string, b: string): boolean {
   return a.normalize('NFC') === b.normalize('NFC')
 }
 
-/** Délimiteur du compte, pris sur les dossiers eux-mêmes — jamais supposé `/`. */
+/** The account delimiter, taken from the folders themselves: never assumed to be `/`. */
 export function accountDelimiter(folders: ReadonlyArray<{ delimiter?: string | null }>): string {
   return folders.find(f => f.delimiter)?.delimiter ?? '/'
 }
 
 /**
- * Les refus des routes `/api/folders*`. Le corps d'une `Response` ne se lit QU'UNE
- * fois : une réponse gardée dans une constante de module part vide dès la deuxième
- * requête du processus, et l'écran, qui affiche `error`, n'a plus rien à montrer.
- * D'où une réponse NEUVE à chaque appel — et un seul endroit qui écrit ces messages.
+ * The refusals of the `/api/folders*` routes. The body of a `Response` can be read
+ * only ONCE: a response kept in a module constant goes out empty from the second
+ * request of the process onward, and the screen, which displays `error`, has nothing
+ * left to show. Hence a NEW response on every call, and a single place writing them.
  *
- * `Response` native plutôt que `NextResponse` : un gestionnaire de route l'accepte tel
- * quel, et le banc peut donc l'exécuter sans le bundler.
+ * Native `Response` rather than `NextResponse`: a route handler accepts it as
+ * is, so the bench can run it without the bundler.
  */
 export const FOLDER_REFUSALS = {
   notFound: { error: 'Folder not found', status: 404 },

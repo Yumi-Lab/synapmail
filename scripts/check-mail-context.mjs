@@ -34,8 +34,8 @@ if (!COUNT_ATTR) { console.error('HARNESS: could not read MAIL_SELECTION_COUNT_A
 
 const LIST = `[${COUNT_ATTR}]`
 const ROW = '[data-mail-row]'
-// Preuve que le volet de lecture a rendu un message. Archiver / supprimer /
-// répondre ont migré dans la head bar : le drapeau est ce qui reste au volet.
+// Proof that the reading pane rendered a message. Archive / delete / reply moved
+// to the head bar, so the flag button is what remains inside the pane.
 const PANE_ACTION = '[data-reading-flag]'
 const MENU = '[data-mail-context-menu]'
 

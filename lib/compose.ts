@@ -1,17 +1,17 @@
-/** Ouverture de la fenêtre « Nouveau message » — source unique pour la barre, le tableau de bord et la liste. */
+/** Opening the "New message" window — single source for the bar, the dashboard and the list. */
 export const COMPOSE_EVENT = 'synapmail:compose'
 export const COMPOSE_QUERY = 'compose'
 export const MAIL_PATH = '/mail'
 
-/** Émet l'événement écouté par MailClient (n'a d'effet que sur la page de la boîte). */
+/** Emits the event MailClient listens for (only has an effect on the mailbox page). */
 export function dispatchCompose() {
   window.dispatchEvent(new CustomEvent(COMPOSE_EVENT))
 }
 
 /**
- * Ouvre la composition d'où qu'on soit : déjà sur la boîte → événement ;
- * ailleurs (tableau de bord, réglages…) → navigation vers la boîte avec
- * `?compose=1`, que MailClient consomme au montage. Pas de minuterie.
+ * Opens the composer from anywhere: already on the mailbox → event; elsewhere
+ * (dashboard, settings, ...) → navigation to the mailbox with `?compose=1`, which
+ * MailClient consumes on mount. No timer involved.
  */
 export function openCompose(pathname: string | null, push: (href: string) => void) {
   if (pathname === MAIL_PATH || pathname?.startsWith(`${MAIL_PATH}/`)) dispatchCompose()

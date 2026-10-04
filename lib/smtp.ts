@@ -59,22 +59,13 @@ async function getSmtpAuth(config: SmtpConfig) {
   return { user: config.username, pass: decrypt(config.passwordEncrypted) }
 }
 
-export async function sendMail(config: SmtpConfig, options: SendMailOptions): Promise<{ messageId: string; raw: Buffer }> {
-  const auth = await getSmtpAuth(config)
-  const transporter = nodemailer.createTransport({
-    host: config.smtpHost,
-    port: config.smtpPort,
-    secure: config.smtpSecure,
-    auth,
-    tls: { rejectUnauthorized: false },
-  })
-
+function toMailOptions(options: SendMailOptions) {
   // Ensure outgoing HTML is a full document (avoids SpamAssassin HTML_MIME_NO_HTML_TAG)
   // and derive a text/plain fallback (avoids MIME_HTML_ONLY flag).
   const finalHtml = options.html ? wrapHtmlDocument(options.html) : undefined
   const finalText = options.text ?? (options.html ? htmlToText(options.html) : undefined)
 
-  const mailOptions = {
+  return {
     from: options.from,
     to: options.to.join(', '),
     cc: options.cc?.join(', '),
@@ -89,13 +80,42 @@ export async function sendMail(config: SmtpConfig, options: SendMailOptions): Pr
       ? { 'Disposition-Notification-To': options.dispositionNotificationTo }
       : undefined,
   }
+}
 
-  // Build raw MIME buffer for IMAP append to Sent folder
-  const raw = await new Promise<Buffer>((resolve, reject) => {
-    new MailComposer(mailOptions as Record<string, unknown>).compile().build(
+const buildMime = (mailOptions: Record<string, unknown>) =>
+  new Promise<Buffer>((resolve, reject) => {
+    new MailComposer(mailOptions).compile().build(
       (err: Error | null, buf: Buffer) => err ? reject(err) : resolve(buf)
     )
   })
+
+/**
+ * Le message MIME, et RIEN d'autre : aucun transport n'est ouvert ici.
+ *
+ * `sendMail` fabriquait et envoyait dans la même fonction — le `raw` ne sortait
+ * jamais sans qu'un envoi soit parti. Un brouillon a besoin du MÊME message, sans
+ * l'envoi. La séparation rend « rien n'est envoyé » STRUCTUREL et pas seulement
+ * mesuré : `createTransport`, `verify()` et `sendMail()` restent hors de cette
+ * fonction, qui n'a aucun moyen d'atteindre un serveur SMTP — elle ne reçoit même
+ * pas les identifiants de la boîte.
+ */
+export const composeMail = (options: SendMailOptions): Promise<Buffer> =>
+  buildMime(toMailOptions(options) as Record<string, unknown>)
+
+export async function sendMail(config: SmtpConfig, options: SendMailOptions): Promise<{ messageId: string; raw: Buffer }> {
+  const auth = await getSmtpAuth(config)
+  const transporter = nodemailer.createTransport({
+    host: config.smtpHost,
+    port: config.smtpPort,
+    secure: config.smtpSecure,
+    auth,
+    tls: { rejectUnauthorized: false },
+  })
+
+  const mailOptions = toMailOptions(options)
+
+  // Build raw MIME buffer for IMAP append to Sent folder
+  const raw = await buildMime(mailOptions as Record<string, unknown>)
 
   await transporter.verify()
   const info = await transporter.sendMail(mailOptions)

@@ -15,5 +15,8 @@ const humanize = (id: string) => id.replace(/_/g, ' ')
 export function useTagLabels() {
   const t = useTranslations('tags')
   const label = (prefix: 'q' | 'v' | 'g' | 'f' | 'source') => (id: string): string => (t.has(`${prefix}.${id}`) ? t(`${prefix}.${id}`) : humanize(id))
-  return { q: label('q'), v: label('v'), g: label('g'), f: label('f'), source: label('source') }
+  const q = label('q'), v = label('v')
+  /** « Question : valeur » — la ponctuation suit la langue (`tags.pair`), jamais codée en dur. */
+  const pair = (question: string, valeur: string): string => t('pair', { question: q(question), value: v(valeur) })
+  return { q, v, g: label('g'), f: label('f'), source: label('source'), pair }
 }

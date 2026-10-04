@@ -4,7 +4,7 @@
  * automatically" SAYS when a local model is running but refuses this site.
  *
  * The defect this bench exists for (measured on 2026-09-19, in production):
- * Ollama was running on Nicolas's Mac with 10 models but answered 403 to any
+ * Ollama was running locally with 10 models but answered 403 to any
  * request carrying the site's origin, and the settings screen read that as
  * "start the model on this computer" — the one thing that was not the problem.
  *

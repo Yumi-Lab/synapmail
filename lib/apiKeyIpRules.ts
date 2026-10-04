@@ -53,6 +53,24 @@ export function sanitizeIpRules(values: unknown): IpRule[] {
 }
 
 /**
+ * Checks an input BEFORE it is saved: one unreadable entry refuses the whole request,
+ * naming the entry. Dropping it silently (what `sanitizeIpRules` does) would shrink the
+ * list — down to empty, which means "no restriction at all": a typo would then LIFT the
+ * restriction instead of tightening it. `sanitizeIpRules` stays for READING stored rows,
+ * which were validated when written. Deduplicated the same way.
+ */
+export function validateIpRules(values: unknown): { rules: IpRule[] } | { invalid: string } {
+  if (!Array.isArray(values)) return { invalid: String(values) }
+  const rules: IpRule[] = []
+  for (const value of values) {
+    if (!isIpRule(value)) return { invalid: String(value) }
+    const trimmed = value.trim()
+    if (!rules.includes(trimmed)) rules.push(trimmed)
+  }
+  return { rules }
+}
+
+/**
  * L'adresse est-elle admise ? Une liste VIDE admet tout : c'est le comportement
  * d'avant ce lot, et le défaut de toute clé existante.
  *

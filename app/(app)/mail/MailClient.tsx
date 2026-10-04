@@ -8,6 +8,7 @@ import { SCOPE_PARAM, SEARCH_PARAM, focusSearch, readScope } from '@/lib/search'
 import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, mailboxSwitchHref } from './mailboxUrl'
 import { ArrowLeft } from 'lucide-react'
 import useSWR from 'swr'
+import { SETTINGS_KEY, saveSettings } from '@/lib/settings'
 import { MessageList } from '@/components/layout/MessageList'
 import { ReadingPane } from '@/components/layout/ReadingPane'
 import { ThreadPane } from '@/components/layout/ThreadPane'
@@ -90,7 +91,7 @@ export function MailClient() {
   const search = effectiveParams.get(SEARCH_PARAM) ?? ''
   const searchScope = readScope(effectiveParams.get(SCOPE_PARAM))
 
-  const { data: settingsData } = useSWR<{ data: { active_account_id: string | null; list_width: number; notifications: boolean } }>('/api/settings', fetcher)
+  const { data: settingsData } = useSWR<{ data: { active_account_id: string | null; list_width: number; notifications: boolean } }>(SETTINGS_KEY, fetcher)
   const didInitFromSettings = useRef(false)
   useEffect(() => {
     if (!settingsData?.data || didInitFromSettings.current) return
@@ -116,11 +117,7 @@ export function MailClient() {
       isResizingRef.current = false
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
-      fetch('/api/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ list_width: listWidthRef.current }),
-      })
+      void saveSettings({ list_width: listWidthRef.current })
     }
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
@@ -296,19 +293,19 @@ export function MailClient() {
     setCurrentMessage(null)
   }, [])
 
-  const handleThreadDelete = useCallback((uid: string) => {
+  // The card names its message by ORIGIN: a thread can hold the same uid twice
+  // (inbox copy and sent copy), and only the triplet tells them apart.
+  const handleThreadDelete = useCallback((origin: MessageOrigin) => {
     if (!selectedThread) return
-    const remaining = selectedThread.filter(m => m.uid !== uid)
+    const remaining = selectedThread.filter(m => !sameOrigin(originOfMessage(m), origin))
+    if (remaining.length === selectedThread.length) return
     if (remaining.length === 0) {
       handleDelete()
     } else {
       setSelectedThread(remaining)
     }
-    const msg = selectedThread.find(m => m.uid === uid)
-    if (msg) {
-      fetch(`/api/messages/${uid}?account=${msg.accountId}&folder=${encodeURIComponent(msg.folder || folder)}`, { method: 'DELETE' })
-    }
-  }, [selectedThread, folder, handleDelete])
+    fetch(messageHref(origin), { method: 'DELETE' })
+  }, [selectedThread, handleDelete])
 
   const handleBack = useCallback(() => {
     setShowReadingPane(false)

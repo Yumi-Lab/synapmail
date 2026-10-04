@@ -36,8 +36,8 @@ if (!COUNT_ATTR) { console.error('HARNESS: could not read MAIL_SELECTION_COUNT_A
 
 const LIST = `[${COUNT_ATTR}]`
 const ROW = '[data-mail-row]'
-// Preuve que le volet de lecture a rendu un message. Archiver / supprimer /
-// répondre ont migré dans la head bar : le drapeau est ce qui reste au volet.
+// Evidence the reading pane rendered a message. Archive / delete / reply moved
+// to the head bar: the flag button is what remains in the pane.
 const PANE_ACTION = '[data-reading-flag]'
 
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split('\n')) {
@@ -67,8 +67,8 @@ try {
   }, { base: BASE, email: EMAIL, password: PASSWORD })
   if (!loggedIn) { console.error('HARNESS: credentials login failed'); process.exit(2) }
 
-  // Le compte et le dossier réellement affichés se lisent sur les requêtes de la
-  // liste : aucune constante de banc à tenir à jour, aucune boîte devinée.
+  // The account and folder actually on screen are read from the list's own requests:
+  // no harness constant to keep up to date, no guessed mailbox.
   const listRequests = []
   page.on('request', req => {
     const u = new URL(req.url())
@@ -104,12 +104,12 @@ try {
     if (got !== want) failures.push(`${label}: selection holds ${got} messages, expected ${want}`)
   }
 
-  // --- La géométrie de la liste ne dépend PAS de la sélection ---
-  // Sans cela, l'en-tête de liste (deux lignes à colonne étroite) est remplacé par
-  // la barre de sélection, plus courte : toutes les lignes remontent dès la
-  // première cochée, et un rectangle ne coupe plus les lignes visées sous le
-  // pointeur. La référence est le haut de la MÊME ligne dans le MÊME passage,
-  // avant puis après la première sélection — jamais une hauteur en dur.
+  // --- The list geometry does NOT depend on the selection ---
+  // Without this, the list header (two lines in a narrow column) is replaced by the
+  // shorter selection bar: every row moves up as soon as the first one is ticked,
+  // and a rectangle no longer cuts the rows under the pointer. The reference is the
+  // top of the SAME row in the SAME run, before then after the first selection —
+  // never a hard-coded height.
   const rowTop = index => page.evaluate((sel, i) => {
     const el = document.querySelectorAll(sel)[i]
     return el ? el.getBoundingClientRect().top : null
@@ -173,17 +173,17 @@ try {
   await new Promise(r => setTimeout(r, SETTLE_MS))
   check('Escape after select-all', await readCount(), 0)
 
-  // --- Rectangle de sélection à la souris (lot M3c) ---
-  // Vrai geste souris : mousedown au milieu d'une ligne, déplacement VERTICAL,
-  // mouseup. Les lignes sont `draggable` : ce que ce banc mesure, c'est que
-  // l'arbitrage de direction annule bien le glisser natif et trace un rectangle.
+  // --- Marquee selection with the mouse ---
+  // A real mouse gesture: mousedown in the middle of a row, VERTICAL move, mouseup.
+  // The rows are `draggable`: what is measured here is that the direction arbitration
+  // does cancel the native drag and draws a rectangle instead.
   const rowBox = async index => {
     const handle = (await page.$$(ROW))[index]
     if (!handle) { console.error(`HARNESS: row ${index} vanished`); process.exit(2) }
     return handle.boundingBox()
   }
-  // Le point de départ évite la bulle (qui porte la case à cocher) : on part du
-  // texte, comme un humain qui commence son rectangle sur une ligne.
+  // The starting point avoids the avatar bubble (which carries the checkbox): the
+  // gesture starts on the text, the way someone would start a rectangle on a row.
   const AVATAR_INSET = 80
   const startOf = box => ({ x: box.x + AVATAR_INSET, y: box.y + box.height / 2 })
 
@@ -192,15 +192,15 @@ try {
   const b1 = await rowBox(1)
   const rowHeight = b1.y - b0.y
   if (!(rowHeight > 0)) { console.error(`HARNESS: could not measure a row height (got ${rowHeight})`); process.exit(2) }
-  // Cible : couper EXACTEMENT les trois premières lignes. La distance vient de
-  // la hauteur mesurée dans CE passage, pas d'une constante.
+  // Target: cut EXACTLY the first three rows. The distance comes from the height
+  // measured in THIS run, not from a constant.
   const CUT_ROWS = 3
   const from = startOf(b0)
   const toY = b0.y + rowHeight * (CUT_ROWS - 1) + b0.height / 2
 
   await page.mouse.move(from.x, from.y)
   await page.mouse.down()
-  // Plusieurs pas : un seul saut ne produit pas de `dragstart` à arbitrer.
+  // Several steps: a single jump produces no `dragstart` to arbitrate.
   for (let i = 1; i <= 8; i++) {
     await page.mouse.move(from.x, from.y + ((toY - from.y) * i) / 8)
     await new Promise(r => setTimeout(r, 20))
@@ -215,9 +215,9 @@ try {
   if (!marqueeDuring) failures.push('vertical drag: no marquee rectangle was drawn during the gesture')
   if (marqueeAfter) failures.push('vertical drag: the marquee rectangle survived the mouseup')
   if (countAfter !== CUT_ROWS) failures.push(`vertical drag: selection holds ${countAfter} messages, expected the ${CUT_ROWS} crossed rows`)
-  // Le rectangle ne doit pas non plus avoir OUVERT la ligne de départ. Ce contrôle
-  // passe AVANT tout clic simple : une fois un message ouvert, le volet le reste,
-  // et la présence du volet ne dirait plus rien de ce geste-ci.
+  // The rectangle must also not have OPENED the starting row. This check runs BEFORE
+  // any plain click: once a message is open the pane stays open, and its presence
+  // would then say nothing about this particular gesture.
   const openedByMarquee = await page.$(PANE_ACTION).then(Boolean)
   console.log(`vertical drag opened a message: ${openedByMarquee} (expected false)`)
   if (openedByMarquee) failures.push('vertical drag opened the message instead of only selecting')
@@ -225,18 +225,18 @@ try {
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
 
-  // --- Le rectangle coupe EXACTEMENT les lignes qu'il traverse, la première comprise ---
-  // Le rectangle attendu n'est pas un nombre en dur : il se déduit des rectangles
-  // des lignes DANS CE PASSAGE, comparés à la bande balayée par le pointeur. La
-  // ligne où l'on a APPUYÉ doit en faire partie — c'est ce qu'un décalage de
-  // l'en-tête faisait rater. La sélection obtenue est relue sur `aria-selected`,
-  // que le composant publie depuis son propre état.
+  // --- The rectangle cuts EXACTLY the rows it crosses, the first one included ---
+  // The expected set is not a hard-coded number: it is derived from the row rects IN
+  // THIS RUN, compared against the band swept by the pointer. The row that was
+  // PRESSED must be part of it — that is what a header shift used to break. The
+  // resulting selection is read back from `aria-selected`, which the component
+  // publishes from its own state.
   const DRAG_PX = 200
   const PRESS_ROW = 1
-  // La référence se mesure AVANT le geste : c'est la géométrie que l'humain voit
-  // quand il appuie. La lire pendant le geste la rendrait complice d'un décalage
-  // de l'en-tête (les lignes auraient déjà bougé), et le contrôle ne mesurerait
-  // plus rien.
+  // The reference is measured BEFORE the gesture: that is the geometry visible at
+  // the moment of the press. Reading it during the gesture would make it complicit
+  // in a header shift (the rows would already have moved), and the check would
+  // measure nothing.
   const bp = await rowBox(PRESS_ROW)
   const pressFrom = startOf(bp)
   const band = { top: pressFrom.y, bottom: pressFrom.y + DRAG_PX }
@@ -269,10 +269,10 @@ try {
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
 
-  // --- Un rectangle parti d'un en-tête de date ne surligne AUCUN texte ---
-  // La sélection de texte du navigateur naît au `mousedown` : un
-  // `preventDefault()` posé au `mousemove` arrive trop tard. Mesure directe :
-  // `getSelection()` doit rester vide pendant ET après le geste.
+  // --- A rectangle started from a date header highlights NO text ---
+  // The browser's text selection starts at `mousedown`: a `preventDefault()` placed
+  // on `mousemove` arrives too late. Direct measurement: `getSelection()` must stay
+  // empty during AND after the gesture.
   const dateHeader = await page.$('[data-mail-date-header]')
   if (!dateHeader) { console.error('HARNESS: no date header in the list to start the gesture from'); process.exit(2) }
   const hBox = await dateHeader.boundingBox()
@@ -294,7 +294,7 @@ try {
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
 
-  // --- Échap PENDANT le geste rétablit la sélection d'avant ---
+  // --- Escape DURING the gesture restores the previous selection ---
   await clickRow(0, ACCEL)
   const beforeEsc = await readCount()
   if (beforeEsc !== 1) { console.error(`HARNESS: could not seed a 1-row selection (got ${beforeEsc})`); process.exit(2) }
@@ -319,14 +319,14 @@ try {
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
 
-  // --- Un glisser HORIZONTAL reste le glisser-déposer natif ---
-  // Mesure directe : on écoute `dragstart` sur la ligne et on lit
-  // `defaultPrevented`. Annulé = le rectangle a pris la main (défaut) ; non
-  // annulé = le navigateur peut porter le message vers un dossier.
-  // `defaultPrevented` se lit APRÈS propagation : React pose ses gestionnaires
-  // sur la racine, donc un écouteur en phase de CAPTURE le lirait toujours faux
-  // et ce contrôle ne mesurerait rien. L'événement est donc gardé et relu au
-  // tour de boucle suivant, quand tout le monde a parlé.
+  // --- A HORIZONTAL drag stays the native drag and drop ---
+  // Direct measurement: listen for `dragstart` on the row and read
+  // `defaultPrevented`. Cancelled = the rectangle took over (the defect); not
+  // cancelled = the browser can carry the message to a folder.
+  // `defaultPrevented` must be read AFTER propagation: React attaches its handlers
+  // on the root, so a listener in the CAPTURE phase would always read it false and
+  // this check would measure nothing. The event is therefore kept and read back on
+  // the next loop turn, once everyone has had their say.
   await page.evaluate(() => {
     window.__dragProbe = null
     document.addEventListener('dragstart', e => {
@@ -359,17 +359,16 @@ try {
   // --- A plain click REPLACES the selection and opens that row ---
   // Explorer/Finder rule: only Cmd/Ctrl, Shift and the hover checkbox accumulate.
   // A bare click on the row body empties a multi-selection and opens the row —
-  // without this, the right-click of lot M3 (which selects) leaves the list
-  // unopenable until Escape.
-  // La liste est servie depuis le cache local : certaines lignes portent un uid
-  // qui n'est plus dans la boîte IMAP (le serveur répond alors 404) et n'ouvrent
-  // rien — c'est une donnée périmée du banc, pas le produit mesuré ici. On
-  // demande donc au serveur QUELLE ligne s'ouvre vraiment, et on clique
-  // celle-là : l'assertion « un clic simple ouvre » garde tout son sens, elle
-  // porte juste sur un message qui existe.
-  // La route d'un message exige le compte ET le dossier. Plutôt que de les
-  // deviner, on relit ceux que la liste elle-même vient d'employer : le banc
-  // interroge exactement la boîte qui est affichée.
+  // without this, the right-click that selects leaves the list unopenable until
+  // Escape.
+  // The list is served from the local cache: some rows carry a uid that is no longer
+  // in the IMAP mailbox (the server then answers 404) and open nothing — that is
+  // stale harness data, not the product under measurement. So the server is asked
+  // WHICH row actually opens, and that one is clicked: the "a plain click opens"
+  // assertion keeps its full meaning, it just applies to a message that exists.
+  // The message route requires both the account AND the folder. Rather than guessing
+  // them, the ones the list itself just used are read back: the harness queries
+  // exactly the mailbox that is on screen.
   const listQuery = listRequests.at(-1)
   if (!listQuery) { console.error('HARNESS: never saw the list fetch its own messages'); process.exit(2) }
   const openableIndex = await page.evaluate(async ({ account, folder }) => {
@@ -383,7 +382,7 @@ try {
   }, listQuery)
   if (openableIndex < 0) { console.error('HARNESS: no row in the first 8 still exists server-side (stale local cache)'); process.exit(2) }
   console.log(`row chosen for the open check: ${openableIndex} (first one the server still serves)`)
-  // Les deux lignes accumulées doivent être AUTRES que celle qu'on ouvrira.
+  // The two rows added to the selection must be OTHER than the one to be opened.
   const [selA, selB] = [0, 1, 2, 3].filter(i => i !== openableIndex)
 
   await clickRow(selA, ACCEL)
@@ -403,11 +402,11 @@ try {
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
 
-  // --- Le volet de lecture rend bien ses actions sur un message ouvert ---
-  // Archiver / supprimer / répondre ont migré dans la head bar : ce qui reste au
-  // volet est le drapeau. On ouvre et on lit SON état désactivé — un bouton
-  // inerte se distingue ainsi d'un bouton câblé, sans rien poser sur un vrai
-  // message (poser un drapeau écrirait dans une boîte réelle).
+  // --- The reading pane does render its actions on an open message ---
+  // Archive / delete / reply have moved to the head bar: what is left in the pane is
+  // the flag. The message is opened and ITS disabled state is read — an inert button
+  // is thus told apart from a wired one, without writing anything to a real message
+  // (setting a flag would change a live mailbox).
   await clickRow(openableIndex)
   await page.waitForSelector(PANE_ACTION, { timeout: OPEN_MS })
   const paneAction = await page.$eval(PANE_ACTION, el => ({

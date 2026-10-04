@@ -18,7 +18,7 @@
  */
 import { createHash } from 'crypto'
 import { query } from '../db'
-import { HUMAN_SOURCE, isEngineKind, TAG_SOURCES, type TagSource } from './engine'
+import { HUMAN_SOURCE, RULE_SOURCE, isEngineKind, TAG_SOURCES, type EngineState, type TagSource } from './engine'
 import { engineBodyOf, isRuleQuestionId, type QuestionSet, type TagQuestion } from './questions'
 import { FIELDS, fieldTemplate, isFieldName, isValidFieldValue, type Candidate, type FieldValue } from './fields'
 import { questionSetForAccount } from './userQuestions'
@@ -54,9 +54,9 @@ export function messageIdOf(m: { messageId?: string | null; fromAddress?: string
  * devant l'aller-retour à la base qui suit.
  */
 const VERSION_CHARS = 12
+const shortSha256 = (s: string): string => createHash('sha256').update(s).digest('hex').slice(0, VERSION_CHARS)
 
-export const questionVersion = (q: TagQuestion): string =>
-  createHash('sha256').update(JSON.stringify(engineBodyOf(q))).digest('hex').slice(0, VERSION_CHARS)
+export const questionVersion = (q: TagQuestion): string => shortSha256(JSON.stringify(engineBodyOf(q)))
 
 /**
  * La version de la TAXONOMIE ENTIÈRE d'un jeu : le même hachage, sur le corps de TOUTES les
@@ -69,9 +69,31 @@ export const questionVersion = (q: TagQuestion): string =>
  * qui en insère une au milieu, lot T11b) ne doit pas rejouer la boîte.
  */
 export const taxonomyVersion = (set: QuestionSet): string =>
-  createHash('sha256').update(JSON.stringify(
-    [...set.enabled].sort((a, b) => a.id.localeCompare(b.id)).map(q => [q.id, engineBodyOf(q)]),
-  )).digest('hex').slice(0, VERSION_CHARS)
+  shortSha256(JSON.stringify([...set.enabled].sort((a, b) => a.id.localeCompare(b.id)).map(q => [q.id, engineBodyOf(q)])))
+
+/**
+ * L'INSTANTANÉ d'état (décision 14) : le hachage de l'état EXACT envoyé au moteur (`buildState`),
+ * même recette que les versions. C'est ce qui permet de revérifier une étiquette : sans le texte
+ * jugé, elle ne se relit plus. Une correction humaine porte le MÊME hachage que la ligne du
+ * moteur qu'elle corrige (le dernier instantané du mail, `latestState`) : les deux parlent du
+ * même texte.
+ */
+export const stateHash = (state: EngineState): string => shortSha256(JSON.stringify(state, canonicalKeys))
+
+// `jsonb` RÉORDONNE les clés d'un objet : l'état relu de `tag_states` ne se sérialise plus
+// octet pour octet comme celui envoyé (mesuré : hachage différent avant/après aller-retour).
+// Les clés sont donc triées avant de hacher, à l'écriture comme à la relecture.
+const canonicalKeys = (_: string, v: unknown): unknown =>
+  v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v
+
+/** Le dernier instantané d'état connu d'un mail, ou `null` s'il n'a jamais été jugé. */
+export async function latestState(accountId: string, messageId: string): Promise<EngineState | null> {
+  const [row] = await query<{ state: EngineState }>(
+    `SELECT state FROM tag_states WHERE account_id = $1 AND message_id = $2 ORDER BY created_at DESC LIMIT 1`,
+    [accountId, messageId]
+  )
+  return row?.state ?? null
+}
 
 export interface TagToWrite {
   question: string
@@ -105,6 +127,8 @@ export interface StoredTag {
   /** L'origine de la ligne : id de l'auteur (vide quand la migration n'a pu nommer personne) et son nom d'alors. */
   auteurId: string
   auteurNom: string
+  /** L'instantané du texte jugé (`tag_states`, voir `stateHash`) ; vide quand il est inconnu. */
+  stateHash: string
 }
 
 /** La position connue d'un mail tagué, pour le retrouver hors de la page chargée. */
@@ -210,6 +234,8 @@ export async function writeTags(params: {
   position?: TaggedMessagePosition | null
   /** Le jeu de questions de la boîte, quand l'appelant l'a déjà chargé (le trieur) ; sinon relu ici. */
   questions?: QuestionSet
+  /** L'état jugé (décision 14) : enregistré dans `tag_states` et référencé par chaque ligne ; absent = inconnu. */
+  state?: EngineState | null
 }): Promise<number> {
   const { accountId, messageId, source, auteur, tags } = params
   const set = params.questions ?? await questionSetForAccount(accountId)
@@ -223,26 +249,36 @@ export async function writeTags(params: {
   const versionOf = (question: string) => questionVersion(set.questionById(question)!)
 
   if (params.position) await upsertPosition(accountId, messageId, params.position)
+  const hash = params.state ? stateHash(params.state) : ''
+  if (params.state) await writeState(accountId, messageId, hash, params.state)
   await query(
     `INSERT INTO message_tags (account_id, message_id, question, valeur, probabilites, confiance,
                                source, modele, valide_par, question_version,
-                               taxonomy_version, auteur_id, auteur_nom, cree_le)
+                               taxonomy_version, auteur_id, auteur_nom, state_hash, cree_le)
      SELECT $1, $2, q.question, q.valeur, q.probabilites, q.confiance, $3, $4, $5, q.question_version,
-            $11, $12, $13, NOW()
+            $11, $12, $13, $14, NOW()
        FROM unnest($6::text[], $7::text[], $8::jsonb[], $9::real[], $10::text[])
               AS q(question, valeur, probabilites, confiance, question_version)
      ON CONFLICT (account_id, message_id, question, source, auteur_id, modele, question_version) DO UPDATE SET
        valeur = EXCLUDED.valeur, probabilites = EXCLUDED.probabilites, confiance = EXCLUDED.confiance,
        valide_par = EXCLUDED.valide_par, taxonomy_version = EXCLUDED.taxonomy_version,
-       auteur_nom = EXCLUDED.auteur_nom, cree_le = NOW()`,
+       auteur_nom = EXCLUDED.auteur_nom, state_hash = EXCLUDED.state_hash, cree_le = NOW()`,
     [accountId, messageId, source, params.modele ?? '', params.validePar ?? null,
       tags.map(t => t.question), tags.map(t => t.valeur),
       tags.map(t => (t.probabilites ? JSON.stringify(t.probabilites) : null)),
       tags.map(t => t.confiance ?? null), tags.map(t => versionOf(t.question)),
-      taxonomyVersion(set), auteur.id, auteur.nom]
+      taxonomyVersion(set), auteur.id, auteur.nom, hash]
   )
   return tags.length
 }
+
+/** Un instantané n'est écrit qu'une fois par mail : le même texte revenu (relance, correction) ne coûte rien. */
+const writeState = (accountId: string, messageId: string, hash: string, state: EngineState): Promise<unknown> =>
+  query(
+    `INSERT INTO tag_states (account_id, message_id, state_hash, state) VALUES ($1, $2, $3, $4::jsonb)
+     ON CONFLICT (account_id, message_id, state_hash) DO NOTHING`,
+    [accountId, messageId, hash, JSON.stringify(state)]
+  )
 
 /** La dernière position connue d'un mail. Écrite par le trieur et par un PUT qui la fournit. */
 export async function upsertPosition(accountId: string, messageId: string, p: TaggedMessagePosition): Promise<void> {
@@ -264,17 +300,17 @@ export async function upsertPosition(accountId: string, messageId: string, p: Ta
 type TagRow = {
   question: string; valeur: string; probabilites: Record<string, number> | null; confiance: number | null
   source: TagSource; modele: string; cree_le: Date; valide_par: string | null
-  question_version: string; auteur_id: string; auteur_nom: string
+  question_version: string; auteur_id: string; auteur_nom: string; state_hash: string
 }
 
 /** Les colonnes qu'une lecture rend, écrites UNE fois : les quatre lectures ci-dessous les partagent. */
 const TAG_COLUMNS = `question, valeur, probabilites, confiance, source, modele, cree_le, valide_par,
-            question_version, auteur_id, auteur_nom`
+            question_version, auteur_id, auteur_nom, state_hash`
 
 const toStored = (r: TagRow): StoredTag => ({
   question: r.question, valeur: r.valeur, probabilites: r.probabilites, confiance: r.confiance,
   source: r.source, modele: r.modele || null, creeLe: r.cree_le, validePar: r.valide_par,
-  questionVersion: r.question_version, auteurId: r.auteur_id, auteurNom: r.auteur_nom,
+  questionVersion: r.question_version, auteurId: r.auteur_id, auteurNom: r.auteur_nom, stateHash: r.state_hash,
 })
 
 /**
@@ -288,6 +324,17 @@ const EFFECTIVE_RANK = `ROW_NUMBER() OVER (
   PARTITION BY account_id, message_id, question
   ORDER BY ${EFFECTIVE_ORDER}
 )`
+
+/**
+ * Les lignes qui ont le droit de PESER sur la priorité d'une boîte (lot T12, gate du 03/10) :
+ * une main, le trieur (`regle`), le moteur RATTACHÉ à la boîte, et les lignes d'origine inconnue
+ * (`auteur_id = ''`, antérieures aux auteurs — écrites par le moteur de la boîte d'alors). Jamais un
+ * moteur d'essai ni une clé de banc : mesuré sur la boîte réelle, 221 mails d'un moteur de test
+ * répondant « oui » presque partout dominaient « à traiter ». L'AFFICHAGE garde la règle de
+ * `GOAL.md` (effective sur toutes les lignes) ; seule la priorité se restreint. `$1` = account_id.
+ */
+const TRUSTED_ORIGIN = `(source IN ('${HUMAN_SOURCE}', '${RULE_SOURCE}') OR auteur_id = ''
+  OR auteur_id IN (SELECT engine_id::text FROM mailbox_tagging WHERE account_id = $1 AND engine_id IS NOT NULL))`
 
 /** Toutes les lignes d'un mail, toutes sources, plus l'effective par question. */
 export async function readTags(accountId: string, messageId: string): Promise<{ tags: StoredTag[]; effective: StoredTag[] }> {
@@ -304,13 +351,14 @@ export async function readTags(accountId: string, messageId: string): Promise<{ 
  * Les étiquettes effectives d'une LISTE de mails : ce que la liste affiche en pastilles, en UNE
  * requête par page — jamais une par ligne.
  */
-export async function readEffectiveFor(accountId: string, messageIds: string[]): Promise<Map<string, StoredTag[]>> {
+export async function readEffectiveFor(accountId: string, messageIds: string[], opts: { trusted?: boolean } = {}): Promise<Map<string, StoredTag[]>> {
   const byMessage = new Map<string, StoredTag[]>()
   if (!messageIds.length) return byMessage
   const rows = await query<TagRow & { message_id: string; rang: number }>(
     `SELECT * FROM (
        SELECT message_id, ${TAG_COLUMNS}, ${EFFECTIVE_RANK} AS rang
          FROM message_tags WHERE account_id = $1 AND message_id = ANY($2::text[])
+          ${opts.trusted ? `AND ${TRUSTED_ORIGIN}` : ''}
      ) r WHERE rang = 1 ORDER BY message_id, question`,
     [accountId, messageIds]
   )
@@ -374,20 +422,27 @@ export async function filterByTag(params: {
   }
 }
 
-/** L'export d'une boîte, paginé par `id` : toutes les lignes, toutes sources. */
+/**
+ * L'export d'une boîte, paginé par `id` : toutes les lignes, toutes sources, chacune avec la
+ * version de sa question ET l'état jugé (décision 14) — un jeu d'entraînement se relit sans la
+ * boîte. `state` est `null` quand l'instantané est inconnu (`state_hash` vide).
+ */
 export async function exportTags(params: {
   accountId: string; after?: number; limit?: number
-}): Promise<{ rows: (StoredTag & { id: number; messageId: string })[]; nextAfter: number | null }> {
+}): Promise<{ rows: (StoredTag & { id: number; messageId: string; state: EngineState | null })[]; nextAfter: number | null }> {
   const limit = Math.min(Math.max(params.limit ?? 500, 1), 5000)
-  const rows = await query<TagRow & { id: string; message_id: string }>(
-    `SELECT id, message_id, ${TAG_COLUMNS}
-       FROM message_tags
-      WHERE account_id = $1 AND id > $2
-      ORDER BY id LIMIT $3`,
+  const rows = await query<TagRow & { id: string; message_id: string; state: EngineState | null }>(
+    `SELECT t.*, s.state
+       FROM (SELECT id, account_id, message_id, ${TAG_COLUMNS}
+               FROM message_tags
+              WHERE account_id = $1 AND id > $2
+              ORDER BY id LIMIT $3) t
+       LEFT JOIN tag_states s ON s.account_id = t.account_id AND s.message_id = t.message_id AND s.state_hash = t.state_hash
+      ORDER BY t.id`,
     [params.accountId, params.after ?? 0, limit]
   )
   return {
-    rows: rows.map(r => ({ ...toStored(r), id: Number(r.id), messageId: r.message_id })),
+    rows: rows.map(r => ({ ...toStored(r), id: Number(r.id), messageId: r.message_id, state: r.state })),
     nextAfter: rows.length === limit ? Number(rows[rows.length - 1].id) : null,
   }
 }
@@ -477,7 +532,7 @@ export async function alreadyTagged(
 // ---------------------------------------------------------------- valeurs extraites (lot T11)
 
 /** Ce qu'une ligne de `message_fields` rend à la lecture : une étiquette dont la valeur est LUE, pas prévue. */
-export interface StoredField extends Omit<StoredTag, 'probabilites' | 'confiance'> {
+export interface StoredField extends Omit<StoredTag, 'probabilites' | 'confiance' | 'stateHash'> {
   candidats: Candidate[] | null
 }
 
@@ -545,14 +600,19 @@ export async function readFields(accountId: string, messageId: string): Promise<
   return { fields: rows.map(toField), effective: rows.filter(r => Number(r.rang) === 1).map(toField) }
 }
 
-/** Les valeurs effectives d'une LISTE de mails (la liste des documents GED), en UNE requête — le pendant de `readEffectiveFor`. */
-export async function readEffectiveFieldsFor(accountId: string, messageIds: string[]): Promise<Map<string, StoredField[]>> {
+/**
+ * Les valeurs effectives d'UNE LISTE de mails, en UNE requête — le pendant de `readEffectiveFor` :
+ * la liste des documents GED (toutes origines, ordre MÉTIER de `FIELDS`) et la priorité (lot T12 :
+ * l'échéance extraite pèse — `trusted`, restreint aux origines de confiance).
+ */
+export async function readEffectiveFieldsFor(accountId: string, messageIds: string[], opts: { trusted?: boolean } = {}): Promise<Map<string, StoredField[]>> {
   const byMessage = new Map<string, StoredField[]>()
   if (!messageIds.length) return byMessage
   const rows = await query<FieldRow & { message_id: string; rang: number }>(
     `SELECT * FROM (
        SELECT message_id, ${FIELD_COLUMNS}, ${EFFECTIVE_RANK} AS rang
          FROM message_fields WHERE account_id = $1 AND message_id = ANY($2::text[])
+          ${opts.trusted ? `AND ${TRUSTED_ORIGIN}` : ''}
      ) r WHERE rang = 1 ORDER BY message_id, array_position($3::text[], question)`,
     [accountId, messageIds, [...FIELDS]]
   )

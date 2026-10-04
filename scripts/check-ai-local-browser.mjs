@@ -175,7 +175,7 @@ try {
   corsEnabled = true
 
   // ── 4. "Detect automatically" reaches a local server and shows its models ──
-  // Gate of 2026-09-20 (a): the button was not rendered for this provider, so
+  // Found on review, 2026-09-20 (a): the button was not rendered for this provider, so
   // the model chips were unreachable and the model had to be typed by hand.
   //
   // `detectLocal` probes fixed ports in order and stops at the FIRST that

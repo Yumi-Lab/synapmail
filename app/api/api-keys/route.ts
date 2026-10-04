@@ -5,7 +5,7 @@ import { query } from '@/lib/db'
 import { sanitizeScopes } from '@/lib/apiScopes'
 import { grantAccounts } from '@/lib/apiKeyAccounts'
 import { encrypt } from '@/lib/encrypt'
-import { sanitizeIpRules } from '@/lib/apiKeyIpRules'
+import { sanitizeIpRules, validateIpRules } from '@/lib/apiKeyIpRules'
 
 export const dynamic = 'force-dynamic'
 
@@ -83,6 +83,12 @@ export async function POST(req: Request) {
     const granted = sanitizeScopes(scopes)
     if (!granted.length) return NextResponse.json({ error: 'at least one scope is required' }, { status: 400 })
 
+    // Same rule as PATCH: an unreadable entry refuses the creation, naming it.
+    const validatedIps = validateIpRules(allowedIps ?? [])
+    if ('invalid' in validatedIps) {
+      return NextResponse.json({ error: `Invalid address or range: ${validatedIps.invalid}` }, { status: 400 })
+    }
+
     const rawKey = `syn_${crypto.randomBytes(24).toString('hex')}`
     const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex')
     const keyPrefix = rawKey.slice(0, 12)
@@ -91,7 +97,7 @@ export async function POST(req: Request) {
       `INSERT INTO api_keys (user_id, name, key_prefix, key_hash, key_encrypted, scopes, allowed_ips, scopes_migrated_at, accounts_migrated_at)
        VALUES ($1, $2, $3, $4, $5, $6::text[], $7::text[], NOW(), NOW())
        RETURNING id, name, key_prefix, last_used_at, created_at, scopes, key_encrypted, allowed_ips`,
-      [session.user.id, name.trim(), keyPrefix, keyHash, encrypt(rawKey), granted, sanitizeIpRules(allowedIps)]
+      [session.user.id, name.trim(), keyPrefix, keyHash, encrypt(rawKey), granted, validatedIps.rules]
     )
 
     // Les boîtes cochées à la création. `accounts_migrated_at` est posé ci-dessus pour

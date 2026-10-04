@@ -21,10 +21,15 @@
  *   F. `byPriorityThenDate` trie par score décroissant puis date décroissante ; un message sans
  *      priorité vaut 0 ; `imapFilterOf('focus')` = 'unread', les autres filtres inchangés ;
  *   G. chaque question de `TAG_WEIGHTS` existe dans `DEFAULT_QUESTIONS` et chaque valeur pesée
- *      est une valeur de la question (un poids orphelin ne pèserait jamais rien).
+ *      est une valeur de la question (un poids orphelin ne pèserait jamais rien) ;
+ *   H. le jeu RÉALISTE du gate du 03/10 (infolettre fréquente, notification réseau social, code de
+ *      connexion « sous 48 h », spam marqué qui crie à la fraude, relance fournisseur, facture à
+ *      échéance J+2) : relance et facture devant tout le reste, infolettre et notification sous le
+ *      seuil, spam EXCLU (plafond `SPAM_CEILING`) ; `echeancePoints` par proximité ; « fréquent »
+ *      annulé par `automatique = oui`.
  *
  * CONTRÔLE NÉGATIF (`--negative`) : les étiquettes passées à `scoreFocus` sont VIDÉES (l'état
- * du produit si l'enrichissement n'existait pas). B, C (la part étiquette), D et E DOIVENT
+ * du produit si l'enrichissement n'existait pas). B, C (la part étiquette), D, E et H DOIVENT
  * tomber ; A, F et G tiennent (ils ne dépendent pas des étiquettes). Ce qu'il démontre : les
  * assertions mesurent l'enrichissement, pas la présence du code.
  */
@@ -33,7 +38,7 @@ import './alias-resolver.mjs'
 const NEGATIVE = process.argv.includes('--negative')
 const focus = await import('../lib/focus.ts')
 const { DEFAULT_QUESTIONS, valuesOf } = await import('../lib/tagging/questions.ts')
-const { scoreFocus, TAG_WEIGHTS, FOCUS_THRESHOLD, imapFilterOf } = focus
+const { scoreFocus, TAG_WEIGHTS, FOCUS_THRESHOLD, SPAM_CEILING, AUTO_CAP, echeancePoints, imapFilterOf } = focus
 const { byPriorityThenDate } = await import('../lib/flags.ts')
 
 const failures = []
@@ -83,6 +88,26 @@ eq('D3 égalité → surface', score(row('x', { is_starred: true }), [{ question
 check('E1 URGENT seul ≥ seuil', score(row('URGENT : action requise')).score >= FOCUS_THRESHOLD, 'un mot d\'échéance doit suffire sans étiquette')
 check('E2 URGENT + automatique < seuil', score(row('URGENT : action requise'), [{ question: 'automatique', valeur: 'oui' }]).score < FOCUS_THRESHOLD, `score=${score(row('URGENT : action requise'), [{ question: 'automatique', valeur: 'oui' }]).score}`)
 check('E3 URGENT + hameçonnage < seuil', score(row('URGENT : action requise'), [{ question: 'spam_hameconnage', valeur: 'oui' }]).score < FOCUS_THRESHOLD, 'hameçonnage doit faire descendre')
+// Le veto (gate 03/10 : « HuffyB sent you a message », spam = oui, valait 20 et menait « À traiter »).
+const phishing = score(row('URGENT : votre compte', { is_starred: true, has_attachments: true }), [
+  { question: 'spam_hameconnage', valeur: 'oui' }, { question: 'urgence', valeur: 'aujourdhui' },
+  { question: 'fraude_paiement', valeur: 'oui' }, { question: 'menace_juridique', valeur: 'oui' }, { question: 'risque_depart', valeur: 'oui' },
+])
+check('E4 spam + tout le reste = plafond', phishing.score === SPAM_CEILING && phishing.score < FOCUS_THRESHOLD, `score=${phishing.score}`)
+check('E4 somme des parts = score', sum(phishing.parts) === phishing.score, `parts=${sum(phishing.parts)} score=${phishing.score}`)
+eq('E4 pastille = spam', phishing.reason, 'spam')
+// Un automatique « aujourd'hui » (code de connexion) : l'urgence plafonne, le mail reste sous le seuil.
+const otp = score(row('Your verification code', { has_attachments: true }), [{ question: 'automatique', valeur: 'oui' }, { question: 'urgence', valeur: 'aujourdhui' }])
+check('E5 automatique plafonne l\'urgence', otp.parts.find(p => p.kind === 'tag' && p.question === 'urgence')?.points === AUTO_CAP && otp.score < FOCUS_THRESHOLD, JSON.stringify(otp))
+check('E5 somme des parts = score', sum(otp.parts) === otp.score, `parts=${sum(otp.parts)} score=${otp.score}`)
+// E6 (gate du 03/10, réserves) : une notification « agacée » ne pèse rien, et les mots d'échéance /
+// de facture en objet sont plafonnés comme l'urgence quand l'envoi est automatique.
+const angryBot = score(row('Mrcreatesuk sent you a message'), [{ question: 'automatique', valeur: 'oui' }, { question: 'frustration', valeur: 'agace' }])
+check('E6 frustration ignorée si automatique', !angryBot.parts.some(p => p.kind === 'tag' && p.question === 'frustration') && angryBot.score === TAG_WEIGHTS.automatique.oui, JSON.stringify(angryBot))
+const botDeadline = score(row('Action required: your invoice is ready'), [{ question: 'automatique', valeur: 'oui' }])
+eq('E6 échéance + facture d\'objet plafonnées si automatique', botDeadline.parts.filter(p => p.kind === 'reason').map(p => `${p.reason}:${p.points}`), [`invoice:${AUTO_CAP}`, `deadline:${AUTO_CAP}`])
+check('E6 … et sous le seuil', botDeadline.score < FOCUS_THRESHOLD && sum(botDeadline.parts) === botDeadline.score, `score=${botDeadline.score}`)
+eq('E6 témoin : humain non plafonné', score(row('Action required: your invoice is ready')).parts.map(p => p.points), [3, 4])
 
 // F. le tri et le filtre IMAP
 const d = (iso, s) => ({ date: iso, priority: s === undefined ? undefined : { score: s, reason: 'reply', parts: [] } })
@@ -100,6 +125,41 @@ for (const [qid, weights] of Object.entries(TAG_WEIGHTS)) {
   const values = valuesOf(q)
   for (const v of Object.keys(weights)) check(`G ${qid}.${v}`, values.includes(v), `valeur hors liste (${values.join(', ')})`)
 }
+
+// H. le jeu réaliste du gate du 03/10
+const today = new Date('2026-10-03T09:00:00Z')
+const iso = d => new Date(+today + d * 86_400_000).toISOString().slice(0, 10)
+eq('H1 échéance J+2', echeancePoints(iso(2), today), 6)
+eq('H1 échéance J+7', echeancePoints(iso(7), today), 4)
+eq('H1 échéance J+20', echeancePoints(iso(20), today), 2)
+eq('H1 échéance J+60', echeancePoints(iso(60), today), 0)
+eq('H1 échéance passée J-10', echeancePoints(iso(-10), today), 6)
+eq('H1 échéance passée J-40', echeancePoints(iso(-40), today), 0)
+eq('H1 sans échéance', echeancePoints(null, today), 0)
+const mails = {
+  newsletter: score(row("Tom's Hardware: the best GPUs this week", { from_address: 'news@tomshardware.invalid' }),
+    [{ question: 'automatique', valeur: 'oui' }, { question: 'urgence', valeur: 'aucune' }], none, new Set(['news@tomshardware.invalid'])),
+  notification: score(row('Xebec sent you a message'), [{ question: 'automatique', valeur: 'oui' }, { question: 'urgence', valeur: 'sous_48h' }]),
+  otp: score(row('Sign in to Cursor'), [{ question: 'automatique', valeur: 'oui' }, { question: 'urgence', valeur: 'aujourdhui' }]),
+  spam: score(row('URGENT: verify your account now'), [
+    { question: 'spam_hameconnage', valeur: 'oui' }, { question: 'urgence', valeur: 'aujourdhui' },
+    { question: 'fraude_paiement', valeur: 'oui' }, { question: 'menace_juridique', valeur: 'oui' }]),
+  relance: score(row('Re: Yumi HZ documents for June bookkeeping -REMINDER', { has_attachments: true }),
+    [{ question: 'reponse_requise', valeur: 'oui' }, { question: 'urgence', valeur: 'sous_48h' }]),
+  facture: score(row('Facture F-2026-118', { has_attachments: true, echeance: NEGATIVE ? null : iso(2) }),
+    [{ question: 'reponse_requise', valeur: 'oui' }]),
+}
+const order = Object.entries(mails).sort((a, b) => b[1].score - a[1].score).map(([k]) => k)
+const treated = Object.entries(mails).filter(([, s]) => s.score >= FOCUS_THRESHOLD).map(([k]) => k).sort()
+eq('H2 à traiter = relance + facture seulement', treated, ['facture', 'relance'])
+check('H3 relance et facture devant tout le reste', order.slice(0, 2).sort().join(',') === 'facture,relance', `ordre=${order.join(' > ')}`)
+check('H4 infolettre et notification sous le seuil', mails.newsletter.score < FOCUS_THRESHOLD && mails.notification.score < FOCUS_THRESHOLD, `infolettre=${mails.newsletter.score} notification=${mails.notification.score}`)
+check('H5 infolettre fréquente : part « fréquent » absente', !mails.newsletter.parts.some(p => p.kind === 'reason' && p.reason === 'frequent'), JSON.stringify(mails.newsletter.parts))
+check('H6 code de connexion sous le seuil', mails.otp.score < FOCUS_THRESHOLD, `otp=${mails.otp.score}`)
+check('H7 spam exclu : dernier et plafonné', order[order.length - 1] === 'spam' && mails.spam.score === SPAM_CEILING, `spam=${mails.spam.score} ordre=${order.join(' > ')}`)
+check('H8 facture : part « échéance extraite » +6 dans l\'infobulle', mails.facture.parts.some(p => p.kind === 'reason' && p.reason === 'echeance' && p.points === 6), JSON.stringify(mails.facture.parts))
+eq('H8 pastille de la facture = échéance', mails.facture.reason, 'echeance')
+console.log(`ordre réaliste : ${Object.entries(mails).sort((a, b) => b[1].score - a[1].score).map(([k, s]) => `${k}=${s.score}`).join(' > ')}`)
 
 for (const f of failures) console.log(`FAIL ${f}`)
 console.log(`check-focus-priority${NEGATIVE ? ' --negative' : ''}: ${ok} ok, ${failures.length} FAIL`)

@@ -4,13 +4,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import { openCompose as openComposeFrom } from '@/lib/compose'
-import useSWR, { mutate as globalMutate } from 'swr'
+import useSWR from 'swr'
+import { SETTINGS_KEY, saveSettings } from '@/lib/settings'
 import { useTranslations, useLocale } from 'next-intl'
 import {
   Mail, Send, Eye, Clock, Sparkles, BarChart3, Users, Filter,
   PenSquare, RefreshCw, ArrowUpRight, Minus, CheckCheck,
   Paperclip, Star, FileText, AlarmClock, ChevronRight, ChevronDown, Check, MailX,
-  GripVertical, Undo2, Tag,
+  GripVertical, Undo2, Tag, CalendarClock, ShieldAlert,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AccountAvatar } from '@/components/layout/AccountAvatar'
@@ -289,6 +290,8 @@ const REASON_STYLE: Record<FocusReason, string> = {
   frequent: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
   starred: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
   attachment: 'bg-muted text-muted-foreground border-border',
+  echeance: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
+  spam: 'bg-muted text-muted-foreground border-border',
   tag: 'bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20',
 }
 const REASON_ICON: Record<FocusReason, React.ReactNode> = {
@@ -299,6 +302,8 @@ const REASON_ICON: Record<FocusReason, React.ReactNode> = {
   frequent: <Users className="h-3 w-3" />,
   starred: <Star className="h-3 w-3" />,
   attachment: <Paperclip className="h-3 w-3" />,
+  echeance: <CalendarClock className="h-3 w-3" />,
+  spam: <ShieldAlert className="h-3 w-3" />,
   tag: <Tag className="h-3 w-3" />,
 }
 
@@ -325,17 +330,11 @@ export function DashboardClient() {
   // Account scope — null = all accounts combined. Persisted server-side per user.
   const { data: settingsRes, isLoading: settingsLoading } = useSWR<{
     data: { dashboard_account_id: string | null; dashboard_card_order: DashboardCardId[] | null }
-  }>('/api/settings', fetcher)
+  }>(SETTINGS_KEY, fetcher)
   const filterAccount = settingsRes?.data?.dashboard_account_id ?? null
   const filterReady = !settingsLoading
   const changeFilter = (id: string | null) => {
-    globalMutate('/api/settings', (curr: { data: Record<string, unknown> } | undefined) =>
-      curr ? { data: { ...curr.data, dashboard_account_id: id } } : curr, false)
-    fetch('/api/settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dashboard_account_id: id }),
-    }).then(() => globalMutate('/api/settings'))
+    void saveSettings({ dashboard_account_id: id })
   }
 
   // L'ordre des cartes vient du serveur et passe par la règle partagée : une valeur
@@ -345,13 +344,7 @@ export function DashboardClient() {
     [settingsRes],
   )
   const saveCardOrder = (order: DashboardCardId[] | null) => {
-    globalMutate('/api/settings', (curr: { data: Record<string, unknown> } | undefined) =>
-      curr ? { data: { ...curr.data, dashboard_card_order: order } } : curr, false)
-    fetch('/api/settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dashboard_card_order: order }),
-    }).then(() => globalMutate('/api/settings'))
+    void saveSettings({ dashboard_card_order: order })
   }
   const [draggedCard, setDraggedCard] = useState<DashboardCardId | null>(null)
   const [dropCard, setDropCard] = useState<DashboardCardId | null>(null)
@@ -446,10 +439,12 @@ export function DashboardClient() {
    * largeur (depuis la source unique), la poignée, et le dépôt. Un seul endroit :
    * neuf cartes ne peuvent pas diverger sur la façon d'être saisies.
    */
-  const cardProps = (id: DashboardCardId) => ({
+  const cardProps = (id: DashboardCardId, extraClassName?: string) => ({
     cardId: id,
     index: cardOrder.indexOf(id),
-    className: cardSpan(id),
+    // La largeur vient d'ici : un `className` posé APRÈS le spread l'écraserait et la carte
+    // tomberait à une colonne sur douze (carte « À traiter » à 87 px, gate du 03/10).
+    className: cn(cardSpan(id), extraClassName),
     draggable: true,
     dragging: draggedCard === id,
     dropTarget: dropCard === id && draggedCard !== id,
@@ -489,8 +484,7 @@ export function DashboardClient() {
   const cards: Record<DashboardCardId, React.ReactNode> = {
     focus: (
       <Card
-        {...cardProps('focus')}
-        className="bg-gradient-to-b from-card to-card/40"
+        {...cardProps('focus', 'bg-gradient-to-b from-card to-card/40')}
         icon={<Sparkles className="h-[15px] w-[15px]" />}
         title={<span>{t('focusTitle')} <span className="font-normal text-muted-foreground">— {t('focusSubtitle')}</span></span>}
         action={<Link href="/mail" className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('viewAll')}</Link>}

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Measures the multi-message forward (lot M5) with REAL clicks, on the running
+ * Measures the multi-message forward with REAL clicks, on the running
  * app: N rows are selected in the list, the toolbar's Forward action is fired,
  * and the compose window must open carrying those N messages.
  *
@@ -35,7 +35,7 @@ const SETTLE_MS = 400
 const FORWARD_N = 3
 const MIN_ROWS = FORWARD_N + 1
 // Margin on top of the app's own undo-send delay, for the round-trip the window
-// makes once the countdown ends. Calibrated on the lane's dev server (:3106).
+// makes once the countdown ends. Calibrated on a local dev server.
 const SEND_GRACE_MS = 5000
 
 // Read from the shipped module so a rename there fails the bench instead of
@@ -55,7 +55,7 @@ const COMPOSE_CHIP = '[data-forwarded-count]'
 const FROM_TRIGGER = '[data-compose-from]'
 const FROM_OPTION = '[data-compose-from-list] [role="option"]'
 // Budget for the accounts round-trip the compose window makes on mount.
-// Measured on the lane's dev server (:3106): the picker appears well under 1 s.
+// Measured on a local dev server: the picker appears well under 1 s.
 const FROM_PICKER_TIMEOUT_MS = 5000
 
 for (const file of ['../.env', '../.env.local']) {

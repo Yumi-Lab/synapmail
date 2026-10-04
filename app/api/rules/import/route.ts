@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { createRule } from '@/lib/rules'
+import { createRule, validateConditions } from '@/lib/rules'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
+import { questionSetForAccount } from '@/lib/tagging/userQuestions'
 import type { EmailRule } from '@/types/rule'
 
 export const dynamic = 'force-dynamic'
@@ -30,10 +31,14 @@ export async function POST(req: Request) {
       [accountId]
     )
     let nextPriority = (maxRows[0]?.max ?? -1) + 1
+    const questions = await questionSetForAccount(accountId)
 
     const created = []
     for (const r of body.rules) {
       if (!r.name?.trim() || !r.conditions?.length || !r.actions?.length) continue
+      // Un fichier importé passe par la MÊME porte qu'un POST : rien n'entre sans compiler.
+      const invalid = validateConditions(r.conditions, questions)
+      if (invalid) return NextResponse.json({ error: `rule "${r.name.trim()}": ${invalid}` }, { status: 422 })
       const rule = await createRule(session.user!.id!, accountId, {
         name: r.name.trim(),
         enabled: r.enabled ?? true,

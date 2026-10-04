@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Measures lot C4: the six other settings screens carry no bin on a row either. Each one
- * now opens the SAME discreet "..." menu as the accounts screen (lot C3), and each
+ * Measures that the six other settings screens carry no bin on a row either. Each one
+ * now opens the SAME discreet "..." menu as the accounts screen, and each
  * confirmation NAMES the object it is about to remove.
  *
  * NOTHING PRE-EXISTING IS EVER DELETED by this bench: every DELETE request is intercepted

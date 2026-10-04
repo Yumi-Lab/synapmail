@@ -17,7 +17,7 @@ async function guard() {
   return null
 }
 
-/** La ligne d'instance existe toujours après ceci : tout le reste est un UPDATE. */
+/** The instance row always exists after this call: everything else is an UPDATE. */
 async function ensureRow() {
   await query('INSERT INTO instance_settings (id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING')
 }
@@ -29,13 +29,13 @@ export async function GET() {
 }
 
 /**
- * Enregistre le nom, l'icône, ou les deux. Le corps est un `multipart/form-data`
- * parce qu'il porte un fichier : `appName` (texte) et `favicon` (fichier) sont
- * tous deux facultatifs, ce qui permet de ne changer qu'un des deux.
+ * Saves the name, the icon, or both. The body is `multipart/form-data` because it
+ * carries a file: `appName` (text) and `favicon` (file) are both optional, which
+ * allows changing only one of the two.
  *
- * Le type de l'icône est décidé sur ses OCTETS et jamais sur son extension ni
- * sur le type déclaré par le navigateur : c'est ce type détecté qui est stocké,
- * puis re-servi par `GET /api/branding/favicon`.
+ * The icon's type is decided from its BYTES, never from its extension nor from the
+ * type declared by the browser: the detected type is the one stored, and later
+ * re-served by `GET /api/branding/favicon`.
  */
 export async function PUT(req: Request) {
   const refused = await guard()
@@ -60,8 +60,8 @@ export async function PUT(req: Request) {
         return NextResponse.json({ error: BRANDING_ERRORS.tooLarge }, { status: BAD_REQUEST })
       }
       const bytes = Buffer.from(await file.arrayBuffer())
-      // Deuxième mesure de la taille, sur les octets réellement lus : `file.size`
-      // vient du client et ne prouve rien.
+      // Second size check, on the bytes actually read: `file.size` comes from the
+      // client and proves nothing.
       if (bytes.length > FAVICON_MAX_BYTES) {
         return NextResponse.json({ error: BRANDING_ERRORS.tooLarge }, { status: BAD_REQUEST })
       }
@@ -90,9 +90,9 @@ export async function PUT(req: Request) {
 }
 
 /**
- * Remise à zéro, champ par champ : `?target=name` rend le nom d'origine,
- * `?target=favicon` rend les fichiers de `public/`. Sans cible reconnue, rien
- * n'est effacé — une remise à zéro totale par accident serait irréversible.
+ * Reset, field by field: `?target=name` restores the original name,
+ * `?target=favicon` restores the files from `public/`. Without a recognized target,
+ * nothing is cleared — an accidental full reset would be irreversible.
  */
 export async function DELETE(req: Request) {
   const refused = await guard()

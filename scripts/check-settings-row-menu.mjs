@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Measures lot C3: Settings → Accounts no longer puts a bin on every row. Deletion moved
+ * Measures that Settings → Accounts no longer puts a bin on every row. Deletion moved
  * into a discreet "..." menu, the confirmation NAMES the mailbox, cancelling sends nothing,
  * and clicking the row opens the edit form.
  *

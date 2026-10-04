@@ -8,8 +8,8 @@ interface ShortcutHandlers {
   onReply: (msg: Message) => void
   onReplyAll: (msg: Message) => void
   onForward: (msg: Message) => void
-  // Le message ENTIER, pas (uid, compte) : l'appelant a besoin de SON dossier
-  // pour viser le bon message quand la liste en mêle plusieurs (recherche).
+  // The WHOLE message, not (uid, account): the caller needs ITS folder to target
+  // the right message when the list mixes several of them (search results).
   onDelete: (message: Message) => void
   onMarkUnread: (message: Message) => void
   onFocusSearch: () => void

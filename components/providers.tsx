@@ -9,9 +9,9 @@ import { DEFAULT_THEME, type Theme } from '@/lib/theme'
 import { DEFAULT_APP_NAME } from '@/lib/branding'
 
 /**
- * Le nom de l'instance, résolu une fois côté serveur dans `app/layout.tsx` et
- * distribué ici : tout texte VISIBLE qui nomme le produit lit `useAppName()`,
- * pour qu'un seul réglage suffise à tous les renommer.
+ * The instance name, resolved once on the server in `app/layout.tsx` and distributed
+ * here: every VISIBLE piece of text that names the product reads `useAppName()`, so a
+ * single setting is enough to rename them all.
  */
 const AppNameContext = createContext(DEFAULT_APP_NAME)
 export const useAppName = () => useContext(AppNameContext)

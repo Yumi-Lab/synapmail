@@ -25,6 +25,7 @@ export const API_SCOPES = {
   'messages:read': 'Lire, chercher et suivre les messages',
   'messages:write': 'Marquer, déplacer et supprimer des messages',
   'messages:send': 'Envoyer des messages',
+  'messages:draft': 'Écrire des brouillons',
   'folders:read': 'Lire les dossiers',
   'folders:write': 'Créer, renommer et supprimer des dossiers',
   'contacts:read': 'Lire les contacts',
@@ -45,6 +46,8 @@ export const API_SCOPES = {
   'tags:write': 'Écrire des étiquettes et piloter le tri automatique',
   'documents:read': 'Lire les documents GED : texte OCR, dossiers virtuels, motifs',
   'documents:write': 'Ranger les documents GED, gérer leurs dossiers et leurs motifs',
+  'webhooks:read': 'Lire les webhooks et leur journal d\'envois',
+  'webhooks:write': 'Créer, modifier et supprimer des webhooks, et déclencher un envoi',
 } as const
 
 export type ApiScope = keyof typeof API_SCOPES
@@ -62,6 +65,7 @@ export const ACCOUNT_WRITE_SCOPES: ApiScope[] = ['accounts:create', 'accounts:up
  */
 export const OPT_IN_SCOPES: ApiScope[] = [
   ...ACCOUNT_WRITE_SCOPES,
+  'messages:draft',
   'contacts:write',
   'signatures:read',
   'signatures:write',
@@ -75,6 +79,8 @@ export const OPT_IN_SCOPES: ApiScope[] = [
   'tags:write',
   'documents:read',
   'documents:write',
+  'webhooks:read',
+  'webhooks:write',
 ]
 
 /**
@@ -98,6 +104,8 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'DELETE /api/accounts/[id]': 'accounts:delete',
   'GET /api/messages': 'messages:read',
   'GET /api/messages/[id]': 'messages:read',
+  // Lire un message inclut ses pièces jointes : même portée, pas une portée de plus.
+  'GET /api/messages/[id]/attachment/[partId]': 'messages:read',
   'GET /api/messages/search': 'messages:read',
   'GET /api/messages/thread': 'messages:read',
   'PATCH /api/messages/[id]': 'messages:write',
@@ -105,6 +113,11 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'PATCH /api/messages/bulk': 'messages:write',
   'DELETE /api/messages/bulk': 'messages:write',
   'POST /api/messages/send': 'messages:send',
+  // Écrire un brouillon n'est PAS envoyer : une clé qui prépare du courrier pour
+  // relecture ne doit pas pouvoir le mettre sur le fil.
+  'POST /api/messages/draft': 'messages:draft',
+  'PUT /api/messages/draft/[uid]': 'messages:draft',
+  'DELETE /api/messages/draft/[uid]': 'messages:draft',
   'GET /api/folders': 'folders:read',
   'POST /api/folders': 'folders:write',
   'PATCH /api/folders': 'folders:write',
@@ -147,6 +160,15 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'GET /api/tags/export': 'tags:read',
   'GET /api/tagging/status': 'tags:read',
   'POST /api/tagging/run': 'tags:write',
+  'GET /api/webhooks': 'webhooks:read',
+  'POST /api/webhooks': 'webhooks:write',
+  'GET /api/webhooks/[id]': 'webhooks:read',
+  'PATCH /api/webhooks/[id]': 'webhooks:write',
+  'DELETE /api/webhooks/[id]': 'webhooks:write',
+  'POST /api/webhooks/[id]/secret': 'webhooks:write',
+  'POST /api/webhooks/[id]/test': 'webhooks:write',
+  'GET /api/webhooks/[id]/deliveries': 'webhooks:read',
+  'POST /api/webhooks/deliveries/[id]/retry': 'webhooks:write',
   // Les questions de tri de l'utilisateur (lot T-Q) : un jeu par utilisateur, aucune boîte
   // nommée, sauf le test qui interroge le moteur d'UNE boîte sur UN de ses mails.
   'GET /api/tags/questions': 'tags:read',
@@ -206,6 +228,11 @@ export const ROUTE_ACCOUNT_PERMISSION: Record<string, AccountPermission> = {
   'PATCH /api/messages/bulk': 'organize',
   'DELETE /api/messages/bulk': 'delete',
   'POST /api/messages/send': 'send',
+  // Un brouillon prépare un envoi DEPUIS cette boîte : même permission de partage
+  // que l'envoi, même si la portée de clé, elle, reste distincte.
+  'POST /api/messages/draft': 'send',
+  'PUT /api/messages/draft/[uid]': 'send',
+  'DELETE /api/messages/draft/[uid]': 'send',
   'POST /api/folders': 'organize',
   'PATCH /api/folders': 'organize',
   'DELETE /api/folders': 'delete',
@@ -223,6 +250,15 @@ export const ROUTE_ACCOUNT_PERMISSION: Record<string, AccountPermission> = {
   'PUT /api/messages/[id]/tags': 'organize',
   'PUT /api/messages/[id]/fields': 'organize',
   'POST /api/tagging/run': 'organize',
+  // Un webhook EST une règle vue de l'autre bout (décision 1) : le geste qu'un partage doit
+  // autoriser pour l'écrire est donc le MÊME que pour une règle. Renvoyer un mail à un webhook
+  // (`/test`, `/retry`) est une écriture aussi : cela fait sortir du contenu de la boîte.
+  'POST /api/webhooks': 'manageRules',
+  'PATCH /api/webhooks/[id]': 'manageRules',
+  'DELETE /api/webhooks/[id]': 'manageRules',
+  'POST /api/webhooks/[id]/secret': 'manageRules',
+  'POST /api/webhooks/[id]/test': 'manageRules',
+  'POST /api/webhooks/deliveries/[id]/retry': 'manageRules',
   'POST /api/tags/questions/[id]/test': 'organize',
   // Ranger un document ou tailler ses dossiers virtuels, c'est RANGER (rien ne touche l'IMAP).
   'POST /api/documents/[id]/filing': 'organize',

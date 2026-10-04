@@ -4,13 +4,13 @@ import { query } from '@/lib/db'
 import { getAccessibleAccount, listAccessibleAccounts } from '@/lib/accountAccess'
 import type { DbEmailAccount } from '@/lib/accounts'
 import type { Message } from '@/types/email'
-import { listFolderPasses, listFolders, listFoldersRanked, searchMessagesByFolder, searchMessagesIn } from '@/lib/imap'
+import { listFolderPasses, listFoldersRanked, searchMessagesByFolder, searchMessagesIn } from '@/lib/imap'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
 import {
   ACCOUNT_CONCURRENCY, ACCOUNTS_SWEEP_BUDGET_MS, EMPTY_SEARCH_STREAM, MIN_QUERY_LENGTH,
   SCOPE_ACCOUNTS, SCOPE_ALL, SCOPE_PARAM, SEARCH_FIELDS, SEARCH_PARAM, SEARCH_RESULT_LIMIT,
-  STREAM_PARAM, accumulateSearchStream, mergeGenerators, orderAccountsForSearch, parseQuery,
-  readScope, sweepCompleteness,
+  STREAM_CONTENT_TYPE, STREAM_PARAM, accumulateSearchStream, mergeGenerators, orderAccountsForSearch,
+  parseQuery, readScope, sweepCompleteness,
 } from '@/lib/search'
 import type { SearchStreamState, SweepProgress } from '@/lib/search'
 import { withApiLog } from '@/lib/apiLog'
@@ -56,7 +56,11 @@ type SweepState = {
   folders: number
   sweptIds: Set<string>
   unreachable: string[]
-  /** Vrai dès qu'UNE boîte balayée demande la garde d'invite (`bool_or`). */
+  /**
+   * True as soon as ONE swept account asks for the prompt guard (`bool_or`) — for
+   * the single-shot response, which blends every account. The stream never reads
+   * this aggregate: each chunk carries its OWN account's guard (`guarded`).
+   */
   guarded: boolean
 }
 
@@ -80,6 +84,8 @@ type SweepChunk = {
   searched: number
   folders: number
   accounts: number
+  /** The prompt guard of THIS chunk's account — not of the accounts swept so far. */
+  guarded: boolean
 }
 
 /**
@@ -125,6 +131,7 @@ async function* sweepAccounts(
         folder: chunk.folder,
         accountId: row.id,
         accountEmail: row.email,
+        guarded: row.prompt_guard,
         searched: state.searched,
         folders: state.folders,
         // Le nombre de boîtes est connu dès le départ (celles qui sont accessibles) :
@@ -229,22 +236,23 @@ async function getHandler(req: Request) {
       const state = newSweepState()
       const sweep = new AbortController()
       req.signal.addEventListener('abort', () => sweep.abort(), { once: true })
-      // La garde d'invite est celle des boîtes BALAYÉES, jamais celle de la boîte
-      // courante : le balayage en traverse plusieurs, aux réglages différents, et
-      // `state.guarded` est vrai dès que l'UNE d'elles la demande (`bool_or`, comme
-      // `promptGuardApplies` sans boîte nommée). Lu à chaque appel, donc après que le
-      // morceau l'a mis à jour.
-      const guard = () => ({ enabled: machine && state.guarded })
-
+      // The prompt guard is that of the SWEPT accounts, never of the current one:
+      // the sweep crosses several accounts with different settings.
+      // In the stream, each chunk comes from ONE account and carries ITS guard
+      // (`chunk.guarded`) — not the aggregate, which would stick at the first `true`
+      // and then flag accounts that do not ask for it (upstream review defect #10).
+      // The single-shot response blends every account: it carries the guard as soon
+      // as ONE of them asks for it (`state.guarded`, `bool_or` like
+      // `promptGuardApplies` with no named account), read AFTER the sweep.
       if (searchParams.get(STREAM_PARAM)) {
         const encoder = new TextEncoder()
         const stream = new ReadableStream<Uint8Array>({
           async start(controller) {
             const send = (payload: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`))
             try {
-              for await (const chunk of sweepAccounts(accounts, terms, sweep.signal, state)) {
+              for await (const { guarded, ...chunk } of sweepAccounts(accounts, terms, sweep.signal, state)) {
                 if (sweep.signal.aborted) break
-                send(guardApiPayload(chunk, guard()))
+                send(guardApiPayload(chunk, { enabled: machine && guarded }))
               }
               // Les boîtes injoignables sont signalées en FIN de flux : le client les
               // affiche quand il sait qu'il n'en viendra plus.
@@ -259,7 +267,7 @@ async function getHandler(req: Request) {
         })
         return new Response(stream, {
           headers: {
-            'Content-Type': 'application/x-ndjson; charset=utf-8',
+            'Content-Type': STREAM_CONTENT_TYPE,
             'Cache-Control': 'no-store, no-transform',
           },
         })
@@ -297,7 +305,7 @@ async function getHandler(req: Request) {
         unreachable: state.unreachable,
         complete: coverage.complete,
         ...(coverage.complete ? {} : { stoppedBecause: coverage.reasons }),
-      }, guard()))
+      }, { enabled: machine && state.guarded }))
     }
 
 
@@ -347,24 +355,24 @@ async function getHandler(req: Request) {
       })
       return new Response(stream, {
         headers: {
-          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Content-Type': STREAM_CONTENT_TYPE,
           'Cache-Control': 'no-store, no-transform',
         },
       })
     }
 
     // Réponse d'un seul tenant : la portée « ce dossier » (un seul dossier, donc
-    // rien à étaler) et tout appel machine, dont le contrat ne change pas.
-    const folders = scope === SCOPE_ALL
-      ? (await listFolders(config)).map(f => f.path)
-      : [folder]
+    // rien à étaler) et tout appel qui n'a pas demandé le flux — le flux est un
+    // opt-in de l'appelant, clé Bearer comprise, jamais un choix fait pour lui.
+    // Same ranked list as the streamed branch: it already drops `\\Noselect` and
+    // measured-empty folders, which `listFolders()` would have opened for nothing.
+    const folders = scope === SCOPE_ALL ? await listFoldersRanked(config) : [folder]
     const { messages, total } = await searchMessagesIn(config, folders, terms)
-    messages.sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
 
     // `total` = correspondances RÉELLES (compte des identifiants), `messages` = ce
     // qui a été rendu. L'interface dit « les 200 premiers sur 1 340 » à partir des deux.
     return NextResponse.json(guardApiPayload({
-      messages: messages.slice(0, SEARCH_RESULT_LIMIT).map(m => ({ ...m, accountId: account.id })),
+      messages: streamedMessages(messages, account.id),
       total,
       fields: SEARCH_FIELDS,
     }, { enabled: isMachineRequest(req) && account.prompt_guard }))

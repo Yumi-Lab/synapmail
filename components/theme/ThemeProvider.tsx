@@ -2,7 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
-import useSWR, { mutate as globalMutate } from 'swr'
+import useSWR from 'swr'
+import { SETTINGS_KEY, saveSettings } from '@/lib/settings'
 import { isPublicPath } from '@/lib/publicPaths'
 import {
   DARK_MEDIA_QUERY,
@@ -16,9 +17,9 @@ import {
 } from '@/lib/theme'
 
 interface ThemeContextValue {
-  /** Préférence de l'utilisateur : light | dark | system. */
+  /** The user's preference: light | dark | system. */
   theme: Theme
-  /** Ce qui est réellement affiché (`system` déjà résolu). */
+  /** What is actually displayed (`system` already resolved). */
   resolvedTheme: ResolvedTheme
   setTheme: (theme: Theme) => void
 }
@@ -35,20 +36,23 @@ export function ThemeProvider({
   initialTheme = DEFAULT_THEME,
   children,
 }: {
-  /** Valeur du cookie lue au SSR : évite tout flash au premier rendu. */
+  /** Cookie value read during SSR: avoids any flash on the first render. */
   initialTheme?: Theme
   children: React.ReactNode
 }) {
   const [theme, setThemeState] = useState<Theme>(initialTheme)
-  const [systemDark, setSystemDark] = useState(false)
+  // Read the OS preference on the very first client render: starting from `false`
+  // resolved `system` to light for one render, which removed the `dark` class the
+  // blocking script had just applied — a dark→light→dark flash on every load.
+  const [systemDark, setSystemDark] = useState(prefersDark)
 
-  // `user_settings.theme` fait autorité (multi-appareil) ; le cookie n'est qu'un
-  // miroir local pour le SSR. On ne l'applique qu'une fois, sinon une préférence
-  // changée dans l'onglet serait écrasée à chaque revalidation SWR. Sur une page
-  // publique (connexion, inscription…) il n'y a pas de session : on ne demande rien,
-  // le cookie suffit — sinon chaque chargement de /login logue un 401 en console.
+  // `user_settings.theme` is authoritative (cross-device); the cookie is only a local
+  // mirror for SSR. It is applied just once, otherwise a preference changed in the tab
+  // would be overwritten on every SWR revalidation. On a public page (sign-in, sign-up)
+  // there is no session: nothing is requested and the cookie is enough — otherwise every
+  // /login load would log a 401 in the console.
   const pathname = usePathname()
-  const { data: settings } = useSWR<{ data?: { theme?: string } }>(isPublicPath(pathname) ? null : '/api/settings', fetcher)
+  const { data: settings } = useSWR<{ data?: { theme?: string } }>(isPublicPath(pathname) ? null : SETTINGS_KEY, fetcher)
   const hydratedFromServer = useRef(false)
 
   useEffect(() => {
@@ -60,10 +64,9 @@ export function ThemeProvider({
     document.cookie = themeCookieValue(next)
   }, [settings])
 
-  // `system` suit les changements de l'OS en direct, sans rechargement.
+  // `system` follows OS changes live, with no reload.
   useEffect(() => {
     const media = window.matchMedia(DARK_MEDIA_QUERY)
-    setSystemDark(media.matches)
     const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches)
     media.addEventListener('change', onChange)
     return () => media.removeEventListener('change', onChange)
@@ -79,20 +82,7 @@ export function ThemeProvider({
     setThemeState(next)
     setSystemDark(prefersDark())
     document.cookie = themeCookieValue(next)
-    // Optimiste sur la clé SWR partagée, puis revalidation quand le PATCH a atterri.
-    globalMutate(
-      '/api/settings',
-      (curr: { data?: Record<string, unknown> } | undefined) =>
-        curr?.data ? { ...curr, data: { ...curr.data, theme: next } } : curr,
-      false
-    )
-    fetch('/api/settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ theme: next }),
-    })
-      .catch(() => undefined)
-      .then(() => globalMutate('/api/settings'))
+    void saveSettings({ theme: next })
   }, [])
 
   const value = useMemo(

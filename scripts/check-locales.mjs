@@ -51,7 +51,7 @@ function properNouns(reference, codes) {
 }
 
 /**
- * House rule (Nicolas, H3e gate): no em dash in any displayed string, in any
+ * House rule: no em dash in any displayed string, in any
  * locale. Use a comma or two sentences instead. Checked here so the rule holds
  * on its own instead of depending on a reviewer spotting it.
  */

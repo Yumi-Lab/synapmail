@@ -402,13 +402,13 @@ async function tagBatch(
   // (décision 24.3) ; chaque réponse est écrite dès qu'elle arrive, et rendue pour que la passe
   // suivante lise les étiquettes déjà obtenues. `null` = une requête a échoué (le mail compte
   // en erreur) ; `stop` est posé par un refus qui arrête la boîte.
-  const runPassOn = async (mail: SourceMail, ask: readonly TagQuestion[], position: Parameters<typeof writeTags>[0]['position']): Promise<EngineResult['tags'] | null> => {
+  const runPassOn = async (mail: SourceMail, state: EngineState, ask: readonly TagQuestion[], position: Parameters<typeof writeTags>[0]['position']): Promise<EngineResult['tags'] | null> => {
     const held: EngineResult['tags'] = []
     for (const chunk of chunkByBudget(ask)) {
       let result: EngineResult
       calls += 1
       try {
-        result = await engine.ask(buildState(mail), chunk)
+        result = await engine.ask(state, chunk)
       } catch (err) {
         if (err instanceof EngineError && (err.kind === 'credit' || err.kind === 'auth')) stop = err
         return null
@@ -417,7 +417,7 @@ async function tagBatch(
       if (!result.tags.length) return null
       await writeTags({
         accountId, messageId: messageIdOf(mail), source: engine.source, auteur: engine.auteur, modele: result.model,
-        tags: result.tags, questions, position,
+        tags: result.tags, questions, position, state,
       })
       held.push(...result.tags)
     }
@@ -434,10 +434,13 @@ async function tagBatch(
       // foi » a tranchées ne sont plus posées — un mail entièrement tranché ne coûte rien.
       const decided = applyTagRules(rules, mail, questions)
       const position = { folder: mail.folder, uid: mail.uid, fromName: mail.fromName, fromAddress: mail.fromAddress, subject: mail.subject, date: mail.date }
+      // UN état par mail (décision 14) : le même instantané pour toutes les passes et toutes les
+      // sources (règles, détecteurs, moteur) — c'est ce que l'export rend avec chaque ligne.
+      const state = buildState(mail)
       for (const rule of Array.from(new Set(decided.tags.map(t => t.rule)))) {
         await writeTags({
           accountId, messageId: messageIdOf(mail), source: RULE_SOURCE, auteur: { id: rule.id, nom: rule.name },
-          tags: decided.tags.filter(t => t.rule === rule).map(({ question, valeur }) => ({ question, valeur })), questions, position,
+          tags: decided.tags.filter(t => t.rule === rule).map(({ question, valeur }) => ({ question, valeur })), questions, position, state,
         })
       }
       // Les DÉTECTEURS (lot T11b, étage A) : par programme, sur le corps ENTIER (pas l'état
@@ -445,7 +448,7 @@ async function tagBatch(
       // jamais une valeur lue dans le mail. Coût nul, donc toujours, avant tout moteur.
       const detected = detect({ subject: mail.subject, text: mail.ocrText ?? messageText({ bodyPlain: mail.bodyPlain, bodyHtml: mail.bodyHtml }), fromAddress: mail.fromAddress, recipients: mail.recipients })
       for (const d of detected) {
-        await writeTags({ accountId, messageId: messageIdOf(mail), source: RULE_SOURCE, auteur: detectorAuthor(d.question), tags: [tagOf(d)], questions, position })
+        await writeTags({ accountId, messageId: messageIdOf(mail), source: RULE_SOURCE, auteur: detectorAuthor(d.question), tags: [tagOf(d)], questions, position, state })
       }
       // Passe 1 : le tronc. Passe 2 : les groupes dont le déclencheur est vrai au vu des
       // étiquettes déjà obtenues (règles + passe 1) — une requête de plus, pour ces mails
@@ -453,13 +456,13 @@ async function tagBatch(
       const held: { question: string; valeur: string }[] = [...decided.tags, ...detected.map(tagOf)].map(({ question, valeur }) => ({ question, valeur }))
       const trunk = remainingQuestions(plan.trunk, decided.settled)
       if (trunk.length) {
-        const got = await runPassOn(mail, trunk, position)
+        const got = await runPassOn(mail, state, trunk, position)
         if (!got) { if (stop) return; errors += 1; continue }
         held.push(...got)
       }
       const second = remainingQuestions(triggeredQuestions(plan, mail, held), decided.settled)
       if (second.length) {
-        const got = await runPassOn(mail, second, position)
+        const got = await runPassOn(mail, state, second, position)
         if (!got) { if (stop) return; errors += 1; continue }
         held.push(...got)
       }
@@ -469,7 +472,6 @@ async function tagBatch(
       // option hors liste est déjà rejetée par `parseAnswer`.
       // Un document GED (décision 6) : l'extraction lit le texte OCR COMPLET, pas l'état tronqué —
       // le montant d'une facture de 8 pages est sur la dernière.
-      const state = buildState(mail)
       const extraction = extractionFor(mail.ocrText ?? `${state.objet}\n${state.corps}`, held, mail.date)
       let fields = extraction.direct
       let modele: string | null = null

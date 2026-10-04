@@ -8,6 +8,8 @@ export type FocusReason =
   | 'frequent'
   | 'starred'
   | 'attachment'
+  | 'echeance'
+  | 'spam'
   | 'tag'
 
 /** Une composante du score, lisible dans l'infobulle : un signal de surface ou une étiquette pesée. */

@@ -55,6 +55,11 @@ const ACCOUNT_PATH_EXCEPTIONS = ['test']
 const ACCOUNT_BY_OBJECT: { prefix: string; sql: string }[] = [
   { prefix: '/api/rules/', sql: 'SELECT account_id AS id FROM email_rules WHERE id = $1' },
   { prefix: '/api/signatures/', sql: 'SELECT account_id AS id FROM signatures WHERE id = $1' },
+  // Un webhook nomme sa boîte : l'appeler, le modifier ou lire son journal, c'est agir sur
+  // cette boîte. `/api/webhooks/deliveries/<id>/retry` désigne la sienne à travers la LIGNE
+  // du journal — c'est le même geste, et il doit franchir la même barrière.
+  { prefix: '/api/webhooks/deliveries/', sql: 'SELECT account_id AS id FROM webhook_deliveries WHERE id = $1' },
+  { prefix: '/api/webhooks/', sql: 'SELECT account_id AS id FROM webhooks WHERE id = $1' },
   // Les objets GED (lane courrier) : les collections (`/folders`, `/patterns`, `/own`) ne sont
   // pas des UUID et passent au suivant ; le préfixe nu vient en dernier pour la même raison.
   { prefix: '/api/documents/folders/', sql: ACCOUNT_OF_FOLDER },
@@ -63,7 +68,15 @@ const ACCOUNT_BY_OBJECT: { prefix: string; sql: string }[] = [
 ]
 
 
-/** La boîte visée à travers l'objet nommé dans le chemin, ou `null`. */
+/**
+ * La boîte visée à travers l'objet nommé dans le chemin, ou `null`.
+ *
+ * L'objet est le PREMIER segment qui suit le préfixe, jamais tout le reste du chemin : sans
+ * cela `/api/webhooks/<id>/secret` ne désignerait aucune boîte et la barrière serait
+ * contournée par un sous-chemin. Le préfixe le plus long d'abord (`/api/webhooks/deliveries/`
+ * avant `/api/webhooks/`), sinon le plus court l'attraperait et chercherait un webhook là où
+ * vit une livraison.
+ */
 async function accountIdFromObject(path: string): Promise<string | null> {
   for (const { prefix, sql } of ACCOUNT_BY_OBJECT) {
     if (!path.startsWith(prefix)) continue

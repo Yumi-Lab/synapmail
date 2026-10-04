@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Measures the CLEARED mail rows of lot M3b, with REAL clicks and a REAL hover:
+ * Measures the CLEARED mail rows, with REAL clicks and a REAL hover:
  *  - a row carries NO action button, at rest AND under a real hover (the
  *    selection checkbox of the avatar bubble is not an action: it is excluded);
  *  - every row shows a date WITH a time;
@@ -108,7 +108,7 @@ try {
     await settle()
   }
   // Buttons of a row, EXCLUDING the avatar bubble: its checkbox is selection,
-  // not an action, and Nicolas' request keeps it ("plus aucune icône d'action").
+  // not an action, and the requirement keeps it (no action icon left on the row).
   const rowButtons = (el) => [...el.querySelectorAll('button, [role="button"]')]
     .filter(b => !b.closest('[class*="group/avatar"]'))
     .map(b => b.getAttribute('title') || b.getAttribute('data-menu-item') || b.textContent.trim().slice(0, 20) || '(unnamed)')

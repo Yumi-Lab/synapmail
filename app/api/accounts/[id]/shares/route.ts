@@ -125,6 +125,13 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       [normalizedEmail]
     )
 
+    // Same rule as the login check in lib/auth.ts: two accounts that differ only by case
+    // (rows created before addresses were normalised) make the invitee ambiguous.
+    // Granting mailbox access to a guessed one would be a security defect — refuse.
+    if (existingUsers.length > 1) {
+      return NextResponse.json({ error: 'Ambiguous invitee: several accounts share this address' }, { status: 409 })
+    }
+
     let emailSent = false
     let share: ShareRow
 

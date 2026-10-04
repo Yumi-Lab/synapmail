@@ -28,10 +28,10 @@ export function SettingsPage({
 }) {
   return (
     <div
-      // Délimite le panneau des réglages, et LUI SEUL : la barre latérale garde sa
-      // corbeille (le DOSSIER Corbeille), qui n'a rien à voir avec une suppression de
-      // ligne. Sans cette borne, un banc qui cherche « une corbeille à l'écran » compte
-      // celle de la barre et accuse l'écran de réglages à tort.
+      // Scopes the settings panel, and IT ALONE: the sidebar keeps its own trash icon
+      // (the Trash FOLDER), which has nothing to do with deleting a row. Without this
+      // boundary, a test looking for "a trash icon on screen" counts the sidebar's one
+      // and blames the settings screen by mistake.
       data-settings-page
       className={cn(
         'mx-auto p-6 sm:p-8 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300',

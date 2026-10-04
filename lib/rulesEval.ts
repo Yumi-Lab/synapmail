@@ -5,11 +5,23 @@
  */
 import type { Message } from '@/types/email'
 import type { EmailRule, RuleCondition } from '@/types/rule'
+import { REGEX_BODY_MAX, REGEX_PATTERN_MAX, REGEX_TEXT_MAX } from '@/types/rule'
 
 /** Une étiquette telle qu'une condition `tag` la lit : la question et sa valeur, rien d'autre. */
 export interface RuleTag { question: string; valeur: string }
 
-const NO_TAGS: readonly RuleTag[] = []
+export const NO_TAGS: readonly RuleTag[] = []
+
+export const REGEX_OPERATORS = new Set(['matches', 'not_matches'])
+
+/**
+ * Le motif, compilé. Insensible à la casse par le DRAPEAU `i`, jamais par un `toLowerCase()`
+ * du motif : minuscule, `\W` deviendrait `\w` et la condition changerait de sens.
+ */
+export function compileRulePattern(pattern: string): RegExp | null {
+  if (typeof pattern !== 'string' || !pattern.length || pattern.length > REGEX_PATTERN_MAX) return null
+  try { return new RegExp(pattern, 'i') } catch { return null }
+}
 
 /** La longueur maximale d'un motif `matches` : au-delà, la condition est fausse, jamais une erreur. */
 export const MATCH_PATTERN_MAX = 200
@@ -95,6 +107,16 @@ export function evalCondition(msg: Message, cond: RuleCondition, tags: readonly 
     return false
   }
 
+  // Motif : le texte BRUT (borné), confronté au motif BRUT. Une branche à part, avant le
+  // `toLowerCase()` ci-dessous, qui abîmerait le motif autant que le texte.
+  if (REGEX_OPERATORS.has(cond.operator)) {
+    const re = compileRulePattern(cond.value)
+    if (!re) return false
+    const max = cond.field === 'body' ? REGEX_BODY_MAX : REGEX_TEXT_MAX
+    const hit = re.test(rawFieldText(msg, cond.field).slice(0, max))
+    return cond.operator === 'matches' ? hit : !hit
+  }
+
   // Text fields
   let fieldVal = ''
   switch (cond.field) {
@@ -119,12 +141,24 @@ export function evalCondition(msg: Message, cond: RuleCondition, tags: readonly 
   }
 }
 
+/** Le texte d'un champ tel qu'il est, sans mise en minuscule : ce que lit un motif. */
+function rawFieldText(msg: Message, field: RuleCondition['field']): string {
+  switch (field) {
+    case 'from':    return `${msg.from?.name ?? ''} ${msg.from?.address ?? ''}`.trim()
+    case 'to':      return (msg.to ?? []).map(a => `${a.name ?? ''} ${a.address ?? ''}`.trim()).join(' ')
+    case 'cc':      return (msg.cc ?? []).map(a => `${a.name ?? ''} ${a.address ?? ''}`.trim()).join(' ')
+    case 'subject': return msg.subject ?? ''
+    case 'body':    return msg.bodyPlain ?? msg.bodyHtml ?? msg.preview ?? ''
+    default:        return ''
+  }
+}
+
 export function evaluateRule(msg: Message, rule: Pick<EmailRule, 'enabled' | 'conditions' | 'conditionLogic'>, tags: readonly RuleTag[] = NO_TAGS): boolean {
   if (!rule.enabled || !rule.conditions.length) return false
   if (rule.conditionLogic === 'all') return rule.conditions.every(c => evalCondition(msg, c, tags))
   return rule.conditions.some(c => evalCondition(msg, c, tags))
 }
 
-export function testRule(messages: Message[], rule: EmailRule): Message[] {
-  return messages.filter(msg => evaluateRule(msg, rule))
+export function testRule(messages: Message[], rule: EmailRule, tagsByUid?: Map<string, RuleTag[]>): Message[] {
+  return messages.filter(msg => evaluateRule(msg, rule, tagsByUid?.get(msg.uid) ?? NO_TAGS))
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import { useTranslations } from 'next-intl'
-import { Star, Flag, MoreHorizontal, Paperclip, Download, X, FileText, Image as ImageIcon, MailX, CheckCircle2, AlertCircle, ShieldCheck, ShieldAlert, ShieldX, Filter, AlarmClock, CornerUpLeft, Users, ChevronRight, Tag } from 'lucide-react'
+import { Star, Flag, MoreHorizontal, Paperclip, Download, X, FileText, Image as ImageIcon, MailX, CheckCircle2, AlertCircle, ShieldCheck, ShieldAlert, ShieldX, Filter, AlarmClock, CornerUpLeft, Users, ChevronRight, Tag, CalendarClock } from 'lucide-react'
 import { AIToolbar } from '@/components/ai/AIToolbar'
 import useSWR from 'swr'
 import type { Message } from '@/types/email'
@@ -770,6 +770,8 @@ const REASON_ICON: Record<FocusReason, React.ReactNode> = {
   frequent: <Users className="w-3 h-3" />,
   starred: <Star className="w-3 h-3" />,
   attachment: <Paperclip className="w-3 h-3" />,
+  echeance: <CalendarClock className="w-3 h-3" />,
+  spam: <ShieldAlert className="w-3 h-3" />,
   tag: <Tag className="w-3 h-3" />,
 }
 const REASON_CLASS: Record<FocusReason, string> = {
@@ -780,6 +782,8 @@ const REASON_CLASS: Record<FocusReason, string> = {
   frequent: 'text-blue-600 dark:text-blue-400 border-blue-500/30 bg-blue-500/10',
   starred: 'text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10',
   attachment: 'text-muted-foreground border-border bg-muted',
+  echeance: 'text-rose-600 dark:text-rose-400 border-rose-500/30 bg-rose-500/10',
+  spam: 'text-muted-foreground border-border bg-muted',
   tag: 'text-violet-600 dark:text-violet-400 border-violet-500/30 bg-violet-500/10',
 }
 

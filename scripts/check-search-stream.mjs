@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Measures lot S2 against the RUNNING app and a REAL mailbox (read only: GET
+ * Measures the streamed search against the RUNNING app and a REAL mailbox (read only: GET
  * requests only, no message created, moved or deleted, no body and no password
  * printed).
  *
@@ -12,7 +12,7 @@
  *  B. BANNER — once the cap bites, the banner says how many are shown out of how
  *     many were found, on one line.
  *  C. FIRST RESULTS — how long until the first row of the progressive path shows
- *     (lot S2 target: under 10 s on a large mailbox).
+ *     (target: under 10 s on a large mailbox).
  *  D. ABORT — leaving the search stops the stream: no unhandled rejection, no
  *     page error.
  *
@@ -33,13 +33,13 @@ const VIEWPORT = { width: 1440, height: 900 }
 // than as a dead harness.
 const API_TIMEOUT_MS = 180000
 const PROTOCOL_TIMEOUT_MS = API_TIMEOUT_MS * 2
-// Lot S2's own target, quoted from PROGRESS.md: first results under 10 s.
+// Target for a streamed search: first results under 10 s.
 const FIRST_RESULTS_TARGET_MS = 10000
 const STREAM_SETTLE_MS = 60000
 const SAMPLE_PAGE = 50
 
 // The contract is IMPORTED, never retyped: a change in lib/search.ts fails this
-// gate instead of silently making it measure something else.
+// check instead of silently making it measure something else.
 registerHooks({
   resolve(spec, ctx, next) {
     if (spec.startsWith('.') && !/\.[a-z]+$/.test(spec)) {
@@ -129,7 +129,7 @@ try {
   // Warm-up: the mailbox page is loaded ONCE without a query first, so arm C times
   // the SEARCH and not the first compile/hydration of the page around it (on a dev
   // server that first navigation alone costs seconds and has nothing to do with
-  // what lot S2 promises).
+  // what the streamed search promises).
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2', timeout: API_TIMEOUT_MS })
   // The STREAMING ROUTE needs the same treatment, and for the same reason: on a
   // dev server its first request pays the route's compilation (measured: 30 s on

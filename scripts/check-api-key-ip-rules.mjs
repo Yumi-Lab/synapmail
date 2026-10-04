@@ -12,14 +12,19 @@
  *   D. le refus est INSCRIT au journal de la clé avec son motif ;
  *   E. une session HUMAINE n'est jamais concernée, depuis n'importe quelle adresse ;
  *   F. le verrou est posé AVANT la portée : une clé qui parle d'un endroit interdit
- *      ne reçoit pas un refus qui lui apprendrait ce qu'il lui manque par ailleurs.
+ *      ne reçoit pas un refus qui lui apprendrait ce qu'il lui manque par ailleurs ;
+ *   G. une entrée ILLISIBLE dans la liste REFUSE l'enregistrement (400 qui la nomme),
+ *      à la création comme à la modification — jamais une liste réduite en silence,
+ *      qui, vidée, lèverait TOUTE la restriction (défaut #3 de la revue amont).
  *
  *   node --experimental-strip-types scripts/check-api-key-ip-rules.mjs
  *   node --experimental-strip-types scripts/check-api-key-ip-rules.mjs --negative
  *
  * CONTRÔLE NÉGATIF (`--negative`) : les requêtes qui devraient être refusées sont
  * envoyées depuis l'adresse AUTORISÉE, c'est-à-dire comme si le verrou n'existait
- * pas et laissait tout passer. Le banc DOIT alors virer au rouge sur B, C et D. Ce
+ * pas et laissait tout passer ; et la saisie illisible de G est jugée par l'ANCIEN
+ * chemin (`sanitizeIpRules`, écart silencieux) au lieu de `validateIpRules`. Le banc
+ * DOIT alors virer au rouge sur B, C, D et G. Ce
  * qu'il démontre : les assertions portent sur le REFUS et pas sur la simple réponse
  * de la route. Ce qu'il ne démontre PAS : le comportement d'un binaire dont on aurait
  * retiré `ipAllowed` — il mesure la réponse, pas la suppression du code.
@@ -29,7 +34,7 @@
 import crypto from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import pg from 'pg'
-import { ipAllowed, sanitizeIpRules } from '../lib/apiKeyIpRules.ts'
+import { ipAllowed, sanitizeIpRules, validateIpRules } from '../lib/apiKeyIpRules.ts'
 
 for (const file of ['../.env', '../.env.local']) {
   const path = new URL(file, import.meta.url)
@@ -92,8 +97,16 @@ check('M3 une plage autorise ce qu\'elle couvre, et rien d\'autre',
   ipAllowed([RANGE], IN_RANGE) && !ipAllowed([RANGE], OTHER_IP))
 check('M4 une adresse ABSENTE face à une liste non vide est refusée',
   !ipAllowed([ALLOWED_IP], null))
-check('M5 une entrée illisible est écartée à la saisie',
+check('M5 la lecture d\'une ligne stockée écarte une entrée illisible sans doublon',
   JSON.stringify(sanitizeIpRules([ALLOWED_IP, 'pas-une-ip', '', '999.1.1.1', `${ALLOWED_IP}`])) === JSON.stringify([ALLOWED_IP]))
+
+// Le contrôle négatif juge la saisie par l'ANCIEN chemin : écart silencieux, liste réduite.
+const validate = NEGATIVE ? values => ({ rules: sanitizeIpRules(values) }) : validateIpRules
+const badInput = validate([ALLOWED_IP, 'pas-une-ip'])
+check('G1 une entrée illisible fait REFUSER la saisie en la nommant, jamais une liste réduite',
+  'invalid' in badInput && badInput.invalid === 'pas-une-ip', JSON.stringify(badInput))
+check('G2 une saisie lisible passe, sans doublon',
+  JSON.stringify(validateIpRules([ALLOWED_IP, ` ${ALLOWED_IP} `, RANGE]).rules) === JSON.stringify([ALLOWED_IP, RANGE]))
 
 const pool = new pg.Pool({ connectionString: DB_URL })
 const created = { keys: [] }
@@ -182,6 +195,27 @@ try {
   check('F1 adresse interdite ET portée manquante : c\'est l\'ADRESSE qui est citée',
     both.status === 403 && both.json?.deniedIp === OTHER_IP && !both.json?.missingScope,
     `HTTP ${both.status} — ${both.text.slice(0, 160)}`)
+
+  // ---- G. une saisie illisible est REFUSÉE par la route, à la création et à la modification ----
+  // En négatif, la saisie est rendue lisible : la route ne peut pas la refuser, et G3/G4
+  // tombent — c'est bien le REFUS de la route qui est mesuré, pas le simple statut.
+  const badList = [ALLOWED_IP, NEGATIVE ? OTHER_IP : 'pas-une-ip']
+  const createBad = await call('/api/api-keys', {
+    method: 'POST', cookie, body: { name: `bench ip illisible ${crypto.randomBytes(3).toString('hex')}`, scopes: ['accounts:read'], accountIds: [], allowedIps: badList },
+  })
+  if (createBad.status === 201) created.keys.push(createBad.json.data.id)
+  check('G3 à la création : 400 qui NOMME l\'entrée illisible, aucune clé créée',
+    createBad.status === 400 && String(createBad.json?.error).includes('pas-une-ip'),
+    `HTTP ${createBad.status} — ${createBad.text.slice(0, 160)}`)
+  const patchBad = await call(`/api/api-keys/${pinned.id}`, {
+    method: 'PATCH', cookie, body: { scopes: ['accounts:read'], allowedIps: badList },
+  })
+  check('G4 à la modification : 400 qui NOMME l\'entrée illisible',
+    patchBad.status === 400 && String(patchBad.json?.error).includes('pas-une-ip'),
+    `HTTP ${patchBad.status} — ${patchBad.text.slice(0, 160)}`)
+  const { rows: kept } = await pool.query('SELECT allowed_ips FROM api_keys WHERE id = $1', [pinned.id])
+  check('G5 la restriction de la clé est INTACTE après le refus (ni vidée, ni réduite)',
+    JSON.stringify(kept[0]?.allowed_ips) === JSON.stringify([ALLOWED_IP]), JSON.stringify(kept[0]?.allowed_ips))
 } finally {
   // La base est rendue comme elle a été trouvée : les clés d'essai sont SUPPRIMÉES.
   for (const id of created.keys) await pool.query('DELETE FROM api_keys WHERE id = $1', [id]).catch(() => {})

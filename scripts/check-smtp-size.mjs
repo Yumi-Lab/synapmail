@@ -172,23 +172,29 @@ function BASE64_STEP() {
 {
   const read = p => readFileSync(join(ROOT, p), 'utf8')
   const route = read('app/api/messages/send/route.ts')
+  // Depuis le lot D2, le plafond se décide dans la PRÉPARATION du message sortant :
+  // l'envoi et le brouillon la partagent, donc c'est là que se lit le câblage. La
+  // route garde ce qui ne concerne qu'un ENVOI — la forme de sa réponse.
+  const prepare = read('lib/outgoing.ts')
   const attachments = read('lib/attachments.ts')
   const probe = read('lib/accountProbe.ts')
-  const source = BREAK === 'wiring' ? route.replace(/resolveSendCeiling/g, 'autreChose') : route
+  const source = BREAK === 'wiring' ? prepare.replace(/resolveSendCeiling/g, 'autreChose') : prepare
 
-  assert.ok(source.includes('resolveSendCeiling'), 'la route doit déduire son plafond du serveur')
+  assert.ok(source.includes('resolveSendCeiling'), 'la préparation doit déduire son plafond du serveur')
   // L'avertissement part avec un envoi RÉUSSI, pas avec un refus.
-  const warned = BREAK === 'warning' ? route.replace(/exceedsRecipientWarning/g, 'autreChose') : route
-  assert.ok(warned.includes('exceedsRecipientWarning'), 'la route doit AVERTIR au-delà du seuil')
+  const warned = BREAK === 'warning' ? prepare.replace(/exceedsRecipientWarning/g, 'autreChose') : prepare
+  assert.ok(warned.includes('exceedsRecipientWarning'), 'la préparation doit AVERTIR au-delà du seuil')
   assert.ok(
-    /success: true, \.\.\.warning/.test(warned),
+    /success: true, \.\.\.warning/.test(route),
     'l’avertissement voyage avec la réussite : il ne bloque pas',
   )
-  assert.ok(warned.includes('SEND_WARNING.recipientMayRefuse'), 'la route lit le code d’avertissement du module')
-  assert.ok(
-    !warned.includes(`'${SEND_WARNING.recipientMayRefuse}'`),
-    'la route ne recopie pas la valeur du code d’avertissement',
-  )
+  assert.ok(warned.includes('SEND_WARNING.recipientMayRefuse'), 'la préparation lit le code d’avertissement du module')
+  for (const [where, src] of [['la préparation', warned], ['la route', route]]) {
+    assert.ok(
+      !src.includes(`'${SEND_WARNING.recipientMayRefuse}'`),
+      `${where} ne recopie pas la valeur du code d’avertissement`,
+    )
+  }
   // Le refus DIT d'où sort son plafond, sinon « 17 Mio » se lit comme une
   // limite du serveur alors que c'est notre repli.
   assert.ok(source.includes('limitSource'), 'un refus de taille doit dire d’où vient son plafond')
@@ -201,7 +207,8 @@ function BASE64_STEP() {
     ['SEND_WARNING_BYTES', SEND_WARNING_BYTES],
     ['MESSAGE_ENVELOPE_RESERVE_BYTES', MESSAGE_ENVELOPE_RESERVE_BYTES],
   ]) {
-    assert.ok(!source.includes(String(value)), `la route ne recopie pas ${name} (${value})`)
+    assert.ok(!source.includes(String(value)), `la préparation ne recopie pas ${name} (${value})`)
+    assert.ok(!route.includes(String(value)), `la route ne recopie pas ${name} (${value})`)
     assert.ok(!attachments.includes(String(value)), `lib/attachments.ts ne recopie pas ${name}`)
   }
   ok('le plafond et le seuil ne sont écrits qu’une fois, dans lib/smtpSize.ts')

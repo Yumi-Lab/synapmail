@@ -17,7 +17,7 @@
  *     plus récente (décision 5) — la règle sert alors d'avis, pas de verdict.
  */
 import { query } from '../db'
-import { evaluateRule } from '../rulesEval'
+import { REGEX_OPERATORS, compileRulePattern, evaluateRule } from '../rulesEval'
 import type { Message } from '@/types/email'
 import type { ConditionLogic, RuleCondition, RuleField, RuleOperator } from '@/types/rule'
 import type { MailForState } from './engine'
@@ -121,7 +121,7 @@ export interface TagRuleInput {
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 const LOGICS: readonly ConditionLogic[] = ['all', 'any']
 export const RULE_FIELDS: readonly RuleField[] = ['from', 'to', 'cc', 'subject', 'body', 'has_attachments', 'list_unsubscribe', 'size', 'date_received', 'priority', 'header', 'texte_ocr']
-export const RULE_OPERATORS: readonly RuleOperator[] = ['contains', 'not_contains', 'equals', 'not_equals', 'starts_with', 'ends_with', 'is_true', 'is_false', 'greater_than', 'less_than', 'before', 'after', 'matches']
+export const RULE_OPERATORS: readonly RuleOperator[] = ['contains', 'not_contains', 'equals', 'not_equals', 'starts_with', 'ends_with', 'is_true', 'is_false', 'greater_than', 'less_than', 'before', 'after', 'matches', 'not_matches']
 
 /**
  * UNE condition, sous le contrat des règles de courrier. Partagée avec les groupes de questions
@@ -135,6 +135,7 @@ export function validateCondition(
   if (!fields.includes(c.field as RuleField)) fail(`${field}.field`, `${field}.field: champ inconnu ${JSON.stringify(c.field)}`)
   if (!RULE_OPERATORS.includes(c.operator as RuleOperator)) fail(`${field}.operator`, `${field}.operator: opérateur inconnu ${JSON.stringify(c.operator)}`)
   if (c.value !== undefined && c.value !== null && typeof c.value !== 'string') fail(`${field}.value`, `${field}.value: chaîne attendue`)
+  if (REGEX_OPERATORS.has(c.operator as string) && !compileRulePattern(c.value as string)) fail(`${field}.value`, `${field}.value: motif invalide ou trop long`)
   const out: RuleCondition = { id: typeof c.id === 'string' && c.id ? c.id : `${field}`, field: c.field as RuleField, operator: c.operator as RuleOperator, value: (c.value as string | undefined) ?? '' }
   if (typeof c.headerName === 'string' && c.headerName) out.headerName = c.headerName
   if (typeof c.tagQuestion === 'string' && c.tagQuestion) out.tagQuestion = c.tagQuestion

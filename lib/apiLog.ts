@@ -23,7 +23,7 @@
 import { query } from './db'
 
 /** Pourquoi une requête a été refusée, dans le vocabulaire de la barrière elle-même. */
-export type DenialReason = 'unauthenticated' | 'scope' | 'account' | 'share' | 'ip'
+export type DenialReason = 'unauthenticated' | 'scope' | 'account' | 'share' | 'ip' | 'password'
 
 /** L'état d'une ligne en cours, le temps que la requête se déroule. */
 type PendingLog = {
@@ -43,18 +43,24 @@ const IP_MAX_LEN = 45
 /**
  * D'OÙ la requête vient, telle que l'application peut la voir — LA source unique.
  *
- * Le journal, la liste des IP d'une clé et la restriction par IP lisent toutes CECI :
- * comparer une restriction à une adresse obtenue autrement laisserait passer ce que le
- * journal montre refusé, et l'inverse.
+ * Le journal, la liste des IP d'une clé, la restriction par IP et le pixel de suivi
+ * lisent toutes CECI : comparer une restriction à une adresse obtenue autrement
+ * laisserait passer ce que le journal montre refusé, et l'inverse.
  *
- * CE QUE CETTE SOURCE VAUT : `x-forwarded-for` est un en-tête, donc FORGEABLE par
+ * `x-forwarded-for` is a comma-separated chain, one hop per proxy, each APPENDING the
+ * address it saw. Only the LAST entry was written by the trusted reverse proxy in front
+ * of this app; everything before it arrived in the caller's own request and can say
+ * anything. Reading the first entry let a caller put an allowed address there and walk
+ * past a key's allowlist — hence the last hop, never the first.
+ *
+ * CE QUE CETTE SOURCE VAUT : même le dernier maillon est un en-tête, donc FORGEABLE par
  * quiconque atteint l'application directement. Elle n'est digne de confiance que si le
- * reverse proxy est le SEUL chemin vers l'application (il réécrit l'en-tête) et que le
+ * reverse proxy est le SEUL chemin vers l'application (il pose l'en-tête) et que le
  * port de l'application n'est pas joignable autrement. Sans cette garantie, la
  * restriction par IP est un garde-fou d'exploitation, pas une barrière de sécurité.
  */
 export function clientIp(req: Request): string | null {
-  const forwarded = req.headers.get('x-forwarded-for')?.split(',')[0].trim()
+  const forwarded = req.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim()
   const ip = forwarded || req.headers.get('x-real-ip')?.trim() || null
   return ip ? ip.slice(0, IP_MAX_LEN) : null
 }

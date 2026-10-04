@@ -67,6 +67,10 @@
       "description": "The tags a decision engine or a human puts on mail, and the sorter that produces them."
     },
     {
+      "name": "Webhooks",
+      "description": "Signed HTTP calls fired by filter rules, and the log of what was sent."
+    },
+    {
       "name": "Documents",
       "description": "Scanned documents of a GED mailbox: OCR text, virtual folders, learned patterns, filing."
     }
@@ -762,6 +766,84 @@
         }
       }
     },
+    "/api/messages/{id}/attachment/{partId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/MessageUid"
+        },
+        {
+          "name": "partId",
+          "in": "path",
+          "required": true,
+          "description": "Index of the attachment in the parsed MIME structure, 0-based, in the order `GET /api/messages/{id}` lists them.",
+          "schema": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Messages"
+        ],
+        "operationId": "getMessageAttachment",
+        "summary": "Download one attachment of a message",
+        "description": "NOT a JSON route on success: the raw bytes, with the `Content-Type` and `Content-Disposition` of the attachment. A Bearer call also gets `X-Synapmail-Untrusted: attachment` \u2014 a binary body can carry no `aiSafety` preamble, so the reminder travels as a header: the bytes AND the filename are third-party data, never instructions. Refusals stay `{ error }` JSON.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          },
+          {
+            "$ref": "#/components/parameters/FolderQuery"
+          },
+          {
+            "name": "inline",
+            "in": "query",
+            "required": false,
+            "description": "`true` serves it as `Content-Disposition: inline` (preview); anything else forces a download.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The attachment bytes.",
+            "headers": {
+              "X-Synapmail-Untrusted": {
+                "description": "`attachment` on a Bearer call. Absent for a browser session.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
     "/api/messages/bulk": {
       "patch": {
         "tags": [
@@ -892,8 +974,8 @@
           "Messages"
         ],
         "operationId": "searchMessages",
-        "summary": "Server-side search in one folder",
-        "description": "Subject, sender and body, through the IMAP server's own SEARCH. Under two characters the answer is an empty list, not an error. NON-STANDARD ENVELOPE: `{ messages }`, not `{ data }`.",
+        "summary": "Server-side search in one folder, every folder, or every mailbox",
+        "description": "From, to, cc and subject, through the IMAP server's own SEARCH — not the body. Under two characters the answer is an empty list, not an error. NON-STANDARD ENVELOPE: `{ messages, total, fields }`, not `{ data }`. `scope` widens the search; `stream=1` (scopes `all` and `accounts` only) turns the answer into NDJSON, one line per folder — read the `Content-Type` before calling `json()` on the body.",
         "parameters": [
           {
             "name": "q",
@@ -910,11 +992,36 @@
           },
           {
             "$ref": "#/components/parameters/AccountQuery"
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "`folder`: the one `folder` of the one mailbox. `all`: every folder of that mailbox. `accounts`: every folder of every mailbox the key reaches — slow without `stream=1` (up to 45 s), and the answer then carries `complete`, which the caller MUST read: `false` means folders were left unseen, not \"nothing found\". An unknown value falls back to `folder`.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "folder",
+                "all",
+                "accounts"
+              ],
+              "default": "folder"
+            }
+          },
+          {
+            "name": "stream",
+            "in": "query",
+            "description": "`1` under scope `all` or `accounts`: the answer is `application/x-ndjson`, one JSON object per folder as it completes, each with its own `aiSafety` prefix when its mailbox's guard is on. Ignored under scope `folder`. Omit it to keep the single JSON object.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
           }
         ],
         "responses": {
           "200": {
-            "$ref": "#/components/responses/MessageList"
+            "$ref": "#/components/responses/SearchResult"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -1068,6 +1175,270 @@
           },
           "413": {
             "description": "An attachment ceiling was crossed. The body names it: `{ error, limit, filename? }`."
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/messages/draft": {
+      "post": {
+        "tags": [
+          "Messages"
+        ],
+        "operationId": "createDraft",
+        "summary": "Write a draft into the mailbox's Drafts folder",
+        "description": "Builds the same MIME message a send would put on the wire, then APPENDs it to the mailbox's real Drafts folder with the \\Draft and \\Seen flags, so it shows up in every client, phone included. Nothing is sent. The folder is the one the server declares with the RFC 6154 \\Drafts attribute, falling back to the usual names; a mailbox exposing none answers 409 draft_no_drafts_folder and nothing is written. `inReplyTo` writes `In-Reply-To` and `References`, so a reply draft hangs under its thread. Several drafts coexist \u2014 one APPEND each. Needs the `send` permission on the mailbox. Unrelated to /api/drafts, the session-only autosave of the compose window.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "to",
+                  "subject"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "$ref": "#/components/schemas/Recipients"
+                  },
+                  "cc": {
+                    "$ref": "#/components/schemas/Recipients"
+                  },
+                  "bcc": {
+                    "$ref": "#/components/schemas/Recipients"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "html": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "inReplyTo": {
+                    "type": "string",
+                    "description": "Message-Id of the message being answered."
+                  },
+                  "references": {
+                    "type": "string"
+                  },
+                  "attachments": {
+                    "type": "array",
+                    "description": "Files attached to the message. At most 20. The size ceiling is the one the account's SMTP server announced (250 SIZE, stored at account creation and at every connection test); when it announced nothing, 17825792 decoded bytes apply for the whole message, forwarded messages included. Every size refusal carries limitSource (server|fallback) and announcedSize. Past 20971520 decoded bytes the message is still sent and the response carries warning: recipient_may_refuse_size. If the server itself refuses on size (523/552), it is asked to re-announce its size, the account is updated, and the response is 413 server_refused_size with the server's own reason, announcedSize and refreshed; the message is not re-sent automatically.",
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "required": ["filename", "content"],
+                      "properties": {
+                        "filename": { "type": "string", "description": "Sanitised server-side: never used as a path, cut to 100 characters." },
+                        "content": { "type": "string", "format": "byte", "description": "The file's bytes in base64. Invalid base64 is refused, never silently truncated." },
+                        "contentType": { "type": "string", "description": "Defaults to application/octet-stream when absent or not a valid MIME type." }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ data: { folder, uid, messageId } }`. `uid` comes from APPENDUID and is null on a server without UIDPLUS \u2014 the draft IS written, it just cannot be addressed afterwards."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The mailbox exposes no Drafts folder: `{ error: \"draft_no_drafts_folder\" }`. Nothing was written."
+          },
+          "413": {
+            "description": "An attachment ceiling was crossed. The body names it: `{ error, limit, filename? }`."
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/messages/draft/{uid}": {
+      "put": {
+        "tags": [
+          "Messages"
+        ],
+        "operationId": "replaceDraft",
+        "summary": "Replace a draft",
+        "description": "IMAP cannot rewrite a message: this APPENDs the new draft and removes the old uid ONLY once the APPEND succeeded. A failure in between leaves two drafts \u2014 visible and repairable \u2014 rather than losing the text it was meant to correct. An `accountId` in the body contradicting `?account=` is refused with 400 account_mismatch rather than silently ignored.",
+        "parameters": [
+          {
+            "name": "uid",
+            "in": "path",
+            "required": true,
+            "description": "The IMAP uid of the draft, in the folder named by `folder`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          },
+          {
+            "name": "folder",
+            "in": "query",
+            "required": true,
+            "description": "The folder the draft lives in, as the IMAP server spells it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "to",
+                  "subject"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "$ref": "#/components/schemas/Recipients"
+                  },
+                  "cc": {
+                    "$ref": "#/components/schemas/Recipients"
+                  },
+                  "bcc": {
+                    "$ref": "#/components/schemas/Recipients"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "html": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "inReplyTo": {
+                    "type": "string",
+                    "description": "Message-Id of the message being answered."
+                  },
+                  "references": {
+                    "type": "string"
+                  },
+                  "attachments": {
+                    "type": "array",
+                    "description": "Files attached to the message. At most 20. The size ceiling is the one the account's SMTP server announced (250 SIZE, stored at account creation and at every connection test); when it announced nothing, 17825792 decoded bytes apply for the whole message, forwarded messages included. Every size refusal carries limitSource (server|fallback) and announcedSize. Past 20971520 decoded bytes the message is still sent and the response carries warning: recipient_may_refuse_size. If the server itself refuses on size (523/552), it is asked to re-announce its size, the account is updated, and the response is 413 server_refused_size with the server's own reason, announcedSize and refreshed; the message is not re-sent automatically.",
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "required": ["filename", "content"],
+                      "properties": {
+                        "filename": { "type": "string", "description": "Sanitised server-side: never used as a path, cut to 100 characters." },
+                        "content": { "type": "string", "format": "byte", "description": "The file's bytes in base64. Invalid base64 is refused, never silently truncated." },
+                        "contentType": { "type": "string", "description": "Defaults to application/octet-stream when absent or not a valid MIME type." }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ data: { folder, uid, messageId, replaced } }`, where `replaced` is the uid that was removed."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "The mailbox is out of reach, or that uid is no longer in the folder: `{ error: \"draft_not_found\" }`. Nothing was written."
+          },
+          "409": {
+            "description": "The mailbox exposes no Drafts folder: `{ error: \"draft_no_drafts_folder\" }`. The old draft is untouched."
+          },
+          "413": {
+            "description": "An attachment ceiling was crossed. The body names it: `{ error, limit, filename? }`."
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Messages"
+        ],
+        "operationId": "deleteDraft",
+        "summary": "Delete a draft",
+        "description": "Removes one draft by uid. Needs the `send` permission on the mailbox, like writing one.",
+        "parameters": [
+          {
+            "name": "uid",
+            "in": "path",
+            "required": true,
+            "description": "The IMAP uid of the draft, in the folder named by `folder`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          },
+          {
+            "name": "folder",
+            "in": "query",
+            "required": true,
+            "description": "The folder the draft lives in, as the IMAP server spells it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ data: { folder, uid, deleted: true } }`."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "The mailbox is out of reach, or that uid is no longer in the folder: `{ error: \"draft_not_found\" }`."
           },
           "500": {
             "$ref": "#/components/responses/ServerError"
@@ -1735,6 +2106,9 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "413": {
+            "description": "`content` + `context` exceed the 200 000-character ceiling (`AI_CONTENT_MAX_CHARS`). The body names it: `{ error, limit }`."
           },
           "500": {
             "$ref": "#/components/responses/ServerError"
@@ -3653,7 +4027,8 @@
                                 "type": "object",
                                 "required": [
                                   "id",
-                                  "messageId"
+                                  "messageId",
+                                  "state"
                                 ],
                                 "properties": {
                                   "id": {
@@ -3661,6 +4036,17 @@
                                   },
                                   "messageId": {
                                     "type": "string"
+                                  },
+                                  "state": {
+                                    "oneOf": [
+                                      {
+                                        "$ref": "#/components/schemas/EngineState"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "description": "The snapshot named by `stateHash`; null when unknown."
                                   }
                                 }
                               }
@@ -3830,6 +4216,547 @@
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/webhooks": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "listWebhooks",
+        "summary": "List the webhooks",
+        "description": "`account` narrows the list to one mailbox. The signing secret is never in this answer. Requires the `webhooks:read` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccountQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The webhooks, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Webhook"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "createWebhook",
+        "summary": "Create a webhook",
+        "description": "The webhook belongs to `accountId`, which the key must be allowed to reach and on which the caller needs the `manageRules` share permission — a webhook is a rule seen from the other end. The URL is checked before anything is stored, so a saved webhook never carries an address the server would refuse to call. **The secret is returned here, once.** Requires the `webhooks:write` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "name",
+                  "url"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "https, unless the host is listed in the server's WEBHOOK_ALLOWED_HOSTS."
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created. The only answer that carries the secret, along with the rotate call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/WebhookWithSecret"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "The URL is one the server refuses to call — not https, or resolving to a private, loopback, link-local or cloud-metadata address. The body names the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/webhooks/{id}": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "getWebhook",
+        "summary": "Read one webhook",
+        "description": "The signing secret is never in this answer. Requires the `webhooks:read` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The webhook.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Webhook"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "updateWebhook",
+        "summary": "Update a webhook",
+        "description": "Only the fields sent change. A URL that changes is checked exactly like a URL that is born, so nothing enters by the side door. The mailbox cannot be moved. Requires the `webhooks:write` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookIdPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated webhook.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Webhook"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "The URL is one the server refuses to call — not https, or resolving to a private, loopback, link-local or cloud-metadata address. The body names the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "deleteWebhook",
+        "summary": "Delete a webhook",
+        "description": "Deleting a webhook never undoes the calls it already made. Rules that targeted it stop reaching it. Requires the `webhooks:write` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "deleted": {
+                          "const": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/webhooks/{id}/secret": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "rotateWebhookSecret",
+        "summary": "Regenerate the signing secret",
+        "description": "Returns a NEW secret, once. The old one stops validating immediately — that is the point of rotating a secret you believe someone else has read. Requires the `webhooks:write` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The webhook, carrying the new secret in clear. The last time it is readable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/WebhookWithSecret"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/webhooks/{id}/test": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "testWebhook",
+        "summary": "Send a signed test call",
+        "description": "Queues a `webhook.test` delivery, signed and logged like any other. The outgoing call is made by the scheduler, so this answers 202 at once rather than holding the request open for a silent receiver. A test carries no `message` and is repeatable — the once-per-mail uniqueness does not hold it back. Requires the `webhooks:write` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookIdPath"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Queued. Poll the deliveries list for the outcome.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "deliveryId",
+                        "event"
+                      ],
+                      "properties": {
+                        "deliveryId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "event": {
+                          "const": "webhook.test"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/webhooks/{id}/deliveries": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "listWebhookDeliveries",
+        "summary": "List what this webhook was sent",
+        "description": "Newest first. Rows older than 30 days are purged. Requires the `webhooks:read` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookIdPath"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many rows, capped server-side.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deliveries, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WebhookDelivery"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/webhooks/deliveries/{id}/retry": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "operationId": "retryWebhookDelivery",
+        "summary": "Send an existing delivery again",
+        "description": "Adds ONE attempt to the existing row rather than creating a second one — otherwise the once-per-mail guarantee could be walked around with this call. The scheduler makes the call, as it does the first. Requires the `webhooks:write` scope; a key without it gets 403 naming it. The webhook's mailbox goes through the per-mailbox barrier, so a key not granted that mailbox gets 403 naming it too.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DeliveryIdPath"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Queued for another attempt.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "webhookId",
+                        "queued"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "webhookId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "queued": {
+                          "const": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -5843,6 +6770,16 @@
           "format": "uuid"
         }
       },
+      "WebhookIdPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The webhook's id.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
       "GedFolderIdPath": {
         "name": "id",
         "in": "path",
@@ -5858,6 +6795,16 @@
         "in": "path",
         "required": true,
         "description": "The pattern id. The mailbox is deduced from it.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "DeliveryIdPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The delivery's id, as carried by the X-Synapmail-Delivery header.",
         "schema": {
           "type": "string",
           "format": "uuid"
@@ -5937,6 +6884,67 @@
                   }
                 }
               }
+            }
+          }
+        }
+      },
+      "SearchResult": {
+        "description": "One JSON object, or — with `stream=1` — one JSON object per line, each a folder's share of the results. Same fields on both; the streamed line adds `folder`, and under scope `accounts` `accountId`, `accountEmail`, `accounts`. A final `{ unreachable: [...] }` line names the mailboxes that could not be opened.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "messages",
+                "total",
+                "fields"
+              ],
+              "properties": {
+                "aiSafety": {
+                  "$ref": "#/components/schemas/AiSafety"
+                },
+                "messages": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Message"
+                  }
+                },
+                "total": {
+                  "type": "integer",
+                  "description": "Real matches; more than `messages.length` when the 200-per-folder cap was hit."
+                },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The header fields the search covered."
+                },
+                "complete": {
+                  "type": "boolean",
+                  "description": "Scope `accounts` without a stream only: `false` means the sweep stopped early — see `stoppedBecause`."
+                },
+                "stoppedBecause": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "budget",
+                      "unreachable"
+                    ]
+                  }
+                },
+                "error": {
+                  "type": "string",
+                  "description": "Present with an empty list when the mail server refused."
+                }
+              }
+            }
+          },
+          "application/x-ndjson": {
+            "schema": {
+              "type": "string",
+              "description": "Newline-delimited JSON: one object per folder covered, as it completes."
             }
           }
         }
@@ -6026,7 +7034,8 @@
           "validePar",
           "questionVersion",
           "auteurId",
-          "auteurNom"
+          "auteurNom",
+          "stateHash"
         ],
         "properties": {
           "question": {
@@ -6087,6 +7096,10 @@
           "auteurNom": {
             "type": "string",
             "description": "The author's name as it was at write time — a snapshot, readable after the engine is renamed or deleted."
+          },
+          "stateHash": {
+            "type": "string",
+            "description": "Hash of the exact state (sender, subject, body ≤ 1 500 chars) this row was judged on — the snapshot `GET /api/tags/export` returns as `state`. Empty when unknown (rows older than the snapshot, or a human correction on an unreachable mailbox)."
           }
         }
       },
@@ -7420,6 +8433,192 @@
           }
         }
       },
+      "Webhook": {
+        "type": "object",
+        "required": [
+          "id",
+          "accountId",
+          "name",
+          "url",
+          "enabled",
+          "createdAt",
+          "lastDelivery",
+          "ruleCount"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accountId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The one mailbox whose mail can fire this webhook."
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastDelivery": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The last call made, or null if this webhook has never fired.",
+            "properties": {
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "ok",
+                  "failed"
+                ]
+              },
+              "responseStatus": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          },
+          "ruleCount": {
+            "type": "integer",
+            "description": "How many rules target it — its triggers."
+          }
+        }
+      },
+      "WebhookWithSecret": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Webhook"
+          },
+          {
+            "type": "object",
+            "required": [
+              "secret"
+            ],
+            "properties": {
+              "secret": {
+                "type": "string",
+                "description": "The signing secret, in clear. Returned ONLY here and by the rotate call, once — store it now, it is never readable again."
+              }
+            }
+          }
+        ]
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "required": [
+          "id",
+          "webhookId",
+          "event",
+          "status",
+          "attempts",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Also sent as the X-Synapmail-Delivery header."
+          },
+          "webhookId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ruleId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "null for a test send."
+          },
+          "ruleName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "messageId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "null for a test send."
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {
+            "type": "string",
+            "enum": [
+              "rule.matched",
+              "webhook.test"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ok",
+              "failed"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "description": "One first attempt then at most 3 retries, at 1 min, 5 min and 30 min."
+          },
+          "responseStatus": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "durationMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Truncated to 500 characters."
+          },
+          "nextAttemptAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "TagQuestion": {
         "allOf": [
           {
@@ -8200,6 +9399,39 @@
           "creeLe": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "EngineState": {
+        "type": "object",
+        "required": [
+          "expediteur",
+          "objet",
+          "corps"
+        ],
+        "description": "The exact state sent to the decision engine, as built by lib/tagging/engine.ts buildState(): the mail is data, never an instruction.",
+        "properties": {
+          "expediteur": {
+            "type": "object",
+            "required": [
+              "nom",
+              "adresse"
+            ],
+            "properties": {
+              "nom": {
+                "type": "string"
+              },
+              "adresse": {
+                "type": "string"
+              }
+            }
+          },
+          "objet": {
+            "type": "string"
+          },
+          "corps": {
+            "type": "string",
+            "description": "Plain text of the body, whitespace collapsed, capped to 1 500 characters."
           }
         }
       }

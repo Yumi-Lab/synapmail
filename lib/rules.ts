@@ -11,7 +11,56 @@ import { markReadBulk, deleteMessagesBulk, moveMessagesBulk, markStarred } from 
 import { sendMail } from './smtp'
 import type { AccountConfig } from './imap'
 import type { Message } from '@/types/email'
+import { valuesOf, type QuestionSet } from './tagging/questions'
+import { messageIdOf, readEffectiveFor } from './tagging/store'
+import { queueRuleDelivery, type WebhookMessage } from './webhooks'
 import type { EmailRule, RuleCondition, RuleAction } from '@/types/rule'
+import { REGEX_PATTERN_MAX } from '@/types/rule'
+import { NO_TAGS, REGEX_OPERATORS, compileRulePattern, evaluateRule, type RuleTag } from './rulesEval'
+
+// ---------------------------------------------------------------------------
+// Conditions regex : les bornes, écrites UNE fois
+// ---------------------------------------------------------------------------
+
+// Les trois bornes vivent dans `types/rule.ts` : l'éditeur de règles, qui tourne dans le
+// NAVIGATEUR, borne sa saisie sur la même valeur que le serveur. Les importer depuis ce
+// fichier-ci y tirait `lib/imap.ts`, donc `tls`, et l'écran des règles ne se rendait plus.
+export { REGEX_PATTERN_MAX, REGEX_TEXT_MAX, REGEX_BODY_MAX } from '@/types/rule'
+
+/**
+ * Ce qu'une condition doit valoir AVANT d'être enregistrée. Rend le motif de l'erreur en
+ * NOMMANT la condition fautive — une règle enregistrée ne peut pas porter une regex qui ne
+ * compile pas, donc `evalCondition` n'a jamais à s'en expliquer à l'exécution.
+ * Une condition `tag` se juge contre le jeu de questions de la BOÎTE de la règle
+ * (`questionSetForAccount`) : ses étiquettes répondent au jeu du propriétaire, pas à celui
+ * de la main qui écrit la règle.
+ */
+export function validateConditions(conditions: readonly RuleCondition[], set: QuestionSet): string | null {
+  for (let i = 0; i < conditions.length; i++) {
+    const c = conditions[i]
+    const where = `condition ${i + 1} (${c?.field ?? '?'} ${c?.operator ?? '?'})`
+    if (!c || typeof c !== 'object') return `${where}: malformed condition`
+    if (REGEX_OPERATORS.has(c.operator)) {
+      if (c.field === 'tag') return `${where}: the tag field takes equals / not_equals, not a pattern`
+      if (typeof c.value !== 'string' || !c.value.length) return `${where}: pattern required`
+      if (c.value.length > REGEX_PATTERN_MAX) {
+        return `${where}: pattern longer than ${REGEX_PATTERN_MAX} characters (${c.value.length})`
+      }
+      if (!compileRulePattern(c.value)) return `${where}: invalid regular expression`
+    }
+    if (c.field === 'tag') {
+      if (c.operator !== 'equals' && c.operator !== 'not_equals') {
+        return `${where}: the tag field takes equals / not_equals`
+      }
+      const q = set.questionById(c.tagQuestion ?? '')
+      if (!q) return `${where}: unknown tag question "${c.tagQuestion ?? ''}"`
+      if (!valuesOf(q).includes(c.value)) {
+        return `${where}: value "${c.value}" is not one of ${valuesOf(q).join(' / ')}`
+      }
+    }
+  }
+  return null
+}
 
 // ---------------------------------------------------------------------------
 // DB row → domain type
@@ -175,8 +224,7 @@ export async function getRecentLogs(
 }
 
 // L'évaluation des conditions vit dans `lib/rulesEval.ts` (pure) ; ré-exportée ici pour les appelants historiques.
-export { evalCondition, evaluateRule, testRule } from './rulesEval'
-import { evaluateRule } from './rulesEval'
+export { evalCondition, evaluateRule, testRule, compileRulePattern, type RuleTag } from './rulesEval'
 
 // ---------------------------------------------------------------------------
 // Action execution
@@ -196,7 +244,9 @@ export async function executeActions(
   folder: string,
   uid: string,
   rule: EmailRule,
-  fullMessage?: Message   // needed for forward action
+  fullMessage?: Message,  // needed for forward action
+  tags: readonly RuleTag[] = NO_TAGS,  // voyagent dans la charge utile d'un webhook
+  allowWebhook = false   // cf. `case 'webhook'` : refus par défaut, un appelant doit le DEMANDER
 ): Promise<{ movedOrDeleted: boolean }> {
   let movedOrDeleted = false
 
@@ -230,6 +280,27 @@ export async function executeActions(
             await forwardMessage(account.id, fullMessage, action.value)
           } else if (action.value) {
             console.log(`[Rules] Forward: full message not available for uid ${uid}, skipping`)
+          }
+          break
+        // L'action n'ENVOIE pas : elle inscrit un envoi à faire. Le planificateur le porte,
+        // avec ses reprises — une règle ne doit pas attendre un récepteur de 10 s, ni perdre
+        // l'envoi si le processus tombe entre l'évaluation et l'appel.
+        //
+        // REFUS PAR DÉFAUT. Seul un appelant à CURSEUR peut inscrire un envoi (`allowWebhook`),
+        // parce que lui seul sait ce qui est NOUVEAU. Les autres appelants de `executeActions`
+        // balayent un état, pas un flux : `processRules` repasse les 30 derniers non-lus toutes
+        // les 5 min, `POST /api/rules/run` repasse un dossier entier à la demande — un webhook
+        // y partirait sur du vieux courrier, soit l'historique rejoué que la décision 8 interdit.
+        // C'est ici, au seul endroit qui exécute une action, que ce refus tient : un appelant
+        // ajouté demain est protégé sans avoir à le savoir.
+        case 'webhook':
+          if (allowWebhook && action.value) {
+            await queueRuleDelivery({
+              webhookId: action.value,
+              rule: { id: rule.id, name: rule.name, accountId: rule.accountId },
+              message: webhookMessageOf(fullMessage ?? null, folder, uid),
+              tags: tags.map(t => ({ question: t.question, valeur: t.valeur })),
+            })
           }
           break
       }
@@ -276,6 +347,28 @@ async function forwardMessage(accountId: string, msg: Message, to: string): Prom
   )
 }
 
+/**
+ * Ce qu'un webhook apprend du mail. `messageIdOf` (et pas `msg.messageId`) parce que c'est
+ * l'identifiant qui porte l'unicité de `webhook_deliveries` : un mail sans `Message-ID` doit
+ * quand même être reconnu comme le même mail au passage suivant. L'aperçu est borné par
+ * `buildPayload`, jamais ici : une seule borne, écrite une seule fois.
+ */
+function webhookMessageOf(msg: Message | null, folder: string, uid: string): WebhookMessage {
+  return {
+    messageId: messageIdOf({
+      messageId: msg?.messageId, fromAddress: msg?.from?.address, date: msg?.date, subject: msg?.subject,
+    }),
+    uid,
+    folder,
+    from: msg?.from ?? null,
+    to: msg?.to ?? [],
+    subject: msg?.subject ?? '',
+    date: msg?.date ?? null,
+    preview: msg?.preview ?? msg?.bodyPlain ?? '',
+    hasAttachments: msg?.hasAttachments === true,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Batch: apply rules to a list of messages
 // ---------------------------------------------------------------------------
@@ -286,20 +379,48 @@ export interface RuleResult {
   movedOrDeleted: boolean
 }
 
+/** Une règle porte-t-elle au moins une condition sur une étiquette ? */
+export const needsTags = (rules: readonly EmailRule[]): boolean =>
+  rules.some(r => r.conditions.some(c => c.field === 'tag'))
+
+/**
+ * Les étiquettes EFFECTIVES (humain > moteur) des mails d'un lot, rangées par uid. Une seule
+ * requête pour tout le lot, et seulement si une règle en a besoin — sinon rien n'est lu.
+ */
+export async function tagsForMessages(
+  accountId: string,
+  messages: readonly Message[],
+  rules: readonly EmailRule[]
+): Promise<Map<string, RuleTag[]> | undefined> {
+  if (!needsTags(rules) || !messages.length) return undefined
+  const idOf = new Map(messages.map(m => [m.uid, messageIdOf({
+    messageId: m.messageId, fromAddress: m.from?.address, date: m.date, subject: m.subject,
+  })]))
+  const effective = await readEffectiveFor(accountId, Array.from(new Set(Array.from(idOf.values()))))
+  const byUid = new Map<string, RuleTag[]>()
+  idOf.forEach((messageId, uid) => {
+    byUid.set(uid, (effective.get(messageId) ?? []).map(t => ({ question: t.question, valeur: t.valeur })))
+  })
+  return byUid
+}
+
 export async function applyRulesToMessages(
   account: AccountConfig,
   folder: string,
   messages: Message[],
   rules: EmailRule[],
-  fullMessageFetcher?: (uid: string) => Promise<Message | null>
+  fullMessageFetcher?: (uid: string) => Promise<Message | null>,
+  tagsByUid?: Map<string, RuleTag[]>,
+  allowWebhook = false   // transmis tel quel à `executeActions` — cf. son `case 'webhook'`
 ): Promise<RuleResult[]> {
   const results: RuleResult[] = []
 
   for (const msg of messages) {
     const result: RuleResult = { uid: msg.uid, matchedRules: [], movedOrDeleted: false }
+    const tags = tagsByUid?.get(msg.uid) ?? NO_TAGS
 
     for (const rule of rules) {
-      if (evaluateRule(msg, rule)) {
+      if (evaluateRule(msg, rule, tags)) {
         result.matchedRules.push(rule.name)
 
         // Fetch full message if forward action is present and we have a fetcher
@@ -308,7 +429,7 @@ export async function applyRulesToMessages(
           fullMsg = (await fullMessageFetcher(msg.uid)) ?? undefined
         }
 
-        const { movedOrDeleted } = await executeActions(account, folder, msg.uid, rule, fullMsg ?? msg)
+        const { movedOrDeleted } = await executeActions(account, folder, msg.uid, rule, fullMsg ?? msg, tags, allowWebhook)
         if (movedOrDeleted) result.movedOrDeleted = true
 
         if (result.movedOrDeleted || rule.stopProcessing) break
@@ -325,7 +446,27 @@ export async function applyRulesToMessages(
 // Sieve script export
 // ---------------------------------------------------------------------------
 
+/**
+ * Ce que Sieve ne sait PAS dire, nommé. Rendre `''` ici ferait disparaître la condition, puis
+ * — si c'était la dernière — la règle entière, sans un mot : un script exporté qui trie moins
+ * que la règle qu'il prétend traduire.
+ */
+function sieveActionUntranslatable(a: RuleAction): string | null {
+  return a.type === 'webhook' ? `webhook ${a.value ?? '?'}` : null
+}
+
+function sieveUntranslatable(c: RuleCondition): string | null {
+  if (c.operator === 'matches' || c.operator === 'not_matches') {
+    return `${c.operator === 'not_matches' ? 'NOT ' : ''}regex on ${c.field}: /${c.value}/i`
+  }
+  if (c.field === 'tag') {
+    return `tag ${c.tagQuestion ?? '?'} ${c.operator === 'not_equals' ? '!=' : '=='} ${c.value}`
+  }
+  return null
+}
+
 function sieveCondition(c: RuleCondition): string {
+  if (sieveUntranslatable(c)) return ''
   switch (c.field) {
     case 'from':
     case 'to':
@@ -394,13 +535,31 @@ export function generateSieveScript(rules: EmailRule[]): string {
 
     const conds = rule.conditions.map(c => sieveCondition(c)).filter(Boolean)
     const acts  = rule.actions.map(a => sieveAction(a, requires)).filter(Boolean)
-    if (!conds.length || !acts.length) continue
+    // Ce que ce script NE FERA PAS, écrit dans le script lui-même.
+    const dropped = [
+      ...rule.conditions.map(c => sieveUntranslatable(c)),
+      ...rule.actions.map(a => sieveActionUntranslatable(a)),
+    ].filter(Boolean) as string[]
+    const warn = dropped.length
+      ? dropped.map(d => `#   condition not expressible in Sieve, evaluated by Synapmail only: ${d}`).join('\n') + '\n'
+      : ''
+
+    if (!conds.length || !acts.length) {
+      if (warn) {
+        blocks.push(`# ${rule.name}\n# RULE NOT EXPORTED — Synapmail evaluates it, this script does not:\n${warn}`.trimEnd())
+      }
+      continue
+    }
 
     const condStr = conds.length === 1
       ? conds[0]
       : `${rule.conditionLogic === 'all' ? 'allof' : 'anyof'} (${conds.join(',\n        ')})`
 
-    let block = `# ${rule.name}\nif ${condStr} {\n`
+    // `all` : une condition en moins RELÂCHE le filtre ; `any` : elle le RESSERRE.
+    const widthNote = warn
+      ? `#   the block below is therefore ${rule.conditionLogic === 'all' ? 'WIDER' : 'NARROWER'} than the rule\n`
+      : ''
+    let block = `# ${rule.name}\n${warn}${widthNote}if ${condStr} {\n`
     block += acts.map(a => `    ${a}`).join('\n') + '\n'
     if (rule.stopProcessing) block += '    stop;\n'
     block += '}'

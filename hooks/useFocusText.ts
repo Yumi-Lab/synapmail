@@ -13,11 +13,11 @@ const signed = (n: number) => (n > 0 ? `+${n}` : String(n))
 
 export function useFocusText() {
   const t = useTranslations('mail')
-  const { q, v } = useTagLabels()
+  const { pair } = useTagLabels()
   const reason = (r: FocusReason, part?: FocusPart): string =>
-    r === 'tag' && part?.kind === 'tag' ? `${q(part.question)} : ${v(part.valeur)}` : t(`reason_${r}`)
+    r === 'tag' && part?.kind === 'tag' ? pair(part.question, part.valeur) : t(`reason_${r}`)
   const describe = (f: FocusScore): string => [
-    ...f.parts.map(p => `${p.kind === 'tag' ? `${q(p.question)} : ${v(p.valeur)}` : t(`reason_${p.reason}`)} ${signed(p.points)}`),
+    ...f.parts.map(p => `${p.kind === 'tag' ? pair(p.question, p.valeur) : t(`reason_${p.reason}`)} ${signed(p.points)}`),
     t('priority', { score: f.score }),
   ].join('\n')
   /** La composante la plus forte, celle que la pastille nomme. */
