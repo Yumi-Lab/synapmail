@@ -105,8 +105,14 @@ export function useAccountAccent() {
    * Switch mailbox, in ONE place: the event goes out first (the accent turns on the
    * click), the local state follows, the preference is written through
    * `saveSettings` — so the shared cache turns over with it and a focus
-   * revalidation racing the write cannot put the old mailbox back. The sidebar and
-   * the omnibar (lot H3f) call THIS function, never a copy.
+   * revalidation racing the write cannot put the old mailbox back. The sidebar, the
+   * omnibar (lot H3f) and the « Fiabilité » screen (lot T14) call THIS function, never
+   * a copy.
+   *
+   * The `/api/settings` SWR cache is updated in the SAME gesture (the "UI state
+   * persistence" pattern): a screen mounted AFTER the click (the mailbox opened by
+   * `router.push`) reads the preference from that cache, not from an event already
+   * gone — without this it opened the OLD mailbox (gate T14, point 4).
    */
   const switchAccount = (id: string) => {
     window.dispatchEvent(new CustomEvent('synapmail:account-change', { detail: id }))

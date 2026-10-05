@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
 import { getAccessibleAccount } from '@/lib/accountAccess'
+import { auditPending, validationQueue } from '@/lib/tagging/audit'
 import { filterByTag, readEffectiveFor } from '@/lib/tagging/store'
 import { questionSetForAccount } from '@/lib/tagging/userQuestions'
 
@@ -14,7 +15,12 @@ export const dynamic = 'force-dynamic'
  *    position connue (`tagged_messages`), donc y compris ceux sortis de la page chargée ;
  *    `&origine=` restreint à une origine — une source (`humain`) ou l'id d'un moteur (décision 23) ;
  *  - `?id=<mid>&id=<mid>…` → les étiquettes effectives d'une LISTE de mails : ce que la liste
- *    affiche en pastilles, en UNE requête par page et jamais une par ligne (décision 11).
+ *    affiche en pastilles, en UNE requête par page et jamais une par ligne (décision 11) ;
+ *  - `?audit=1` → les mails de l'AUDIT ALÉATOIRE (lot T14) qu'aucune main n'a encore jugés,
+ *    même forme que le filtre : la liste les montre comme un filtre, et chaque validation
+ *    les en retire ;
+ *  - `?queue=1` → la FILE « À valider » (lot T15, décision 17) : une ligne par (mail, question)
+ *    à juger — audit, désaccord entre moteurs, confiance sous le seuil — avec le texte jugé.
  */
 async function getHandler(req: Request) {
   const gate = await authorize(req)
@@ -33,6 +39,16 @@ async function getHandler(req: Request) {
       return NextResponse.json({ data: { effective: Object.fromEntries(byMessage) } })
     }
 
+    const page = Number(searchParams.get('page') ?? '1')
+    if (searchParams.get('audit') === '1') {
+      const { messages, total, drawn } = await auditPending(accountId, page)
+      return NextResponse.json({ data: { messages, total, drawn, page: Math.max(page || 1, 1) } })
+    }
+    if (searchParams.get('queue') === '1') {
+      const { items, total, counts } = await validationQueue(accountId, page)
+      return NextResponse.json({ data: { items, total, counts, page: Math.max(page || 1, 1) } })
+    }
+
     const question = searchParams.get('question')
     const valeur = searchParams.get('valeur')
     if (!question || !valeur) {
@@ -44,7 +60,6 @@ async function getHandler(req: Request) {
     if (!set.questionById(question)) return NextResponse.json({ error: `question inconnue: ${question}`, question }, { status: 422 })
     if (!set.isValidTag(question, valeur)) return NextResponse.json({ error: `valeur non prévue pour la question ${question}: ${valeur}`, question, valeur }, { status: 422 })
 
-    const page = Number(searchParams.get('page') ?? '1')
     const { messages, total } = await filterByTag({ accountId, question, valeur, page, origine: searchParams.get('origine') })
     return NextResponse.json({ data: { messages, total, page: Math.max(page || 1, 1) } })
   } catch (err) {

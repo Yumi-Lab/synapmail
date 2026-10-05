@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useTranslations } from 'next-intl'
-import { Check, ChevronDown, LayoutGrid, Languages, Menu, Monitor, Moon, PenSquare, Search, Sun, X } from 'lucide-react'
+import { Check, ChevronDown, ClipboardCheck, LayoutGrid, Languages, Menu, Monitor, Moon, PenSquare, Search, Sun, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { UserMenu } from './UserMenu'
 import { MailToolbar, MailToolbarLead } from './MailToolbar'
@@ -20,6 +20,7 @@ import { THEMES, type Theme } from '@/lib/theme'
 import { LOCALES, setLocale } from '@/lib/locales'
 import { OMNIBAR_SECTIONS, matchOmnibar, type OmnibarEntry, type OmnibarSection } from '@/lib/omnibarCommands'
 import { MAIL_PATH, openCompose } from '@/lib/compose'
+import { VALIDATE_PATH } from '@/lib/tagging/view'
 import {
   SCOPE_ACCOUNTS, SCOPE_LABEL, SCOPE_PARAM, SEARCH_DEBOUNCE_MS, SEARCH_FOCUS_EVENT,
   SEARCH_PARAM, SEARCH_SCOPES, buildSearchHref, readScope, type SearchScope,
@@ -289,6 +290,14 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
       run: () => router.push('/dashboard'),
     },
     {
+      id: `${ENTRY.action}:validate`,
+      section: 'actions' as const,
+      label: tOmni('validateQueue'),
+      keywords: tOmni('validateQueueKeywords'),
+      icon: <ClipboardCheck className={ICON} />,
+      run: () => router.push(VALIDATE_PATH),
+    },
+    {
       id: `${ENTRY.action}:compose`,
       section: 'actions' as const,
       label: t('compose'),
@@ -363,6 +372,9 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
   const runSuggestion = (index: number) => {
     const picked = suggestions[index]
     if (!picked) return
+    // Choisir une entrée annule la recherche en attente : sinon, 400 ms plus tard, la frappe
+    // partait quand même en `/mail?q=…` par-dessus l'écran que l'entrée venait d'ouvrir.
+    if (debounce.current) clearTimeout(debounce.current)
     closePanel()
     setQuery('')
     inputRef.current?.blur()

@@ -3869,6 +3869,18 @@
             "description": "Narrow to one origin: a source (`humain`) or an author id (one engine). The effective tag is then computed among that origin's rows only."
           },
           {
+            "name": "audit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "With `audit=1` (and no `question`/`id`): the messages of the RANDOM AUDIT not yet judged by a human, same shape as the filter. Each human validation removes one from this list."
+          },
+          {
             "name": "id",
             "in": "query",
             "description": "A Message-ID, repeatable. Takes precedence over the filter.",
@@ -4118,6 +4130,18 @@
               ]
             },
             "description": "Add `staleCounts`: per question id, how many messages carry a tag written under an OLDER version of that question than the caller’s current one. Human (`humain`) tags never count. Opt-in for the same reason as `distribution`."
+          },
+          {
+            "name": "reliability",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "Add `reliability` (one row per active question: human validations, engine-vs-human accuracy on the RANDOM AUDIT only, most frequent confusions, accuracy per 0.1 confidence bucket, JEV / Yumi One agreement) and `audit` (tagged, target = max(50, 2 %) capped at tagged, drawn, validated). Several scans of the mailbox's tags, so opt-in only."
           }
         ],
         "responses": {
@@ -4184,9 +4208,11 @@
                     "type": "string",
                     "enum": [
                       "start",
+                      "sample",
                       "pause",
                       "resume",
                       "restart",
+                      "audit",
                       "catchup"
                     ]
                   }

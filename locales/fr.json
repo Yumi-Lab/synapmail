@@ -627,7 +627,7 @@
       "spent": "Dépensé",
       "estimate": "Coût estimé du tri de ce qui reste",
       "estimateDesc": "{mails} mails restants × {questions} questions, au tarif de ce moteur. Taxonomie {version} : un mail déjà trié sous une autre version est retrié.",
-      "estimateUnknown": "Inconnu tant qu’aucun moteur n’est choisi.",
+      "estimateUnknown": "Inconnu tant qu’aucun moteur n’est choisi. Taxonomie {version}.",
       "free": "Gratuit",
       "progress": "Progression",
       "tagged": "Triés",
@@ -653,6 +653,25 @@
       "distribution": "Répartition des valeurs",
       "distributionDesc": "Ce que le moteur a répondu, question par question. C’est ce qui dit si les questions valent d’être posées à la boîte entière.",
       "distributionEmpty": "Rien de trié pour l’instant sous la taxonomie courante.",
+      "reliability": "Fiabilité",
+      "reliabilityDesc": "Un échantillon tiré au hasard parmi les mails étiquetés (2 %, au moins 50) est proposé à votre validation, sans regarder la confiance : c’est la seule mesure non biaisée. L’exactitude ci-dessous ne compte que cet audit.",
+      "auditState": "{tagged, plural, one {# mail étiqueté} other {# mails étiquetés}} · cible {target} · {drawn} tirés · {validated} validés",
+      "auditDraw": "Tirer l’audit",
+      "auditComplete": "Compléter l’audit ({missing})",
+      "auditValidate": "Valider ({pending})",
+      "auditNothing": "Aucun mail étiqueté par un moteur : rien à auditer.",
+      "auditStale": "{count, plural, one {# mail étiqueté sous une ancienne version d’une question : il ne se mesure pas tant qu’il n’est pas retagué} other {# mails étiquetés sous une ancienne version d’une question : ils ne se mesurent pas tant qu’ils ne sont pas retagués}}",
+      "reliabilityEmpty": "Aucune validation humaine pour l’instant. Tirez l’audit, puis validez les mails proposés.",
+      "colQuestion": "Question",
+      "colHuman": "Validations",
+      "colAccuracy": "Exactitude (audit)",
+      "colConfusions": "Confusions",
+      "colCurve": "Confiance → exactitude",
+      "colAgreement": "JEV / Yumi One",
+      "accuracyOf": "{correct} / {judged}",
+      "confusionPair": "{engine} → {human} ({count})",
+      "curveBucket": "≥ {bucket} : {correct}/{judged}",
+      "agreementOf": "{agree} / {both}",
       "stateIdle": "Pas commencé",
       "stateRunning": "Tri en cours",
       "stateDone": "Terminé",
@@ -682,6 +701,7 @@
         "deleteConfirm": "Supprimer la question « {name} » ? Les étiquettes déjà posées restent en base mais ne s’afficheront plus.",
         "enabled": "Question active",
         "id": "Identifiant",
+        "idPlaceholder": "ma_question",
         "type": "Type",
         "group": "Groupe",
         "instructions": "Consigne au moteur",
@@ -715,7 +735,9 @@
         "noMail": "Aucun mail dans la boîte de réception",
         "bodyPreview": "Corps envoyé au moteur : {chars} caractères",
         "saveFailed": "L’enregistrement a échoué.",
-        "reservedId": "L’identifiant « {id} » est réservé à un détecteur de règles : choisissez-en un autre."
+        "reservedId": "L’identifiant « {id} » est réservé à un détecteur de règles : choisissez-en un autre.",
+        "confidenceThreshold": "Seuil de confiance",
+        "confidenceThresholdHint": "Sous ce seuil, la réponse du moteur entre dans la file « À valider » (défaut {value, number})."
       },
       "rules": {
         "title": "Règles d’étiquetage",
@@ -775,7 +797,8 @@
         "groupRate": "{name} : {questions} questions, déclenché pour {rate} des mails",
         "groupRateUnknown": "{name} : {questions} questions, part inconnue",
         "groupRateHint": "Part lue sur les {mails} mails déjà étiquetés sous la définition courante de la question lue, pas sur toute la boîte."
-      }
+      },
+      "validateKeyboard": "Valider au clavier"
     },
     "engines": {
       "title": "Outils de décision (System One)",
@@ -1152,7 +1175,9 @@
       "branding": "onglet, icône, favicon, titre, nom du site, identité, logo",
       "tagging": "tri étiquettes moteur classer automatique",
       "webhooks": "webhook, http, rappel, bot, n8n, intégration, déclencheur"
-    }
+    },
+    "validateQueue": "File « À valider »",
+    "validateQueueKeywords": "valider, validation, file, clavier, étiquettes, audit"
   },
   "tags": {
     "panelTitle": "Étiquettes",
@@ -1170,6 +1195,9 @@
     "filterLabel": "Étiquette",
     "filterAll": "Toutes",
     "filterClear": "Retirer le filtre",
+    "filterAudit": "Audit aléatoire",
+    "filterAuditEmpty": "Tout l’audit est validé.",
+    "filterAuditNone": "Aucun audit tiré pour cette boîte.",
     "filterCount": "{count, plural, one {# étiqueté} other {# étiquetés}}",
     "filterEmpty": "Aucun message ne porte cette étiquette.",
     "unpositioned": "{count, plural, one {# masqué : dossier inconnu.} other {# masqués : dossier inconnu.}}",
@@ -1425,6 +1453,28 @@
       "agent": "agent",
       "motif": "motif appris",
       "moteur": "moteur"
+    },
+    "validate": {
+      "title": "À valider",
+      "description": "Une étiquette par ligne : confirmez, corrigez ou passez, au clavier.",
+      "remaining": "{count, plural, =0 {Rien à valider} one {# à valider} other {# à valider}}",
+      "done": "{count, plural, =0 {0 validée} one {# validée} other {# validées}}",
+      "reason_audit": "Audit",
+      "reason_disagreement": "Désaccord",
+      "reason_confidence": "Confiance basse",
+      "loading": "Chargement de la file…",
+      "loadError": "La file n’a pas pu être lue.",
+      "empty": "Rien à valider pour cette boîte : tirez un audit ou laissez le tri avancer.",
+      "allDone": "{count, plural, one {# étiquette validée} other {# étiquettes validées}}, la file est vide.",
+      "noState": "Texte jugé inconnu (étiquette antérieure aux instantanés).",
+      "enginesSaid": "Les moteurs ont répondu : {values}",
+      "writeFailed": "Écriture refusée ({status}).",
+      "readOnly": "Lecture seule : cette boîte partagée ne vous laisse pas organiser.",
+      "keyConfirm": "confirmer",
+      "keyChoose": "choisir",
+      "keySkip": "passer",
+      "keyUndo": "défaire",
+      "keyMove": "se déplacer"
     }
   },
   "documents": {

@@ -14,9 +14,10 @@ import { ENGINES_ENDPOINT } from '@/components/settings/DecisionEnginesSection'
 import { TagQuestionsSection } from '@/components/settings/TagQuestionsSection'
 import { TagGroupsSection } from '@/components/settings/TagGroupsSection'
 import { TagRulesSection } from '@/components/settings/TagRulesSection'
+import { TagReliabilitySection } from '@/components/settings/TagReliabilitySection'
 import { useTagLabels } from '@/hooks/useTagLabels'
 import type { PassEstimate, TaggingStatus } from '@/lib/tagging/mailbox'
-import { TAGGING_SETTINGS_ENDPOINT } from '@/lib/tagging/view'
+import { TAGGING_RUN_ENDPOINT, TAGGING_SETTINGS_ENDPOINT, TAGGING_STATUS_ENDPOINT } from '@/lib/tagging/view'
 import type { tagDistribution } from '@/lib/tagging/store'
 import type { DecisionEngine } from '@/lib/tagging/engines'
 import type { EmailAccount } from '@/types/account'
@@ -28,8 +29,6 @@ type TagDistribution = Awaited<ReturnType<typeof tagDistribution>>
 
 /** Les routes de l'écran, écrites une fois. */
 const SETTINGS_ENDPOINT = TAGGING_SETTINGS_ENDPOINT
-const RUN_ENDPOINT = '/api/tagging/run'
-const STATUS_ENDPOINT = '/api/tagging/status'
 
 /**
  * Pendant un tri, l'état vient du planificateur, pas de cet écran : on le redemande. Le pas est
@@ -124,7 +123,7 @@ export default function TaggingSettingsPage() {
     try {
       // Un refus du serveur se DIT : sans cela, un bouton pressé qui ne change rien se lit
       // comme un bouton cassé, et l'utilisateur recommence au lieu de lire la cause.
-      const res = await fetch(RUN_ENDPOINT, {
+      const res = await fetch(TAGGING_RUN_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // La taille et la graine ne sont pas écrites ici : elles viennent du serveur
@@ -153,7 +152,7 @@ export default function TaggingSettingsPage() {
   // Elle est hors du rafraîchissement de l'état (20 s pendant un tri) pour cette raison.
   const showDistribution = !!status?.sample && status.tagged > 0
   const { data: distData } = useSWR<{ data: TaggingStatus & { distribution?: TagDistribution } }>(
-    showDistribution && accountId ? `${STATUS_ENDPOINT}?account=${accountId}&distribution=1` : null,
+    showDistribution && accountId ? `${TAGGING_STATUS_ENDPOINT}?account=${accountId}&distribution=1` : null,
     fetcher,
   )
   const distribution = distData?.data?.distribution ?? []
@@ -161,7 +160,7 @@ export default function TaggingSettingsPage() {
   // Les « anciennes versions » par question (lot T-Q) : un GROUP BY sur les étiquettes de la
   // boîte, demandé une fois par boîte affichée, hors du rafraîchissement de l'état.
   const { data: staleData } = useSWR<{ data: TaggingStatus & { staleCounts?: Record<string, number> } }>(
-    accountId ? `${STATUS_ENDPOINT}?account=${accountId}&stale=1` : null,
+    accountId ? `${TAGGING_STATUS_ENDPOINT}?account=${accountId}&stale=1` : null,
     fetcher,
   )
 
@@ -227,7 +226,7 @@ export default function TaggingSettingsPage() {
                 <SettingsRow
                   title={t('estimate')}
                   description={status.estimateUsd === null
-                    ? t('estimateUnknown')
+                    ? t('estimateUnknown', { version: status.taxonomyVersion })
                     : t('estimateDesc', { mails: count(remaining), questions: status.questions, version: status.taxonomyVersion })}
                 >
                   <span className="text-sm tabular-nums">
@@ -351,6 +350,8 @@ export default function TaggingSettingsPage() {
                   </>
                 )}
               </SettingsSection>
+
+              <TagReliabilitySection accountId={accountId!} />
             </>
           )}
         </div>

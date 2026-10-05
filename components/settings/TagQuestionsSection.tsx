@@ -12,7 +12,7 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
-import { useTranslations } from 'next-intl'
+import { useFormatter, useTranslations } from 'next-intl'
 import { ChevronDown, ChevronRight, FlaskConical, GripVertical, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -20,8 +20,8 @@ import { RowMenu, ContextMenuItem, MENU_ICON } from '@/components/ui/ContextMenu
 import { SettingsSection, SaveBar, Toggle } from '@/components/settings/primitives'
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import { useTagLabels } from '@/hooks/useTagLabels'
-import { RESERVED_ID_CODE, SCORE_LEVELS, SLUG_RE, engineBodyOf, type QuestionType, type TagOption, type TagQuestion } from '@/lib/tagging/questions'
-import { QUESTIONS_ENDPOINT } from '@/lib/tagging/view'
+import { CONFIDENCE_THRESHOLD_DEFAULT, RESERVED_ID_CODE, SCORE_LEVELS, SLUG_RE, engineBodyOf, type QuestionType, type TagOption, type TagQuestion } from '@/lib/tagging/questions'
+import { QUESTIONS_ENDPOINT, TAGGING_RUN_ENDPOINT } from '@/lib/tagging/view'
 import type { StoredQuestion } from '@/lib/tagging/userQuestions'
 import type { Message } from '@/types/email'
 import { cn } from '@/lib/utils'
@@ -32,7 +32,7 @@ const TYPES: QuestionType[] = ['choice', 'score', 'noul']
 type Draft = Omit<StoredQuestion, 'updatedAt'>
 
 const draftOf = (q?: StoredQuestion): Draft => q
-  ? { id: q.id, type: q.type, instructions: q.instructions, group: q.group, options: q.options ? q.options.map(o => ({ ...o, examples: o.examples ? [...o.examples] : undefined })) : undefined, listBadge: q.listBadge, enabled: q.enabled, version: q.version }
+  ? { id: q.id, type: q.type, instructions: q.instructions, group: q.group, options: q.options ? q.options.map(o => ({ ...o, examples: o.examples ? [...o.examples] : undefined })) : undefined, listBadge: q.listBadge, enabled: q.enabled, version: q.version, confidenceThreshold: q.confidenceThreshold }
   : { id: '', type: 'noul', instructions: '', group: 'general', enabled: true, version: 1 }
 
 const emptyOption = (): TagOption => ({ value: '', definition: '' })
@@ -70,9 +70,11 @@ export function TagQuestionsSection({ accountId, staleCounts }: {
     if (!draft) return
     setSaving(true); setSaved(false); setError(null)
     try {
+      // Un seuil effacé part en `null` (= retour au défaut) : `undefined` disparaîtrait du JSON et garderait l'ancien.
+      const body = { ...draft, confidenceThreshold: draft.confidenceThreshold ?? null }
       const { ok, json } = adding
-        ? await send('POST', QUESTIONS_ENDPOINT, draft)
-        : await send('PATCH', `${QUESTIONS_ENDPOINT}/${encodeURIComponent(draft.id)}`, draft)
+        ? await send('POST', QUESTIONS_ENDPOINT, body)
+        : await send('PATCH', `${QUESTIONS_ENDPOINT}/${encodeURIComponent(draft.id)}`, body)
       if (!ok) { setError(json.code === RESERVED_ID_CODE ? t('reservedId', { id: json.id ?? draft.id }) : json.error ?? t('saveFailed')); return }
       await mutate()
       // La question rendue porte sa nouvelle version : le brouillon se réaligne dessus, sinon
@@ -188,6 +190,7 @@ type T = ReturnType<typeof useTranslations<'settings.tagging.questions'>>
 function Editor({ draft, setDraft, isNew, accountId, stale, t }: {
   draft: Draft; setDraft: (f: (d: Draft | null) => Draft | null) => void; isNew: boolean; accountId: string | null; stale: number; t: T
 }) {
+  const format = useFormatter()
   const update = (patch: Partial<Draft>) => setDraft(d => d && { ...d, ...patch })
   const setType = (type: QuestionType) => update({ type, options: type === 'noul' ? undefined : (draft.type === 'noul' ? [emptyOption(), emptyOption()] : draft.options), listBadge: undefined })
   const options = draft.options ?? []
@@ -206,7 +209,7 @@ function Editor({ draft, setDraft, isNew, accountId, stale, t }: {
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="space-y-1 text-xs text-muted-foreground">
           {t('id')}
-          <Input value={draft.id} disabled={!isNew} placeholder="ma_question" data-field="id"
+          <Input value={draft.id} disabled={!isNew} placeholder={t('idPlaceholder')} data-field="id"
             onChange={e => update({ id: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })} />
         </label>
         <label className="space-y-1 text-xs text-muted-foreground">
@@ -274,6 +277,20 @@ function Editor({ draft, setDraft, isNew, accountId, stale, t }: {
         )}
       </label>
 
+      {/* Vide = le défaut (`CONFIDENCE_THRESHOLD_DEFAULT`) : `undefined` dans le brouillon, `null` en base.
+          Une saisie partielle (« 0. », champ vidé) n'est jamais lue comme 0 : seul un nombre fini entre. Le 0 reste
+          permis PENDANT la frappe (« 0 » puis « .5 »), mais un 0 laissé en quittant le champ (le « 0 » d'un Retour
+          arrière sur « 0. ») redevient vide : un seuil nul n'alimenterait jamais la file, rien à enregistrer. */}
+      <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        {t('confidenceThreshold')}
+        <input type="number" min={0} max={1} step={0.05} data-field="confidenceThreshold"
+          value={draft.confidenceThreshold ?? ''} placeholder={format.number(CONFIDENCE_THRESHOLD_DEFAULT)}
+          onChange={e => { const n = e.target.valueAsNumber; update({ confidenceThreshold: Number.isFinite(n) ? Math.min(Math.max(n, 0), 1) : undefined }) }}
+          onBlur={() => { if (draft.confidenceThreshold === 0) update({ confidenceThreshold: undefined }) }}
+          className="h-8 w-20 rounded-md border border-input bg-background px-2 text-xs tabular-nums" />
+        <span className="text-[11px]">{t('confidenceThresholdHint', { value: CONFIDENCE_THRESHOLD_DEFAULT })}</span>
+      </label>
+
       {!isNew && <TestOnMail question={draft} accountId={accountId} stale={stale} t={t} />}
     </div>
   )
@@ -315,7 +332,7 @@ function TestOnMail({ question, accountId, stale, t }: { question: Draft; accoun
 
   async function retag() {
     if (!accountId || !window.confirm(t('retagConfirm', { count: stale }))) return
-    await fetch('/api/tagging/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId, action: 'start' }) })
+    await fetch(TAGGING_RUN_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId, action: 'start' }) })
     setResult(t('retagStarted'))
   }
 

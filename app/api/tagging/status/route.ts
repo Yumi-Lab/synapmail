@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { authorize } from '@/lib/apiAuth'
 import { withApiLog } from '@/lib/apiLog'
 import { getAccessibleAccount } from '@/lib/accountAccess'
+import { auditStatus, reliability } from '@/lib/tagging/audit'
 import { readTaggingStatus } from '@/lib/tagging/mailbox'
 import { questionVersion, tagDistribution } from '@/lib/tagging/store'
 import { questionSetForAccount, staleCounts } from '@/lib/tagging/userQuestions'
@@ -21,6 +22,10 @@ export const dynamic = 'force-dynamic'
  * `?stale=1` y ajoute, par question, le nombre de mails tagués sous une AUTRE version que la
  * courante (lot T-Q) : le « N mails tagués avec une ancienne version » de l'écran. Même raison
  * de ne pas être dans la réponse par défaut.
+ *
+ * `?reliability=1` y ajoute le tableau « Fiabilité » (lot T14, `lib/tagging/audit.ts`) et
+ * l'état de l'audit aléatoire (`audit`) : plusieurs balayages de `message_tags`, demandés
+ * seulement quand l'écran les montre.
  */
 async function getHandler(req: Request) {
   const gate = await authorize(req)
@@ -38,6 +43,7 @@ async function getHandler(req: Request) {
       ...status,
       ...(params.get('distribution') === '1' ? { distribution: await tagDistribution(accountId) } : {}),
       ...(params.get('stale') === '1' ? { staleCounts: await staleCounts(accountId, await questionSetForAccount(accountId), questionVersion) } : {}),
+      ...(params.get('reliability') === '1' ? { reliability: await reliability(accountId), audit: await auditStatus(accountId) } : {}),
     } })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

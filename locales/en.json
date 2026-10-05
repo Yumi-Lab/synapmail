@@ -627,7 +627,7 @@
       "spent": "Spent",
       "estimate": "Estimated cost of sorting the rest",
       "estimateDesc": "{mails} messages left × {questions} questions, at this engine’s rate. Taxonomy {version}: a message already sorted under another version is sorted again.",
-      "estimateUnknown": "Unknown as long as no engine is chosen.",
+      "estimateUnknown": "Unknown as long as no engine is chosen. Taxonomy {version}.",
       "free": "Free",
       "progress": "Progress",
       "tagged": "Sorted",
@@ -653,6 +653,25 @@
       "distribution": "Spread of the values",
       "distributionDesc": "What the engine answered, question by question. This is what tells you whether the questions are worth asking on the whole mailbox.",
       "distributionEmpty": "Nothing sorted yet under the current taxonomy.",
+      "reliability": "Reliability",
+      "reliabilityDesc": "A random sample of the tagged messages (2%, at least 50) is offered for your validation, regardless of confidence: the only unbiased measure. Accuracy below counts that audit only.",
+      "auditState": "{tagged, plural, one {# tagged message} other {# tagged messages}} · target {target} · {drawn} drawn · {validated} validated",
+      "auditDraw": "Draw the audit",
+      "auditComplete": "Complete the audit ({missing})",
+      "auditValidate": "Validate ({pending})",
+      "auditNothing": "No message tagged by an engine: nothing to audit.",
+      "auditStale": "{count, plural, one {# message tagged under an older version of a question: it cannot be measured until it is retagged} other {# messages tagged under an older version of a question: they cannot be measured until they are retagged}}",
+      "reliabilityEmpty": "No human validation yet. Draw the audit, then validate the proposed messages.",
+      "colQuestion": "Question",
+      "colHuman": "Validations",
+      "colAccuracy": "Accuracy (audit)",
+      "colConfusions": "Confusions",
+      "colCurve": "Confidence → accuracy",
+      "colAgreement": "JEV / Yumi One",
+      "accuracyOf": "{correct} / {judged}",
+      "confusionPair": "{engine} → {human} ({count})",
+      "curveBucket": "≥ {bucket}: {correct}/{judged}",
+      "agreementOf": "{agree} / {both}",
       "stateIdle": "Not started",
       "stateRunning": "Sorting",
       "stateDone": "Finished",
@@ -682,6 +701,7 @@
         "deleteConfirm": "Delete the question “{name}”? Tags already written stay in the database but will no longer be shown.",
         "enabled": "Question enabled",
         "id": "Identifier",
+        "idPlaceholder": "my_question",
         "type": "Type",
         "group": "Group",
         "instructions": "Instructions for the engine",
@@ -715,7 +735,9 @@
         "noMail": "No mail in the inbox",
         "bodyPreview": "Body sent to the engine: {chars} characters",
         "saveFailed": "Saving failed.",
-        "reservedId": "The id “{id}” is reserved for a rule detector: pick another one."
+        "reservedId": "The id “{id}” is reserved for a rule detector: pick another one.",
+        "confidenceThreshold": "Confidence threshold",
+        "confidenceThresholdHint": "Below this, the engine’s answer enters the validation queue (default {value, number})."
       },
       "rules": {
         "title": "Tagging rules",
@@ -775,7 +797,8 @@
         "groupRate": "{name}: {questions} questions, triggered on {rate} of messages",
         "groupRateUnknown": "{name}: {questions} questions, share unknown",
         "groupRateHint": "Share read on the {mails} messages already tagged under the current definition of the question it reads, not on the whole mailbox."
-      }
+      },
+      "validateKeyboard": "Validate with the keyboard"
     },
     "engines": {
       "title": "Decision engines (System One)",
@@ -1152,7 +1175,9 @@
       "branding": "tab, icon, favicon, title, site name, branding, logo",
       "tagging": "sorting tags labels engine classify automatic",
       "webhooks": "webhook, http, callback, bot, n8n, integration, trigger"
-    }
+    },
+    "validateQueue": "Validation queue",
+    "validateQueueKeywords": "validate, validation, queue, keyboard, tags, audit"
   },
   "tags": {
     "panelTitle": "Tags",
@@ -1170,6 +1195,9 @@
     "filterLabel": "Tag",
     "filterAll": "Any tag",
     "filterClear": "Clear tag filter",
+    "filterAudit": "Random audit",
+    "filterAuditEmpty": "The whole audit is validated.",
+    "filterAuditNone": "No audit drawn for this mailbox.",
     "filterCount": "{count, plural, one {# tagged} other {# tagged}}",
     "filterEmpty": "No message carries this tag.",
     "unpositioned": "{count, plural, one {# hidden: its folder is unknown.} other {# hidden: their folder is unknown.}}",
@@ -1425,6 +1453,28 @@
       "agent": "agent",
       "motif": "learned pattern",
       "moteur": "engine"
+    },
+    "validate": {
+      "title": "To validate",
+      "description": "One tag per line: confirm, correct or skip, from the keyboard.",
+      "remaining": "{count, plural, =0 {Nothing to validate} one {# to validate} other {# to validate}}",
+      "done": "{count, plural, =0 {0 validated} one {# validated} other {# validated}}",
+      "reason_audit": "Audit",
+      "reason_disagreement": "Disagreement",
+      "reason_confidence": "Low confidence",
+      "loading": "Loading the queue…",
+      "loadError": "The queue could not be read.",
+      "empty": "Nothing to validate for this mailbox: draw an audit or let the sorter run.",
+      "allDone": "{count, plural, one {# tag validated} other {# tags validated}}, the queue is empty.",
+      "noState": "Judged text unknown (tag predates the snapshots).",
+      "enginesSaid": "Engines answered: {values}",
+      "writeFailed": "Write refused ({status}).",
+      "readOnly": "Read only: this shared mailbox does not let you organize.",
+      "keyConfirm": "confirm",
+      "keyChoose": "choose",
+      "keySkip": "skip",
+      "keyUndo": "undo",
+      "keyMove": "move"
     }
   },
   "documents": {

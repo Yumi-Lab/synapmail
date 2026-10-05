@@ -242,6 +242,19 @@ try {
     JSON.stringify((full.body.data ?? {}).sample))
 
   await run('pause')
+
+  // --- V. la file « À valider » au clavier (lot T15) ----------------------------------
+  // Même limite que H : la page est un composant client, le HTML servi porte le cadre
+  // (`data-validate-screen`) et la route rend la file ; les touches restent un gate humain.
+  const vPage = await get('/validate')
+  const vHtml = await vPage.text()
+  check(vPage.status === 200 && /data-validate-screen/.test(vHtml), 'V1 /validate se rend pour une session, avec son cadre', `statut ${vPage.status}`)
+  const queue = await json(`/api/tags?account=${encodeURIComponent(accountId)}&queue=1`)
+  const vd = queue.data ?? {}
+  check(Array.isArray(vd.items) && Number.isInteger(vd.total) && vd.counts && ['audit', 'disagreement', 'confidence'].every(k => Number.isInteger(vd.counts[k])),
+    'V2 GET /api/tags?queue=1 rend { items, total, counts{audit,disagreement,confidence} }', JSON.stringify(queue).slice(0, 200))
+  check(vd.items.every(i => typeof i.messageId === 'string' && typeof i.question === 'string' && typeof i.valeur === 'string' && Array.isArray(i.valeurs) && ['audit', 'disagreement', 'confidence'].includes(i.reason)),
+    'V3 chaque item porte mail, question, proposition, valeurs et raison', JSON.stringify(vd.items[0] ?? null).slice(0, 200))
 } finally {
   if (engineId) {
     await fetch(`${BASE}/api/decision-engines/${engineId}`, { method: 'DELETE', headers: { cookie } }).catch(() => {})

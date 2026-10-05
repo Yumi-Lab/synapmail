@@ -20,6 +20,7 @@ import { toast } from '@/components/ui/toast'
 import { useMailSelection, targetOrigins } from '@/lib/mailSelection'
 import { groupByOrigin, messageHref, originOfMessage, sameOrigin, type MessageOrigin } from '@/lib/mailOrigin'
 import { MAILBOX_CHANGED, STREAM_ACCOUNT_PARAM } from '@/lib/stream'
+import { AUDIT_FILTER, TAG_FILTER_PARAM } from '@/lib/tagging/view'
 import type { ForwardedMessages } from '@/lib/forward'
 import type { Message } from '@/types/email'
 import type { EmailAccount } from '@/types/account'
@@ -455,6 +456,7 @@ export function MailClient() {
           search={search}
           searchScope={searchScope}
           permissions={permissions}
+          initialTagFilter={searchParams.get(TAG_FILTER_PARAM) === AUDIT_FILTER ? AUDIT_FILTER : ''}
         />
       </div>
 

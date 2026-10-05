@@ -395,6 +395,17 @@ try {
     run.status === 200 && run.body?.data?.bulkState === 'running' && !leaks(run.text),
     `reçu ${run.status} — ${run.text.slice(0, 200)}`)
 
+  // ---- T14. l'audit aléatoire par les routes : tirage, file à valider, tableau de fiabilité ----
+  const drawn = await call('/api/tagging/run', { method: 'POST', key: writerKey, body: { accountId, action: 'audit' } })
+  const auditList = await call(`/api/tags?account=${accountId}&audit=1`, { key: readerKey })
+  const reliable = await call(`/api/tagging/status?account=${accountId}&reliability=1`, { key: readerKey })
+  const a = drawn.body?.data?.audit
+  check('H6 `action=audit` tire jusqu’à la cible sans trier ; `?audit=1` liste les tirés non jugés ; `?reliability=1` rend le tableau',
+    drawn.status === 200 && a && a.drawn === a.target && a.target <= a.tagged && drawn.body?.data?.bulkState === 'running'
+      && auditList.status === 200 && Array.isArray(auditList.body?.data?.messages) && auditList.body.data.total === a.drawn - a.validated
+      && reliable.status === 200 && Array.isArray(reliable.body?.data?.reliability) && reliable.body?.data?.audit?.drawn === a.drawn,
+    `run ${drawn.status}:${JSON.stringify(a)} — tags ${auditList.status}:${auditList.body?.data?.total} — status ${reliable.status}:${reliable.text.slice(0, 160)}`)
+
   // ---- I. la boîte comme GED (lot G3) : interrupteur session seule, rattrapage par ordre d'état -------
   const notGed = await call('/api/tagging/run', { method: 'POST', key: writerKey, body: { accountId, action: 'catchup' } })
   check('I1 `catchup` sur une boîte qui n\'est pas une GED est refusé (409)',

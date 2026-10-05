@@ -17,6 +17,21 @@ import type { StoredTag, TaggedMessage } from './store'
 export const TAGS_ENDPOINT = '/api/tags'
 
 /**
+ * Le filtre « audit aléatoire » (lot T14) : la valeur du sélecteur d'étiquettes de la liste ET
+ * le paramètre d'URL (`/mail?tag=audit`) par lequel l'écran « Fiabilité » y mène. Une seule
+ * chaîne, écrite ici, lue par les deux.
+ */
+export const AUDIT_FILTER = 'audit'
+export const TAG_FILTER_PARAM = 'tag'
+
+/** Émis par le panneau après chaque correction écrite : la liste en mode audit se relit dessus. */
+export const TAGS_CHANGED_EVENT = 'synapmail:tags-changed'
+
+/** L'écran « À valider » (lot T15, décision 17) : son chemin et le paramètre de la boîte. */
+export const VALIDATE_PATH = '/validate'
+export const VALIDATE_ACCOUNT_PARAM = 'account'
+
+/**
  * La route qui sert le JEU de questions de l'utilisateur (lot T-Q), écrite UNE fois : c'est la
  * clé SWR que la liste, le panneau et l'écran de réglages partagent (mêmes règles que
  * `/api/settings` : `{ data }`, un seul fetcher, une mutation la rafraîchit partout).
@@ -31,6 +46,9 @@ export const TAG_GROUPS_ENDPOINT = '/api/tags/groups'
 
 /** Le statut et les réglages d'une boîte (`?account=`) — clé SWR de l'écran de tri, aussi revalidée par les groupes. */
 export const TAGGING_SETTINGS_ENDPOINT = '/api/tagging/settings'
+/** Le trieur d'une boîte : où il en est (`?account=`), et l'ordre qu'on lui donne (`POST { accountId, action }`). */
+export const TAGGING_STATUS_ENDPOINT = '/api/tagging/status'
+export const TAGGING_RUN_ENDPOINT = '/api/tagging/run'
 
 /** L'ordre d'affichage d'une étiquette : celui du jeu de l'utilisateur, jamais celui du SQL. */
 const byQuestionOrder = (set: QuestionSet) => (a: StoredTag, b: StoredTag) => set.rankOf(a.question) - set.rankOf(b.question)

@@ -627,7 +627,7 @@
       "spent": "已支出",
       "estimate": "分类剩余邮件的预计费用",
       "estimateDesc": "剩余 {mails} 封邮件 × {questions} 个问题，按此引擎费率计算。分类体系 {version}：已按其他版本分类的邮件将重新分类。",
-      "estimateUnknown": "未选择引擎前无法估算。",
+      "estimateUnknown": "未选择引擎前无法估算。分类版本 {version}。",
       "free": "免费",
       "progress": "进度",
       "tagged": "已分类",
@@ -653,6 +653,25 @@
       "distribution": "取值分布",
       "distributionDesc": "引擎逐个问题给出的答案。这能说明这些问题是否值得对整个邮箱提问。",
       "distributionEmpty": "当前分类体系下尚无已分类的邮件。",
+      "reliability": "可靠性",
+      "reliabilityDesc": "从已标注邮件中随机抽取样本（2%，至少 50 封）供您验证，不看置信度：这是唯一无偏的度量。下方准确率仅统计该抽检。",
+      "auditState": "{tagged, plural, one {# 封已标注} other {# 封已标注}} · 目标 {target} · 已抽 {drawn} · 已验证 {validated}",
+      "auditDraw": "抽取抽检样本",
+      "auditComplete": "补足抽检样本（{missing}）",
+      "auditValidate": "去验证（{pending}）",
+      "auditNothing": "没有引擎标注过的邮件：无可抽检。",
+      "auditStale": "{count, plural, other {# 封邮件在旧版本问题下标注：重新标注前无法计入准确率}}",
+      "reliabilityEmpty": "尚无人工验证。先抽取样本，再验证所列邮件。",
+      "colQuestion": "问题",
+      "colHuman": "验证数",
+      "colAccuracy": "准确率（抽检）",
+      "colConfusions": "常见混淆",
+      "colCurve": "置信度 → 准确率",
+      "colAgreement": "JEV / Yumi One",
+      "accuracyOf": "{correct} / {judged}",
+      "confusionPair": "{engine} → {human}（{count}）",
+      "curveBucket": "≥ {bucket}：{correct}/{judged}",
+      "agreementOf": "{agree} / {both}",
       "stateIdle": "尚未开始",
       "stateRunning": "正在分类",
       "stateDone": "已完成",
@@ -682,6 +701,7 @@
         "deleteConfirm": "删除问题“{name}”？已写入的标签会保留在数据库中，但不再显示。",
         "enabled": "问题已启用",
         "id": "标识符",
+        "idPlaceholder": "wo_de_wen_ti",
         "type": "类型",
         "group": "分组",
         "instructions": "给引擎的指令",
@@ -715,7 +735,9 @@
         "noMail": "收件箱中没有邮件",
         "bodyPreview": "发送给引擎的正文：{chars} 个字符",
         "saveFailed": "保存失败。",
-        "reservedId": "标识符“{id}”已保留给规则检测器，请换一个。"
+        "reservedId": "标识符“{id}”已保留给规则检测器，请换一个。",
+        "confidenceThreshold": "置信度阈值",
+        "confidenceThresholdHint": "低于此值时，引擎的回答进入校验队列（默认 {value, number}）。"
       },
       "rules": {
         "title": "标签规则",
@@ -775,7 +797,8 @@
         "groupRate": "{name}：{questions} 个问题，{rate} 的邮件触发",
         "groupRateUnknown": "{name}：{questions} 个问题，比例未知",
         "groupRateHint": "该比例基于已按所读问题当前定义标注的 {mails} 封邮件，而非整个邮箱。"
-      }
+      },
+      "validateKeyboard": "键盘校验"
     },
     "engines": {
       "title": "决策工具（System One）",
@@ -1152,7 +1175,9 @@
       "branding": "标签页, 图标, favicon, 标题, 站点名称, 标识",
       "tagging": "分类 标签 引擎 自动",
       "webhooks": "钩子, 网络钩子, 回调, 机器人, n8n, 集成, 触发"
-    }
+    },
+    "validateQueue": "校验队列",
+    "validateQueueKeywords": "校验, 验证, 队列, 键盘, 标签, 抽检"
   },
   "tags": {
     "panelTitle": "标签",
@@ -1170,6 +1195,9 @@
     "filterLabel": "标签",
     "filterAll": "全部",
     "filterClear": "清除筛选",
+    "filterAudit": "随机抽检",
+    "filterAuditEmpty": "抽检样本已全部验证。",
+    "filterAuditNone": "此邮箱尚未抽取抽检样本。",
     "filterCount": "{count, plural, other {已标记 # 封}}",
     "filterEmpty": "没有邮件带此标签。",
     "unpositioned": "{count, plural, other {# 封已隐藏：文件夹未知。}}",
@@ -1425,6 +1453,28 @@
       "agent": "代理",
       "motif": "已学习的模式",
       "moteur": "引擎"
+    },
+    "validate": {
+      "title": "待校验",
+      "description": "每行一个标签：用键盘确认、修正或跳过。",
+      "remaining": "{count, plural, =0 {没有待校验} other {# 条待校验}}",
+      "done": "{count, plural, other {已校验 # 条}}",
+      "reason_audit": "抽检",
+      "reason_disagreement": "引擎不一致",
+      "reason_confidence": "置信度低",
+      "loading": "正在加载队列…",
+      "loadError": "无法读取队列。",
+      "empty": "此邮箱没有待校验项：先抽取抽检样本，或让分类继续运行。",
+      "allDone": "{count, plural, other {已校验 # 条标签}}，队列已空。",
+      "noState": "未知判定文本（该标签早于快照）。",
+      "enginesSaid": "引擎的回答：{values}",
+      "writeFailed": "写入被拒绝（{status}）。",
+      "readOnly": "只读：此共享邮箱不允许您整理。",
+      "keyConfirm": "确认",
+      "keyChoose": "选择",
+      "keySkip": "跳过",
+      "keyUndo": "撤销",
+      "keyMove": "移动"
     }
   },
   "documents": {
