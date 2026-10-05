@@ -226,7 +226,14 @@ function OmnibarInner({ onMenu, menuLabel, menuExpanded }: OmnibarProps) {
     submit('', activeScope)
   }
 
-  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current) }, [])
+  // La frappe différée appartient à la vue COURRIER : elle est annulée dès que la vue
+  // change, pas seulement au démontage (l'omnibar vit dans la coquille, elle ne se
+  // démonte jamais). Sinon le minuteur tombait depuis un autre écran avec le `pathname`
+  // capturé 400 ms plus tôt, prenait donc la branche « seuls des paramètres changent »
+  // et écrivait `/mail?q=…` par l'API d'historique — SANS navigation, donc sans rien
+  // démonter : la fenêtre des réglages restait ouverte au-dessus d'une URL qui ne la
+  // nommait plus (mesuré le 04/10/2026 : assistant « ajouter un compte » effacé).
+  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current) }, [pathname])
 
   // --- Lot H3f : tout ce que l'omnibar sait proposer en plus du courrier ---
   const tOmni = useTranslations('omnibar')

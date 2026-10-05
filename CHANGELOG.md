@@ -5,6 +5,38 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — fork Yumi-Lab (branche `fix/settings-tab-url-leak`) — la fenêtre des réglages ne saute plus sur « Profil » — 2026-10-04
+
+### Résumé
+- La fenêtre des réglages ne quitte plus l'onglet ouvert pour « Profil », et n'efface plus ce qu'on y
+  remplissait. Le cas vu : l'ajout d'une boîte (Comptes → Ajouter un compte → Gmail), interrompu après
+  avoir tapé une recherche dans l'omnibar juste avant d'ouvrir les réglages.
+
+### Fixed
+- **La fenêtre des réglages abandonnait l'onglet ouvert pour « Profil »**, en effaçant ce qui y était en
+  cours de saisie. Vu en production sur l'assistant d'ajout de compte : Comptes → Ajouter un compte →
+  Gmail, le panneau des identifiants s'affichait puis la fenêtre repartait sur Profil, fenêtre toujours
+  ouverte, URL `/mail?q=…`. Deux causes, corrigées chacune à sa source :
+  - `components/layout/Omnibar.tsx` — la frappe différée (400 ms) n'était annulée qu'au démontage, et
+    l'omnibar vit dans la coquille : elle ne se démonte jamais. Le minuteur tombait donc depuis un AUTRE
+    écran, avec le `pathname` capturé 400 ms plus tôt ; il prenait la branche « seuls des paramètres
+    changent » et réécrivait `/mail?q=…` par l'API d'historique — sans navigation, donc sans rien démonter.
+    La frappe appartient désormais à la vue courrier : son minuteur est annulé dès que la vue change.
+  - `components/settings/SettingsModal.tsx` — l'onglet se lisait de n'importe quel chemin :
+    `pathname.replace(/^\/settings\/?/, '')` rendait `''` pour `/mail` comme pour `/admin/users`, et le
+    repli `|| 'profile'` en faisait « Profil ». La fenêtre affichait donc un onglet que l'URL ne nomme pas,
+    au lieu de se retirer. Elle ne lit plus d'onglet que dans un chemin de réglages.
+- La racine `/settings` est écrite UNE fois (`SETTINGS_ROOT`, `components/settings/SettingsSidebar.tsx`) :
+  trois fichiers l'épelaient, dont celui qui devait la reconnaître.
+
+### Notes
+- Banc : `scripts/check-settings-modal-path.mjs` — vrais clics souris (Chrome), il mesure les deux causes.
+  ROUGE avant le correctif sur un déploiement portant le défaut (3 écarts), dont la réécriture d'URL
+  reproduite depuis le geste réel : taper une recherche dans l'omnibar puis ouvrir les réglages. La mesure
+  verte reste à prendre sur le staging après déploiement.
+
+---
+
 ## [Unreleased] — fork Yumi-Lab (branche `lane/password`) — revoir une clé API, et savoir d'où elle sert — 2026-09-23
 
 ### Added
