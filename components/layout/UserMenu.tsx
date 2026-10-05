@@ -6,6 +6,7 @@ import { signOut } from 'next-auth/react'
 import { useLocale, useTranslations } from 'next-intl'
 import useSWR from 'swr'
 import { LogOut, Settings } from 'lucide-react'
+import { SETTINGS_ROOT } from '@/components/settings/SettingsSidebar'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LOCALES, setLocale, type Locale } from '@/lib/locales'
 import { twoLetters } from './AccountAvatar'
@@ -122,7 +123,7 @@ export function UserMenu() {
             <div className="truncate text-[11px] text-muted-foreground">{user?.email ?? ''}</div>
           </div>
           <div className="my-1 border-t border-border" />
-          <Link href="/settings" onClick={() => setOpen(false)} role="menuitem" data-user-menu-item="settings" className={MENU_ROW}>
+          <Link href={SETTINGS_ROOT} onClick={() => setOpen(false)} role="menuitem" data-user-menu-item="settings" className={MENU_ROW}>
             <Settings className={MENU_ICON} />
             <span className="flex-1 truncate text-left">{t('settings')}</span>
           </Link>

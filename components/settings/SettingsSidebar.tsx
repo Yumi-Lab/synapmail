@@ -13,8 +13,16 @@ import { BRANDING_ANCHOR } from '@/components/admin/BrandingSection'
 import { cn } from '@/lib/utils'
 import { useAppName } from '@/components/providers'
 
+/**
+ * La racine des réglages — écrite UNE fois. Les adresses d'onglet se construisent
+ * dessus, et la fenêtre des réglages s'en sert pour reconnaître un chemin qui est
+ * vraiment le sien : sans cette borne, elle lisait un onglet dans n'importe quel
+ * chemin (`/mail`, `/admin/users`) et retombait silencieusement sur « Profil ».
+ */
+export const SETTINGS_ROOT = '/settings'
+
 /** Where an account's sharing is managed — the one place the bar's shared mark points to. */
-export const ACCOUNTS_SETTINGS_HREF = '/settings/accounts'
+export const ACCOUNTS_SETTINGS_HREF = `${SETTINGS_ROOT}/accounts`
 
 /** La page d'administration — la seule, et le seul endroit où son chemin s'écrit. */
 export const ADMIN_HREF = '/admin/users'
@@ -23,7 +31,7 @@ export const ADMIN_HREF = '/admin/users'
  * La page Apparence — écrite une fois, lue deux : l'entrée ordinaire ci-dessous et
  * l'entrée d'administration qui mène à la section d'identité qu'elle héberge (lot H4a).
  */
-export const APPEARANCE_HREF = '/settings/appearance'
+export const APPEARANCE_HREF = `${SETTINGS_ROOT}/appearance`
 
 /** Le Tri automatique — là où une boîte se déclare GED ; l'écran Documents y renvoie une boîte qui ne l'est pas. */
 export const TAGGING_SETTINGS_HREF = '/settings/tagging'
