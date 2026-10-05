@@ -106,6 +106,16 @@ export const NOUL_VALUES = [NOUL_YES, NOUL_NO] as const
 /** Les domaines du groupe : ce qui distingue un échange `interne` d'une `correspondance`. */
 const GROUP_DOMAINS = '3d-expert.fr, yumi-lab.com'
 
+/**
+ * Le groupe conditionnel des questions GED (décision 6) : inséré par `lib/db.ts` pour chaque
+ * utilisateur avec ce déclencheur, modifiable ensuite comme un groupe créé à l'écran (T-Q3).
+ * Sans lui, les quatre questions `ged` seraient posées à chaque mail de chaque boîte.
+ */
+export const GED_GROUP = {
+  id: 'ged', name: 'Documents GED', conditionLogic: 'all',
+  conditions: [{ id: 'ged', field: 'texte_ocr', operator: 'is_true', value: '' }],
+} as const
+
 export const DEFAULT_QUESTIONS: TagQuestion[] = [
   // ── Tri général ────────────────────────────────────────────────────────────
   {
@@ -681,6 +691,62 @@ export const DEFAULT_QUESTIONS: TagQuestion[] = [
     id: 'echeance_mentionnee', group: 'finance', type: 'noul',
     // Noul de PRÉSENCE seulement : aucune comparaison de dates n'est demandée au moteur.
     instructions: 'Ce mail mentionne-t-il une date limite ou une échéance ?',
+  },
+
+  // ── GED : documents scannés (lot G3, décision 6) ───────────────────────────
+  // Posées SEULEMENT quand l'état porte un texte OCR : le groupe `ged` est inséré avec le
+  // déclencheur `texte_ocr is_true` (`GED_GROUP`), jamais au tronc. Le copieur envoie tout
+  // depuis la même adresse sans objet : ces questions ne lisent que `corps`.
+  {
+    id: 'type_document', group: GED_GROUP.id, type: 'choice', listBadge: true,
+    instructions: 'Quel type de document est ce scan ? Lire le `corps` (texte OCR), jamais `expediteur` : le copieur envoie tout depuis la même adresse.',
+    options: [
+      { value: 'facture', definition: "une facture : un émetteur réclame un montant pour des biens ou des services, avec un numéro de facture", notFor: "un avoir (montant remboursé ou déduit) : c'est `avoir`" },
+      { value: 'avoir', definition: 'un avoir ou une note de crédit : un montant remboursé ou à déduire' },
+      { value: 'devis', definition: 'un devis ou une proposition chiffrée avant commande' },
+      { value: 'releve', definition: "un relevé : récapitulatif périodique de compte, d'opérations ou de factures" },
+      { value: 'douane', definition: "un document de dédouanement : déclaration en douane, formulaire CBP, droits et taxes à l'importation", notFor: "une facture de transport qui cite seulement la douane : c'est `facture`" },
+      { value: 'courrier', definition: 'une lettre ou un courrier : une demande, une information, une réponse, sans montant réclamé' },
+      { value: 'contrat', definition: 'un contrat, des conditions générales ou un avenant' },
+      { value: 'bon_livraison', definition: 'un bon de livraison, un bordereau de transport ou un accusé de réception de marchandises' },
+      { value: 'autre', definition: 'aucun des types précédents, ou une page blanche' },
+    ],
+  },
+  {
+    id: 'emetteur_document', group: GED_GROUP.id, type: 'choice', listBadge: true,
+    instructions: "Qui a ÉMIS ce document (l'en-tête, le pied de page, la raison sociale), indépendamment de qui l'a scanné ?",
+    options: [
+      { value: 'transporteur', definition: 'un transporteur ou un transitaire : FedEx, DHL, UPS, Colissimo, fret' },
+      { value: 'fournisseur', definition: 'un fournisseur de biens : usine, grossiste, boutique en ligne qui nous a vendu' },
+      { value: 'client', definition: 'un client : une entreprise, une école ou une administration qui nous achète' },
+      { value: 'administration', definition: 'une administration : douane, impôts, URSSAF, tribunal, mairie' },
+      { value: 'banque', definition: 'une banque ou un établissement de paiement' },
+      { value: 'prestataire', definition: "un prestataire de services : comptable, avocat, assureur, hébergeur, agence" },
+      { value: 'groupe', definition: "une société du groupe lui-même (3D-Expert, Artillery3D, Wanhao, Yumi Lab) : le document est le nôtre" },
+      { value: 'inconnu', definition: "l'émetteur ne se lit pas dans le texte" },
+    ],
+  },
+  {
+    id: 'destinataire_document', group: GED_GROUP.id, type: 'choice',
+    instructions: 'À qui ce document est-il ADRESSÉ (le bloc « client » ou « destinataire ») ?',
+    options: [
+      { value: 'groupe', definition: 'une société du groupe (3D-Expert, Artillery3D, Wanhao, Yumi Lab) ou un de ses salariés' },
+      { value: 'client_du_groupe', definition: "un client du groupe : le document nous concerne mais vise un tiers (facture émise par nous, livraison chez un client)" },
+      { value: 'tiers', definition: 'un tiers sans lien lisible avec le groupe' },
+      { value: 'inconnu', definition: 'le destinataire ne se lit pas dans le texte' },
+    ],
+  },
+  {
+    id: 'marque_groupe', group: GED_GROUP.id, type: 'choice', listBadge: true,
+    instructions: 'Quelle marque ou société du groupe ce document concerne-t-il ?',
+    options: [
+      { value: '3d_expert', definition: '3D-Expert ou 3d-expert.fr' },
+      { value: 'artillery3d', definition: 'Artillery3D ou Artillery' },
+      { value: 'wanhao', definition: 'Wanhao' },
+      { value: 'yumi_lab', definition: 'Yumi Lab ou yumi-lab.com' },
+      { value: 'plusieurs', definition: 'plusieurs de ces marques sont nommées' },
+      { value: 'aucune', definition: 'aucune de ces marques ne figure dans le texte' },
+    ],
   },
 ]
 

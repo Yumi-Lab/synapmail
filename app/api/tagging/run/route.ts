@@ -4,6 +4,7 @@ import { withApiLog } from '@/lib/apiLog'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { pauseMailbox, resumeMailbox, startBulk, startSample } from '@/lib/tagging/runner'
 import { ensureMailboxTagging, readTaggingStatus } from '@/lib/tagging/mailbox'
+import { gedMailboxStatus, requestCatchUp } from '@/lib/ged/intake'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,7 +14,9 @@ export const dynamic = 'force-dynamic'
  * dispose d'un budget par passage et du verrou par boîte — lancer le tri ici, dans le temps
  * d'une requête HTTP, ferait un second chemin de tri à tenir d'accord avec le premier.
  */
-const ACTIONS = ['start', 'sample', 'pause', 'resume', 'restart'] as const
+// `catchup` (lot G3) : le rattrapage des mails déjà présents d'une boîte GED — même nature, un
+// ordre d'état que le planificateur (`processGed`) exécute à son prochain passage.
+const ACTIONS = ['start', 'sample', 'pause', 'resume', 'restart', 'catchup'] as const
 type Action = (typeof ACTIONS)[number]
 const isAction = (v: unknown): v is Action => typeof v === 'string' && (ACTIONS as readonly string[]).includes(v)
 
@@ -53,6 +56,10 @@ async function postHandler(req: Request) {
     if (body.action === 'start') await startBulk(body.accountId)
     else if (body.action === 'sample') await startSample(body.accountId, sample)
     else if (body.action === 'restart') await startBulk(body.accountId, { restart: true })
+    else if (body.action === 'catchup') {
+      if (!(await gedMailboxStatus(body.accountId)).actif) return NextResponse.json({ error: 'mailbox is not a GED' }, { status: 409 })
+      await requestCatchUp(body.accountId)
+    }
     // La pause demandée par la main porte la raison `user` : c'est ce qui la distingue d'un
     // plafond ou d'un crédit épuisé à l'écran, et d'une reprise automatique.
     else if (body.action === 'pause') await pauseMailbox(body.accountId, 'user', 'mise en pause depuis l’écran de tri')

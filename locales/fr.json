@@ -501,6 +501,7 @@
         "field_date_received": "Date de réception",
         "field_priority": "Priorité (X-Priority)",
         "field_header": "En-tête personnalisé",
+        "field_texte_ocr": "Texte OCR (document GED)",
         "field_tag": "Étiquette",
         "op_contains": "contient",
         "op_not_contains": "ne contient pas",
@@ -663,6 +664,14 @@
       "pausedNoEngine": "Aucun moteur n’est choisi pour cette boîte.",
       "live": "Trier au fil de l’eau",
       "liveDesc": "N’étiquette que les nouveaux messages ; l’historique est le travail du tri complet.",
+      "ged": {
+        "toggle": "Cette boîte est une GED",
+        "toggleDesc": "Chaque PDF reçu est océrisé sur place, rangé dans des dossiers virtuels et exposé par API. Rien ne sort de l’instance.",
+        "catchup": "Rattraper les mails existants",
+        "catchupDesc": "Relit tout le dossier au prochain passage (une minute au plus) et rejoue les OCR en échec. Documents : {done} faits, {pending} en attente, {failed} en échec.",
+        "catchupAction": "Rattraper",
+        "catchupConfirm": "Relire tous les mails de cette boîte ? Les PDF déjà océrisés ne sont pas refaits."
+      },
       "questions": {
         "title": "Questions",
         "description": "{enabled} questions actives sur {total}. Chaque mail trié reçoit une réponse par question active ; modifier une consigne ou ses critères crée une nouvelle version.",
@@ -1199,7 +1208,8 @@
       "support": "Service",
       "prospection": "Prospection",
       "security": "Sécurité",
-      "finance": "Finance"
+      "finance": "Finance",
+      "ged": "Documents GED"
     },
     "q": {
       "categorie": "Catégorie",
@@ -1259,7 +1269,11 @@
       "email_tiers": "Adresse e-mail tierce",
       "iban": "IBAN",
       "carte_bancaire": "Carte bancaire",
-      "secret_technique": "Secret technique"
+      "secret_technique": "Secret technique",
+      "type_document": "Type de document",
+      "emetteur_document": "Émetteur du document",
+      "destinataire_document": "Destinataire du document",
+      "marque_groupe": "Marque du groupe"
     },
     "v": {
       "oui": "Oui",
@@ -1386,7 +1400,18 @@
       "italie": "Italie",
       "royaume_uni": "Royaume-Uni",
       "chine": "Chine",
-      "hong_kong": "Hong Kong"
+      "hong_kong": "Hong Kong",
+      "avoir": "Avoir",
+      "courrier": "Courrier",
+      "bon_livraison": "Bon de livraison",
+      "groupe": "Le groupe",
+      "client_du_groupe": "Client du groupe",
+      "tiers": "Tiers",
+      "3d_expert": "3D-Expert",
+      "artillery3d": "Artillery3D",
+      "wanhao": "Wanhao",
+      "yumi_lab": "Yumi Lab",
+      "plusieurs": "Plusieurs"
     },
     "history": "{count, plural, one {# réponse} other {# réponses}}",
     "filterOrigin": "Origine",
@@ -1394,6 +1419,52 @@
     "filterOriginHuman": "Confirmé à la main",
     "sourceDetector": "règle interne · {name}",
     "occurrences": "{count, plural, one {# occurrence} other {# occurrences}}",
-    "filterOriginRule": "Règle interne"
+    "filterOriginRule": "Règle interne",
+    "source": {
+      "humain": "à la main",
+      "agent": "agent",
+      "motif": "motif appris",
+      "moteur": "moteur"
+    }
+  },
+  "documents": {
+    "title": "Documents",
+    "all": "Tous les documents",
+    "unfiled": "À ranger",
+    "newFolder": "Nouveau dossier",
+    "newSubfolder": "Nouveau sous-dossier",
+    "folderNamePlaceholder": "Nom du dossier",
+    "rename": "Renommer",
+    "mergeInto": "Fusionner dans…",
+    "mergeConfirm": "Fusionner « {from} » dans « {into} » ? {count, plural, =0 {Ses motifs appris} one {Son document et ses motifs appris} other {Ses # documents et ses motifs appris}} y passent.",
+    "delete": "Supprimer",
+    "deleteConfirm": "Supprimer « {name} » ({count, plural, =0 {aucun document} one {# document} other {# documents}}) ? Ses documents reviennent dans « À ranger ».",
+    "deletedFolder": "{name} (dossier supprimé)",
+    "loadFailed": "Les dossiers n’ont pas pu être chargés.",
+    "actionFailed": "L’action a échoué.",
+    "searchPlaceholder": "Rechercher dans le texte OCR…",
+    "clearSearch": "Effacer la recherche",
+    "empty": "Aucun document ici.",
+    "noMatch": "Aucun document ne correspond.",
+    "today": "Aujourd’hui",
+    "pickOne": "Choisissez un document pour le lire.",
+    "pages": "{count} p.",
+    "page": "Page {n}",
+    "loading": "Chargement…",
+    "back": "Retour",
+    "confidence": "OCR {percent} %",
+    "download": "Télécharger le PDF",
+    "fileInto": "Ranger…",
+    "takeOut": "Sortir du dossier",
+    "noFolderYet": "Aucun dossier encore : créez-en un depuis la barre latérale.",
+    "suggestion": "Suggéré : {name}",
+    "suggestionHint": "d’après {genres}",
+    "values": "Valeurs",
+    "ocrText": "Texte OCR",
+    "ocrEmpty": "Aucun texte reconnu.",
+    "history": "Historique",
+    "historyEmpty": "Jamais rangé.",
+    "notGed": "« {account} » n’est pas une boîte GED.",
+    "openSettings": "Ouvrir les réglages du tri automatique"
   }
 }

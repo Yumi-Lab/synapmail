@@ -79,7 +79,7 @@ export function focusMenuStep(container: HTMLElement | null, selector: string, s
 }
 
 export function ContextMenuSurface({
-  anchor, onClose, ignoreRef, children, ...rest
+  anchor, onClose, ignoreRef, children, style, ...rest
 }: {
   anchor: ContextMenuAnchor
   onClose: () => void
@@ -169,9 +169,9 @@ export function ContextMenuSurface({
       <div
         ref={ref}
         className="fixed z-[100] bg-popover border border-border rounded-lg shadow-xl py-1"
-        style={{ left: pos.x, top: pos.y, minWidth: MENU_MIN_WIDTH }}
         data-context-menu-surface
         {...rest}
+        style={{ minWidth: MENU_MIN_WIDTH, ...style, left: pos.x, top: pos.y }}
       >
         {children}
       </div>

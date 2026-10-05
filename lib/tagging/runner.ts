@@ -446,7 +446,7 @@ async function tagBatch(
       // Les DÉTECTEURS (lot T11b, étage A) : par programme, sur le corps ENTIER (pas l'état
       // tronqué — un secret en fin de mail compte), source `regle`, un auteur par détecteur,
       // jamais une valeur lue dans le mail. Coût nul, donc toujours, avant tout moteur.
-      const detected = detect({ subject: mail.subject, text: messageText({ bodyPlain: mail.bodyPlain, bodyHtml: mail.bodyHtml }), fromAddress: mail.fromAddress, recipients: mail.recipients })
+      const detected = detect({ subject: mail.subject, text: mail.ocrText ?? messageText({ bodyPlain: mail.bodyPlain, bodyHtml: mail.bodyHtml }), fromAddress: mail.fromAddress, recipients: mail.recipients })
       for (const d of detected) {
         await writeTags({ accountId, messageId: messageIdOf(mail), source: RULE_SOURCE, auteur: detectorAuthor(d.question), tags: [tagOf(d)], questions, position, state })
       }
@@ -470,7 +470,9 @@ async function tagBatch(
       // des candidats à faire désigner ; l'IBAN (4 derniers caractères) s'écrit sans moteur.
       // Les réponses ne sont pas des étiquettes : elles vont dans `message_fields`, et une
       // option hors liste est déjà rejetée par `parseAnswer`.
-      const extraction = extractionFor(`${state.objet}\n${state.corps}`, held, mail.date)
+      // Un document GED (décision 6) : l'extraction lit le texte OCR COMPLET, pas l'état tronqué —
+      // le montant d'une facture de 8 pages est sur la dernière.
+      const extraction = extractionFor(mail.ocrText ?? `${state.objet}\n${state.corps}`, held, mail.date)
       let fields = extraction.direct
       let modele: string | null = null
       if (extraction.questions.length) {

@@ -501,6 +501,7 @@
         "field_date_received": "Date received",
         "field_priority": "Priority (X-Priority)",
         "field_header": "Custom header",
+        "field_texte_ocr": "OCR text (document)",
         "field_tag": "Tag",
         "op_contains": "contains",
         "op_not_contains": "does not contain",
@@ -663,6 +664,14 @@
       "pausedNoEngine": "No engine is chosen for this mailbox.",
       "live": "Sort as mail arrives",
       "liveDesc": "Tags new messages only; history is the job of the full sort.",
+      "ged": {
+        "toggle": "This mailbox is a document store",
+        "toggleDesc": "Every PDF received is OCR’d locally, filed into virtual folders and exposed through the API. Nothing leaves the instance.",
+        "catchup": "Catch up on existing mail",
+        "catchupDesc": "Re-reads the whole folder on the next pass (a minute at most) and retries failed OCRs. Documents: {done} done, {pending} pending, {failed} failed.",
+        "catchupAction": "Catch up",
+        "catchupConfirm": "Re-read every message in this mailbox? PDFs already OCR’d are not redone."
+      },
       "questions": {
         "title": "Questions",
         "description": "{enabled} of {total} questions enabled. Every sorted mail gets one answer per enabled question; editing the instructions or criteria creates a new version.",
@@ -1199,7 +1208,8 @@
       "support": "Support",
       "prospection": "Sales",
       "security": "Security",
-      "finance": "Finance"
+      "finance": "Finance",
+      "ged": "Document management"
     },
     "q": {
       "categorie": "Category",
@@ -1259,7 +1269,11 @@
       "email_tiers": "Third-party e-mail address",
       "iban": "IBAN",
       "carte_bancaire": "Payment card",
-      "secret_technique": "Technical secret"
+      "secret_technique": "Technical secret",
+      "type_document": "Document type",
+      "emetteur_document": "Document issuer",
+      "destinataire_document": "Document addressee",
+      "marque_groupe": "Group brand"
     },
     "v": {
       "oui": "Yes",
@@ -1386,7 +1400,18 @@
       "italie": "Italy",
       "royaume_uni": "United Kingdom",
       "chine": "China",
-      "hong_kong": "Hong Kong"
+      "hong_kong": "Hong Kong",
+      "avoir": "Credit note",
+      "courrier": "Letter",
+      "bon_livraison": "Delivery note",
+      "groupe": "The group",
+      "client_du_groupe": "Group customer",
+      "tiers": "Third party",
+      "3d_expert": "3D-Expert",
+      "artillery3d": "Artillery3D",
+      "wanhao": "Wanhao",
+      "yumi_lab": "Yumi Lab",
+      "plusieurs": "Several"
     },
     "history": "{count, plural, one {# answer} other {# answers}}",
     "filterOrigin": "Origin",
@@ -1394,6 +1419,52 @@
     "filterOriginHuman": "Confirmed by hand",
     "sourceDetector": "internal rule · {name}",
     "occurrences": "{count, plural, one {# occurrence} other {# occurrences}}",
-    "filterOriginRule": "Internal rule"
+    "filterOriginRule": "Internal rule",
+    "source": {
+      "humain": "by hand",
+      "agent": "agent",
+      "motif": "learned pattern",
+      "moteur": "engine"
+    }
+  },
+  "documents": {
+    "title": "Documents",
+    "all": "All documents",
+    "unfiled": "To file",
+    "newFolder": "New folder",
+    "newSubfolder": "New subfolder",
+    "folderNamePlaceholder": "Folder name",
+    "rename": "Rename",
+    "mergeInto": "Merge into…",
+    "mergeConfirm": "Merge \"{from}\" into \"{into}\"? {count, plural, =0 {Its learned patterns} one {Its document and learned patterns} other {Its # documents and learned patterns}} move there.",
+    "delete": "Delete",
+    "deleteConfirm": "Delete \"{name}\" ({count, plural, =0 {no document} one {# document} other {# documents}})? Its documents go back to \"To file\".",
+    "deletedFolder": "{name} (deleted folder)",
+    "loadFailed": "Folders could not be loaded.",
+    "actionFailed": "The action failed.",
+    "searchPlaceholder": "Search the OCR text…",
+    "clearSearch": "Clear search",
+    "empty": "No document here.",
+    "noMatch": "No document matches.",
+    "today": "Today",
+    "pickOne": "Pick a document to read it.",
+    "pages": "{count} p.",
+    "page": "Page {n}",
+    "loading": "Loading…",
+    "back": "Back",
+    "confidence": "OCR {percent} %",
+    "download": "Download the PDF",
+    "fileInto": "File…",
+    "takeOut": "Take out of its folder",
+    "noFolderYet": "No folder yet: create one from the sidebar.",
+    "suggestion": "Suggested: {name}",
+    "suggestionHint": "matched on {genres}",
+    "values": "Values",
+    "ocrText": "OCR text",
+    "ocrEmpty": "No text recognised.",
+    "history": "History",
+    "historyEmpty": "Never filed.",
+    "notGed": "\"{account}\" is not a document store.",
+    "openSettings": "Open automatic sorting settings"
   }
 }

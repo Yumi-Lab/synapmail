@@ -319,7 +319,7 @@ const toStored = (r: TagRow): StoredTag => ({
  * fragment est la SOURCE UNIQUE de cette règle — les trois lectures ci-dessous s'en servent,
  * aucune ne réécrit un `ORDER BY`.
  */
-const EFFECTIVE_ORDER = `(source = '${HUMAN_SOURCE}') DESC, cree_le DESC`
+export const EFFECTIVE_ORDER = `(source = '${HUMAN_SOURCE}') DESC, cree_le DESC`
 const EFFECTIVE_RANK = `ROW_NUMBER() OVER (
   PARTITION BY account_id, message_id, question
   ORDER BY ${EFFECTIVE_ORDER}
@@ -601,18 +601,20 @@ export async function readFields(accountId: string, messageId: string): Promise<
 }
 
 /**
- * Les valeurs effectives d'UNE LISTE de mails, pour la priorité (lot T12 : l'échéance extraite
- * pèse) — même forme que `readEffectiveFor`, et toujours restreinte aux origines de confiance.
+ * Les valeurs effectives d'UNE LISTE de mails, en UNE requête — le pendant de `readEffectiveFor` :
+ * la liste des documents GED (toutes origines, ordre MÉTIER de `FIELDS`) et la priorité (lot T12 :
+ * l'échéance extraite pèse — `trusted`, restreint aux origines de confiance).
  */
-export async function readEffectiveFieldsFor(accountId: string, messageIds: string[]): Promise<Map<string, StoredField[]>> {
+export async function readEffectiveFieldsFor(accountId: string, messageIds: string[], opts: { trusted?: boolean } = {}): Promise<Map<string, StoredField[]>> {
   const byMessage = new Map<string, StoredField[]>()
   if (!messageIds.length) return byMessage
   const rows = await query<FieldRow & { message_id: string; rang: number }>(
     `SELECT * FROM (
        SELECT message_id, ${FIELD_COLUMNS}, ${EFFECTIVE_RANK} AS rang
-         FROM message_fields WHERE account_id = $1 AND message_id = ANY($2::text[]) AND ${TRUSTED_ORIGIN}
-     ) r WHERE rang = 1 ORDER BY message_id, question`,
-    [accountId, messageIds]
+         FROM message_fields WHERE account_id = $1 AND message_id = ANY($2::text[])
+          ${opts.trusted ? `AND ${TRUSTED_ORIGIN}` : ''}
+     ) r WHERE rang = 1 ORDER BY message_id, array_position($3::text[], question)`,
+    [accountId, messageIds, [...FIELDS]]
   )
   for (const r of rows) {
     const list = byMessage.get(r.message_id) ?? []

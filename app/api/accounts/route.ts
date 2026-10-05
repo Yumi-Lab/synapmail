@@ -27,6 +27,7 @@ async function getHandler(req: Request) {
               -- authoritative SEARCH UNSEEN count (mailbox_stats), falling back to
               -- the cached-row count until the first background sync populates it
               COALESCE(s.unread_count, u.cnt, 0)::int AS "unreadCount",
+              EXISTS (SELECT 1 FROM ged_mailboxes g WHERE g.account_id = a.id AND g.actif) AS "isGed",
               false AS "isShared", NULL::text AS "ownerName", NULL::timestamptz AS "expiresAt",
               NULL::uuid AS "shareId",
               true AS "canSend", true AS "canDelete", true AS "canOrganize",
@@ -51,6 +52,7 @@ async function getHandler(req: Request) {
               a.badge_color AS "badgeColor",
               a.created_at AS "createdAt",
               COALESCE(ms.unread_count, um.cnt, 0)::int AS "unreadCount",
+              EXISTS (SELECT 1 FROM ged_mailboxes g WHERE g.account_id = a.id AND g.actif) AS "isGed",
               true AS "isShared", owner.name AS "ownerName", sh.expires_at AS "expiresAt",
               sh.id AS "shareId",
               sh.can_send AS "canSend", sh.can_delete AS "canDelete", sh.can_organize AS "canOrganize",

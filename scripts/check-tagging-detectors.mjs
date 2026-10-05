@@ -139,8 +139,9 @@ const posedErr = (() => { try { DEFAULT_SET.posed(['iban']); return null } catch
 check('B5 `engineBodyFor` et `posed` REFUSENT un détecteur : aucune requête ne peut l’emporter', bodyErr instanceof Error && /iban/.test(bodyErr.message) && posedErr instanceof Error)
 const ids = DEFAULT_QUESTIONS.map(q => q.id)
 const newNouls = ['partage_mot_de_passe', 'partage_secret_technique', 'donnees_personnelles_tiers', 'piece_identite', 'donnees_bancaires']
+// 49 → 53 au lot T11b ; 57 depuis le lot G3 (quatre questions du groupe GED, hors du périmètre de ce banc).
 check('B6 taxonomie 49 → 53 : `donnees_sensibles` partie, cinq nouls arrivés, `demande_identifiants` restée',
-  ids.length === 53 && !ids.includes('donnees_sensibles') && newNouls.every(id => ids.includes(id) && DEFAULT_SET.questionById(id).type === 'noul') && ids.includes('demande_identifiants'), String(ids.length))
+  ids.length === 57 && !ids.includes('donnees_sensibles') && newNouls.every(id => ids.includes(id) && DEFAULT_SET.questionById(id).type === 'noul') && ids.includes('demande_identifiants'), String(ids.length))
 const V_T11 = 'b99eee39c459' // `taxonomyVersion(DEFAULT_SET)` mesurée avant ce lot, 49 questions
 check(`B7 \`TAXONOMY_VERSION\` a changé (${V_T11} → ${taxonomyVersion(DEFAULT_SET)})`, taxonomyVersion(DEFAULT_SET) !== V_T11)
 check('B8 un jeu qui se voit passer un détecteur l’écarte de `all` et ne le pose pas', questionSet([DEFAULT_QUESTIONS[0], RULE_QUESTIONS[0]]).all.length === 1 && questionSet([RULE_QUESTIONS[0]]).enabled.length === 0)

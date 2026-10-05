@@ -25,6 +25,9 @@ export const ADMIN_HREF = '/admin/users'
  */
 export const APPEARANCE_HREF = '/settings/appearance'
 
+/** Le Tri automatique — là où une boîte se déclare GED ; l'écran Documents y renvoie une boîte qui ne l'est pas. */
+export const TAGGING_SETTINGS_HREF = '/settings/tagging'
+
 /**
  * Source UNIQUE des entrees de reglages : cette barre les rend, et l'omnibar
  * (lot H3f) les propose a la saisie. Ajouter un reglage ici le rend trouvable
@@ -44,7 +47,7 @@ export const SETTINGS_NAV = [
   { href: '/settings/contacts',      key: 'contacts',      icon: Users },
   { href: '/settings/rules',         key: 'rules',         icon: Filter },
   { href: '/settings/ai',            key: 'ai',            icon: Bot },
-  { href: '/settings/tagging',       key: 'tagging',       icon: Tags },
+  { href: TAGGING_SETTINGS_HREF,     key: 'tagging',       icon: Tags },
   { href: '/settings/pgp',           key: 'pgp',           icon: KeyRound },
   { href: '/settings/webhooks',      key: 'webhooks',      icon: Webhook },
   { href: '/settings/api-keys',      key: 'apiKeys',       icon: Terminal },

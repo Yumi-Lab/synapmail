@@ -343,13 +343,16 @@ try {
       `SELECT COUNT(*) AS n FROM message_tags WHERE account_id = $1 AND message_id LIKE '%@synapmail.local>'`,
       [ACCOUNT])).rows[0].n) > 0)
   // Décision 14 (lot T13) : chaque ligne écrite par le trieur renvoie à un instantané d'état qui
-  // EXISTE, et un mail n'en a qu'un (toutes les passes ont jugé le même texte).
+  // EXISTE, et un mail n'en a qu'un (toutes les passes ont jugé le même texte). Borné aux mails
+  // du banc (`MINE`) : les vrais mails de la boîte écrits avant le lot portent `state_hash = ''`
+  // (« inconnu », voulu — lib/db.ts), ce n'est pas au trieur d'aujourd'hui de le payer.
   const snap = (await pool.query(
     `SELECT COUNT(*) FILTER (WHERE t.state_hash = '' OR s.state IS NULL)::int AS orphelines,
-            (SELECT COUNT(*)::int FROM (SELECT message_id FROM tag_states WHERE account_id = $1 GROUP BY message_id HAVING COUNT(*) > 1) d) AS multi,
+            (SELECT COUNT(*)::int FROM (SELECT message_id FROM tag_states WHERE account_id = $3 AND (${MINE}) GROUP BY message_id HAVING COUNT(*) > 1) d) AS multi,
             COUNT(*)::int AS lignes
-       FROM message_tags t LEFT JOIN tag_states s ON s.account_id = t.account_id AND s.message_id = t.message_id AND s.state_hash = t.state_hash
-      WHERE t.account_id = $1`, [ACCOUNT])).rows[0]
+       FROM (SELECT * FROM message_tags WHERE account_id = $3 AND (${MINE})) t
+       LEFT JOIN tag_states s ON s.account_id = t.account_id AND s.message_id = t.message_id AND s.state_hash = t.state_hash`,
+    [...MINE_ARGS, ACCOUNT])).rows[0]
   check('A5b chaque ligne du trieur renvoie à un instantané d’état qui existe, UN seul par mail',
     snap.lignes > 0 && snap.orphelines === 0 && snap.multi === 0, JSON.stringify(snap))
 

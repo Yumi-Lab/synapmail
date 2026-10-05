@@ -120,7 +120,7 @@ export interface TagRuleInput {
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 const LOGICS: readonly ConditionLogic[] = ['all', 'any']
-export const RULE_FIELDS: readonly RuleField[] = ['from', 'to', 'cc', 'subject', 'body', 'has_attachments', 'list_unsubscribe', 'size', 'date_received', 'priority', 'header']
+export const RULE_FIELDS: readonly RuleField[] = ['from', 'to', 'cc', 'subject', 'body', 'has_attachments', 'list_unsubscribe', 'size', 'date_received', 'priority', 'header', 'texte_ocr']
 export const RULE_OPERATORS: readonly RuleOperator[] = ['contains', 'not_contains', 'equals', 'not_equals', 'starts_with', 'ends_with', 'is_true', 'is_false', 'greater_than', 'less_than', 'before', 'after', 'matches', 'not_matches']
 
 /**
@@ -239,6 +239,7 @@ export function messageForRules(m: MailForRules): Message {
     date: m.date ? new Date(m.date).toISOString() : '', preview: '', isRead: false, isStarred: false, isFlagged: false,
     hasAttachments: m.hasAttachments === true, bodyPlain: m.bodyPlain, bodyHtml: m.bodyHtml,
     ...(m.size !== undefined ? { size: m.size } : {}),
+    ...(m.ocrText !== undefined ? { ocrText: m.ocrText } : {}),
   }
 }
 

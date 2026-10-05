@@ -122,6 +122,11 @@ try {
   console.log('B. le validateur')
   const U1 = await makeUser('u1'), U2 = await makeUser('u2')
   const set1 = await loadQuestionSet(U1)
+  // Le jeu par défaut arrive avec le groupe conditionnel GED (`GED_GROUP`, lot G3). Ce banc mesure
+  // les groupes créés à l'écran sur une boîte ordinaire : il part d'un utilisateur SANS groupe,
+  // comme avant G3 — le groupe GED a son propre banc (`check-ged-intake.mjs`).
+  const dropGedGroup = userId => pool.query(`DELETE FROM tag_question_groups WHERE user_id = $1 AND id = $2`, [userId, questions.GED_GROUP.id])
+  await dropGedGroup(U1)
   const INT = 'intention'
   const RECL = questions.valuesOf(set1.questionById(INT)).find(v => v === 'reclamation') ?? questions.valuesOf(set1.questionById(INT))[0]
   const GOOD = { id: 'support', name: 'Support', conditions: [{ field: 'tag', operator: 'equals', tagQuestion: INT, value: RECL }] }
@@ -217,6 +222,7 @@ try {
   check('E4 une question qui dépasse à elle seule le budget part seule, jamais coupée', chunkByBudget(huge.enabled).length === 1)
   // Le trieur lui-même : la boîte de U2, un jeu allongé EN BASE, un mail → plusieurs requêtes.
   const set2raw = await loadQuestionSet(U2)
+  await dropGedGroup(U2)
   for (const q of set2raw.enabled.slice(0, 10)) await updateQuestion(U2, q.id, { instructions: q.instructions + ' ' + long })
   for (const q of set2raw.enabled.slice(10)) await updateQuestion(U2, q.id, { enabled: false })
   const set2 = await loadQuestionSet(U2)
@@ -272,6 +278,7 @@ try {
     [A4, Q0.id, questions.valuesOf(Q0)[0], taxonomyVersion(set1), ENGINE_ID, T8.mails])
   await pool.query(`INSERT INTO mailbox_tagging (account_id, engine_id, budget_usd, total, input_tokens, input_mails) VALUES ($1, $2, 1000, 1000, $3, 0)`, [A4, ENGINE_ID, T8.tokens])
   await initDb()
+  await dropGedGroup(U1)   // `initDb()` repose le groupe GED par défaut, comme les questions par défaut (même plafond ponytail)
   const backfilled = Number((await pool.query(`SELECT input_mails FROM mailbox_tagging WHERE account_id = $1`, [A4])).rows[0].input_mails)
   check(`F9 la migration rétro-remplit \`input_mails\` depuis l'historique : ${T8.mails} mails tagués par le moteur (obtenu ${backfilled})`, backfilled === T8.mails)
   if (NEGATIVE) await pool.query(`UPDATE mailbox_tagging SET input_mails = 0 WHERE account_id = $1`, [A4])
@@ -311,6 +318,7 @@ try {
 
   // ---- isolation + suppression ----------------------------------------------------------
   console.log('H. isolation et suppression')
+  await dropGedGroup(U2)   // le même `initDb()` l'a reposé chez U2
   check('H1 U2 ne voit pas les groupes de U1 ; la boîte de U2 n’en reçoit aucun', (await listGroups(U2)).length === 0 && (await groupsForAccount(A2)).length === 0 && (await groupsForAccount(A1)).length === 1)
   const h2 = await updateGroup(U2, 'support', { name: 'volé' }, set2).then(() => null, e => e)
   check('H2 U2 ne peut pas modifier le groupe de U1 : `UnknownGroupError`', h2 instanceof UnknownGroupError)

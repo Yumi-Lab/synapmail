@@ -19,6 +19,7 @@
 
 import { query } from './db'
 import { ACCESSIBLE_ACCOUNT_IDS } from './accountAccess'
+import { ACCOUNT_OF_DOCUMENT, ACCOUNT_OF_FOLDER, ACCOUNT_OF_PATTERN, isUuid } from './ged/documents'
 
 /**
  * Les noms sous lesquels une requête peut désigner une boîte. C'est l'inventaire
@@ -59,10 +60,13 @@ const ACCOUNT_BY_OBJECT: { prefix: string; sql: string }[] = [
   // du journal — c'est le même geste, et il doit franchir la même barrière.
   { prefix: '/api/webhooks/deliveries/', sql: 'SELECT account_id AS id FROM webhook_deliveries WHERE id = $1' },
   { prefix: '/api/webhooks/', sql: 'SELECT account_id AS id FROM webhooks WHERE id = $1' },
+  // Les objets GED (lane courrier) : les collections (`/folders`, `/patterns`, `/own`) ne sont
+  // pas des UUID et passent au suivant ; le préfixe nu vient en dernier pour la même raison.
+  { prefix: '/api/documents/folders/', sql: ACCOUNT_OF_FOLDER },
+  { prefix: '/api/documents/patterns/', sql: ACCOUNT_OF_PATTERN },
+  { prefix: '/api/documents/', sql: ACCOUNT_OF_DOCUMENT },
 ]
 
-/** Un identifiant d'objet est un UUID : tout le reste est un sous-chemin (`/run`, `/test`). */
-const OBJECT_ID = /^[0-9a-f-]{36}$/i
 
 /**
  * La boîte visée à travers l'objet nommé dans le chemin, ou `null`.
@@ -76,8 +80,9 @@ const OBJECT_ID = /^[0-9a-f-]{36}$/i
 async function accountIdFromObject(path: string): Promise<string | null> {
   for (const { prefix, sql } of ACCOUNT_BY_OBJECT) {
     if (!path.startsWith(prefix)) continue
+    // Le PREMIER segment après le préfixe : `/api/documents/<id>/pages/3` vise le document <id>.
     const segment = path.slice(prefix.length).split('/')[0]
-    if (!OBJECT_ID.test(segment)) continue
+    if (!isUuid(segment)) continue
     const rows = await query<{ id: string | null }>(sql, [segment])
     return rows[0]?.id ?? null
   }

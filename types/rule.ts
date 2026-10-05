@@ -29,6 +29,7 @@ export type RuleField =
   | 'priority'
   | 'header'
   | 'tag'
+  | 'texte_ocr'
 
 export type RuleOperator =
   | 'contains'

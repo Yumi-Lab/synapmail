@@ -37,7 +37,7 @@ export async function GET(req: Request) {
 
 export async function PUT(req: Request) {
   try {
-    const body = await req.json() as { accountId?: string; engineId?: string | null; budgetUsd?: unknown; live?: unknown }
+    const body = await req.json() as { accountId?: string; engineId?: string | null; budgetUsd?: unknown; live?: unknown; ged?: unknown }
     const gate = await owned(req, body.accountId ?? null)
     if ('denied' in gate) return gate.denied
 
@@ -48,11 +48,15 @@ export async function PUT(req: Request) {
     if (body.live !== undefined && typeof body.live !== 'boolean') {
       return NextResponse.json({ error: 'live must be a boolean' }, { status: 400 })
     }
+    if (body.ged !== undefined && typeof body.ged !== 'boolean') {
+      return NextResponse.json({ error: 'ged must be a boolean' }, { status: 400 })
+    }
 
     const status = await writeTaggingSettings(gate.accountId, gate.userId, {
       engineId: body.engineId,
       budgetUsd,
       live: body.live as boolean | undefined,
+      ged: body.ged as boolean | undefined,
     })
     return NextResponse.json({ data: status })
   } catch (err) {

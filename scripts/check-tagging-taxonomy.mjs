@@ -117,7 +117,7 @@ const ACTION_VALUES = ['repondre', 'payer', 'signer', 'expedier', 'rembourser', 
 const NOUVELLES_QUESTIONS = {
   relation: 9, canal_vente: 7, sens_flux: 4, organisme: 7, transporteur: 9, pays: 11, retour_positif: 2,
 }
-const TOTAL_QUESTIONS = 53
+const TOTAL_QUESTIONS = 57
 
 try {
   await clean()

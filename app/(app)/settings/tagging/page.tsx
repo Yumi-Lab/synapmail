@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { useLocale, useTranslations } from 'next-intl'
-import { Tags, Play, Pause, RotateCcw, FlaskConical } from 'lucide-react'
+import { Tags, Play, Pause, RotateCcw, FlaskConical, FileScan } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AccountAvatar } from '@/components/layout/AccountAvatar'
@@ -76,6 +76,7 @@ export default function TaggingSettingsPage() {
   const [engineId, setEngineId] = useState<string | null>(null)
   const [budget, setBudget] = useState('')
   const [live, setLive] = useState(false)
+  const [ged, setGed] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -91,10 +92,11 @@ export default function TaggingSettingsPage() {
     setEngineId(status.engineId)
     setBudget(String(status.budgetUsd))
     setLive(status.live)
+    setGed(status.ged.actif)
   }, [status])
 
   const dirty = !!status && (
-    engineId !== status.engineId || Number(budget) !== status.budgetUsd || live !== status.live
+    engineId !== status.engineId || Number(budget) !== status.budgetUsd || live !== status.live || ged !== status.ged.actif
   )
 
   async function save() {
@@ -104,7 +106,7 @@ export default function TaggingSettingsPage() {
       await fetch(SETTINGS_ENDPOINT, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId, engineId, budgetUsd: Number(budget), live }),
+        body: JSON.stringify({ accountId, engineId, budgetUsd: Number(budget), live, ged }),
       })
       await refreshStatus()
       setSaved(true)
@@ -113,10 +115,11 @@ export default function TaggingSettingsPage() {
     }
   }
 
-  async function run(action: 'start' | 'sample' | 'pause' | 'resume' | 'restart') {
+  async function run(action: 'start' | 'sample' | 'pause' | 'resume' | 'restart' | 'catchup') {
     if (!accountId) return
     if (action === 'restart' && !window.confirm(t('restartConfirm'))) return
     if (action === 'sample' && !window.confirm(t('sampleConfirm', { size: count(sampleSize) }))) return
+    if (action === 'catchup' && !window.confirm(t('ged.catchupConfirm'))) return
     setBusy(true); setRunError(null)
     try {
       // Un refus du serveur se DIT : sans cela, un bouton pressé qui ne change rien se lit
@@ -245,6 +248,10 @@ export default function TaggingSettingsPage() {
                   <Toggle checked={live} onChange={setLive} label={t('live')} />
                 </SettingsRow>
 
+                <SettingsRow title={t('ged.toggle')} description={t('ged.toggleDesc')}>
+                  <Toggle checked={ged} onChange={setGed} label={t('ged.toggle')} />
+                </SettingsRow>
+
                 <SaveBar
                   dirty={dirty} saving={saving} saved={saved} onSave={save}
                   labels={{ save: tCommon('save'), saving: tCommon('saving'), saved: tCommon('saved'), unsaved: tCommon('unsaved') }}
@@ -296,6 +303,21 @@ export default function TaggingSettingsPage() {
                   <p className="text-xs text-muted-foreground">
                     {t('sampleState', { size: count(status.sample.size), done: count(status.sample.done), seed: status.sample.seed })}
                   </p>
+                )}
+
+                {/*
+                  Le rattrapage d'une boîte GED (décision G3) : un ordre d'état comme les autres, le
+                  planificateur relit tout le dossier à son prochain passage et rejoue les OCR en échec.
+                */}
+                {status.ged.actif && (
+                  <SettingsRow
+                    title={t('ged.catchup')}
+                    description={t('ged.catchupDesc', { done: count(status.ged.documents.fait), pending: count(status.ged.documents.attente), failed: count(status.ged.documents.echec) })}
+                  >
+                    <Button type="button" variant="ghost" disabled={busy} onClick={() => run('catchup')}>
+                      <FileScan className="mr-1.5 h-4 w-4" />{t('ged.catchupAction')}
+                    </Button>
+                  </SettingsRow>
                 )}
 
                 {runError && <p className="text-xs text-red-600 dark:text-red-400">{runError}</p>}

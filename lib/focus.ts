@@ -185,7 +185,7 @@ const NO_INPUTS: PriorityInputs = { tags: [], echeance: null }
 export async function priorityInputsFor(accountId: string, messageIds: string[]): Promise<Map<string, PriorityInputs>> {
   const [tags, fields] = await Promise.all([
     readEffectiveFor(accountId, messageIds, { trusted: true }),
-    readEffectiveFieldsFor(accountId, messageIds),
+    readEffectiveFieldsFor(accountId, messageIds, { trusted: true }),
   ])
   const out = new Map<string, PriorityInputs>()
   tags.forEach((list, mid) => out.set(mid, { tags: list, echeance: null }))

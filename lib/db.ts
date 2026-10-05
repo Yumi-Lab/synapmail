@@ -2,9 +2,10 @@ import { Pool } from 'pg'
 import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
 import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
 import { ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
+import { FILING_SOURCES, OCR_STATUSES, OCR_STATUS_PENDING, PATTERN_KINDS } from '@/lib/ged/model'
 import { BULK_STATES, ENGINES, HUMAN_SOURCE, PAUSE_REASONS, TAG_SOURCES } from '@/lib/tagging/engine'
 import { DELIVERY_STATUSES, ERROR_MAX, WEBHOOK_NAME_MAX } from '@/lib/webhooks'
-import { DEFAULT_QUESTIONS, RETIRED_DEFAULT_IDS, defaultQuestionColumns } from '@/lib/tagging/questions'
+import { DEFAULT_QUESTIONS, GED_GROUP, RETIRED_DEFAULT_IDS, defaultQuestionColumns } from '@/lib/tagging/questions'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -16,6 +17,22 @@ export async function query<T = Record<string, unknown>>(
 ): Promise<T[]> {
   const { rows } = await pool.query(sql, values)
   return rows as T[]
+}
+
+/** Plusieurs écritures qui tiennent ou tombent ENSEMBLE : `fn` reçoit un `query` lié à la même connexion. */
+export async function transaction<T>(fn: (q: typeof query) => Promise<T>): Promise<T> {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await fn(async (sql, values) => (await client.query(sql, values)).rows)
+    await client.query('COMMIT')
+    return result
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw err
+  } finally {
+    client.release()
+  }
 }
 
 /** Une liste de valeurs du code, telle qu'un CHECK SQL l'attend. Les valeurs sont des
@@ -790,6 +807,16 @@ export async function initDb(): Promise<void> {
     )
   `)
 
+  // Le groupe GED (lot G3, décision 6) : les quatre questions `ged` ne sont posées qu'à un
+  // document porteur d'un texte OCR. Posé pour chaque utilisateur qui a déjà son jeu (le jeu
+  // neuf le reçoit avec ses défauts, `userQuestions.ts`) ; un groupe modifié reste le sien.
+  await query(
+    `INSERT INTO tag_question_groups (user_id, id, name, condition_logic, conditions)
+     SELECT u.user_id, $1, $2, $3, $4::jsonb FROM (SELECT DISTINCT user_id FROM tag_questions) u
+     ON CONFLICT (user_id, id) DO NOTHING`,
+    [GED_GROUP.id, GED_GROUP.name, GED_GROUP.conditionLogic, JSON.stringify(GED_GROUP.conditions)]
+  )
+
   // La dernière position CONNUE d'un mail tagué, pour que le filtre par étiquette montre des
   // mails absents de la page chargée. `messages_cache` ne suffit pas : il ne garde qu'une
   // fenêtre, et un mail tagué il y a un mois en est sorti.
@@ -880,6 +907,124 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE mailbox_tagging DROP COLUMN IF EXISTS run_started_at`)
   await query(`ALTER TABLE mailbox_tagging ADD COLUMN IF NOT EXISTS run_started_tag_id BIGINT`)
 
+  // ── GED : une boîte dont chaque PDF reçu devient un document rangé dans des dossiers virtuels ──
+  //
+  // Décisions 3-5 (GOAL de la lane `courrier`). Les listes des CHECK viennent de `lib/ged/model.ts`
+  // (même mécanique que le tri : reposées plus bas à chaque démarrage). Rien ici ne touche l'IMAP.
+
+  // La boîte déclarée GED. Une ligne par boîte ; « À ranger » n'est pas une ligne mais une vue :
+  // les documents sans dossier effectif.
+  await query(`
+    CREATE TABLE IF NOT EXISTS ged_mailboxes (
+      account_id UUID PRIMARY KEY REFERENCES email_accounts(id) ON DELETE CASCADE,
+      actif BOOLEAN NOT NULL DEFAULT true,
+      cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  // Le curseur de la chaîne de réception (lot G3) : `{ lastUid, uidValidity }` du dossier
+  // surveillé. NULL = tout est à rattraper depuis le premier mail — l'OCR est local, donc gratuit.
+  await query(`ALTER TABLE ged_mailboxes ADD COLUMN IF NOT EXISTS cursor JSONB`)
+  // Les identifiants PROPRES de la boîte (lot G4) : SIRET, TVA, IBAN réduit du destinataire, imprimés
+  // sur chaque facture reçue en tant que CLIENT. Jamais appris ni cherchés comme motif — sans cette
+  // liste, la TVA du destinataire rangerait tout émetteur dans le premier dossier qui l'a apprise.
+  await query(`ALTER TABLE ged_mailboxes ADD COLUMN IF NOT EXISTS propres JSONB NOT NULL DEFAULT '[]'`)
+
+  // Un PDF = un document (décision 2) : la clé est la pièce jointe elle-même (mail + rang de la
+  // partie), jamais l'UID IMAP seul, qui change à un déplacement. `page_texts` garde les pages
+  // telles que `lib/ged/ocr.ts` les rend (index, texte, confiance, blanche) ; `ocr_text` est le
+  // texte global, indexé en français pour la recherche (colonne générée : la base la tient à jour).
+  await query(`
+    CREATE TABLE IF NOT EXISTS ged_documents (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      folder TEXT NOT NULL,
+      uid INTEGER NOT NULL,
+      part_idx INTEGER NOT NULL,
+      filename TEXT NOT NULL DEFAULT '',
+      recu_le TIMESTAMPTZ,
+      pages INTEGER NOT NULL DEFAULT 0,
+      ocr_status VARCHAR(20) NOT NULL DEFAULT '${OCR_STATUS_PENDING}' CHECK (ocr_status IN (${sqlList(OCR_STATUSES)})),
+      ocr_error TEXT,
+      ocr_text TEXT NOT NULL DEFAULT '',
+      page_texts JSONB,
+      confiance REAL,
+      texte_tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('french', ocr_text)) STORED,
+      cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (account_id, message_id, part_idx)
+    )
+  `)
+  // L'enveloppe du mail porteur (lot G3) : ce que le trieur montre d'un document dans la liste
+  // (`tagged_messages`), relu depuis la base sans rouvrir l'IMAP.
+  await query(`ALTER TABLE ged_documents ADD COLUMN IF NOT EXISTS from_address TEXT NOT NULL DEFAULT ''`)
+  await query(`ALTER TABLE ged_documents ADD COLUMN IF NOT EXISTS from_name TEXT NOT NULL DEFAULT ''`)
+  await query(`ALTER TABLE ged_documents ADD COLUMN IF NOT EXISTS subject TEXT NOT NULL DEFAULT ''`)
+  await query(`CREATE INDEX IF NOT EXISTS ged_documents_account_idx ON ged_documents(account_id, recu_le DESC)`)
+  await query(`CREATE INDEX IF NOT EXISTS ged_documents_tsv_idx ON ged_documents USING GIN (texte_tsv)`)
+
+  // L'arbre des dossiers virtuels d'une boîte (décision 3) : libre, imbriqué, créé par un humain,
+  // un agent ou automatiquement (`auto`, sous « Nouveaux émetteurs »). Deux frères ne portent pas
+  // le même nom — à la racine aussi (`NULLS NOT DISTINCT`, Postgres 15+, la prod est en 16).
+  await query(`
+    CREATE TABLE IF NOT EXISTS ged_folders (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      parent_id UUID REFERENCES ged_folders(id) ON DELETE CASCADE,
+      nom VARCHAR(120) NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      auto BOOLEAN NOT NULL DEFAULT false,
+      cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE NULLS NOT DISTINCT (account_id, parent_id, nom)
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS ged_folders_parent_idx ON ged_folders(account_id, parent_id, position)`)
+
+  // Un rangement = une NOUVELLE ligne (décision 4, comme `message_tags`) : l'historique reste,
+  // l'effectif se lit « humain d'abord, puis le plus récent ». `folder_id` NULL = « hors de tout
+  // dossier » (une main qui défait un rangement). `auteur_nom` et `dossier_nom` sont des
+  // instantanés, sans clé : un dossier supprimé ou fusionné laisse ses rangements en place
+  // (`ON DELETE SET NULL`, pas CASCADE — mesuré au gate G6 : la cascade effaçait l'historique),
+  // et l'écran lit encore le nom qu'il portait.
+  await query(`
+    CREATE TABLE IF NOT EXISTS ged_filings (
+      id BIGSERIAL PRIMARY KEY,
+      document_id UUID NOT NULL REFERENCES ged_documents(id) ON DELETE CASCADE,
+      folder_id UUID REFERENCES ged_folders(id) ON DELETE SET NULL,
+      source VARCHAR(20) NOT NULL CHECK (source IN (${sqlList(FILING_SOURCES)})),
+      auteur_id TEXT NOT NULL DEFAULT '',
+      auteur_nom TEXT NOT NULL DEFAULT '',
+      dossier_nom TEXT NOT NULL DEFAULT '',
+      confiance REAL,
+      cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS ged_filings_document_idx ON ged_filings(document_id, cree_le DESC)`)
+  // Base déjà créée avec la cascade : on repose la clé étrangère (nom par défaut de Postgres) et on
+  // relit le nom des dossiers encore là dans les lignes qui ne l'ont pas.
+  await query(`ALTER TABLE ged_filings ADD COLUMN IF NOT EXISTS dossier_nom TEXT NOT NULL DEFAULT ''`)
+  await query(`ALTER TABLE ged_filings DROP CONSTRAINT IF EXISTS ged_filings_folder_id_fkey`)
+  await query(`ALTER TABLE ged_filings ADD CONSTRAINT ged_filings_folder_id_fkey FOREIGN KEY (folder_id) REFERENCES ged_folders(id) ON DELETE SET NULL`)
+  await query(`UPDATE ged_filings fl SET dossier_nom = f.nom FROM ged_folders f WHERE fl.folder_id = f.id AND fl.dossier_nom = ''`)
+
+  // Les motifs appris d'un rangement (décision 5) : un identifiant stable de l'émetteur → un
+  // dossier. La même valeur PEUT pointer deux dossiers (c'est le cas « doute » qui laisse le
+  // document à ranger) ; elle ne se répète pas dans le même dossier. Un IBAN n'y entre jamais en
+  // clair (`iban4`, cf. `lib/tagging/fields.ts`). `touches` compte les documents rangés par le motif.
+  await query(`
+    CREATE TABLE IF NOT EXISTS ged_patterns (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      folder_id UUID NOT NULL REFERENCES ged_folders(id) ON DELETE CASCADE,
+      genre VARCHAR(20) NOT NULL CHECK (genre IN (${sqlList(PATTERN_KINDS)})),
+      valeur TEXT NOT NULL,
+      appris_de UUID REFERENCES ged_documents(id) ON DELETE SET NULL,
+      auteur_id TEXT NOT NULL DEFAULT '',
+      auteur_nom TEXT NOT NULL DEFAULT '',
+      touches INTEGER NOT NULL DEFAULT 0,
+      cree_le TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (folder_id, genre, valeur)
+    )
+  `)
+
   // Les CHECK ci-dessus ne sont posées qu'à la CRÉATION de la table : sur une base qui existe
   // déjà, élargir une liste dans le code ne changerait rien. On les repose donc à chaque
   // démarrage, pour que la base suive le code — c'est ce qui permet d'ajouter un type de moteur
@@ -887,6 +1032,9 @@ export async function initDb(): Promise<void> {
   for (const [table, name, expr] of [
     ['message_tags', 'message_tags_source_check', `source IN (${sqlList(TAG_SOURCES)})`],
     ['decision_engines', 'decision_engines_kind_check', `kind IN (${sqlList(ENGINES)})`],
+    ['ged_documents', 'ged_documents_ocr_status_check', `ocr_status IN (${sqlList(OCR_STATUSES)})`],
+    ['ged_filings', 'ged_filings_source_check', `source IN (${sqlList(FILING_SOURCES)})`],
+    ['ged_patterns', 'ged_patterns_genre_check', `genre IN (${sqlList(PATTERN_KINDS)})`],
   ] as const) {
     await query(`ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${name}`)
     await query(`ALTER TABLE ${table} ADD CONSTRAINT ${name} CHECK (${expr})`)

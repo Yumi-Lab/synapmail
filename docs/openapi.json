@@ -69,6 +69,10 @@
     {
       "name": "Webhooks",
       "description": "Signed HTTP calls fired by filter rules, and the log of what was sent."
+    },
+    {
+      "name": "Documents",
+      "description": "Scanned documents of a GED mailbox: OCR text, virtual folders, learned patterns, filing."
     }
   ],
   "paths": {
@@ -4182,7 +4186,8 @@
                       "start",
                       "pause",
                       "resume",
-                      "restart"
+                      "restart",
+                      "catchup"
                     ]
                   }
                 }
@@ -5587,6 +5592,1119 @@
           }
         }
       }
+    },
+    "/api/documents": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "listDocuments",
+        "summary": "List the documents of a GED mailbox",
+        "description": "Newest first, paginated. `folder=<id>` narrows to the documents whose EFFECTIVE folder it is, `folder=unfiled` to the unfiled ones; `q` searches the OCR text (French tsvector, web syntax). Requires the `documents:read` scope.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          },
+          {
+            "name": "folder",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "A folder id, or `unfiled`."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "perPage",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "documents",
+                        "total",
+                        "page",
+                        "perPage",
+                        "unfiled",
+                        "tags",
+                        "fields"
+                      ],
+                      "properties": {
+                        "documents": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/GedDocumentSummary"
+                          }
+                        },
+                        "total": {
+                          "type": "integer"
+                        },
+                        "page": {
+                          "type": "integer"
+                        },
+                        "perPage": {
+                          "type": "integer"
+                        },
+                        "unfiled": {
+                          "type": "integer"
+                        },
+                        "tags": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/StoredTag"
+                            }
+                          },
+                          "description": "Effective tags per document, keyed by tagMessageId."
+                        },
+                        "fields": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/StoredField"
+                            }
+                          },
+                          "description": "Effective extracted values per document, keyed by tagMessageId."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/documents/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/DocumentIdPath"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "getDocument",
+        "summary": "Read one document",
+        "description": "OCR text, page texts, effective tags and fields, filing history (effective first) and, while unfiled, the folders its known patterns suggest. Requires the `documents:read` scope.",
+        "responses": {
+          "200": {
+            "description": "The document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/GedDocument"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/documents/{id}/pdf": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/DocumentIdPath"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "getDocumentPdf",
+        "summary": "Download the PDF of a document",
+        "description": "Re-read from the mailbox (read-only) on demand — never stored server-side. `download=true` serves it as an attachment. Requires the `documents:read` scope.",
+        "parameters": [
+          {
+            "name": "download",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The PDF.",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "502": {
+            "$ref": "#/components/responses/MailboxUnreachable"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/documents/{id}/pages/{n}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/DocumentIdPath"
+        },
+        {
+          "name": "n",
+          "in": "path",
+          "required": true,
+          "description": "Page number, from 1.",
+          "schema": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "getDocumentPage",
+        "summary": "Render one page as PNG",
+        "description": "Rendered on demand by `pdftoppm` from the PDF re-read in the mailbox; `dpi` (default 110, max 200) serves both thumbnails and zooms. Requires the `documents:read` scope.",
+        "parameters": [
+          {
+            "name": "dpi",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 110
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The page.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "502": {
+            "$ref": "#/components/responses/MailboxUnreachable"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/documents/{id}/filing": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/DocumentIdPath"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "fileDocument",
+        "summary": "File a document into a folder",
+        "description": "A new history row, never an update. `folderId: null` takes the document out of every folder. A session files as `humain`, a key as `agent` (signed by the key or by the decision engine named by `engineId`); both learn the document's identifiers for the folder. Requires the `documents:write` scope and the `organize` share permission.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "folderId"
+                ],
+                "properties": {
+                  "folderId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "engineId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The filing written, what was learned, and the whole history.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "filing",
+                        "learned",
+                        "filings"
+                      ],
+                      "properties": {
+                        "filing": {
+                          "$ref": "#/components/schemas/GedFiling"
+                        },
+                        "learned": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/GedIdentifier"
+                          }
+                        },
+                        "filings": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/GedFiling"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/documents/folders": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "listGedFolders",
+        "summary": "List the virtual folders of a mailbox",
+        "description": "Flat: `parentId` says where each folder sits. Each carries the count of documents whose effective folder it is and of its patterns. Requires the `documents:read` scope.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tree, flat, and the unfiled counter.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "folders",
+                        "unfiled"
+                      ],
+                      "properties": {
+                        "folders": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/GedFolder"
+                          }
+                        },
+                        "unfiled": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "createGedFolder",
+        "summary": "Create a virtual folder",
+        "description": "`409` when a sibling already carries that name. Requires the `documents:write` scope and the `organize` share permission.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/GedFolderInput"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "accountId",
+                      "nom"
+                    ],
+                    "properties": {
+                      "accountId": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The folder.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/GedFolder"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/documents/folders/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/GedFolderIdPath"
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "updateGedFolder",
+        "summary": "Rename or move a virtual folder",
+        "description": "A proposed folder a hand touches stops being proposed. `409` refuses a move under itself or onto a sibling's name. Requires the `documents:write` scope and the `organize` share permission.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GedFolderInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The folder.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/GedFolder"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "deleteGedFolder",
+        "summary": "Delete a virtual folder and its sub-folders",
+        "description": "Their documents fall back to unfiled; the documents themselves are never deleted. Requires the `documents:write` scope and the `organize` share permission.",
+        "responses": {
+          "200": {
+            "description": "The removed id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/documents/folders/{id}/merge": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/GedFolderIdPath"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "mergeGedFolder",
+        "summary": "Merge a folder into another",
+        "description": "Every document of `{id}` is filed into `into` (one new row each, learning on the way), its patterns and sub-folders move over, `into` stops being proposed, `{id}` disappears. `404` names an `into` outside the mailbox, `409` a merge into itself or a sub-folder name clash. Requires the `documents:write` scope and the `organize` share permission.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "into"
+                ],
+                "properties": {
+                  "into": {
+                    "type": "string"
+                  },
+                  "engineId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What moved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "from",
+                        "into",
+                        "source",
+                        "documents",
+                        "patterns",
+                        "folders"
+                      ],
+                      "properties": {
+                        "from": {
+                          "type": "string"
+                        },
+                        "into": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "humain",
+                            "agent"
+                          ]
+                        },
+                        "documents": {
+                          "type": "integer"
+                        },
+                        "patterns": {
+                          "type": "integer"
+                        },
+                        "folders": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/documents/patterns": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "listGedPatterns",
+        "summary": "List the learned patterns",
+        "description": "Of a mailbox, or of one folder (`folder=`). `iban4` values are reduced IBANs; the full IBAN is never stored. Requires the `documents:read` scope.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          },
+          {
+            "name": "folder",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The patterns.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GedPattern"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "createGedPattern",
+        "summary": "Put a pattern on a folder",
+        "description": "The value is normalised and checked as the OCR would have been (Luhn key, VAT key, valid bounded regex; a full IBAN is reduced on entry) — `422` names the `genre` and `valeur` refused. Requires the `documents:write` scope and the `organize` share permission.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "folderId",
+                  "genre",
+                  "valeur"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string"
+                  },
+                  "folderId": {
+                    "type": "string"
+                  },
+                  "genre": {
+                    "type": "string",
+                    "enum": [
+                      "siret",
+                      "tva",
+                      "iban4",
+                      "raison_sociale",
+                      "regex"
+                    ]
+                  },
+                  "valeur": {
+                    "type": "string"
+                  },
+                  "engineId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The pattern.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/GedPattern"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "The value is not a valid identifier of that genre; the body names `genre` and `valeur`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/documents/patterns/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/GedPatternIdPath"
+        }
+      ],
+      "delete": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "deleteGedPattern",
+        "summary": "Remove a learned pattern",
+        "description": "Requires the `documents:write` scope and the `organize` share permission.",
+        "responses": {
+          "200": {
+            "description": "The removed id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/api/documents/own": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "getGedOwnIdentifiers",
+        "summary": "Read the mailbox's own identifiers",
+        "description": "The recipient's SIRET / VAT / reduced IBAN, never learned nor searched as a pattern. Requires the `documents:read` scope.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AccountQueryRequired"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "propres"
+                      ],
+                      "properties": {
+                        "propres": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/GedIdentifier"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "setGedOwnIdentifiers",
+        "summary": "Replace the mailbox's own identifiers",
+        "description": "Whole-list replace; genres limited to `siret`, `tva`, `iban4`, each value checked like a pattern (`422`). `409` when the mailbox is not a GED. Requires the `documents:write` scope and the `organize` share permission.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "propres"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string"
+                  },
+                  "propres": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/GedIdentifier"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The list written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "propres"
+                      ],
+                      "properties": {
+                        "propres": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/GedIdentifier"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "description": "A value is not a valid identifier of its genre.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5642,11 +6760,41 @@
           "type": "string"
         }
       },
+      "DocumentIdPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The document id. The mailbox is deduced from it.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
       "WebhookIdPath": {
         "name": "id",
         "in": "path",
         "required": true,
         "description": "The webhook's id.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "GedFolderIdPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The virtual folder id. The mailbox is deduced from it.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "GedPatternIdPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The pattern id. The mailbox is deduced from it.",
         "schema": {
           "type": "string",
           "format": "uuid"
@@ -5853,6 +7001,16 @@
       },
       "ServerError": {
         "description": "The mail server or the database refused.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "MailboxUnreachable": {
+        "description": "The IMAP server of the mailbox did not answer.",
         "content": {
           "application/json": {
             "schema": {
@@ -6096,7 +7254,8 @@
           "total",
           "estimateUsd",
           "questions",
-          "passes"
+          "passes",
+          "ged"
         ],
         "properties": {
           "accountId": {
@@ -6207,6 +7366,62 @@
           },
           "passes": {
             "$ref": "#/components/schemas/PassEstimate"
+          },
+          "ged": {
+            "type": "object",
+            "required": [
+              "accountId",
+              "actif",
+              "cursor",
+              "documents"
+            ],
+            "description": "The mailbox as a document store: declared or not, intake cursor, documents per OCR state.",
+            "properties": {
+              "accountId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "actif": {
+                "type": "boolean"
+              },
+              "cursor": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "required": [
+                  "lastUid",
+                  "uidValidity"
+                ],
+                "properties": {
+                  "lastUid": {
+                    "type": "integer"
+                  },
+                  "uidValidity": {
+                    "type": "string"
+                  }
+                }
+              },
+              "documents": {
+                "type": "object",
+                "required": [
+                  "attente",
+                  "fait",
+                  "echec"
+                ],
+                "properties": {
+                  "attente": {
+                    "type": "integer"
+                  },
+                  "fait": {
+                    "type": "integer"
+                  },
+                  "echec": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -6357,6 +7572,10 @@
                 "type": "boolean"
               }
             }
+          },
+          "isGed": {
+            "type": "boolean",
+            "description": "Declared a document store (GED)."
           }
         }
       },
@@ -7782,6 +9001,404 @@
                 }
               }
             }
+          }
+        }
+      },
+      "GedIdentifier": {
+        "type": "object",
+        "required": [
+          "genre",
+          "valeur"
+        ],
+        "properties": {
+          "genre": {
+            "type": "string",
+            "enum": [
+              "siret",
+              "tva",
+              "iban4",
+              "raison_sociale",
+              "regex"
+            ]
+          },
+          "valeur": {
+            "type": "string",
+            "description": "Normalised: digits only for a SIRET, upper-case for a VAT number, `bank…last4` for a reduced IBAN."
+          }
+        }
+      },
+      "GedDocumentSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "messageId",
+          "folder",
+          "uid",
+          "partIdx",
+          "filename",
+          "fromAddress",
+          "fromName",
+          "subject",
+          "pages",
+          "ocrStatus",
+          "folderId",
+          "filingSource",
+          "tagMessageId"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "uid": {
+            "type": "integer"
+          },
+          "partIdx": {
+            "type": "integer"
+          },
+          "filename": {
+            "type": "string",
+            "description": "Third-party data (`aiSafety.untrustedFields`)."
+          },
+          "fromAddress": {
+            "type": "string"
+          },
+          "fromName": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "recuLe": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "pages": {
+            "type": "integer"
+          },
+          "ocrStatus": {
+            "type": "string",
+            "enum": [
+              "attente",
+              "fait",
+              "echec"
+            ]
+          },
+          "ocrError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confiance": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "folderId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The EFFECTIVE folder; null = unfiled."
+          },
+          "filingSource": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "humain",
+              "agent",
+              "motif",
+              "moteur",
+              null
+            ]
+          },
+          "tagMessageId": {
+            "type": "string",
+            "description": "The key its tags and fields are stored under."
+          }
+        }
+      },
+      "GedFiling": {
+        "type": "object",
+        "required": [
+          "id",
+          "folderId",
+          "dossierNom",
+          "source",
+          "auteurId",
+          "auteurNom",
+          "creeLe"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "folderId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dossierNom": {
+            "type": "string",
+            "description": "The folder's name when the row was written; still set once the folder is deleted or merged and folderId is null."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "humain",
+              "agent",
+              "motif",
+              "moteur"
+            ]
+          },
+          "auteurId": {
+            "type": "string"
+          },
+          "auteurNom": {
+            "type": "string"
+          },
+          "confiance": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "creeLe": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "GedSuggestion": {
+        "type": "object",
+        "required": [
+          "folderId",
+          "genres",
+          "patternIds",
+          "strong"
+        ],
+        "properties": {
+          "folderId": {
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "siret",
+                "tva",
+                "iban4",
+                "raison_sociale",
+                "regex"
+              ]
+            }
+          },
+          "patternIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "strong": {
+            "type": "boolean"
+          }
+        }
+      },
+      "GedDocument": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/GedDocumentSummary"
+          },
+          {
+            "type": "object",
+            "required": [
+              "ocrText",
+              "pageTexts",
+              "filings",
+              "tags",
+              "fields",
+              "suggestions"
+            ],
+            "properties": {
+              "ocrText": {
+                "type": "string",
+                "description": "Third-party data: what the OCR read. Pages separated by \\f."
+              },
+              "pageTexts": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "index": {
+                      "type": "integer"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "confidence": {
+                      "type": "number"
+                    },
+                    "blank": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              },
+              "filings": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/GedFiling"
+                }
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StoredTag"
+                }
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StoredField"
+                }
+              },
+              "suggestions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/GedSuggestion"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "GedFolder": {
+        "type": "object",
+        "required": [
+          "id",
+          "parentId",
+          "nom",
+          "position",
+          "auto",
+          "creeLe",
+          "documents",
+          "patterns"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nom": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "position": {
+            "type": "integer"
+          },
+          "auto": {
+            "type": "boolean",
+            "description": "Proposed by the filing chain for an unknown sender; a hand touching it clears the flag."
+          },
+          "creeLe": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "documents": {
+            "type": "integer"
+          },
+          "patterns": {
+            "type": "integer"
+          }
+        }
+      },
+      "GedFolderInput": {
+        "type": "object",
+        "properties": {
+          "nom": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "parentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "GedPattern": {
+        "type": "object",
+        "required": [
+          "id",
+          "folderId",
+          "genre",
+          "valeur",
+          "apprisDe",
+          "auteurNom",
+          "touches",
+          "creeLe"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "folderId": {
+            "type": "string"
+          },
+          "genre": {
+            "type": "string",
+            "enum": [
+              "siret",
+              "tva",
+              "iban4",
+              "raison_sociale",
+              "regex"
+            ]
+          },
+          "valeur": {
+            "type": "string"
+          },
+          "apprisDe": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "auteurNom": {
+            "type": "string"
+          },
+          "touches": {
+            "type": "integer"
+          },
+          "creeLe": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

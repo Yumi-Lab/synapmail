@@ -72,6 +72,7 @@ const { validateTagRule, InvalidTagRuleError, UnknownTagRuleError, createTagRule
 const { RULE_SOURCE, TAG_SOURCES, assumedInputTokensPerMail } = await import('../lib/tagging/engine.ts')
 const store = await import('../lib/tagging/store.ts')
 const runner = await import('../lib/tagging/runner.ts')
+const { groupsForAccount, planPasses } = await import('../lib/tagging/questionGroups.ts')
 const { ALL_SCOPES } = await import('../lib/apiScopes.ts')
 
 const pool = new pg.Pool({ connectionString: DB_URL })
@@ -194,9 +195,12 @@ try {
   check('D1 le passage traite les 3 mails (tagués = 3) sans erreur', pass.tagged === 3 && pass.errors === 0, JSON.stringify(pass))
   const byObjet = Object.fromEntries(asked.map(a => [a.objet, a.questions]))
   const all = set1.enabled.map(q => q.id)
-  check(`D2 le mail « facture » (règle qui fait foi) est posé au moteur SANS ${NOUL_Q}`, byObjet['Votre facture n°12']?.length === all.length - 1 && !byObjet['Votre facture n°12'].includes(NOUL_Q), JSON.stringify(byObjet['Votre facture n°12']?.length))
+  // Ce que le moteur VOIT d'un mail sans déclencheur : le tronc seul — les groupes conditionnels
+  // (le groupe GED, posé par défaut) ne partent qu'à un mail qui les déclenche.
+  const trunk = planPasses(set1, await groupsForAccount(A1)).trunk.map(q => q.id)
+  check(`D2 le mail « facture » (règle qui fait foi) est posé au moteur SANS ${NOUL_Q}`, byObjet['Votre facture n°12']?.length === trunk.length - 1 && !byObjet['Votre facture n°12'].includes(NOUL_Q), JSON.stringify(byObjet['Votre facture n°12']?.length))
   check('D3 le mail « newsletter » (toutes les questions tranchées) ne coûte AUCUN appel moteur', !('Newsletter de la semaine' in byObjet) && asked.length === 2, `${asked.length} appel(s) : ${Object.keys(byObjet)}`)
-  check('D4 le mail « Bonjour » (aucune règle) est posé au moteur avec TOUTES les questions', byObjet['Bonjour']?.length === all.length)
+  check('D4 le mail « Bonjour » (aucune règle) est posé au moteur avec TOUTES les questions du tronc', byObjet['Bonjour']?.length === trunk.length, `${byObjet['Bonjour']?.length} / ${trunk.length}`)
   const rows = await pool.query(`SELECT message_id, question, valeur, source, auteur_id, auteur_nom FROM message_tags WHERE account_id = $1 ORDER BY id`, [A1])
   // Les DÉTECTEURS (lot T11b) écrivent aussi en `regle`, signés de leur id, sur TOUT mail :
   // ce banc mesure les règles d'étiquetage, il les écarte.

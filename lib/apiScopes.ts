@@ -44,6 +44,8 @@ export const API_SCOPES = {
   'ai:use': "Utiliser les actions d'assistance",
   'tags:read': 'Lire les étiquettes des messages',
   'tags:write': 'Écrire des étiquettes et piloter le tri automatique',
+  'documents:read': 'Lire les documents GED : texte OCR, dossiers virtuels, motifs',
+  'documents:write': 'Ranger les documents GED, gérer leurs dossiers et leurs motifs',
   'webhooks:read': 'Lire les webhooks et leur journal d\'envois',
   'webhooks:write': 'Créer, modifier et supprimer des webhooks, et déclencher un envoi',
 } as const
@@ -75,6 +77,8 @@ export const OPT_IN_SCOPES: ApiScope[] = [
   'settings:write',
   'tags:read',
   'tags:write',
+  'documents:read',
+  'documents:write',
   'webhooks:read',
   'webhooks:write',
 ]
@@ -183,6 +187,23 @@ export const ROUTE_SCOPES: Record<string, ApiScope> = {
   'POST /api/tags/groups': 'tags:write',
   'PATCH /api/tags/groups/[id]': 'tags:write',
   'DELETE /api/tags/groups/[id]': 'tags:write',
+  // Les documents GED (lane courrier, décision 7) : un document ou un dossier virtuel nomme sa
+  // boîte par son identifiant (`ACCOUNT_BY_OBJECT`), la liste et les collections par `account`.
+  'GET /api/documents': 'documents:read',
+  'GET /api/documents/[id]': 'documents:read',
+  'GET /api/documents/[id]/pages/[n]': 'documents:read',
+  'GET /api/documents/[id]/pdf': 'documents:read',
+  'POST /api/documents/[id]/filing': 'documents:write',
+  'GET /api/documents/folders': 'documents:read',
+  'POST /api/documents/folders': 'documents:write',
+  'PATCH /api/documents/folders/[id]': 'documents:write',
+  'DELETE /api/documents/folders/[id]': 'documents:write',
+  'POST /api/documents/folders/[id]/merge': 'documents:write',
+  'GET /api/documents/patterns': 'documents:read',
+  'POST /api/documents/patterns': 'documents:write',
+  'DELETE /api/documents/patterns/[id]': 'documents:write',
+  'GET /api/documents/own': 'documents:read',
+  'PUT /api/documents/own': 'documents:write',
 }
 
 /**
@@ -239,6 +260,15 @@ export const ROUTE_ACCOUNT_PERMISSION: Record<string, AccountPermission> = {
   'POST /api/webhooks/[id]/test': 'manageRules',
   'POST /api/webhooks/deliveries/[id]/retry': 'manageRules',
   'POST /api/tags/questions/[id]/test': 'organize',
+  // Ranger un document ou tailler ses dossiers virtuels, c'est RANGER (rien ne touche l'IMAP).
+  'POST /api/documents/[id]/filing': 'organize',
+  'POST /api/documents/folders': 'organize',
+  'PATCH /api/documents/folders/[id]': 'organize',
+  'DELETE /api/documents/folders/[id]': 'organize',
+  'POST /api/documents/folders/[id]/merge': 'organize',
+  'POST /api/documents/patterns': 'organize',
+  'DELETE /api/documents/patterns/[id]': 'organize',
+  'PUT /api/documents/own': 'organize',
 }
 
 export const isApiScope = (value: unknown): value is ApiScope =>
