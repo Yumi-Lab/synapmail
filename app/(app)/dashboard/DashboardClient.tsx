@@ -12,6 +12,7 @@ import {
   Paperclip, Star, FileText, AlarmClock, ChevronRight, ChevronDown, Check,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ACCOUNTS_SETTINGS_HREF, SETTINGS_ROOT, SettingsLink } from '@/components/settings/SettingsSidebar'
 import type { DashboardData, DashboardAccount, FocusReason, ActivityPoint } from '@/types/dashboard'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -521,12 +522,12 @@ export function DashboardClient() {
             className="col-span-12 sm:col-span-6 lg:col-span-4"
             icon={<Mail className="h-[15px] w-[15px]" />}
             title={t('accountsTitle')}
-            action={<Link href="/settings/accounts" className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('manage')}</Link>}
+            action={<SettingsLink href={ACCOUNTS_SETTINGS_HREF} className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('manage')}</SettingsLink>}
           >
             {d.accounts.length === 0 ? (
               <Empty>
                 {t('accountsEmpty')}
-                <Link href="/settings/accounts" className="mt-2 block text-violet-500 hover:underline">{t('addAccount')}</Link>
+                <SettingsLink href={ACCOUNTS_SETTINGS_HREF} className="mt-2 block text-violet-500 hover:underline">{t('addAccount')}</SettingsLink>
               </Empty>
             ) : (
               <ul className="-mx-2 space-y-0.5">
@@ -606,7 +607,7 @@ export function DashboardClient() {
             className="col-span-12 sm:col-span-6 lg:col-span-4"
             icon={<Clock className="h-[15px] w-[15px]" />}
             title={t('scheduledTitle')}
-            action={<Link href="/settings" className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('pendingCount', { count: d.kpis.scheduledPending })}</Link>}
+            action={<SettingsLink href={SETTINGS_ROOT} className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('pendingCount', { count: d.kpis.scheduledPending })}</SettingsLink>}
           >
             {d.scheduled.length === 0 ? (
               <Empty>{t('scheduledEmpty')}</Empty>
@@ -644,7 +645,7 @@ export function DashboardClient() {
             {d.rules.items.length === 0 ? (
               <Empty>
                 {t('rulesEmpty')}
-                <Link href="/settings/rules" className="mt-2 block text-violet-500 hover:underline">{t('rulesConfigure')}</Link>
+                <SettingsLink href={`${SETTINGS_ROOT}/rules`} className="mt-2 block text-violet-500 hover:underline">{t('rulesConfigure')}</SettingsLink>
               </Empty>
             ) : (
               <ul className="space-y-2.5">
@@ -717,7 +718,7 @@ export function DashboardClient() {
             <div className="mt-3 flex flex-wrap gap-2">
               {[
                 { label: t('quickNewMessage'), onClick: openCompose },
-                { label: t('quickFromTemplate'), onClick: () => router.push('/settings/templates') },
+                { label: t('quickFromTemplate'), onClick: () => router.push(`${SETTINGS_ROOT}/templates`) },
                 { label: t('quickSchedule'), onClick: openCompose },
               ].map(chip => (
                 <button

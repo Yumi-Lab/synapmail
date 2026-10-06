@@ -19,6 +19,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   l'updater un objet neuf à chaque rejeu. La mesure est désormais comparée à la dernière valeur
   appliquée (gardée dans une ref) et `setThumb` n'est plus appelé quand rien n'a bougé.
 
+### Fixed
+- **« Réglages » ne s'ouvrait pas à chaque fois** (`components/settings/SettingsSidebar.tsx`,
+  `components/layout/UserMenu.tsx`, `components/layout/Sidebar.tsx`, `components/settings/SettingsModal.tsx`,
+  `app/(app)/dashboard/DashboardClient.tsx`) : depuis le menu du compte, cliquer « Réglages » laissait parfois la page
+  telle quelle (2 à 3 fois sur 3 mesurées depuis la Chine). À l'ouverture du menu, le lien préchargeait `/settings`
+  (`next/link` en production, requête `_rsc` + `next-router-prefetch`) ; un clic pendant ce préchargement réutilisait la
+  réponse en vol, faite sans l'en-tête qui active la route interceptée `@modal/(.)settings`, et la navigation ne se
+  terminait jamais. Tout lien vers les réglages (menu du compte, marque « partagé » de la barre, tableau de bord,
+  navigation des réglages, onglets de la fenêtre) passe désormais par un seul composant `SettingsLink` qui ne précharge
+  jamais, et `/settings` n'a plus qu'une source (`SETTINGS_ROOT`). Banc : `scripts/check-settings-open-browser.mjs`
+  (Chrome, build de production, latence émulée 300 ms, clic après 0/300/1000/3000 ms, depuis `/mail` et depuis un
+  dossier atteint par clic) — avant : 16 préchargements de `/settings` sur 24 essais ; après : 0, fenêtre ouverte 24/24.
+
 ## [1.8.0] — 2026-09-20 — En-tête d'application, sidebar repensée, recherche et IA locale
 
 ### Added

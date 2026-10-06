@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import type { ComponentProps } from 'react'
 import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import {
@@ -10,8 +11,24 @@ import {
 import { cn } from '@/lib/utils'
 import { useAppName } from '@/components/providers'
 
+/** The settings area: an INTERCEPTED route (`app/(app)/@modal/(.)settings`) opened as a window over the current page. */
+export const SETTINGS_ROOT = '/settings'
+
+/**
+ * THE link to the settings: everything that leads to `SETTINGS_ROOT` or one of its tabs
+ * goes through it, and it NEVER prefetches. `next/link` prefetches a visible link in a
+ * production build without the header that activates the intercepted route; a click
+ * during that prefetch reuses the in-flight response and the navigation never completes —
+ * the window does not open (measured 2-3 times out of 3 from the account menu on a slow
+ * network). One component rather than a `prefetch={false}` per link: the next link to the
+ * settings cannot forget it.
+ */
+export function SettingsLink(props: Omit<ComponentProps<typeof Link>, 'prefetch'>) {
+  return <Link {...props} prefetch={false} />
+}
+
 /** Where an account's sharing is managed — the one place the bar's shared mark points to. */
-export const ACCOUNTS_SETTINGS_HREF = '/settings/accounts'
+export const ACCOUNTS_SETTINGS_HREF = `${SETTINGS_ROOT}/accounts`
 
 /**
  * The ONE source of settings entries: this bar renders them, and the omnibar
@@ -67,10 +84,10 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
         {SETTINGS_NAV.map(({ href, key, icon: Icon }) => {
           const active = pathname.startsWith(href)
           return (
-            <Link key={href} href={href} className={linkClass(active)}>
+            <SettingsLink key={href} href={href} className={linkClass(active)}>
               <Icon className="h-4 w-4 shrink-0" />
               <span>{t(key)}</span>
-            </Link>
+            </SettingsLink>
           )
         })}
 
