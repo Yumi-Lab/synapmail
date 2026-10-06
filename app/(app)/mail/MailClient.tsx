@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import { COMPOSE_EVENT, COMPOSE_QUERY, MAIL_PATH } from '@/lib/compose'
 import { SCOPE_PARAM, SEARCH_PARAM, focusSearch, readScope } from '@/lib/search'
-import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, mailboxSwitchHref } from './mailboxUrl'
+import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, mailboxSwitchHref, pushFolder } from './mailboxUrl'
 import { ArrowLeft } from 'lucide-react'
 import useSWR from 'swr'
 import { SETTINGS_KEY, saveSettings } from '@/lib/settings'
@@ -14,7 +14,6 @@ import { ReadingPane } from '@/components/layout/ReadingPane'
 import { ThreadPane } from '@/components/layout/ThreadPane'
 import { ComposeModal } from '@/components/mail/ComposeModal'
 import { MdnToast } from '@/components/mail/MdnToast'
-import { useEmailNotifications } from '@/hooks/useEmailNotifications'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { toast } from '@/components/ui/toast'
 import { useMailSelection, targetOrigins } from '@/lib/mailSelection'
@@ -190,9 +189,7 @@ export function MailClient() {
       const { uid, accountId, folder: targetFolder } = (e as CustomEvent<{ uid: string; accountId: string; folder?: string }>).detail
       // L'origine voyage entière : le volet lit le message dans SON dossier, sans
       // que la liste ait à changer de dossier d'abord.
-      if (targetFolder) {
-        router.push(`${MAIL_PATH}?${FOLDER_PARAM}=${encodeURIComponent(targetFolder)}`)
-      }
+      if (targetFolder) pushFolder(targetFolder)
       handleSelect({ uid, accountId, folder: targetFolder ?? folder })
       setShowReadingPane(true)
     }
@@ -253,8 +250,6 @@ export function MailClient() {
     }
     return () => es.close()
   }, [resolvedActiveId, runMail])
-
-  useEmailNotifications(folder, resolvedActiveId)
 
   const handleSelect = useCallback((origin: MessageOrigin) => {
     setSelectedOrigin(origin)

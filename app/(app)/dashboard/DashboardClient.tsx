@@ -497,6 +497,7 @@ export function DashboardClient() {
               <li key={`${f.accountId}-${f.uid}`}>
                 <Link
                   href={`/mail?folder=${encodeURIComponent(f.folder)}`}
+                  prefetch={false}
                   className="grid grid-cols-[36px_1fr_auto] items-start gap-3 py-3 first:pt-1 last:pb-0"
                 >
                   <span

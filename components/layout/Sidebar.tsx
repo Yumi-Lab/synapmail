@@ -19,7 +19,7 @@ import { FolderContextMenu, type FolderMenuState } from './FolderContextMenu'
 import { accountDelimiter, isDescendant, sanitizeFolderName, type FolderAction } from '@/lib/folderActions'
 import { MAIL_PATH } from '@/lib/compose'
 import { ACCOUNT_PICKER_FILTER_FROM, AccountPickerFilter, AccountPickerText, useAccountPicker } from './AccountPicker'
-import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, mailboxSwitchHref } from '@/app/(app)/mail/mailboxUrl'
+import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, folderHref, mailboxSwitchHref, pushFolder } from '@/app/(app)/mail/mailboxUrl'
 import { GedFolderTree } from './GedFolderTree'
 import { DOCUMENTS_PATH, DOCUMENT_FOLDER_PARAM } from '@/lib/ged/model'
 import type { EmailAccount } from '@/types/account'
@@ -217,11 +217,17 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const [naming, setNaming] = useState<{ action: 'create' | 'createChild' | 'rename'; parent: string; path: string; value: string } | null>(null)
   const [folderError, setFolderError] = useState<string | null>(null)
 
-  // La surbrillance suit l'URL, qui est la source du dossier affiché.
+  // La surbrillance suit l'URL, qui est la source du dossier affiché. Un retour
+  // arrière change les paramètres sans changer de chemin : il est écouté aussi.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    setCurrentFolder(params.get(FOLDER_PARAM) ?? DEFAULT_FOLDER)
-    setCurrentGedFolder(params.get(DOCUMENT_FOLDER_PARAM))
+    const readUrl = () => {
+      const params = new URLSearchParams(window.location.search)
+      setCurrentFolder(params.get(FOLDER_PARAM) ?? DEFAULT_FOLDER)
+      setCurrentGedFolder(params.get(DOCUMENT_FOLDER_PARAM))
+    }
+    readUrl()
+    window.addEventListener('popstate', readUrl)
+    return () => window.removeEventListener('popstate', readUrl)
   }, [pathname])
 
   // Un changement de boîte ramène l'URL sur la réception SANS changer de chemin :
@@ -313,8 +319,15 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   // Resolved once per list: a folder grows to two letters only when a sibling shares its first.
   const customInitials = folderInitials(customFolders)
 
-  const handleFolderClick = (path?: string) => {
-    if (path) setCurrentFolder(path)
+  // Depuis la page du courrier, un clic ORDINAIRE change le dossier sans
+  // aller-retour serveur (`pushFolder`) ; un clic modifié (nouvel onglet) ou
+  // venu d'une autre page reste une navigation du lien.
+  const handleFolderClick = (e: React.MouseEvent, path: string) => {
+    if (pathname === MAIL_PATH && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault()
+      pushFolder(path)
+    }
+    setCurrentFolder(path)
     onClose?.()
   }
 
@@ -501,8 +514,11 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     return (
       <Link
         key={folder.path}
-        href={`${MAIL_PATH}?${FOLDER_PARAM}=${encodeURIComponent(folder.path)}`}
-        onClick={() => handleFolderClick(folder.path)}
+        href={folderHref(folder.path)}
+        // Pas de préchargement : N dossiers = N rendus serveur de /mail pour rien
+        // (mesuré le 06/10/2026 : ~40 requêtes `_rsc` à l'ouverture, ~1 s chacune).
+        prefetch={false}
+        onClick={e => handleFolderClick(e, folder.path)}
         onDragOver={e => handleDragOver(e, folder.path)}
         onDragLeave={handleDragLeave}
         onDrop={e => handleDrop(e, folder.path)}

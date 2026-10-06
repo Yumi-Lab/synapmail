@@ -21,6 +21,23 @@ export const DEFAULT_FOLDER = 'INBOX'
 /** Événement émis par le sélecteur de comptes (barre latérale ET palette). */
 export const ACCOUNT_CHANGE_EVENT = 'synapmail:account-change'
 
+/** L'adresse d'un dossier de la boîte. */
+export const folderHref = (path: string) => `${MAIL_PATH}?${FOLDER_PARAM}=${encodeURIComponent(path)}`
+
+/**
+ * Changer de dossier DANS la boîte : seuls des paramètres d'URL changent, donc
+ * l'URL est poussée par l'API d'historique — que le routeur suit depuis Next 14.2
+ * (`useSearchParams` est mis à jour au rendu suivant) — et jamais par `router.push`,
+ * qui refait rendre la route côté serveur : une requête `_rsc` par clic, mesurée le
+ * 06/10/2026 à ~1 s chacune depuis la Chine, pour aucune donnée utile. PUSH et non
+ * replace : le retour arrière ramène au dossier précédent. Sans effet si l'URL porte
+ * déjà ce dossier.
+ */
+export function pushFolder(path: string) {
+  const href = folderHref(path)
+  if (href !== `${window.location.pathname}${window.location.search}`) window.history.pushState(null, '', href)
+}
+
 /**
  * L'URL de la boîte après un changement de boîte aux lettres, à partir des
  * paramètres actuels :

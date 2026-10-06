@@ -105,7 +105,7 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
         {SETTINGS_NAV.map(({ href, key, icon: Icon }) => {
           const active = pathname.startsWith(href)
           return (
-            <Link key={href} href={href} className={linkClass(active)}>
+            <Link key={href} href={href} prefetch={false} className={linkClass(active)}>
               <Icon className="h-4 w-4 shrink-0" />
               <span>{t(key)}</span>
             </Link>
@@ -133,7 +133,7 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
                   <span>{t(key)}</span>
                 </a>
               ) : (
-                <Link key={href} href={href} className={classe}>
+                <Link key={href} href={href} prefetch={false} className={classe}>
                   <Icon className="h-4 w-4 shrink-0" />
                   <span>{t(key)}</span>
                 </Link>

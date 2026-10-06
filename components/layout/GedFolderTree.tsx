@@ -125,6 +125,7 @@ export function GedFolderTree({ accountId, currentFolder, onDocuments, collapsed
     <Link
       key={key}
       href={href}
+      prefetch={false}
       onClick={onNavigate}
       title={label}
       data-ged-row={key}

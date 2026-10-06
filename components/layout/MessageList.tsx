@@ -6,7 +6,7 @@ import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
 import { MAIL_ORIGIN_ATTR, groupByOrigin, groupsToMove, originKey, type MessageOrigin } from '@/lib/mailOrigin'
 import { DEFAULT_FLAG_KEY, FOCUS_FILTER, FOCUS_THRESHOLD, MAIL_LIST_FILTERS, PRIORITY_SORT, SORT_SETTING, byPriorityThenDate, flagByKey, type MailListFilter } from '@/lib/flags'
-import { unreadRefresh, unreadShift } from '@/lib/unreadSignal'
+import { ACCOUNTS_KEY, unreadRefresh, unreadShift } from '@/lib/unreadSignal'
 import {
   explorerSelect, gestureOf, isAllSelected, selectAll,
   type ExplorerGesture, type ExplorerSelection,
@@ -35,9 +35,12 @@ import { useTagLabels } from '@/hooks/useTagLabels'
 import { HUMAN_SOURCE, RULE_SOURCE } from '@/lib/tagging/engine'
 import { AUDIT_FILTER, TAGS_CHANGED_EVENT, TAGS_ENDPOINT, taggedRows } from '@/lib/tagging/view'
 import { useFocusText } from '@/hooks/useFocusText'
+import { useEmailNotifications } from '@/hooks/useEmailNotifications'
 import type { StoredTag, TaggedMessage } from '@/lib/tagging/store'
 import type { DecisionEngine } from '@/lib/tagging/engines'
 import { ENGINES_ENDPOINT } from '@/components/settings/DecisionEnginesSection'
+
+const EMPTY_MESSAGES: Message[] = []
 
 const fetcher = async (url: string) => {
   const res = await fetch(url)
@@ -228,7 +231,9 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
 
   const { data: settingsData } = useSWR<{ data: AppSettings }>(SETTINGS_KEY, fetcher)
   const threadView = settingsData?.data?.thread_view ?? true
-  const perPage = settingsData?.data?.messages_per_page ?? 30
+  // Pas de repli : la liste n'est demandée qu'une fois la taille de page connue
+  // (mesuré le 06/10/2026 : une requête à 30 puis une à 100, la première pour rien).
+  const perPage = settingsData?.data?.messages_per_page
 
   // Direction B — comfortable / compact density
   const density = settingsData?.data?.mail_density ?? 'comfortable'
@@ -296,8 +301,24 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
 
   const isSearchMode = isSearchQuery(search)
 
+  // Le compte actif arrive APRÈS le premier rendu, et en DEUX temps : /api/accounts
+  // donne la liste, /api/settings dit lequel est affiché. Tant que les réglages
+  // manquent, le compte reçu n'est qu'un repli sur la boîte PAR DÉFAUT : lister là
+  // demanderait une autre boîte que celle affichée, ouvrirait des connexions IMAP
+  // pour rien, et pourrait montrer un instant les messages du mauvais compte.
+  //
+  // La présence des réglages ne suffit PAS : les effets d'un enfant s'exécutent AVANT
+  // ceux du parent, donc la liste verrait les réglages arrivés un rendu avant que le
+  // parent n'ait appliqué le compte qu'ils désignent. On exige donc l'ACCORD des deux
+  // sources — le compte affiché est bien celui que les réglages nomment. Sans aucune
+  // boîte, la liste des comptes reçue (vide) suffit : le serveur répond « aucun compte ».
+  const { data: accountsRes } = useSWR<{ data: EmailAccount[] }>(ACCOUNTS_KEY, fetcher)
+  const savedAccountId = settingsData?.data?.active_account_id
+  const accountSettled = !!settingsData?.data &&
+    (activeAccountId ? (!savedAccountId || savedAccountId === activeAccountId) : !!accountsRes)
+
   const { data, error, isValidating, mutate } = useSWR<{ messages: Message[]; total: number }>(
-    isSearchMode
+    isSearchMode || !accountSettled
       ? null
       : `/api/messages?folder=${encodeURIComponent(folder)}&filter=${filter}&page=${page}&perPage=${perPage}${accountParam}${byPriority ? `&sort=${PRIORITY_SORT}` : ''}`,
     fetcher,
@@ -308,21 +329,10 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   // le bandeau les dit plutôt que de les retaper (source unique : lib/search.ts).
   // La portée « ce dossier » tient en une réponse : un seul dossier, rien à étaler.
   const isStreamingScope = isSearchMode && isWideScope(searchScope)
-  // Le compte actif arrive APRÈS le premier rendu, et en DEUX temps : /api/accounts
-  // donne la liste, /api/settings dit lequel est affiché. Tant que les réglages
-  // manquent, le compte reçu n'est qu'un repli sur la boîte PAR DÉFAUT : chercher
-  // là balaierait une autre boîte que celle affichée, ouvrirait des connexions IMAP
-  // pour rien, et pourrait montrer un instant les résultats du mauvais compte.
-  // Une SEULE condition retient les deux portées, et le bandeau reste « en attente »
-  // au lieu d'annoncer un « 0 résultat » définitif.
-  //
-  // La présence des réglages ne suffit PAS : les effets d'un enfant s'exécutent AVANT
-  // ceux du parent, donc la liste verrait les réglages arrivés un rendu avant que le
-  // parent n'ait appliqué le compte qu'ils désignent. On exige donc l'ACCORD des deux
-  // sources — le compte affiché est bien celui que les réglages nomment.
-  const savedAccountId = settingsData?.data?.active_account_id
-  const searchReady = isSearchMode && !!activeAccountId && !!settingsData?.data &&
-    (!savedAccountId || savedAccountId === activeAccountId)
+  // Même attente que la liste (`accountSettled`) : une SEULE condition retient les
+  // deux portées, et le bandeau reste « en attente » au lieu d'annoncer un
+  // « 0 résultat » définitif.
+  const searchReady = isSearchMode && !!activeAccountId && accountSettled
   const { data: searchData, isValidating: isSearchingOne } = useSWR<{ messages: Message[]; total: number; fields: SearchField[] }>(
     searchReady && !isStreamingScope
       ? `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}&folder=${encodeURIComponent(folder)}` +
@@ -494,6 +504,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     [tagHits, accumulated, activeAccountId],
   )
   const messages = isSearchMode ? searchMessages : (isTagMode ? tagged.rows : accumulated)
+  // Le dossier tel que chargé (pas une recherche ni un filtre d'étiquette) : aucun sondage de plus.
+  useEmailNotifications(isSearchMode || isTagMode ? EMPTY_MESSAGES : accumulated, folder, activeAccountId ?? undefined)
   const total = data?.total ?? knownTotal
   // Le serveur peut avoir trouvé plus que ce qu'il rend (plafond SEARCH_RESULT_LIMIT) :
   // le bandeau annonce alors « X premiers sur N » au lieu de laisser croire à N = X.
