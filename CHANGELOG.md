@@ -5,6 +5,57 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — fork Yumi-Lab (branche `perf/mail-china`) — le courrier ne charge que ce qui est à l'écran, et « Réglages » s'ouvre à chaque fois — 2026-10-07
+
+### Résumé
+- Depuis la Chine, rien n'était cliquable tant que la page du courrier n'avait pas fini de charger ;
+  « Réglages », dans le menu du compte, n'ouvrait parfois rien du tout ; changer de dossier prenait
+  près de 2 s. La page ne demande plus que ce qu'elle affiche, change de dossier sans aller-retour
+  serveur, et ne se re-rend plus en boucle au repos.
+
+### Fixed
+- **Chaque dossier de la barre latérale était préchargé** — `components/layout/Sidebar.tsx` rendait
+  un `<Link>` par dossier, et en production `next/link` précharge tout lien visible : une requête
+  `/mail?folder=…&_rsc` par dossier à l'ouverture (22 mesurées pour 100 dossiers). Les liens de dossier
+  ne préchargent plus (`prefetch={false}`).
+- **Changer de dossier passait par le serveur** — le clic suivait `router.push`, donc un rendu serveur
+  (`_rsc`) à chaque fois. `app/(app)/mail/mailboxUrl.ts` → `pushFolder()` pousse l'URL par l'API
+  d'historique (`history.pushState`, que Next 14.2 patche et suit) ; la liste se recharge seule depuis
+  l'URL, zéro requête de navigation. Le `<Link>` reste pour cmd-clic et depuis une autre page ; le retour
+  arrière rallume le bon dossier (`popstate` écouté).
+- **La liste était demandée plusieurs fois à l'ouverture** (5 requêtes de page 1 mesurées : `@30, @5,
+  @50, @50, @5`) — `components/layout/MessageList.tsx` partait avec un repli `?? 30` avant que
+  `/api/settings` ne donne la vraie taille de page, puis repartait ; `hooks/useEmailNotifications.ts`
+  tenait son propre sondage `perPage=5` du même dossier ; et la liste partait avant que le compte actif
+  soit résolu (une requête sur la boîte par défaut, une sur la vraie). Plus de repli, la liste attend
+  l'accord réglages/compte, les notifications observent la page déjà chargée. Une seule requête.
+- **« Réglages » n'ouvrait parfois rien** — à l'ouverture du menu, le lien préchargeait `/settings` ; un
+  clic pendant ce préchargement réutilisait la réponse en vol, obtenue sans l'en-tête qui active la
+  route interceptée `@modal/(.)settings`, et la navigation ne se terminait jamais. Tout lien vers les
+  réglages passe par un seul `SettingsLink` (`components/settings/SettingsSidebar.tsx`) qui ne précharge
+  jamais — menu du compte, marque « partagé », tableau de bord, documents, onglets de la fenêtre.
+- **La page se re-rendait en boucle au repos** à certaines hauteurs de fenêtre (1440×844, 1280×720,
+  1536×864 — pas 1440×900) : 500 à 800 commits React par seconde, un cœur saturé, rien de cliquable, et la
+  navigation « Réglages » que le routeur n'arrivait pas à terminer. `components/layout/ThinScroll.tsx`
+  remesurait son pouce après chaque commit avec `setThumb(prev => …)` ; une mise à jour périmée restée
+  dans la file du hook (voie « idle » de React, hauteur d'un viewport 2 px plus haut) faisait rendre à
+  l'updater un objet neuf à chaque rejeu. La mesure est comparée à une référence et `setThumb` n'est plus
+  appelé quand rien n'a bougé.
+
+### Notes
+- Mesures sur le staging, Chrome de Nicolas, réseau Chine : requêtes au chargement 42-48 → 20-28 ;
+  préchargements `_rsc` 13-22 → 1 ; clic de dossier 1,8-2,0 s → 0,07 s sans aller-retour ; « Réglages »
+  après un clic de dossier : n'ouvrait jamais → s'ouvre (1,0-1,5 s). Les durées « menu cliquable » n'ont
+  pas pu être mesurées proprement : le Mac de mesure était saturé (charge 98-224), chiffres relatifs
+  seulement.
+- Bancs (Chrome, build de production, latence émulée 300 ms) : `scripts/check-mail-folder-nav-browser.mjs`
+  (préchargements, requêtes de liste, clic et retour arrière), `scripts/check-settings-open-browser.mjs`
+  (40 ouvertures dont 20 après un clic de dossier), `scripts/check-render-loop-browser.mjs` (commits
+  React, recalculs de style et mises en page au repos à 4 tailles de fenêtre, puis « Réglages » après un
+  clic de dossier). Chacun rouge avant, vert après.
+
+---
+
 ## [Unreleased] — fork Yumi-Lab (branche `fix/settings-tab-url-leak`) — la fenêtre des réglages ne saute plus sur « Profil » — 2026-10-04
 
 ### Résumé
