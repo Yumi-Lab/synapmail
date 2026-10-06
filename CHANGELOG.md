@@ -6,6 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ---
 
 ## [Unreleased]
+### Fixed
+- **La liste du courrier était demandée plusieurs fois à l'ouverture, dont une fois à la mauvaise taille**
+  (`components/layout/MessageList.tsx`, `hooks/useEmailNotifications.ts`, `app/(app)/mail/MailClient.tsx`) : la liste
+  partait avec le repli `messages_per_page ?? 30` avant que `/api/settings` ne réponde, puis repartait à la taille
+  réglée ; et le hook de notifications sondait le même dossier de son côté (`perPage=5`, toutes les 60 s). Pour un
+  dossier à 40 par page : 5 requêtes `/api/messages` page 1 à l'ouverture (30, 5, 40, 40, 5), autant d'ouvertures
+  IMAP, ~1 s chacune depuis la Chine. La clé de liste reste `null` tant que la taille de page n'est pas connue et
+  que le compte affiché n'est pas celui que nomment les réglages (`accountSettled` — même attente que la recherche,
+  qui réutilise la condition au lieu de la retaper) ; le hook de notifications n'interroge plus le serveur : il
+  observe la page 1 déjà chargée par la liste (le plus récent = plus grand UID, ordre d'arrivée IMAP ; changer de
+  dossier ou de compte repart de zéro, sans fausse alerte). Comme il observe la liste telle qu'affichée (après
+  filtre), seul un UID strictement supérieur au plus haut déjà vu dans le même dossier compte comme une arrivée :
+  passer au filtre « non lus », revenir, ou supprimer le plus récent ne déclenche rien
+  (`scripts/check-notification-arrival.mjs`). Banc : `scripts/check-mail-list-requests-browser.mjs`
+  (Chrome, vraie ouverture de `/mail`, taille réglée à 40 puis remise) — avant : 5 requêtes de liste page 1 ;
+  après : 1, à 40.
 
 ## [1.8.1] — 2026-10-07 — Correctif boucle de rendu
 

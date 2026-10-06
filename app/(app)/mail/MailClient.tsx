@@ -11,7 +11,6 @@ import { ReadingPane } from '@/components/layout/ReadingPane'
 import { ThreadPane } from '@/components/layout/ThreadPane'
 import { ComposeModal } from '@/components/mail/ComposeModal'
 import { MdnToast } from '@/components/mail/MdnToast'
-import { useEmailNotifications } from '@/hooks/useEmailNotifications'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { toast } from '@/components/ui/toast'
 import { useMailSelection, targetOrigins } from '@/lib/mailSelection'
@@ -215,8 +214,6 @@ export function MailClient() {
     }
     return () => es.close()
   }, [resolvedActiveId, runMail])
-
-  useEmailNotifications(folder, resolvedActiveId)
 
   const handleSelect = useCallback((origin: MessageOrigin) => {
     setSelectedOrigin(origin)
