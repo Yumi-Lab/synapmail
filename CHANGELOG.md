@@ -7,6 +7,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **La page du courrier se re-rendait en boucle au repos à certaines hauteurs de fenêtre**
+  (`components/layout/ThinScroll.tsx`) : à 1440×844, 1280×720 et 1536×864 — pas à 1440×900 — la fine
+  barre de défilement relançait sa mesure après chaque rendu, soit 500 à 800 rendus React par seconde,
+  un cœur de processeur saturé et une page où rien n'était cliquable avant la fin du chargement (une
+  navigation lancée pendant ce temps, comme l'ouverture des réglages, pouvait ne jamais aboutir).
+  Cause : `setThumb(prev => …)` ; une mise à jour périmée restée dans la file du hook faisait rendre à
+  l'updater un objet neuf à chaque rejeu. La mesure est désormais comparée à la dernière valeur
+  appliquée (gardée dans une ref) et `setThumb` n'est plus appelé quand rien n'a bougé.
+
 ## [1.8.0] — 2026-09-20 — En-tête d'application, sidebar repensée, recherche et IA locale
 
 ### Added
