@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import { openCompose as openComposeFrom } from '@/lib/compose'
+import { folderHref } from '@/app/(app)/mail/mailboxUrl'
 import useSWR, { mutate as globalMutate } from 'swr'
 import { useTranslations, useLocale } from 'next-intl'
 import {
@@ -457,7 +458,8 @@ export function DashboardClient() {
                 {d.focus.map(f => (
                   <li key={`${f.accountId}-${f.uid}`}>
                     <Link
-                      href={`/mail?folder=${encodeURIComponent(f.folder)}`}
+                      href={folderHref(f.folder)}
+                      prefetch={false}
                       className="grid grid-cols-[36px_1fr_auto] items-start gap-3 py-3 first:pt-1 last:pb-0"
                     >
                       <span

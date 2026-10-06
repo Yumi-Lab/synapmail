@@ -7,6 +7,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Chaque dossier de la barre latérale était préchargé, et changer de dossier passait par le serveur**
+  (`components/layout/Sidebar.tsx`, `app/(app)/mail/mailboxUrl.ts`, `app/(app)/mail/MailClient.tsx`,
+  `app/(app)/dashboard/DashboardClient.tsx`) : en production, `next/link` précharge tout lien visible, donc
+  l'ouverture du courrier émettait une requête `/mail?folder=…&_rsc` par dossier de la barre (un rendu serveur
+  de la page par dossier, pour rien), et chaque clic de dossier refaisait rendre la route côté serveur — ~1 s
+  par requête mesurée depuis la Chine. Les liens de dossier (barre, liste « à traiter » du tableau de bord) ne
+  préchargent plus (`prefetch={false}`) ; depuis la page du courrier, un clic ordinaire pousse l'URL par l'API
+  d'historique (`pushFolder`, `history.pushState`, que le routeur de Next 14.2 patche et suit : `useSearchParams`
+  voit la nouvelle valeur, un lien ordinaire vers une autre page navigue toujours) — zéro requête de navigation,
+  la liste se recharge seule depuis l'URL. Le `<Link>` reste pour cmd-clic et depuis une autre page ; la barre
+  relit l'URL sur `popstate`, donc le retour arrière rallume le bon dossier. Le nom du paramètre `folder` et le
+  dossier par défaut `INBOX` n'ont plus qu'une source (`mailboxUrl.ts`) au lieu de cinq copies.
+  Banc : `scripts/check-mail-folder-nav-browser.mjs` (Chrome, build de production, vraie souris) — avant :
+  4 `_rsc` à l'ouverture pour 5 dossiers, 1 `_rsc` par clic, retour arrière sans surbrillance ; après : 0, 0,
+  surbrillance juste, et le lien « tableau de bord » navigue encore après un changement de dossier.
+
 ## [1.8.1] — 2026-10-07 — Correctif boucle de rendu
 
 ### Fixed

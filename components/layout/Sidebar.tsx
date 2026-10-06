@@ -17,6 +17,8 @@ import { ThinScroll } from './ThinScroll'
 import { ACCOUNTS_SETTINGS_HREF } from '@/components/settings/SettingsSidebar'
 import { FolderContextMenu, type FolderMenuState } from './FolderContextMenu'
 import { accountDelimiter, isDescendant, sanitizeFolderName, type FolderAction } from '@/lib/folderActions'
+import { DEFAULT_FOLDER, FOLDER_PARAM, folderHref, pushFolder } from '@/app/(app)/mail/mailboxUrl'
+import { MAIL_PATH } from '@/lib/compose'
 import type { EmailAccount } from '@/types/account'
 
 /**
@@ -201,7 +203,7 @@ function RowBody({
 export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const t = useTranslations('mail')
   const pathname = usePathname()
-  const [currentFolder, setCurrentFolder] = useState('INBOX')
+  const [currentFolder, setCurrentFolder] = useState(DEFAULT_FOLDER)
   const [accountOpen, setAccountOpen] = useState(false)
   const [accountFilter, setAccountFilter] = useState('')
   const accountBoxRef = useRef<HTMLDivElement>(null)
@@ -211,11 +213,16 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const [naming, setNaming] = useState<{ action: 'create' | 'createChild' | 'rename'; parent: string; path: string; value: string } | null>(null)
   const [folderError, setFolderError] = useState<string | null>(null)
 
+  // The highlight follows the URL, the source of the displayed folder. Going back
+  // changes the parameters without changing the path: it is listened to as well.
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    const readUrl = () => {
       const params = new URLSearchParams(window.location.search)
-      setCurrentFolder(params.get('folder') ?? 'INBOX')
+      setCurrentFolder(params.get(FOLDER_PARAM) ?? DEFAULT_FOLDER)
     }
+    readUrl()
+    window.addEventListener('popstate', readUrl)
+    return () => window.removeEventListener('popstate', readUrl)
   }, [pathname])
 
   // Close the account dropdown on outside click / Escape
@@ -280,8 +287,15 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     setAccountOpen(false)
   }
 
-  const handleFolderClick = (path?: string) => {
-    if (path) setCurrentFolder(path)
+  // From the mail page, a PLAIN click changes folder without a server round-trip
+  // (`pushFolder`); a modified click (new tab) or one from another page stays a
+  // regular link navigation.
+  const handleFolderClick = (e: React.MouseEvent, path: string) => {
+    if (pathname === MAIL_PATH && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault()
+      pushFolder(path)
+    }
+    setCurrentFolder(path)
     onClose?.()
   }
 
@@ -467,14 +481,17 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     /** Custom folders hover their full IMAP path — the tile only shows its letters. */
     title: string = label,
   ) => {
-    const isActive = pathname.startsWith('/mail') && currentFolder === folder.path
+    const isActive = pathname.startsWith(MAIL_PATH) && currentFolder === folder.path
     const isDragOver = dragOverPath === folder.path
     const unread = folder.unreadCount ?? 0
     return (
       <Link
         key={folder.path}
-        href={`/mail?folder=${encodeURIComponent(folder.path)}`}
-        onClick={() => handleFolderClick(folder.path)}
+        href={folderHref(folder.path)}
+        // No prefetch: N folders = N server renders of /mail for nothing
+        // (measured 06/10/2026: ~40 `_rsc` requests on open, ~1 s each).
+        prefetch={false}
+        onClick={e => handleFolderClick(e, folder.path)}
         onDragOver={e => handleDragOver(e, folder.path)}
         onDragLeave={handleDragLeave}
         onDrop={e => handleDrop(e, folder.path)}
