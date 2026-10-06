@@ -2,6 +2,7 @@
 
 import { ThinScroll } from '@/components/layout/ThinScroll'
 import Link from 'next/link'
+import type { ComponentProps } from 'react'
 import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import {
@@ -20,6 +21,19 @@ import { useAppName } from '@/components/providers'
  * chemin (`/mail`, `/admin/users`) et retombait silencieusement sur « Profil ».
  */
 export const SETTINGS_ROOT = '/settings'
+
+/**
+ * LE lien vers les réglages : tout ce qui mène à `SETTINGS_ROOT` ou à un de ses onglets
+ * passe par lui, et il ne précharge JAMAIS. `/settings` est une route INTERCEPTÉE
+ * (`@modal/(.)settings`) : le préchargement de `next/link` part sans l'en-tête qui
+ * l'active, et un clic pendant ce préchargement réutilise la réponse en vol — la
+ * navigation ne se termine pas, la fenêtre ne s'ouvre pas (mesuré le 06/10/2026 depuis
+ * le menu du compte, staging, Chrome réel). Un seul composant plutôt qu'un
+ * `prefetch={false}` par lien : le prochain lien vers les réglages ne peut pas l'oublier.
+ */
+export function SettingsLink(props: Omit<ComponentProps<typeof Link>, 'prefetch'>) {
+  return <Link {...props} prefetch={false} />
+}
 
 /** Where an account's sharing is managed — the one place the bar's shared mark points to. */
 export const ACCOUNTS_SETTINGS_HREF = `${SETTINGS_ROOT}/accounts`
@@ -105,10 +119,10 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
         {SETTINGS_NAV.map(({ href, key, icon: Icon }) => {
           const active = pathname.startsWith(href)
           return (
-            <Link key={href} href={href} prefetch={false} className={linkClass(active)}>
+            <SettingsLink key={href} href={href} className={linkClass(active)}>
               <Icon className="h-4 w-4 shrink-0" />
               <span>{t(key)}</span>
-            </Link>
+            </SettingsLink>
           )
         })}
 
@@ -133,10 +147,10 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
                   <span>{t(key)}</span>
                 </a>
               ) : (
-                <Link key={href} href={href} prefetch={false} className={classe}>
+                <SettingsLink key={href} href={href} className={classe}>
                   <Icon className="h-4 w-4 shrink-0" />
                   <span>{t(key)}</span>
-                </Link>
+                </SettingsLink>
               )
             })}
           </>

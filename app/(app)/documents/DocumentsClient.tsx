@@ -11,7 +11,6 @@
  * barre (`useAccountAccent`) ; une boîte qui n'est pas une GED renvoie vers ses réglages.
  */
 
-import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useSWR, { mutate as globalMutate } from 'swr'
@@ -30,7 +29,7 @@ import { flattenTree, folderPath } from '@/lib/ged/tree'
 import type { GedDocumentDetail, GedDocumentSummary, GedFilingView, GedFolder } from '@/lib/ged/documents'
 import type { Suggestion } from '@/lib/ged/filing'
 import type { StoredField, StoredTag } from '@/lib/tagging/store'
-import { TAGGING_SETTINGS_HREF } from '@/components/settings/SettingsSidebar'
+import { SettingsLink, TAGGING_SETTINGS_HREF } from '@/components/settings/SettingsSidebar'
 
 type ListResponse = { data: { documents: GedDocumentSummary[]; total: number; unfiled: number; tags: Record<string, StoredTag[]>; fields: Record<string, StoredField[]> } }
 type DetailResponse = { data: GedDocumentDetail & { tags: StoredTag[]; fields: StoredField[]; suggestions: Suggestion[] } }
@@ -100,7 +99,7 @@ export function DocumentsClient() {
   if (activeAccount && !activeAccount.isGed) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground" data-documents-not-ged>
-        <p>{t('notGed', { account: activeAccount.name || activeAccount.email })}{' '}<Link href={TAGGING_SETTINGS_HREF} className="underline hover:text-foreground">{t('openSettings')}</Link></p>
+        <p>{t('notGed', { account: activeAccount.name || activeAccount.email })}{' '}<SettingsLink href={TAGGING_SETTINGS_HREF} className="underline hover:text-foreground">{t('openSettings')}</SettingsLink></p>
       </div>
     )
   }

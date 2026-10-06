@@ -14,7 +14,7 @@ import { ACCENT, AccountAvatar, BADGE_OFFSET_PX, UnreadBadge, useAccountAccent }
 import { IconTooltip } from '@/components/ui/IconTooltip'
 import { folderGlyph, folderInitials } from './FolderGlyph'
 import { ThinScroll } from './ThinScroll'
-import { ACCOUNTS_SETTINGS_HREF } from '@/components/settings/SettingsSidebar'
+import { ACCOUNTS_SETTINGS_HREF, SettingsLink } from '@/components/settings/SettingsSidebar'
 import { FolderContextMenu, type FolderMenuState } from './FolderContextMenu'
 import { accountDelimiter, isDescendant, sanitizeFolderName, type FolderAction } from '@/lib/folderActions'
 import { MAIL_PATH } from '@/lib/compose'
@@ -150,7 +150,7 @@ function SharedMark({ account, label, withChevron = false, hidden = false }: {
 }) {
   if (!account.isShared) return null
   return (
-    <Link
+    <SettingsLink
       href={ACCOUNTS_SETTINGS_HREF}
       title={label}
       aria-label={label}
@@ -163,7 +163,7 @@ function SharedMark({ account, label, withChevron = false, hidden = false }: {
       )}
     >
       <Share2 className="w-3.5 h-3.5" />
-    </Link>
+    </SettingsLink>
   )
 }
 

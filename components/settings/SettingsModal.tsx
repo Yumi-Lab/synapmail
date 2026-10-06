@@ -13,7 +13,7 @@ import { Dialog, DialogPortal, DialogOverlay } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { SettingsModalPanel } from './SettingsModalPanel'
 import { useIsAdmin } from '@/hooks/useIsAdmin'
-import { ADMIN_HREF, SETTINGS_ROOT } from './SettingsSidebar'
+import { ADMIN_HREF, SETTINGS_ROOT, SettingsLink } from './SettingsSidebar'
 
 const NAV_ITEMS = [
   { seg: 'profile',       key: 'profile',       icon: User },
@@ -86,10 +86,10 @@ export function SettingsModal() {
             {NAV_ITEMS.map(({ seg, key, icon: Icon }) => (
               // `replace` : changer d'onglet ne doit pas empiler d'entrée d'historique, sinon la croix
               // (un seul retour arrière) ramène à l'onglet précédent au lieu de fermer la fenêtre.
-              <Link key={seg} href={`${SETTINGS_ROOT}/${seg}`} replace prefetch={false} className={linkClass(segment === seg)}>
+              <SettingsLink key={seg} href={`${SETTINGS_ROOT}/${seg}`} replace className={linkClass(segment === seg)}>
                 <Icon className="h-4 w-4 shrink-0" />
                 <span>{t(key)}</span>
-              </Link>
+              </SettingsLink>
             ))}
             {isAdmin && (
               <>
