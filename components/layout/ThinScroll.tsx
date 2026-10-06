@@ -68,6 +68,8 @@ export function ThinScroll({ className, viewportClassName, viewportRef: outerVie
   }, [outerViewportRef])
   const idleTimer = useRef<ReturnType<typeof setTimeout>>()
   const [thumb, setThumb] = useState<Thumb | null>(null)
+  /** The last value handed to `setThumb` — `measure` compares against THIS, not the state. */
+  const lastThumb = useRef<Thumb | null>(null)
   const [scrolling, setScrolling] = useState(false)
   const [overBand, setOverBand] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -79,22 +81,28 @@ export function ThinScroll({ className, viewportClassName, viewportRef: outerVie
     if (!el) return
     const { clientHeight, scrollHeight, scrollTop } = el
     // Nothing to scroll: no thumb at all, rather than a full-height one pretending to be one.
-    if (scrollHeight - clientHeight < 1) return setThumb(null)
-    // Clamped so a huge mailbox still leaves something to grab; `top` then runs over the
-    // EFFECTIVE height, so the thumb reaches exactly the top and the bottom of the track.
-    const height = Math.min(clientHeight, Math.max(THIN_SCROLL.minThumbHeight, (clientHeight * clientHeight) / scrollHeight))
-    const top = (clientHeight - height) * (scrollTop / (scrollHeight - clientHeight))
-    setThumb(prev =>
-      prev && Math.abs(prev.top - top) < SAME_PX && Math.abs(prev.height - height) < SAME_PX
-        ? prev
-        : { top, height },
-    )
+    let next: Thumb | null = null
+    if (scrollHeight - clientHeight >= 1) {
+      // Clamped so a huge mailbox still leaves something to grab; `top` then runs over the
+      // EFFECTIVE height, so the thumb reaches exactly the top and the bottom of the track.
+      const height = Math.min(clientHeight, Math.max(THIN_SCROLL.minThumbHeight, (clientHeight * clientHeight) / scrollHeight))
+      next = { top: (clientHeight - height) * (scrollTop / (scrollHeight - clientHeight)), height }
+    }
+    const prev = lastThumb.current
+    if (prev === next || (prev && next && Math.abs(prev.top - next.top) < SAME_PX && Math.abs(prev.height - next.height) < SAME_PX)) return
+    lastThumb.current = next
+    setThumb(next)
   }, [])
 
   // Deliberately dependency-free: the content of a scroll area changes with the parent's
   // render (folders arriving, an account list filtered), and re-measuring then is what
-  // keeps the thumb honest. `measure` returns the previous state when nothing moved, so
-  // this cannot feed itself a render loop.
+  // keeps the thumb honest. The guard above is a ref, NOT a `setThumb(prev => prev)`
+  // updater: when a stale update sits in the hook's queue (measured 06/10/2026 — one
+  // queued at React's idle lane with the height of an earlier, 2 px taller viewport),
+  // every render replays the queue from that stale value, the updater is handed an
+  // object that is not the rendered state, returns a new one, and the effect fires again:
+  // 500-800 commits/s on /mail at 1440×844, 1280×720, 1536×864, the page unclickable.
+  // Not calling `setThumb` at all when nothing moved is what breaks that chain.
   useEffect(measure)
 
   useEffect(() => {
