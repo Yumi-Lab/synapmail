@@ -9,9 +9,11 @@ import { cn } from '@/lib/utils'
 import {
   BRANDING_ERRORS,
   DEFAULT_APP_NAME,
+  FAVICON_TYPES,
   type Branding,
   type BrandingError,
   faviconLinks,
+  faviconTypeError,
   faviconUrl,
 } from '@/lib/branding'
 
@@ -111,12 +113,17 @@ export function BrandingSection() {
     }
   }
 
+  // A file whose declared type is not in the list gets no preview URL at all:
+  // only an accepted file ever reaches `createObjectURL`.
   const pickFile = (next: File | null) => {
+    const refused = next ? faviconTypeError(next.type) : null
+    const accepted = refused ? null : next
+    setError(refused ? t(`errors.${refused}`) : null)
     setFilePreview(previous => {
       if (previous) URL.revokeObjectURL(previous)
-      return next ? URL.createObjectURL(next) : null
+      return accepted ? URL.createObjectURL(accepted) : null
     })
-    setFile(next)
+    setFile(accepted)
   }
 
   const save = () => {
@@ -185,7 +192,7 @@ export function BrandingSection() {
               e.preventDefault()
               setDragging(false)
               const file = e.dataTransfer.files?.[0]
-              if (file) { pickFile(file); setError(null) }
+              if (file) pickFile(file)
             }}
             className={cn(
               'mt-1 flex w-full items-center gap-3 rounded-lg border border-dashed px-3 py-3 text-left transition-colors',
@@ -209,8 +216,8 @@ export function BrandingSection() {
           <input
             ref={fileRef}
             type="file"
-            accept="image/png,image/x-icon,image/vnd.microsoft.icon,image/jpeg,image/webp"
-            onChange={e => { pickFile(e.target.files?.[0] ?? null); setError(null) }}
+            accept={FAVICON_TYPES.join(',')}
+            onChange={e => pickFile(e.target.files?.[0] ?? null)}
             className="sr-only"
           />
           <button
