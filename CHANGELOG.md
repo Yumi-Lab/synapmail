@@ -7,6 +7,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.8.1] — 2026-10-07 — Correctif boucle de rendu
+
 ### Fixed
 - **La page du courrier se re-rendait en boucle au repos à certaines hauteurs de fenêtre**
   (`components/layout/ThinScroll.tsx`) : à 1440×844, 1280×720 et 1536×864 — pas à 1440×900 — la fine
