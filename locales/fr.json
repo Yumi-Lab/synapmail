@@ -128,7 +128,8 @@
     "expandSidebar": "Agrandir la barre latérale",
     "folders": "Dossiers",
     "switchAccount": "Changer de compte",
-    "searchAllFolders": "Tous les dossiers",
+    "searchAllAccounts": "Toutes les boîtes",
+    "searchAllFolders": "Cette boîte",
     "searchThisFolder": "Ce dossier",
     "clearSearch": "Effacer la recherche",
     "searchResults": "{count, plural, one {# résultat} other {# résultats}} pour « {query} »",
@@ -140,6 +141,8 @@
     "searchShown": "{shown} affichés",
     "searchDetails": "Cherché dans : {fields} · {scope}",
     "searchProgress": "{searched, plural, one {# dossier} other {# dossiers}} sur {folders}",
+    "searchAccountProgress": "{swept, plural, one {# boîte} other {# boîtes}} sur {accounts}",
+    "searchUnreachable": "{count, plural, one {# boîte injoignable} other {# boîtes injoignables}}",
     "searchStop": "Arrêter",
     "searchNoBodyHint": "Le corps des messages n’est pas cherché (limite du serveur de messagerie). Essayez un mot de l’objet ou une adresse.",
     "refresh": "Relever",
@@ -159,6 +162,7 @@
       "gray": "Gris"
     },
     "noFolders": "Aucun dossier",
+    "filterFolders": "Filtrer les dossiers",
     "messageList": "Liste des messages",
     "folderNew": "Nouveau dossier…",
     "folderNewChild": "Nouveau sous-dossier…",
@@ -199,8 +203,15 @@
       "soonTitle": "Bientôt disponible",
       "resultSummary": "Résumé",
       "resultTranslation": "Traduction",
-      "resultReply": "Brouillon IA, ouvert dans la composition"
-    }
+      "resultReply": "Brouillon IA, ouvert dans la composition",
+      "translateModeQuick": "Traduction rapide (depuis votre navigateur)",
+      "translateModeModel": "Traduction par le modèle IA",
+      "translateModeOff": "Désactivée",
+      "translateModeTitle": "Moteur de traduction",
+      "translateModeNotice": "La traduction rapide envoie le texte du message depuis VOTRE navigateur vers un service tiers (un point d'entrée non officiel de Google Traduction). Ce service n'est pas officiel et peut cesser de répondre à tout moment, il est inaccessible depuis la Chine, et il est prévu pour un usage PRIVÉ. Sur une instance partagée ou publique, choisissez le modèle IA ou désactivez-la.",
+      "translateQuickFailed": "Le service de traduction rapide n'a pas répondu. Passez au modèle IA dans les réglages, ou réessayez plus tard."
+    },
+    "back": "Retour"
   },
   "compose": {
     "newMessage": "Nouveau message",
@@ -270,7 +281,8 @@
       "ai": "IA Copilot",
       "pgp": "Chiffrement PGP",
       "apiKeys": "Clés API",
-      "admin": "Administration"
+      "admin": "Administration",
+      "branding": "Nom et icône de l'onglet"
     },
     "common": {
       "save": "Enregistrer",
@@ -296,6 +308,7 @@
     },
     "accounts": {
       "title": "Comptes email",
+      "description": "Vos comptes IMAP / SMTP connectés à {appName}",
       "add": "Ajouter un compte",
       "edit": "Modifier",
       "setDefault": "Définir par défaut",
@@ -539,6 +552,11 @@
         "smartRules": "Règles IA intelligentes",
         "personas": "Personas par compte"
       }
+    },
+    "apiKeys": {
+      "docsTitle": "Documentation de l'API",
+      "docsDescription": "La référence que cette instance sert : chaque route, ses paramètres et son mode d'accès. Lisible sans clé.",
+      "docsLink": "Ouvrir la référence"
     }
   },
   "admin": {
@@ -561,6 +579,7 @@
       "description": "Le nom et l'icône que cette instance affiche dans l'onglet du navigateur, pour tout le monde.",
       "nameLabel": "Nom",
       "iconLabel": "Icône de l'onglet",
+      "iconDrop": "Glissez une icône ici, ou cliquez pour choisir un fichier",
       "iconHint": "PNG, ICO, JPEG ou WebP, 256 Kio au plus.",
       "choose": "Choisir un fichier",
       "save": "Enregistrer",
@@ -698,7 +717,50 @@
     "from": "de",
     "newToday": "+{count} aujourd’hui",
     "upToDate": "à jour",
-    "allAccounts": "Tous les comptes"
+    "allAccounts": "Tous les comptes",
+    "subsTitle": "Newsletters",
+    "subsCount": "{count, plural, one {# abonnement} other {# abonnements}}",
+    "subsLoading": "Lecture des boîtes…",
+    "subsEmpty": "Aucune newsletter dans ces boîtes.",
+    "subsMeta": "{count, plural, one {# message} other {# messages}} · dernier le {date}",
+    "subsMethod_oneClick": "en un clic",
+    "subsMethod_mailto": "par courriel",
+    "subsMethod_link": "par lien",
+    "subsAlreadyLeft": "désabonné le {date}",
+    "subsSelectAll": "Tout sélectionner",
+    "subsSelectNone": "Ne rien sélectionner",
+    "subsUnsubscribe": "Se désabonner",
+    "subsConfirm": "{count, plural, one {# newsletter va être quittée. L’expéditeur ne peut pas revenir en arrière. Continuer ?} other {# newsletters vont être quittées. L’expéditeur ne peut pas revenir en arrière. Continuer ?}}",
+    "subsTooMany": "{count} sélectionnées : {max} au plus à la fois, désélectionnez-en ou procédez par paquets.",
+    "subsResultDone": "Désabonné.",
+    "subsResultManual": "À terminer à la main sur la page de l’expéditeur :",
+    "subsResultFailed": "Échec : {reason}",
+    "subsResultNotFound": "N’est plus dans cette boîte.",
+    "subsPurge": "Vider l’historique",
+    "subsPurgeOnlyOne": "Une newsletter à la fois : n’en gardez qu’une sélectionnée.",
+    "subsPurgeCounting": "Dénombrement de toute la boîte. Cela peut prendre un moment.",
+    "subsPurgeCount": "{count, plural, one {# message} other {# messages}} dans {folders, plural, one {# dossier} other {# dossiers}}",
+    "subsPurgeRange": "du {oldest} au {newest}",
+    "subsPurgeConfirm": "{count, plural, one {# message part dans la CORBEILLE et reste récupérable depuis là. Rien n’est supprimé définitivement.} other {# messages partent dans la CORBEILLE et restent récupérables depuis là. Rien n’est supprimé définitivement.}}",
+    "subsPurgeGo": "Mettre {count, plural, one {# message} other {# messages}} à la corbeille",
+    "subsPurgeCancel": "Annuler",
+    "subsPurgeDone": "{count, plural, one {# message déplacé} other {# messages déplacés}} vers {trash}.",
+    "subsPurgeChanged": "La boîte a bougé pendant le dénombrement : elle en porte {total} maintenant. Dénombrez à nouveau avant de vider.",
+    "subsPurgeRefused_not_found": "Cette newsletter n’est plus dans cette boîte.",
+    "subsPurgeRefused_no_trash": "Cette boîte n’expose aucune corbeille : rien n’a été déplacé.",
+    "subsPurgeError": "Échec : {reason}",
+    "cardOrderReset": "Remettre l'ordre d'origine",
+    "cardOrderHandle": "Déplacer la carte « {card} »",
+    "cardOrderHint": "Glisser pour déplacer · flèches pour déplacer au clavier",
+    "cardFocus": "À traiter",
+    "cardActivity": "Activité",
+    "cardAccounts": "Comptes",
+    "cardReceipts": "Accusés de lecture",
+    "cardScheduled": "Envois programmés",
+    "cardRules": "Règles",
+    "cardFollowUps": "Relances",
+    "cardSubscriptions": "Newsletters",
+    "cardQuickCompose": "Écrire vite"
   },
   "pgp": {
     "title": "Chiffrement PGP",
@@ -806,7 +868,9 @@
       "rules": "regles, filtres, sieve, automatisation",
       "ai": "ia, copilote, assistant, modele",
       "pgp": "pgp, chiffrement, gpg, cle, confidentialite",
-      "apiKeys": "api, cle, jeton, token, bearer, mcp, agent, integration"
+      "apiKeys": "api, cle, jeton, token, bearer, mcp, agent, integration",
+      "admin": "admin, administration, utilisateurs, roles, comptes",
+      "branding": "onglet, icône, favicon, titre, nom du site, identité, logo"
     }
   }
 }

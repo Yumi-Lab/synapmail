@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Measures on the running app that the header's field is the app's ONLY search
+ * Measures lot O2 on the running app: the header's field is the app's ONLY search
  * input, typing in it drives the message list through the mailbox URL, the scope
  * toggle widens the search to every folder, typing from another page lands on the
  * mailbox, and the list no longer carries its own search field nor its own compose
@@ -17,7 +17,7 @@ const VIEWPORT = { width: 1440, height: 900 }
 
 // The debounce and the URL parameter names are NOT retyped here: they are read out
 // of the shared contract (lib/search.ts) in this same run, so a change there fails
-// this check instead of silently making it measure the wrong thing.
+// this gate instead of silently making it measure the wrong thing.
 const CONTRACT = readFileSync(new URL('../lib/search.ts', import.meta.url), 'utf8')
 const constant = (name, re) => {
   const m = CONTRACT.match(re)
@@ -32,6 +32,10 @@ const MIN_LENGTH = Number(constant('MIN_QUERY_LENGTH', /MIN_QUERY_LENGTH = (\d+)
 
 const SEARCH = '[data-omnibar-search]'
 const SUMMARY = '[data-search-summary]'
+// Lot H3g : la portée n'est plus un contrôle segmenté posé à côté du champ, c'est une
+// puce DANS le champ qui ouvre un menu. Le banc CLIQUE donc la puce d'abord ; les
+// entrées gardent `data-omnibar-scope="<valeur>"`, ce que ce banc désignait déjà.
+const SCOPE_TRIGGER = '[data-omnibar-scope-trigger]'
 const scopeBtn = v => `[data-omnibar-scope="${v}"]`
 // A query that matches nothing in a real mailbox would leave an empty list, which
 // says nothing about the wiring; what is measured is the REQUEST the field issues
@@ -41,7 +45,7 @@ const QUERY = 'facture'
 const SETTLE_MS = 600
 const SEARCH_SETTLE_MS = 12000
 // A direct all-folder IMAP search on a real 7-mailbox account is the slowest call the
-// check makes. It gets its OWN deadline (AbortSignal below) so a slow API is REPORTED as
+// gate makes. It gets its OWN deadline (AbortSignal below) so a slow API is REPORTED as
 // a measured failure; the CDP transport is given more than that, so the transport can
 // never fire first and turn a product measurement into a dead harness.
 const API_TIMEOUT_MS = 120000
@@ -151,6 +155,8 @@ try {
 
   // --- The scope toggle widens the search to every folder ---
   const callsBeforeScope = searchCalls.length
+  await page.waitForSelector(SCOPE_TRIGGER, { timeout: 5000 })
+  await page.click(SCOPE_TRIGGER)
   await page.waitForSelector(scopeBtn(SCOPE_ALL), { timeout: 5000 })
   await page.click(scopeBtn(SCOPE_ALL))
   await new Promise(r => setTimeout(r, SEARCH_SETTLE_MS))
@@ -199,9 +205,13 @@ try {
   await visit(`/mail?${SEARCH_PARAM}=${QUERY}&${SCOPE_PARAM}=${SCOPE_ALL}`)
   await new Promise(r => setTimeout(r, SEARCH_SETTLE_MS))
   const restored = await page.$eval(SEARCH, el => el.value)
-  const restoredScope = await page.$eval(scopeBtn(SCOPE_ALL), el => el.getAttribute('aria-pressed'))
+  // Lot H3g : la coche vit sur l'entrée du MENU, qu'il faut donc ouvrir pour la lire.
+  await page.click(SCOPE_TRIGGER)
+  await page.waitForSelector(scopeBtn(SCOPE_ALL), { timeout: 5000 })
+  const restoredScope = await page.$eval(scopeBtn(SCOPE_ALL), el => el.getAttribute('aria-checked'))
+  await page.keyboard.press('Escape')
   const restoredBanner = await page.$eval(SUMMARY, el => el.textContent.trim()).catch(() => null)
-  console.log(`deep link -> field="${restored}", "all folders" pressed=${restoredScope}, banner=${restoredBanner === null ? '(absent)' : `"${restoredBanner}"`}`)
+  console.log(`deep link -> field="${restored}", "all folders" checked=${restoredScope}, banner=${restoredBanner === null ? '(absent)' : `"${restoredBanner}"`}`)
   if (restored !== QUERY) failures.push(`a deep link left "${restored}" in the field, expected "${QUERY}"`)
   if (restoredScope !== 'true') failures.push('a deep link did not restore the "all folders" scope')
   if (restoredBanner === null) failures.push('a deep link did not put the list in search mode')

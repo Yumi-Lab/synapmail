@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authorize } from '@/lib/apiAuth'
+import { withApiLog } from '@/lib/apiLog'
 import { query } from '@/lib/db'
+import { normalizeCardOrder, type DashboardCardId } from '@/lib/dashboardOrder'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,6 +20,7 @@ interface UserSettings {
   mail_density: string
   list_width: number
   dashboard_account_id: string | null
+  dashboard_card_order: DashboardCardId[] | null
   update_dismissed_version: string | null
 }
 
@@ -35,19 +38,21 @@ const DEFAULTS: UserSettings = {
   mail_density: 'comfortable',
   list_width: 320,
   dashboard_account_id: null,
+  dashboard_card_order: null,
   update_dismissed_version: null,
 }
 
-const SETTINGS_COLUMNS = `theme, language, messages_per_page, thread_view, reading_pane, notifications, undo_send_delay, start_view, active_account_id, sidebar_collapsed, mail_density, list_width, dashboard_account_id, update_dismissed_version`
+const SETTINGS_COLUMNS = `theme, language, messages_per_page, thread_view, reading_pane, notifications, undo_send_delay, start_view, active_account_id, sidebar_collapsed, mail_density, list_width, dashboard_account_id, dashboard_card_order, update_dismissed_version`
 
-export async function GET() {
-  const session = await auth()
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function getHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   try {
     const rows = await query<UserSettings>(
       `SELECT ${SETTINGS_COLUMNS} FROM user_settings WHERE user_id = $1`,
-      [session.user.id]
+      [userId]
     )
     return NextResponse.json({ data: rows[0] ?? DEFAULTS })
   } catch (err) {
@@ -55,9 +60,10 @@ export async function GET() {
   }
 }
 
-export async function PATCH(req: Request) {
-  const session = await auth()
-  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function patchHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   try {
     const body = await req.json() as Partial<UserSettings>
@@ -66,12 +72,22 @@ export async function PATCH(req: Request) {
       'theme', 'language', 'messages_per_page',
       'thread_view', 'reading_pane', 'notifications', 'undo_send_delay', 'start_view',
       'active_account_id', 'sidebar_collapsed', 'mail_density', 'list_width', 'dashboard_account_id',
+      'dashboard_card_order',
       'update_dismissed_version',
     ]
 
     const updates: Partial<UserSettings> = {}
     for (const key of allowed) {
       if (key in body) updates[key] = body[key] as never
+    }
+
+    // L'ordre des cartes est la seule valeur composee : il entre normalise (jamais
+    // une carte de moins qu'il n'en existe) et part en JSON, car pg rendrait d'un
+    // tableau JS un litteral de tableau Postgres, que jsonb refuse.
+    if ('dashboard_card_order' in updates) {
+      const order = updates.dashboard_card_order
+      updates.dashboard_card_order =
+        order === null ? null : JSON.stringify(normalizeCardOrder(order)) as never
     }
 
     if (Object.keys(updates).length === 0) {
@@ -86,15 +102,19 @@ export async function PATCH(req: Request) {
       `INSERT INTO user_settings (user_id, ${cols.join(', ')}, updated_at)
        VALUES ($1, ${cols.map((_, i) => `$${i + 2}`).join(', ')}, NOW())
        ON CONFLICT (user_id) DO UPDATE SET ${setClauses}, updated_at = NOW()`,
-      [session.user.id, ...vals]
+      [userId, ...vals]
     )
 
     const rows = await query<UserSettings>(
       `SELECT ${SETTINGS_COLUMNS} FROM user_settings WHERE user_id = $1`,
-      [session.user.id]
+      [userId]
     )
     return NextResponse.json({ data: rows[0] ?? DEFAULTS })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)
+export const PATCH = withApiLog(patchHandler)

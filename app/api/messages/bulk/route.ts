@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { markReadBulk, deleteMessagesBulk, moveMessagesBulk, setFlagBulk } from '@/lib/imap'
+import { applyReadChange } from '@/lib/unreadCount'
 import { flagByKey } from '@/lib/flags'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,9 +31,10 @@ function accountConfig(a: AccountRow) {
 }
 
 // PATCH — mark read/unread or move
-export async function PATCH(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function patchHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const body = await req.json()
   const { uids, action, accountId, folder, destination, flag } = body as {
@@ -40,7 +43,7 @@ export async function PATCH(req: Request) {
     accountId: string
     folder: string
     destination?: string
-    /** A colour from lib/flags.ts, or `null` to clear the flag. */
+    /** Couleur de lib/flags.ts, ou `null` pour retirer le drapeau. */
     flag?: string | null
   }
 
@@ -54,10 +57,11 @@ export async function PATCH(req: Request) {
 
     const config = accountConfig(account)
 
-    if (action === 'read') {
-      await markReadBulk(config, folder, uids, true)
-    } else if (action === 'unread') {
-      await markReadBulk(config, folder, uids, false)
+    if (action === 'read' || action === 'unread') {
+      const read = action === 'read'
+      await markReadBulk(config, folder, uids, read)
+      // Même règle que pour un message seul : le compteur bouge avec l'action.
+      await applyReadChange(account.id, folder, uids, read)
     } else if (action === 'flag') {
       if (flag === undefined) return NextResponse.json({ error: 'flag required for flag' }, { status: 400 })
       if (flag !== null && !flagByKey(flag)) return NextResponse.json({ error: 'Unknown flag' }, { status: 400 })
@@ -76,9 +80,10 @@ export async function PATCH(req: Request) {
 }
 
 // DELETE — delete multiple messages
-export async function DELETE(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function deleteHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const body = await req.json()
   const { uids, accountId, folder } = body as {
@@ -101,3 +106,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const DELETE = withApiLog(deleteHandler)
+export const PATCH = withApiLog(patchHandler)

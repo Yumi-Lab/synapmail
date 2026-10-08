@@ -7,7 +7,7 @@ import {
   Bot, CheckCircle2, AlertCircle, Loader2, Zap,
   ChevronDown, ChevronUp, Clock, Wand2, MessageSquareDiff,
   Languages, FileText, Globe, Lock, ScanSearch,
-  Sparkles, Brain, Server, Settings2, Laptop, Copy,
+  Sparkles, Brain, Server, Settings2, Laptop, Copy, AlertTriangle,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,8 @@ import { SettingsPage, SettingsHeader } from '@/components/settings/primitives'
 import {
   AIProvider, LOCAL_PROVIDER, LOCAL_DEFAULT_BASE_URL, LOCAL_DETECT_PORTS, isLoopbackUrl,
 } from '@/lib/ai'
+import { TRANSLATE_MODES, TRANSLATE_MODE_LABEL, TRANSLATE_MODE_DEFAULT, TRANSLATE_QUICK } from '@/lib/quickTranslate'
+import type { TranslateMode } from '@/lib/quickTranslate'
 import {
   AIClientError, callLocalModel, listLocalModels, localAccessState,
   buildOllamaOriginCommand, detectLocalOs, LOCAL_OS_ORDER,
@@ -39,6 +41,7 @@ interface AISettingsData {
   featureReplyDraft: boolean
   featureImprove: boolean
   featureTranslate: boolean
+  translateMode: TranslateMode
   configured: boolean
 }
 
@@ -237,6 +240,8 @@ export function AISettingsClient() {
   const t = useTranslations('settings.ai')
   // The four feature labels are the SAME strings as the reading pane toolbar.
   const tAction = useTranslations('mail.ai.actions')
+  // The engine labels and the warning are the SAME strings the reading pane uses.
+  const tAi = useTranslations('mail.ai')
   // The screen title is the SAME string as its entry in the settings navigation.
   const tNav = useTranslations('settings.nav')
   const { data } = useSWR<{ data: AISettingsData }>('/api/ai/settings', fetcher)
@@ -251,6 +256,7 @@ export function AISettingsClient() {
   const [featureReplyDraft, setFeatureReplyDraft] = useState(true)
   const [featureImprove, setFeatureImprove] = useState(true)
   const [featureTranslate, setFeatureTranslate] = useState(true)
+  const [translateMode, setTranslateMode] = useState<TranslateMode>(TRANSLATE_MODE_DEFAULT)
 
   const [saving, setSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'ok' | 'error'>('idle')
@@ -278,6 +284,7 @@ export function AISettingsClient() {
     setFeatureReplyDraft(settings.featureReplyDraft)
     setFeatureImprove(settings.featureImprove)
     setFeatureTranslate(settings.featureTranslate)
+    setTranslateMode(settings.translateMode)
   }, [settings])
 
   // The permission is read as soon as the local provider is picked, so the
@@ -385,6 +392,7 @@ export function AISettingsClient() {
         body: JSON.stringify({
           provider, apiKey: apiKey || undefined, baseUrl, model, systemPrompt,
           featureSummarize, featureReplyDraft, featureImprove, featureTranslate,
+          translateMode,
         }),
       })
       if (res.ok) {
@@ -709,6 +717,36 @@ export function AISettingsClient() {
                 ))}
               </div>
             </div>
+
+            {/* Translation engine — which one the Translate button uses. */}
+            {featureTranslate && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">{tAi('translateModeTitle')}</p>
+                <div className="space-y-1.5">
+                  {TRANSLATE_MODES.map(mode => (
+                    <label
+                      key={mode}
+                      className="flex items-center gap-2 text-sm cursor-pointer rounded-lg px-2 py-1.5 hover:bg-accent transition-colors"
+                    >
+                      <input
+                        type="radio"
+                        name="translate-mode"
+                        checked={translateMode === mode}
+                        onChange={() => setTranslateMode(mode)}
+                        className="accent-violet-500"
+                      />
+                      {tAi(TRANSLATE_MODE_LABEL[mode])}
+                    </label>
+                  ))}
+                </div>
+                {translateMode === TRANSLATE_QUICK && (
+                  <p className="mt-2 flex gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                    <span>{tAi('translateModeNotice')}</span>
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

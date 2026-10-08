@@ -6,15 +6,15 @@ import { query } from './db'
 import { upsertContact } from './contacts'
 import { DEFAULT_FLAG_KEY, FLAG_BIT_KEYWORDS, FLAG_IMAP_FLAG, flagFromKeywords, keywordsForFlag } from './flags'
 import type { MailListFilter } from './flags'
-import { SEARCH_FIELDS, SEARCH_RESULT_LIMIT, orderFoldersForSearch } from './search'
+import { SEARCH_FIELDS, SEARCH_RESULT_LIMIT, orderFoldersForSearch, splitFolderPasses } from './search'
 import type { FolderRank } from './search'
 import type { Message, Folder, AuthResults } from '@/types/email'
 
 /**
- * Date of a message for the app: the Date header (envelope) when it is present and
- * valid, otherwise the IMAP internal date (arrival on the server), which always
- * exists. Some script-generated mails carry no usable Date header: without this
- * fallback the API returned '' and the interface showed "Invalid Date".
+ * Date d'un message pour l'app : l'en-tête Date (enveloppe) quand il est
+ * présent et valide, sinon la date interne IMAP (réception/dépôt sur le serveur),
+ * qui existe toujours. Certains mails générés par des scripts n'ont pas d'en-tête
+ * Date exploitable : sans repli, l'API renvoyait '' et l'interface « Invalid Date ».
  */
 export function messageDate(...candidates: Array<Date | string | null | undefined>): string {
   for (const c of candidates) {
@@ -256,8 +256,8 @@ export async function listMessages(
       }
     }
 
-    // Upsert messages_cache — fire-and-forget, non-blocking
-    // RETURNING xmax: 0 = new row (message never seen before) → track the contact only once
+    // Upsert messages_cache — fire-and-forget, non-bloquant
+    // RETURNING xmax: 0 = nouvelle ligne (message jamais vu) → tracker le contact une seule fois
     if (account.id) {
       const accountId = account.id
       const seenUids = liveUids
@@ -284,8 +284,8 @@ export async function listMessages(
                 m.preview, m.threadId ?? null,
               ]
             )
-            // xmax = 0 → real INSERT (message seen for the first time) → count it only once
-            // Skip the account's own address (some devices send from the user's own address)
+            // xmax = 0 → INSERT réel (message découvert pour la première fois) → 1 seule incrémentation
+            // Exclure sa propre adresse (ex: TrueNAS envoie depuis l'adresse de l'utilisateur)
             if (userId && result[0]?.xmax === '0' && m.from.address
               && m.from.address.toLowerCase() !== account.username.toLowerCase()) {
               upsertContact(userId, { name: m.from.name, address: m.from.address }, 'received').catch(() => {})
@@ -461,10 +461,10 @@ export async function markStarred(
 }
 
 /**
- * Sets (or clears) a color flag on a set of messages. The color is carried by the
- * Apple keywords (see lib/flags.ts): ALL bits are removed first, otherwise a color
- * replacing another one would keep the previous color's bits and end up rendering a
- * third color.
+ * Pose (ou retire) un drapeau de couleur sur un jeu de messages. La couleur est
+ * portée par les mots-clés d'Apple (voir lib/flags.ts) : on retire d'abord TOUS
+ * les bits, sinon une couleur en remplaçant une autre garderait les bits de la
+ * précédente et donnerait une troisième couleur.
  */
 export async function setFlagBulk(
   account: AccountConfig,
@@ -537,25 +537,27 @@ export async function moveMessagesBulk(
 }
 
 /**
- * RAW source of several messages from a single folder, so they can be forwarded as
- * attachments. A SINGLE connection for the whole selection: opening then closing one
- * IMAP session per message is expensive on the servers that were measured. The
- * subject comes from the envelope, so the message is not re-parsed just to name the
- * file.
+ * Source BRUTE de plusieurs messages d'un même dossier, pour les transférer
+ * en pièces jointes (lot M5). Une SEULE connexion pour toute la sélection :
+ * ouvrir puis fermer une session IMAP par message coûte cher sur les serveurs
+ * mesurés. L'objet vient de l'enveloppe, donc le message n'est pas réanalysé
+ * juste pour nommer le fichier.
  *
- * Two passes, in this order: SIZES first (`RFC822.SIZE`, no body bytes at all), then
- * the sources only if the total fits under the cap. Otherwise a large mailbox would
- * be fully loaded into memory before there is any chance to reject it.
+ * Deux passes, dans cet ordre : les TAILLES d'abord (`RFC822.SIZE`, aucun
+ * octet de corps), puis les sources seulement si le total tient sous le
+ * plafond — sinon une boîte volumineuse serait entièrement chargée en mémoire
+ * avant qu'on ait le droit de la refuser.
  *
- * The result carries its own verdict: `missing` lists the requested uids the folder
- * no longer holds (message moved between selection and send). The caller has nothing
- * to compare: a truncated forward cannot go out by simple oversight.
+ * Le résultat porte son propre verdict : `missing` liste les uid demandés que
+ * le dossier ne contient plus (message déplacé entre la sélection et l'envoi).
+ * L'appelant n'a rien à comparer — un transfert amputé ne peut pas partir par
+ * simple oubli.
  */
 export interface MessageSourcesResult {
   sources: Array<{ uid: string; subject: string; source: Buffer }>
-  /** Requested uids that were absent from the folder at re-read time. */
+  /** uid demandés, absents du dossier au moment de la relecture. */
   missing: string[]
-  /** Sum of the sizes advertised by the server, when the cap is exceeded. */
+  /** Somme des tailles annoncées par le serveur, quand le plafond est dépassé. */
   totalBytes: number
   oversized: boolean
 }
@@ -572,8 +574,8 @@ export async function getMessageSources(
   try {
     await client.mailboxOpen(folder)
 
-    // Pass 1: sizes only. `size` comes from RFC822.SIZE, which the server
-    // advertises without transferring the message.
+    // Passe 1 — tailles seules. `size` vient de RFC822.SIZE : le serveur
+    // l'annonce sans transmettre le message.
     const sizeByUid = new Map<string, number>()
     for await (const msg of client.fetch(uids.join(','), { uid: true, size: true }, { uid: true })) {
       sizeByUid.set(String(msg.uid), msg.size ?? 0)
@@ -584,7 +586,7 @@ export async function getMessageSources(
     const totalBytes = uids.reduce((sum, uid) => sum + (sizeByUid.get(uid) ?? 0), 0)
     if (totalBytes > maxTotalBytes) return { ...empty, totalBytes, oversized: true }
 
-    // Pass 2: the sources, now that we know they fit under the cap.
+    // Passe 2 — les sources, maintenant qu'on sait qu'elles tiennent.
     const byUid = new Map<string, { uid: string; subject: string; source: Buffer }>()
     for await (const msg of client.fetch(uids.join(','), { uid: true, envelope: true, source: true }, { uid: true })) {
       if (!msg.source) continue
@@ -594,9 +596,9 @@ export async function getMessageSources(
         source: msg.source,
       })
     }
-    // IMAP returns messages in uid order, not in selection order: restore the
-    // requested order so the attachments follow what the user actually checked
-    // in the list.
+    // IMAP rend les messages dans l'ordre des uid, pas dans celui de la
+    // sélection : on rétablit l'ordre demandé, pour que les pièces jointes
+    // suivent ce que l'oeil a coché.
     return {
       sources: uids
         .map(uid => byUid.get(uid))
@@ -653,13 +655,13 @@ export async function appendToSentFolder(account: AccountConfig, raw: Buffer): P
 }
 
 /**
- * The four verbs this module was MISSING: the application could list folders, but
- * never create, rename, delete or empty one. All follow this file's rule:
- * `createClient` then `logout()` in a `finally`, never a connection left open on an
- * error.
+ * Les quatre verbes qui MANQUAIENT à ce module : l'application savait lister les
+ * dossiers, jamais en créer, renommer, supprimer ni vider un. Tous suivent la règle
+ * du fichier — `createClient` puis `logout()` dans un `finally`, jamais une connexion
+ * laissée ouverte sur une erreur.
  *
- * No access control here: whether an action is allowed is decided in
- * `lib/folderActions.ts` and refused in the route. This layer only executes.
+ * Aucun contrôle d'accès ici : le droit de faire se décide dans `lib/folderActions.ts`
+ * et se refuse dans la route. Ce niveau ne fait qu'exécuter.
  */
 export async function createFolder(account: AccountConfig, path: string): Promise<void> {
   const client = await createClient(account)
@@ -688,8 +690,8 @@ export async function deleteFolder(account: AccountConfig, path: string): Promis
   }
 }
 
-/** Marks the WHOLE folder as read. `1:*` in sequence numbers: this is the one case in the
- *  module where UIDs add nothing, since the range targets the whole mailbox, not a selection. */
+/** Marque TOUT le dossier comme lu. `1:*` en numéros de séquence : c'est le seul cas du
+ *  module où l'UID n'apporte rien — la plage vise la boîte entière, pas des messages choisis. */
 export async function markFolderRead(account: AccountConfig, path: string): Promise<void> {
   const client = await createClient(account)
   try {
@@ -700,7 +702,7 @@ export async function markFolderRead(account: AccountConfig, path: string): Prom
   }
 }
 
-/** Empties the folder (\Deleted + EXPUNGE). Whether emptying is ALLOWED is decided higher up. */
+/** Vide le dossier (\Deleted + EXPUNGE). Le DROIT de vider se décide plus haut. */
 export async function emptyFolder(account: AccountConfig, path: string): Promise<number> {
   const client = await createClient(account)
   try {
@@ -713,8 +715,8 @@ export async function emptyFolder(account: AccountConfig, path: string): Promise
   }
 }
 
-/** Message count of a folder, without downloading anything: the delete confirmation
- *  shows this number to the user before they confirm. */
+/** Nombre de messages d'un dossier, sans rien rapatrier — la confirmation de suppression
+ *  le nomme à l'utilisateur avant qu'il valide. */
 export async function folderMessageCount(account: AccountConfig, path: string): Promise<number> {
   const client = await createClient(account)
   try {
@@ -745,33 +747,33 @@ export async function listFolders(account: AccountConfig): Promise<Folder[]> {
 }
 
 /**
- * Number of IMAP connections opened in parallel by a multi-folder search. A connection
- * can only have one folder open at a time (mailbox lock), so covering a whole account
- * is shared across a few connections. Calibrated on a test account (100 folders, one
- * single-word query): one connection per folder > 300 s; one shared connection 152 s;
- * four connections 44 s. Beyond that, consumer IMAP servers start refusing
- * simultaneous connections.
+ * Nombre de connexions IMAP ouvertes en parallèle par une recherche multi-dossiers.
+ * Une connexion ne peut ouvrir qu'un dossier à la fois (verrou de boîte), donc la
+ * couverture d'un compte entier se partage entre quelques connexions. Calibré sur
+ * le compte de test (IONOS, 100 dossiers, requête « facture ») : 1 connexion par
+ * dossier > 300 s ; 1 connexion partagée 152 s ; 4 connexions 44 s. Au-delà, les
+ * serveurs IMAP grand public commencent à refuser les connexions simultanées.
  */
 export const SEARCH_CONNECTIONS = 4
 
-/** What a search reports: the messages RETURNED and the total number of matches. */
+/** Ce qu'une recherche rapporte : les messages RENDUS et le nombre de correspondances. */
 export type SearchOutcome = { messages: Message[]; total: number }
 
 /**
- * The folders of an account, IN THE ORDER an "all folders" search should open them,
- * and without the empty folders.
+ * Les dossiers d'un compte, DANS L'ORDRE où une recherche « tous les dossiers »
+ * doit les ouvrir, et sans les dossiers vides.
  *
- * Two sources, a single round trip each:
- *  - `LIST` with `statusQuery` (LIST-STATUS extension, when the server advertises it)
- *    gives the message count of EVERY folder in one command: measured on the largest
- *    test account (101 folders) at 222 ms, against 6592 ms for 101 `STATUS` commands
- *    sent one after another. A server without LIST-STATUS simply returns folders with
- *    no count: they stay in the list (only a MEASURED zero drops a folder), and the
- *    search is then merely less well ordered.
- *  - the local cache (`messages_cache`) gives the date of the most recent known
- *    message per folder, which floats the live folders to the top.
+ * Deux sources, un seul aller-retour chacune :
+ *  - `LIST` avec `statusQuery` (extension LIST-STATUS, annoncée par IONOS) donne
+ *    le nombre de messages de CHAQUE dossier en une commande — mesuré sur la plus
+ *    grosse boîte de test (101 dossiers) : 222 ms, contre 6 592 ms pour 101
+ *    `STATUS` envoyés l'un après l'autre. Un serveur sans LIST-STATUS renvoie
+ *    simplement des dossiers sans compte : ils restent dans la liste (seul un zéro
+ *    MESURÉ écarte un dossier), la recherche est alors seulement moins bien triée.
+ *  - le cache local (`messages_cache`) donne la date du message le plus récent
+ *    connu par dossier, ce qui fait remonter les dossiers vivants.
  */
-export async function listFoldersRanked(account: AccountConfig): Promise<string[]> {
+async function rankFolders(account: AccountConfig): Promise<FolderRank[]> {
   const client = await createClient(account)
   let entries: FolderRank[]
   try {
@@ -795,22 +797,37 @@ export async function listFoldersRanked(account: AccountConfig): Promise<string[
     )
     for (const r of rows) if (r.last_date) freshness.set(r.folder, new Date(r.last_date).toISOString())
   } catch {
-    // The cache is only a RANKING: its absence degrades the order, never the result.
+    // Le cache n'est qu'un CLASSEMENT : son absence dégrade l'ordre, jamais le résultat.
   }
 
-  return orderFoldersForSearch(entries.map(e => ({ ...e, lastKnownDate: freshness.get(e.path) ?? null })))
+  return entries.map(e => ({ ...e, lastKnownDate: freshness.get(e.path) ?? null }))
 }
 
-/** What one folder has just reported, as soon as it reported it. */
+/** Les dossiers d'une boîte, du plus utile au moins utile (lot S2). */
+export async function listFoldersRanked(account: AccountConfig): Promise<string[]> {
+  return orderFoldersForSearch(await rankFolders(account))
+}
+
+/**
+ * Les dossiers d'une boîte en DEUX passes : réception + envoyés d'abord, le reste
+ * ensuite. La portée « toutes les boîtes » fait la première passe de CHAQUE boîte
+ * avant d'attaquer les secondes, pour que la dernière boîte ne soit pas servie
+ * derrière les 97 dossiers d'une autre.
+ */
+export async function listFolderPasses(account: AccountConfig): Promise<{ first: string[]; rest: string[] }> {
+  return splitFolderPasses(await rankFolders(account))
+}
+
+/** Ce qu'un dossier vient de rapporter, dès qu'il l'a rapporté. */
 export type SearchChunk = SearchOutcome & { folder: string; searched: number; folders: number }
 
 /**
- * Searches folder by folder and STREAMS RESULTS AS THEY COME: an "all folders"
- * search becomes useful as soon as the first folder is returned, instead of waiting
- * for full coverage (measured: ~30 s for 101 folders, at ~300 ms each).
+ * Cherche dossier par dossier et RESTITUE AU FIL DE L'EAU : la recherche « tous
+ * les dossiers » devient utile dès le premier dossier rendu, au lieu d'attendre
+ * la couverture complète (mesuré : ~30 s pour 101 dossiers, à ~300 ms l'un).
  *
- * `signal` cancels cleanly: the remaining folders are not opened and the connections
- * are closed by each worker's `finally`.
+ * `signal` coupe proprement : les dossiers restants ne sont pas ouverts et les
+ * connexions sont fermées par le `finally` de chaque ouvrier.
  */
 export async function* searchMessagesByFolder(
   account: AccountConfig,
@@ -820,9 +837,9 @@ export async function* searchMessagesByFolder(
 ): AsyncGenerator<SearchChunk> {
   if (terms.length === 0 || folders.length === 0) return
   const queue = [...folders]
-  // A minimal channel: the workers push, the generator pops. No library for three
-  // lines, and the delivery order is the order of the RESPONSES, which is precisely
-  // what we want to display.
+  // Un canal minimal : les ouvriers déposent, le générateur retire. Pas de
+  // bibliothèque pour trois lignes, et l'ordre de restitution est celui des
+  // RÉPONSES, qui est précisément ce qu'on veut afficher.
   const ready: SearchChunk[] = []
   let wake: (() => void) | null = null
   const deliver = (chunk: SearchChunk) => { ready.push(chunk); wake?.(); wake = null }
@@ -830,11 +847,11 @@ export async function* searchMessagesByFolder(
 
   const worker = async () => {
     const client = await createClient(account)
-    // Cancelling BETWEEN two folders is not enough: a `SEARCH` on a large folder
-    // takes tens of seconds (measured 23 s on a folder holding 163783 messages),
-    // during which the connection would stay open after the client has left. Closing
-    // the connection aborts the in-flight command, which `logout()` does not, since
-    // it politely waits for the server's response.
+    // Couper ENTRE deux dossiers ne suffit pas : un `SEARCH` sur un gros dossier
+    // dure des dizaines de secondes (mesuré 23 s sur un dossier de 163 783
+    // messages), pendant lesquelles la connexion resterait ouverte après le départ
+    // du client. Fermer la connexion interrompt la commande en cours, ce que
+    // `logout()` — qui attend poliment la réponse du serveur — ne fait pas.
     const cut = () => { client.close() }
     signal?.addEventListener('abort', cut, { once: true })
     try {
@@ -845,10 +862,10 @@ export async function* searchMessagesByFolder(
           searched += 1
           deliver({ ...outcome, folder, searched, folders: folders.length })
         } catch {
-          // An unreadable folder does not fail the whole search; it still counts as
-          // covered, otherwise progress never reaches completion. A connection cut by
-          // cancellation lands here too: the loop stops on the next iteration, at the
-          // `signal` check.
+          // Un dossier illisible ne fait pas échouer la recherche entière ; il
+          // compte quand même comme couvert, sinon la progression n'arrive jamais à
+          // son terme. Une connexion coupée par l'abandon passe ici aussi : la
+          // boucle s'arrête au tour suivant, sur le test de `signal`.
           searched += 1
           deliver({ messages: [], total: 0, folder, searched, folders: folders.length })
         }
@@ -868,8 +885,8 @@ export async function* searchMessagesByFolder(
     if (ready.length === 0) { await new Promise<void>(resolve => { wake = resolve }); continue }
     yield ready.shift() as SearchChunk
   }
-  // Propagate a failure that hit ALL workers (credentials refused, server
-  // unreachable): without this the search would end reporting "0 results".
+  // Propage une panne qui aurait touché TOUS les ouvriers (identifiants refusés,
+  // serveur injoignable) : sans cela la recherche se terminerait « 0 résultat ».
   const outcomes = await all
   if (outcomes.length > 0 && outcomes.every(o => o.status === 'rejected')) {
     throw (outcomes[0] as PromiseRejectedResult).reason
@@ -877,12 +894,12 @@ export async function* searchMessagesByFolder(
 }
 
 /**
- * Searches SEVERAL folders while reusing the connections: opening one connection per
- * folder costs a TLS handshake plus a LOGIN every time, which makes an "all folders"
- * search unusable on a real account. An unreadable folder is ignored while others
- * remain to be covered.
+ * Cherche dans PLUSIEURS dossiers en réutilisant les connexions : ouvrir une
+ * connexion par dossier coûte une poignée de main TLS + un LOGIN à chaque fois,
+ * ce qui rend la recherche « tous les dossiers » inutilisable sur un compte réel.
+ * Un dossier illisible est ignoré quand d'autres restent à couvrir.
  *
- * `terms` comes from `parseQuery` (lib/search.ts): ALL of them must match.
+ * `terms` vient de `parseQuery` (lib/search.ts) : TOUS doivent correspondre.
  */
 export async function searchMessagesIn(
   account: AccountConfig,
@@ -919,9 +936,9 @@ export async function searchMessagesIn(
 }
 
 /**
- * Searches for ONE exact phrase in a folder. Used by thread grouping, which starts
- * from a normalized subject: splitting it into words would widen the thread to
- * unrelated messages.
+ * Cherche UNE expression exacte dans un dossier. Utilisé par le regroupement en
+ * fil de discussion, qui part d'un objet normalisé : le découper en mots
+ * élargirait le fil à des messages sans rapport.
  */
 export async function searchMessages(
   account: AccountConfig,
@@ -932,16 +949,17 @@ export async function searchMessages(
 }
 
 /**
- * One term = one `SEARCH` querying every field of the contract with `OR`; the terms
- * are then crossed as an INTERSECTION of identifiers, which gives the expected AND
- * ("a b" and "b a" report the same set).
+ * Un terme = un `SEARCH` qui interroge tous les champs du contrat en `OR` ; les
+ * termes sont croisés en INTERSECTION d'identifiants, ce qui donne le ET attendu
+ * (« 3d cpi » et « cpi 3d » rapportent le même ensemble).
  *
- * Why not ONE single query? IMAP does chain its criteria with AND, but an imapflow
- * query object carries only one `or` key: two `OR` groups in the same query would
- * require a nested `NOT NOT`. One `SEARCH` per term only carries identifiers, on an
- * ALREADY open mailbox (measured 1.2 s per query on a consumer server).
- * ponytail: client-side intersection as long as the terms can be counted on one hand;
- * beyond that, the single query is what should be built, not more round trips.
+ * Pourquoi pas UNE seule requête ? IMAP enchaîne bien ses critères en ET, mais un
+ * objet de requête imapflow ne porte qu'une clé `or` : deux groupes `OR` dans la
+ * même requête demanderaient un `NOT NOT` imbriqué. Un `SEARCH` par terme ne
+ * transporte que des identifiants, sur une boîte DÉJÀ ouverte (mesuré 1,2 s par
+ * requête sur IONOS).
+ * ponytail: intersection côté client tant que les termes se comptent sur une main ;
+ * au-delà, c'est la requête unique qu'il faudrait construire, pas plus de tours.
  */
 async function searchOpenFolder(
   client: ImapFlow,
@@ -952,9 +970,9 @@ async function searchOpenFolder(
   try {
     let matching: number[] | null = null
     for (const term of terms) {
-      // `{ uid: true }` is mandatory: without it the server returns SEQUENCE NUMBERS,
-      // which the `fetch` below would read back as UIDs, hence the wrong messages as
-      // soon as any message has been deleted from the folder.
+      // `{ uid: true }` est indispensable : sans lui le serveur renvoie des NUMÉROS
+      // DE SÉQUENCE, que le `fetch` ci-dessous relirait comme des UID — donc les
+      // mauvais messages dès qu'un message a été supprimé du dossier.
       const result = await client.search(
         { or: SEARCH_FIELDS.map(field => ({ [field]: term })) },
         { uid: true }
@@ -972,10 +990,10 @@ async function searchOpenFolder(
 
     const messages: Message[] = []
     if (recentUids.length > 0) {
-      // The third argument is what turns this FETCH into a `UID FETCH`; `uid: true` in
-      // the second one only ASKS for the UID field. Both are required: without the
-      // third, the identifiers returned by the search would be read back as sequence
-      // numbers (measured: 0 messages returned out of 212 found).
+      // Le troisième argument est ce qui fait de ce FETCH un `UID FETCH` ; `uid: true`
+      // dans le second ne fait que DEMANDER le champ UID. Les deux sont nécessaires :
+      // sans le troisième, les identifiants renvoyés par la recherche seraient relus
+      // comme des numéros de séquence (mesuré : 0 message rendu sur 212 trouvés).
       for await (const msg of client.fetch(recentUids.join(','), {
         uid: true, flags: true, envelope: true, bodyStructure: true, internalDate: true,
       }, { uid: true })) {
@@ -1001,6 +1019,106 @@ async function searchOpenFolder(
       }
     }
     return { messages, total: allUids.length }
+  } finally {
+    lock.release()
+  }
+}
+
+/** Ce qu'un dossier rapporte à une recherche par en-tête : ses uid et les bornes de dates. */
+export type HeaderMatches = {
+  folder: string
+  uids: string[]
+  /** Date du plus ancien et du plus récent, ISO, `null` quand le dossier ne rapporte rien. */
+  oldest: string | null
+  newest: string | null
+}
+
+/**
+ * Cherche dans PLUSIEURS dossiers les messages dont UN en-tête porte `value`,
+ * et rapporte leurs uid dossier par dossier, avec les bornes de dates.
+ *
+ * Même forme que `searchMessagesIn` juste au-dessus — même file de dossiers,
+ * mêmes `SEARCH_CONNECTIONS` ouvriers, même règle d'erreur (un dossier illisible
+ * est ignoré quand d'autres restent à couvrir, propagé quand il est le seul) —
+ * parce que c'est la même contrainte : une connexion n'ouvre qu'un dossier à la
+ * fois, et ouvrir une connexion par dossier rend la couverture d'un compte réel
+ * inutilisable.
+ *
+ * Ce qui diffère : le critère est `HEADER <nom> <valeur>` (RFC 3501 §6.4.4,
+ * sous-chaîne, insensible à la casse chez le serveur) au lieu des champs de
+ * `SEARCH_FIELDS`, et AUCUN message n'est rendu — seulement des uid, une date
+ * de plus ancien et une de plus récent. Un historique de newsletter se compte
+ * en milliers de messages : les rendre coûterait un FETCH complet là où
+ * l'appelant n'a besoin que de savoir COMBIEN et QUOI déplacer.
+ *
+ * Les bornes viennent d'un `FETCH internalDate` — une date du serveur, pas
+ * l'en-tête `Date` que l'expéditeur écrit lui-même.
+ */
+export async function searchHeaderIn(
+  account: AccountConfig,
+  folders: string[],
+  header: string,
+  value: string
+): Promise<HeaderMatches[]> {
+  if (!header || !value || folders.length === 0) return []
+  const queue = [...folders]
+  const worker = async (): Promise<HeaderMatches[]> => {
+    const client = await createClient(account)
+    try {
+      const found: HeaderMatches[] = []
+      for (let folder = queue.shift(); folder !== undefined; folder = queue.shift()) {
+        try {
+          const outcome = await searchHeaderOpenFolder(client, folder, header, value)
+          if (outcome.uids.length > 0) found.push(outcome)
+        } catch (err) {
+          if (folders.length === 1) throw err
+        }
+      }
+      return found
+    } finally {
+      await client.logout().catch(() => {})
+    }
+  }
+  const workers = Array.from({ length: Math.min(SEARCH_CONNECTIONS, folders.length) }, worker)
+  return (await Promise.all(workers)).flat()
+}
+
+/** Un dossier déjà ouvert : les uid dont l'en-tête correspond, et leurs bornes. */
+async function searchHeaderOpenFolder(
+  client: ImapFlow,
+  folder: string,
+  header: string,
+  value: string
+): Promise<HeaderMatches> {
+  const lock = await client.getMailboxLock(folder)
+  try {
+    // `{ uid: true }` est indispensable ici pour la même raison que dans
+    // `searchOpenFolder` : sans lui le serveur renvoie des NUMÉROS DE SÉQUENCE,
+    // que le déplacement relirait comme des uid — donc les mauvais messages.
+    const result = await client.search({ header: { [header]: value } }, { uid: true })
+    const uids = Array.isArray(result) ? result : []
+    if (uids.length === 0) return { folder, uids: [], oldest: null, newest: null }
+
+    // Les deux extrémités seulement : les uid d'un dossier IMAP croissent avec
+    // le dépôt, donc le premier et le dernier bornent l'historique sans lire les
+    // milliers de messages entre les deux.
+    const ends = [uids[0], uids[uids.length - 1]]
+    const dates: string[] = []
+    for await (const msg of client.fetch(
+      Array.from(new Set(ends)).join(','),
+      { uid: true, internalDate: true },
+      { uid: true }
+    )) {
+      const date = messageDate(msg.internalDate)
+      if (date) dates.push(date)
+    }
+    dates.sort()
+    return {
+      folder,
+      uids: uids.map(String),
+      oldest: dates[0] ?? null,
+      newest: dates[dates.length - 1] ?? null,
+    }
   } finally {
     lock.release()
   }

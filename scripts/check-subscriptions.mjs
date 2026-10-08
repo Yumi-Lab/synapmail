@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Self-check: the subscription list and the one-click unsubscribe.
+ * Self-check of lot N1: the subscription list and the one-click unsubscribe.
  *
  * PURE: no database, no mailbox, no network, and — deliberately — NOT ONE real
  * unsubscribe. Leaving a list is a real action at a third party's: the only real
- * attempt is performed by hand, on one newsletter picked by hand.
+ * attempt happens at the human gate, on one newsletter Nicolas picks.
  *
  * Three batteries:
  *  1. Headers — RFC 5322 folding, several URIs between angle brackets, RFC 8058
@@ -25,7 +25,6 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   MAILTO_SUBJECT,
-  MAX_UNSUBSCRIBE_BATCH,
   ONE_CLICK_BODY,
   ONE_CLICK_CONTENT_TYPE,
   RECENT_MESSAGES_SCANNED,
@@ -36,6 +35,7 @@ import {
   isOneClick,
   isPrivateAddress,
   mailtoAddress,
+  decodeEncodedWords,
   mailtoSubject,
   manualUrl,
   methodOf,
@@ -50,6 +50,7 @@ import {
   UNSUBSCRIBE_CONCURRENCY,
   UNSUBSCRIBE_TIMEOUT_MS,
 } from '../lib/subscriptions.ts'
+import { MAX_UNSUBSCRIBE_BATCH } from '../lib/subscriptionsContract.ts'
 
 const ok = label => console.log(`  ok  ${label}`)
 /** Header separator, so a fixture never has to escape it inline. */
@@ -113,24 +114,43 @@ ok('one-click needs BOTH the RFC 8058 field and an https URI')
 assert.equal(mailtoAddress(uris.mailto[0]), 'leave@example.com')
 assert.equal(mailtoSubject(uris.mailto[0]), 'unsubscribe abc')
 assert.equal(mailtoAddress('mailto:not-an-address'), null)
-assert.equal(mailtoAddress('mailto:a@one.example,c@two.example'), null)
+assert.equal(mailtoAddress('mailto:a@b.com,c@d.com'), null)
 ok('a mailto target is one validated address, its subject decoded')
 
 assert.deepEqual(parseAddress('Example News <News@Example.com>'), {
   name: 'Example News',
   address: 'news@example.com',
 })
-assert.deepEqual(parseAddress('"Quoted, Name" <a@one.example>'), { name: 'Quoted, Name', address: 'a@one.example' })
+assert.deepEqual(parseAddress('"Quoted, Name" <a@b.com>'), { name: 'Quoted, Name', address: 'a@b.com' })
 ok('a From value gives a name and a lower-case address')
 
+// RFC 2047 encoded-words in a display name. The first fixture is the real
+// Amazon sender the human gate of M7d saw shown raw on the dashboard.
+assert.deepEqual(
+  parseAddress(
+    '=?UTF-8?Q?Communications_Amazon=C2=A0Selle?= =?UTF-8?Q?r=C2=A0Central_=28ne_pas_r=C3=A9pondre=29?= <news@amazon.test>'
+  ),
+  { name: 'Communications Amazon\u00a0Seller\u00a0Central (ne pas répondre)', address: 'news@amazon.test' }
+)
+assert.equal(parseAddress('=?UTF-8?B?TGV0dHJlIGTigJlpbmZv?= <a@b.test>').name, 'Lettre d\u2019info')
+assert.equal(parseAddress('=?ISO-8859-1?Q?Caf=E9?= <c@d.test>').name, 'Café')
+ok('an encoded display name is decoded, in B and in Q, whatever its charset')
+
+// Negative controls: what must NOT be touched.
+assert.equal(parseAddress('Plain Name <p@q.test>').name, 'Plain Name')
+assert.equal(parseAddress('=?BOGUS-CHARSET?Q?x?= <e@f.test>').name, '=?BOGUS-CHARSET?Q?x?=')
+assert.equal(parseAddress('=?UTF-8?Q?truncated <g@h.test>').name, '=?UTF-8?Q?truncated')
+assert.equal(decodeEncodedWords('a =?UTF-8?Q?b?= c'), 'a b c')
+ok('a plain name, an unknown charset and a malformed word are left untouched')
+
 // A message without any unsubscribe route is not a subscription at all.
-assert.equal(parseSubscriptionHeaders('7', 'From: a@one.example\r\nSubject: hello'), null)
+assert.equal(parseSubscriptionHeaders('7', 'From: a@b.com\r\nSubject: hello'), null)
 ok('a message with no List-Unsubscribe is not listed')
 
 const parsed = parseSubscriptionHeaders('12', FOLDED)
 assert.equal(parsed.oneClick, true)
 assert.equal(methodOf(parsed), 'one-click')
-assert.equal(methodOf({ oneClick: false, uris: { https: [], mailto: ['mailto:x@sender.example'], http: [] } }), 'mailto')
+assert.equal(methodOf({ oneClick: false, uris: { https: [], mailto: ['mailto:x@y.z'], http: [] } }), 'mailto')
 assert.equal(methodOf({ oneClick: false, uris: { https: ['https://x/y'], mailto: [], http: [] } }), 'link')
 ok('the method is one-click, else mailto, else link')
 
@@ -229,9 +249,9 @@ assert.match(grouped[0].id, /^[0-9a-f]{24}$/)
 assert.ok(!grouped[0].id.includes('example'))
 ok('the id is stable per mailbox, opaque, and differs across mailboxes')
 
-assert.equal(groupingKey({ listId: 'Weekly <WEEKLY.lists.example.com>', from: { address: 'a@sender.example' } }),
+assert.equal(groupingKey({ listId: 'Weekly <WEEKLY.lists.example.com>', from: { address: 'a@b.c' } }),
   'list:weekly.lists.example.com')
-assert.equal(groupingKey({ from: { address: 'A@Sender.example' } }), 'from:a@sender.example')
+assert.equal(groupingKey({ from: { address: 'A@B.c' } }), 'from:a@b.c')
 ok('the grouping key is case-insensitive on both paths')
 
 // A recorded unsubscribe travels back, so an agent does not start over.
@@ -240,7 +260,7 @@ assert.equal(groupSubscriptions('acc-1', rotated, already)[0].unsubscribedAt, '2
 assert.equal(groupSubscriptions('acc-1', rotated, already)[1].unsubscribedAt, null)
 ok('a past unsubscribe comes back as unsubscribedAt, only on its own group')
 
-assert.equal(subscriptionId('acc-1', 'from:a@sender.example'), subscriptionId('acc-1', 'from:a@sender.example'))
+assert.equal(subscriptionId('acc-1', 'from:a@b.c'), subscriptionId('acc-1', 'from:a@b.c'))
 ok('the same mailbox and key always give the same id')
 
 // ---------------------------------------------------------------------------
@@ -537,9 +557,9 @@ if (BREAK_BOUNDARY) {
 // party is called. Expected: anything but `transport`.
 if (process.argv.includes('--transport')) {
   console.log('\ntransport — the SHIPPED requester, no injection')
-  // A path that exists nowhere, so calling it has no effect on anyone. Set
-  // SYNAPMAIL_TRANSPORT_PROBE_URL to point this arm at a host you control.
-  const PROBE = process.env.SYNAPMAIL_TRANSPORT_PROBE_URL ?? 'https://mail.example.com/no-such-probe-path'
+  // Our own staging, a path that exists nowhere: calling it has no effect on
+  // anyone. Overridable so this arm can be pointed at another harmless URL.
+  const PROBE = process.env.SYNAPMAIL_TRANSPORT_PROBE_URL ?? 'https://srv1774179.hstgr.cloud/gate-n1-sonde-inexistante'
   const started = Date.now()
   const real = await unsubscribeOneClick(PROBE)
   const elapsedMs = Date.now() - started
@@ -688,7 +708,7 @@ console.log('\nsubscriptions: all checks passed')
 //
 // This arm READS ONLY: it lists subscriptions through the API with a Bearer key
 // it creates for itself, times the call, and NEVER posts an unsubscribe — that
-// is a real action at a third party's and belongs to a manual review.
+// is a real action at a third party's and belongs to the human gate.
 if (process.argv.includes('--live')) {
   const { readFileSync: read } = await import('node:fs')
   const crypto = await import('node:crypto')

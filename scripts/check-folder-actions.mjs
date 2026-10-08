@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Self-check of lib/folderActions.ts — the one rule the route AND the menu both apply.
+// Self-check of lib/folderActions.ts — la règle que la route ET le menu appliquent.
 // node --experimental-strip-types scripts/check-folder-actions.mjs
 import assert from 'node:assert/strict'
 import {
@@ -10,10 +10,10 @@ import {
 const owner = { canOrganize: true, canDelete: true }
 const caps = (over) => folderCapabilities({ special: null, hasChildren: false, ...owner, ...over })
 
-// Ordinary folder, owner session: everything except "empty" (reserved for trash/spam).
+// Dossier ordinaire, propriétaire : tout sauf « vider » (réservé Corbeille/Indésirables).
 assert.deepEqual(caps(), { create: true, createChild: true, rename: true, markRead: true, empty: false, remove: true })
 
-// Special folder: what the server declares a role for is neither renamed nor removed.
+// Dossier spécial : on ne renomme ni ne supprime ce dont le rôle est déclaré au serveur.
 for (const special of ['inbox', 'sent', 'drafts', 'spam', 'trash']) {
   const c = caps({ special })
   assert.equal(c.rename, false, `${special} ne doit pas être renommable`)
@@ -21,31 +21,31 @@ for (const special of ['inbox', 'sent', 'drafts', 'spam', 'trash']) {
   assert.equal(c.markRead, true, `${special} reste marquable comme lu`)
 }
 
-// "Empty" exists ONLY for trash and spam.
+// « Vider » n'existe QUE pour la corbeille et les indésirables.
 assert.equal(caps({ special: 'trash' }).empty, true)
 assert.equal(caps({ special: 'spam' }).empty, true)
 for (const special of [null, 'inbox', 'sent', 'drafts']) assert.equal(caps({ special }).empty, false)
 
-// A parent cannot be removed while it still has children; nothing else changes.
+// Un parent ne se supprime pas tant qu'il a des enfants ; le reste est inchangé.
 assert.equal(caps({ hasChildren: true }).remove, false)
 assert.equal(caps({ hasChildren: true }).rename, true)
 
-// Read-only session (share without rights): nothing is offered at all.
+// Session en lecture seule (partage sans droits) : plus rien n'est offert.
 const readOnly = folderCapabilities({ special: null, hasChildren: false, canOrganize: false, canDelete: false })
 assert.deepEqual(Object.values(readOnly), [false, false, false, false, false, false])
 
-// Share with "organize" but not "delete": rearranging is allowed, destroying is not.
+// Partage « organiser » sans « supprimer » : on range, on ne détruit pas.
 const organizeOnly = folderCapabilities({ special: 'trash', hasChildren: false, canOrganize: true, canDelete: false })
 assert.equal(organizeOnly.create, true)
 assert.equal(organizeOnly.empty, false)
 assert.equal(organizeOnly.remove, false)
 
-// Names: the server delimiter is rejected — it would create an unrequested hierarchy.
+// Noms : le délimiteur du serveur ne passe pas — il créerait une hiérarchie non demandée.
 assert.equal(sanitizeFolderName('Factures', '/'), 'Factures')
 assert.equal(sanitizeFolderName('  Factures  ', '/'), 'Factures')
 assert.equal(sanitizeFolderName('a/b', '/'), null)
 assert.equal(sanitizeFolderName('a.b', '.'), null)
-assert.equal(sanitizeFolderName('a.b', '/'), 'a.b')      // a dot is special only when it IS the delimiter
+assert.equal(sanitizeFolderName('a.b', '/'), 'a.b')      // un point n'est spécial que si c'est LE délimiteur
 assert.equal(sanitizeFolderName('a\nb', '/'), null)
 assert.equal(sanitizeFolderName('', '/'), null)
 assert.equal(sanitizeFolderName('   ', '/'), null)
@@ -54,7 +54,7 @@ assert.equal(sanitizeFolderName('x'.repeat(256), '/'), null)
 assert.equal(sanitizeFolderName('x'.repeat(255), '/').length, 255)
 assert.equal(sanitizeFolderName('Élodie 王小明 (2026)', '/'), 'Élodie 王小明 (2026)')
 
-// Paths: create under a parent, rename in place, recognise a descendant.
+// Chemins : créer sous un parent, renommer sur place, reconnaître un descendant.
 assert.equal(joinFolderPath('', 'Tests', '/'), 'Tests')
 assert.equal(joinFolderPath('Archive', 'Tests', '/'), 'Archive/Tests')
 assert.equal(joinFolderPath('INBOX', 'Tests', '.'), 'INBOX.Tests')
@@ -63,17 +63,17 @@ assert.equal(renamedPath('Old', 'Neuf', '/'), 'Neuf')
 assert.equal(renamedPath('INBOX.Old', 'Neuf', '.'), 'INBOX.Neuf')
 assert.equal(isDescendant('Archive/Old', 'Archive', '/'), true)
 assert.equal(isDescendant('Archive', 'Archive', '/'), false)
-assert.equal(isDescendant('ArchiveBis', 'Archive', '/'), false)  // a shared prefix alone is not enough
+assert.equal(isDescendant('ArchiveBis', 'Archive', '/'), false)  // le préfixe seul ne suffit pas
 
-// ── "Empty" is NOT shown greyed out on folders that are never emptied.
-// Greyed out reads as "here, but not for you"; across twenty ordinary folders that is noise.
+// ── Défaut 3 : « vider » n'est PAS affiché grisé sur les dossiers qu'on ne vide pas.
+// Grisé veut dire « ici, mais pas pour vous » ; sur vingt dossiers ordinaires, c'est du bruit.
 for (const special of [null, 'inbox', 'sent', 'drafts']) {
   assert.equal(offeredActions(special).includes('empty'), false, `« vider » ne doit pas être proposé sur ${special}`)
 }
 for (const special of ['trash', 'spam']) {
   assert.equal(offeredActions(special).includes('empty'), true, `« vider » doit être proposé sur ${special}`)
 }
-// The other entries are present everywhere, in the order of the single source.
+// Les autres entrées sont là partout, et dans l'ordre de la source unique.
 for (const special of [null, 'inbox', 'trash']) {
   const offered = offeredActions(special)
   assert.deepEqual(offered, FOLDER_ACTIONS.filter(a => offered.includes(a)), 'ordre du menu altéré')
@@ -82,24 +82,24 @@ for (const special of [null, 'inbox', 'trash']) {
   }
 }
 
-// ── Renaming a parent carries its WHOLE subtree along, not just the parent itself.
+// ── Défaut 4 : renommer un parent emmène TOUT son sous-arbre, pas seulement lui.
 assert.equal(rewritePath('Archive', 'Archive', 'Archives', '/'), 'Archives')
 assert.equal(rewritePath('Archive/2025', 'Archive', 'Archives', '/'), 'Archives/2025')
 assert.equal(rewritePath('Archive/2025/Q1', 'Archive', 'Archives', '/'), 'Archives/2025/Q1')
 assert.equal(rewritePath('INBOX.Vieux.Sous', 'INBOX.Vieux', 'INBOX.Neuf', '.'), 'INBOX.Neuf.Sous')
-// A path outside the subtree comes back UNTOUCHED — a shared prefix alone is not enough.
+// Un chemin étranger au sous-arbre ressort INTACT — un préfixe seul ne suffit pas.
 assert.equal(rewritePath('ArchiveBis', 'Archive', 'Archives', '/'), 'ArchiveBis')
 assert.equal(rewritePath('Autre/Archive', 'Archive', 'Archives', '/'), 'Autre/Archive')
 
-// ── Worth recording: a path listed by the server may be in DECOMPOSED Unicode (NFD).
-// Comparing raw strings would allow an invisible duplicate of the same folder to be created.
-const nfd = 'Administratif socie\u0301te\u0301'   // decomposed form, as IMAP lists it
-const nfc = 'Administratif société'                 // the same name as typed on a keyboard
+// ── À consigner : un chemin listé par le serveur peut être en Unicode DÉCOMPOSÉ (NFD).
+// Comparer des chaînes brutes laisserait créer un doublon invisible du même dossier.
+const nfd = 'Administratif socie\u0301te\u0301'   // « société » décomposé, tel qu'IMAP le liste
+const nfc = 'Administratif société'                 // le même nom tapé au clavier
 assert.notEqual(nfd, nfc, 'le banc doit bien comparer deux encodages DIFFÉRENTS')
 assert.equal(samePath(nfd, nfc), true, 'NFD et NFC désignent le même dossier')
 assert.equal(samePath('Archive', 'Archives'), false)
 
-// The delimiter comes from the folders themselves, never assumed to be "/".
+// Le délimiteur vient des dossiers eux-mêmes, jamais supposé « / ».
 assert.equal(accountDelimiter([{ delimiter: '.' }, { delimiter: '.' }]), '.')
 assert.equal(accountDelimiter([{ delimiter: null }, { delimiter: '/' }]), '/')
 assert.equal(accountDelimiter([]), '/')

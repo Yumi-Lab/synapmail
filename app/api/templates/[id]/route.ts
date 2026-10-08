@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authorize } from '@/lib/apiAuth'
+import { withApiLog } from '@/lib/apiLog'
 import { query } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function patchHandler(req: Request, { params }: { params: { id: string } }) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   try {
     const body = await req.json()
@@ -20,7 +22,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
        WHERE id = $4 AND user_id = $5
        RETURNING id, user_id AS "userId", name, subject,
                  content_html AS "contentHtml", created_at AS "createdAt"`,
-      [name ?? null, subject ?? null, contentHtml ?? null, params.id, session.user?.id]
+      [name ?? null, subject ?? null, contentHtml ?? null, params.id, userId]
     )
 
     if (!result.length) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -30,17 +32,22 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   }
 }
 
-export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function deleteHandler(req: Request, { params }: { params: { id: string } }) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   try {
     await query(
       'DELETE FROM compose_templates WHERE id = $1 AND user_id = $2',
-      [params.id, session.user?.id]
+      [params.id, userId]
     )
     return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const PATCH = withApiLog(patchHandler)
+export const DELETE = withApiLog(deleteHandler)

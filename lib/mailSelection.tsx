@@ -1,34 +1,34 @@
 'use client'
 
 /**
- * Shared mailbox state — the single source of what a mail toolbar needs to know,
- * and of the actions it can trigger.
+ * État partagé de la boîte — source unique de ce qu'une barre d'outils de
+ * courrier doit connaître, et des actions qu'elle peut déclencher.
  *
- * The message list PUBLISHES the account, the folder, the selection and the open
- * message here, then REGISTERS its actions. Every consumer (context menu,
- * app-bar toolbar) only READS the state and CALLS those actions: no mail logic
- * lives outside the list.
+ * La liste des messages PUBLIE ici le compte, le dossier, la sélection et le
+ * message ouvert, puis ENREGISTRE ses actions. Tout consommateur (menu
+ * contextuel, barre d'outils de la barre d'application) ne fait que LIRE l'état
+ * et APPELER ces actions : aucune logique de courrier ne vit hors de la liste.
  *
- * Outside the mailbox the provider has received nothing: the target is empty and
- * every capability is false.
+ * Hors de la boîte, le fournisseur n'a rien reçu : la cible est vide et toutes
+ * les capacités sont fausses.
  */
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
 import { Archive, Flag, Forward, Mail, MoveRight, RefreshCw, Reply, ReplyAll, Trash2, MailX } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { groupByOrigin, sameOrigin, type MessageOrigin } from './mailOrigin'
+import { groupByOrigin, groupsToMove, sameOrigin, type MessageOrigin } from './mailOrigin'
 
-/** Flag colour — `null` clears the flag. */
+/** Couleur de drapeau (lot M2) — `null` retire le drapeau. */
 export type MailFlagValue = string | null
 
 /**
- * The seven-flag palette lives in `lib/flags.ts` (keys, IMAP indexes, colours)
- * and is rendered by `components/mail/FlagPicker.tsx`: a toolbar that offers
- * colours mounts THAT component. No second list here — the previous one had
- * already drifted from the source (`grey` versus `gray`).
+ * La palette des sept drapeaux vit dans `lib/flags.ts` (clés, index IMAP,
+ * couleurs) et se rend par `components/mail/FlagPicker.tsx` : une barre d'outils
+ * qui propose des couleurs monte CE composant. Aucune seconde liste ici — la
+ * précédente divergeait déjà de la source (`grey` contre `gray`).
  */
 
-/** Actions a toolbar can trigger. An unregistered action does nothing. */
+/** Actions qu'une barre d'outils peut déclencher. Une action non enregistrée ne fait rien. */
 export interface MailActions {
   refresh: () => void
   reply: () => void
@@ -41,30 +41,30 @@ export interface MailActions {
   markRead: () => void
   markUnread: () => void
   moveTo: (destination: string) => void
-  /** Defers the target: it disappears from the list until this date. */
+  /** Reporte la cible : elle disparaît de la liste jusqu'à cette date (lot M3b). */
   snooze: (until: Date) => void
 }
 
 export type MailActionName = keyof MailActions
 
-/** What the list publishes on every render. */
+/** Ce que la liste publie à chaque rendu. */
 export interface MailSelectionState {
-  /** The DISPLAYED mailbox and folder — the list's context, not the targets' origin. */
+  /** Boîte et dossier AFFICHÉS — le contexte de la liste, pas l'origine des cibles. */
   accountId: string | null
   folder: string | null
   /**
-   * Selected rows, each with ITS OWN origin: an "all folders" search mixes
-   * several, and a uid only identifies a message within its own folder. Empty =
-   * the target is the open message.
+   * Lignes sélectionnées, chacune avec SON origine : une recherche « tous les
+   * dossiers » en mêle plusieurs, et un uid ne désigne un message que dans son
+   * dossier. Vide = la cible est le message ouvert.
    */
   selected: MessageOrigin[]
-  /** Message open in the reading pane, with its origin, if there is one. */
+  /** Message ouvert dans le volet de lecture, avec son origine, s'il y en a un. */
   open: MessageOrigin | null
-  /** Sharing permissions of the active account (see lib/accountAccess.ts on the server). */
+  /** Permissions de partage du compte actif (voir lib/accountAccess.ts côté serveur). */
   canSend: boolean
   canDelete: boolean
   canOrganize: boolean
-  /** Does an archive / junk folder exist on this account? */
+  /** Un dossier d'archive / d'indésirables existe-t-il sur ce compte ? */
   hasArchive: boolean
   hasSpam: boolean
 }
@@ -84,9 +84,9 @@ const EMPTY_STATE: MailSelectionState = {
 }
 
 /**
- * How many messages the actions would target: the selection if there is one,
- * otherwise the open message. A toolbar shows this count; the capabilities are
- * derived from it.
+ * Nombre de messages que les actions viseraient : la sélection si elle existe,
+ * sinon le message ouvert. Une barre d'outils affiche ce compte ; les capacités
+ * en dérivent.
  */
 export function targetOrigins(state: MailSelectionState): MessageOrigin[] {
   if (state.selected.length) return state.selected
@@ -98,26 +98,41 @@ export function targetCount(state: MailSelectionState): number {
 }
 
 /**
- * Targets grouped by origin: ONE request per (account, folder) group. Every bulk
- * action goes through this — never through the displayed folder.
+ * Les cibles regroupées par origine : UNE requête groupée par (compte, dossier).
+ * Toute action de masse passe par là — jamais par le dossier affiché.
  */
 export function targetGroups(state: MailSelectionState) {
   return groupByOrigin(targetOrigins(state))
 }
 
+/**
+ * Les dossiers qu'un menu « Déplacer vers » a le droit de proposer : ceux qu'au
+ * moins un groupe visé QUITTERAIT. Proposer le dossier où toute la cible se
+ * trouve déjà promettait une action qui n'en est pas une (mesuré le 20/09/2026).
+ * Les deux menus (clic droit, barre d'outils) lisent CETTE fonction — pas deux
+ * filtres écrits séparément, dont l'un oubliait la boîte du groupe.
+ */
+export function movableFolders<T extends { path: string }>(
+  state: MailSelectionState,
+  folders: readonly T[],
+): T[] {
+  const origins = targetOrigins(state)
+  return folders.filter(folder => groupsToMove(origins, folder.path).length > 0)
+}
+
 export function deriveCapabilities(state: MailSelectionState): MailCapabilities {
   const n = targetCount(state)
   const organize = n > 0 && state.canOrganize
-  // A multi-message forward re-reads the sources from ONE folder of ONE mailbox
-  // (`lib/forward.ts`): a selection mixing several has no single origin to
-  // announce, and forwarding it would attach the messages carrying the same uids
-  // from the wrong folder. The button disables itself — that is the honest
-  // answer, and it costs no second list of rules. Kept this way until a measured
-  // need requires one send per origin.
+  // Un transfert multiple relit les sources dans UN dossier d'UNE boîte
+  // (`lib/forward.ts`) : une sélection qui en mêle plusieurs n'a pas d'origine
+  // unique à annoncer, et la transférer joindrait les messages portant les
+  // mêmes uid dans le mauvais dossier. Le bouton se désactive — c'est la
+  // réponse honnête, et elle ne coûte aucune seconde liste de règles.
+  // ponytail: refus tant qu'un besoin mesuré n'impose pas un envoi par origine.
   const oneOrigin = targetGroups(state).length <= 1
   return {
     refresh: !!state.accountId,
-    // Replying targets ONE message: on a multiple selection the action is meaningless.
+    // Répondre vise UN message : sur une sélection multiple, l'action n'a pas de sens.
     reply: n === 1 && state.canSend,
     replyAll: n === 1 && state.canSend,
     forward: n > 0 && state.canSend && oneOrigin,
@@ -133,20 +148,19 @@ export function deriveCapabilities(state: MailSelectionState): MailCapabilities 
 }
 
 /**
- * Canonical button order, matching a desktop mail client's toolbar: fetch |
- * archive, delete, junk | reply, reply all, forward | flag, unread, move. A
- * toolbar reads THIS table — the order, the labels and the icons are not copied
- * anywhere else.
+ * Ordre canonique des boutons, « comme la barre d'outils de Mail sur Mac » :
+ * relever | archiver, supprimer, indésirable | répondre, répondre à tous,
+ * transférer | drapeau, non lu, déplacer. Une barre d'outils lit CE tableau —
+ * l'ordre, les libellés et les icônes ne se recopient nulle part ailleurs.
  */
 export interface MailToolbarItem {
   action: MailActionName
-  /** i18n key, under the `mail` namespace. */
+  /** Clé i18n, sous l'espace `mail`. */
   labelKey: string
   Icon: LucideIcon
   /**
-   * Key that triggers the same action from the keyboard
-   * (`hooks/useKeyboardShortcuts.ts`), shown in the button tooltip. Absent = the
-   * action has no shortcut.
+   * Touche qui déclenche la même action au clavier (`hooks/useKeyboardShortcuts.ts`),
+   * affichée dans l'infobulle du bouton. Absente = l'action n'a pas de raccourci.
    */
   shortcut?: string
 }
@@ -174,11 +188,11 @@ interface MailSelectionContextValue {
   state: MailSelectionState
   can: MailCapabilities
   count: number
-  /** Calls the registered action, or does nothing when the capability is false. */
+  /** Appelle l'action enregistrée, ou ne fait rien si la capacité est fausse. */
   run: <K extends MailActionName>(name: K, ...args: Parameters<MailActions[K]>) => void
-  /** Mailbox-only: publishes the state (`null` = the mailbox was left, empty target). */
+  /** Réservé à la boîte : publie l'état (`null` = la boîte est quittée, cible vide). */
   publish: (state: MailSelectionState | null) => void
-  /** Mailbox-only: adds actions to the registry without erasing the others'. */
+  /** Réservé à la boîte : ajoute des actions au registre, sans effacer celles des autres. */
   register: (actions: Partial<MailActions>) => void
 }
 
@@ -186,8 +200,8 @@ const MailSelectionContext = createContext<MailSelectionContextValue | null>(nul
 
 export function MailSelectionProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<MailSelectionState>(EMPTY_STATE)
-  // The actions get a new identity on every render of the list: keeping them in a
-  // ref avoids re-rendering every consumer for nothing.
+  // Les actions changent d'identité à chaque rendu de la liste : les garder dans
+  // une référence évite de re-rendre tous les consommateurs pour rien.
   const actionsRef = useRef<Partial<MailActions>>({})
 
   const publish = useCallback((next: MailSelectionState | null) => {
@@ -202,7 +216,7 @@ export function MailSelectionProvider({ children }: { children: React.ReactNode 
   const can = useMemo(() => deriveCapabilities(state), [state])
   const count = targetCount(state)
 
-  // `run` is stable: it reads the current state through a ref rather than a closure.
+  // `run` est stable : il lit l'état courant par référence plutôt que par clôture.
   const stateRef = useRef(state)
   stateRef.current = state
 
@@ -239,11 +253,11 @@ function sameState(a: MailSelectionState, b: MailSelectionState): boolean {
   )
 }
 
-/** Read-only access + triggering, for any consumer (menu, toolbar). */
+/** Lecture seule + déclenchement, pour tout consommateur (menu, barre d'outils). */
 export function useMailSelection(): MailSelectionContextValue {
   const ctx = useContext(MailSelectionContext)
   if (ctx) return ctx
-  // Outside the mailbox the provider may not be mounted: empty state, everything false.
+  // Hors de la boîte, le fournisseur peut ne pas être monté : état vide, tout faux.
   return FALLBACK
 }
 
@@ -257,7 +271,7 @@ const FALLBACK: MailSelectionContextValue = {
 }
 
 /**
- * Attribute the list sets on its container: how many messages are targeted. The
- * measurement harness reads it from the DOM — no global variable in production.
+ * Attribut posé par la liste sur son conteneur : le nombre de messages visés.
+ * Le banc de mesure le lit dans le DOM — pas de variable globale en production.
  */
 export const MAIL_SELECTION_COUNT_ATTR = 'data-mail-selection-count'

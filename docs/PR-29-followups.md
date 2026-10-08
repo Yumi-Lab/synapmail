@@ -84,10 +84,12 @@ Classé par sévérité. Cocher au fur et à mesure.
   un dossier pour ouvrir `FolderContextMenu` ne ferme pas le sélecteur de compte — les deux menus peuvent
   se superposer.
 
-- [ ] **`lib/forward.ts`** — le plafond de 25 Mio sur le transfert multi-messages est vérifié sur la
+- [x] **`lib/forward.ts`** — le plafond de 25 Mio sur le transfert multi-messages est vérifié sur la
   taille brute IMAP (`RFC822.SIZE`), mais les pièces jointes sont envoyées en base64 (+37% environ) par
   nodemailer. Un transfert d'environ 24 Mio brut passe le contrôle puis peut dépasser la vraie limite SMTP
-  une fois encodé.
+  une fois encodé. — Fixed together with review defect #8: the fixed 25 MiB constant is gone; the IMAP
+  fetch is bounded by the server ceiling from `lib/smtpSize.ts` (decoded bytes, base64 cost and envelope
+  reserve already deducted), resolved once before the fetch. Bench: `scripts/check-forward-decision.mjs`.
 
 - [ ] **`components/layout/MailToolbar.tsx`** — le menu "…" de débordement affiche tous les groupes de la
   barre d'outils au lieu de seulement ceux qui débordent réellement. Sur une largeur où un seul groupe

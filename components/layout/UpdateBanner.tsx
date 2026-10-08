@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import useSWR, { mutate as globalMutate } from 'swr'
 import { useTranslations } from 'next-intl'
+import { ACCENT, useAccountAccent } from './AccountAvatar'
+import { cn } from '@/lib/utils'
 import { X, Sparkles, Terminal, AlertCircle } from 'lucide-react'
 import {
   Dialog,
@@ -14,12 +16,12 @@ import type { GitHubRelease } from '@/app/api/updates/route'
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
-/** Shared SWR key for user preferences (a single source, cf. UI state persistence). */
+/** Clé SWR partagée des préférences utilisateur (une seule source, cf. UI state persistence). */
 const SETTINGS_KEY = '/api/settings'
-/** Version assumed while the API has not answered yet: older than any release. */
+/** Version supposée quand l'API n'a pas encore répondu : plus ancienne que toute release. */
 const FALLBACK_VERSION = '0.0.0'
 
-// ── Helper: simple semver comparison ────────────────────────────────────────
+// ── Utilitaire : comparaison semver simple ───────────────────────────────────
 function isNewer(latest: string, current: string): boolean {
   const parse = (v: string) =>
     v
@@ -34,7 +36,7 @@ function isNewer(latest: string, current: string): boolean {
   return lPat > cPat
 }
 
-// ── Minimal Markdown rendering (headers, bold, lists, links) ─────────────────
+// ── Rendu Markdown minimal (headers, bold, listes, liens) ────────────────────
 function renderMarkdown(md: string): string {
   return md
     // Headers
@@ -46,15 +48,15 @@ function renderMarkdown(md: string): string {
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     // Code inline
     .replace(/`([^`]+)`/g, '<code class="bg-muted px-1 py-0.5 rounded text-xs font-mono">$1</code>')
-    // Lists
+    // Listes
     .replace(/^[-*] (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
-    // Links
+    // Liens
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="text-blue-500 underline">$1</a>')
-    // Separator
+    // Séparateur
     .replace(/^---$/gm, '<hr class="my-3 border-border" />')
-    // Line breaks (after the replacements above)
+    // Sauts de ligne (après les remplacements)
     .replace(/\n/g, '<br />')
-    // Drop the redundant <br /> around block tags
+    // Nettoyer les <br /> superflus autour des balises block
     .replace(/<br \/>(<h[1-3])/g, '$1')
     .replace(/(<\/h[1-3]>)<br \/>/g, '$1')
     .replace(/<br \/>(<li)/g, '$1')
@@ -63,9 +65,13 @@ function renderMarkdown(md: string): string {
     .replace(/(<\/hr>)<br \/>/g, '$1')
 }
 
-// ── Main component ──────────────────────────────────────────────────────────
+// ── Composant principal ──────────────────────────────────────────────────────
 export function UpdateBanner() {
   const t = useTranslations('updates')
+  // Les variables de couleur du compte sont posées par la barre latérale SUR ELLE-MÊME :
+  // hors de son arbre, `var(--synap-account)` ne vaut rien. On les repose ici, depuis la
+  // MÊME source (`useAccountAccent`), au lieu d'inventer une seconde palette.
+  const { vars: accentStyle } = useAccountAccent()
   const [modalOpen, setModalOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'releases' | 'howto'>('releases')
 
@@ -78,9 +84,9 @@ export function UpdateBanner() {
     dedupingInterval: 3600_000,
   })
 
-  // The dismissal lives server-side (user_settings.update_dismissed_version): it
-  // survives a reload and follows the user across devices, and a version newer than the
-  // dismissed one brings the banner back.
+  // Le « dismiss » vit côté serveur (user_settings.update_dismissed_version) : il
+  // survit au rechargement et suit l'utilisateur d'un appareil à l'autre, et une
+  // version plus récente que celle fermée fait réapparaître le bandeau.
   const { data: settings } = useSWR<{ data?: { update_dismissed_version?: string | null } }>(
     SETTINGS_KEY,
     fetcher
@@ -89,7 +95,7 @@ export function UpdateBanner() {
   const releases = data?.data?.releases ?? []
   const current = data?.data?.current ?? FALLBACK_VERSION
 
-  // Find every release newer than the current version
+  // Trouver toutes les releases plus récentes que la version courante
   const newReleases = releases.filter(
     (r) => !r.prerelease && isNewer(r.tag_name, current)
   )
@@ -116,20 +122,25 @@ export function UpdateBanner() {
       .then(() => globalMutate(SETTINGS_KEY))
   }
 
-  // Render nothing until the server preference has loaded: otherwise the banner would
-  // appear and then vanish for anyone who already dismissed it.
+  // Tant que la préférence serveur n'est pas chargée on n'affiche rien : sinon le
+  // bandeau apparaîtrait puis disparaîtrait chez qui l'a déjà fermé.
   if (!data || !settings || !latest || dismissed) return null
 
   return (
     <>
-      {/* ── Full-width banner ──────────────────────────────────────────────── */}
+      {/* ── Bandeau pleine largeur ─────────────────────────────────────────── */}
       <div
         role="alert"
-        className="relative flex items-center justify-between gap-3 w-full
-                   bg-gradient-to-r from-violet-600 to-indigo-600
-                   text-white px-4 py-2.5 text-sm shrink-0 z-40"
+        // Le bandeau porte la couleur du compte ACTIF, pas un violet figé : c'est la même
+        // source que la bulle du compte et que les compteurs (`--synap-account`), et l'encre
+        // suit automatiquement pour rester lisible sur une couleur claire comme sur une foncée.
+        style={accentStyle}
+        className={cn(
+          'relative flex items-center justify-between gap-3 w-full px-4 py-2.5 text-sm shrink-0 z-40',
+          ACCENT.solid,
+        )}
       >
-        {/* Icon + text */}
+        {/* Icône + texte */}
         <div className="flex items-center gap-2 min-w-0">
           <Sparkles className="w-4 h-4 shrink-0 opacity-90" />
           <span className="font-medium truncate">
@@ -141,22 +152,24 @@ export function UpdateBanner() {
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => { setActiveTab('releases'); setModalOpen(true) }}
-            className="rounded-md border border-white/40 bg-white/10 px-3 py-1
-                       text-xs font-medium hover:bg-white/20 transition-colors"
+            className="rounded-md border border-[color-mix(in_oklab,var(--synap-account-ink)_40%,transparent)]
+                       bg-[color-mix(in_oklab,var(--synap-account-ink)_12%,transparent)] px-3 py-1
+                       text-xs font-medium hover:bg-[color-mix(in_oklab,var(--synap-account-ink)_22%,transparent)]
+                       transition-colors"
           >
             {t('moreInfo')}
           </button>
           <button
             onClick={handleDismiss}
             aria-label={t('dismiss')}
-            className="rounded-md p-1 hover:bg-white/20 transition-colors"
+            className="rounded-md p-1 hover:bg-[color-mix(in_oklab,var(--synap-account-ink)_22%,transparent)] transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* ── Modal ─────────────────────────────────────────────────────────── */}
+      {/* ── Modale ─────────────────────────────────────────────────────────── */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
         <DialogContent className="!max-w-[960px] w-[92vw] max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
           <DialogHeader className="px-6 pt-5 pb-0 shrink-0">
@@ -166,7 +179,7 @@ export function UpdateBanner() {
             </DialogTitle>
           </DialogHeader>
 
-          {/* Tabs */}
+          {/* Onglets */}
           <div className="flex border-b border-border mt-4 shrink-0 px-6">
             <button
               onClick={() => setActiveTab('releases')}
@@ -190,13 +203,13 @@ export function UpdateBanner() {
             </button>
           </div>
 
-          {/* Content */}
+          {/* Contenu */}
           <div className="flex-1 overflow-y-auto px-6 py-4">
             {activeTab === 'releases' ? (
               <div className="space-y-6">
                 {newReleases.map((release) => (
                   <div key={release.tag_name}>
-                    {/* Release header */}
+                    {/* En-tête release */}
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
                         <span className="inline-flex items-center rounded-full bg-violet-100 dark:bg-violet-900/40 px-2.5 py-0.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
@@ -220,7 +233,7 @@ export function UpdateBanner() {
                       </a>
                     </div>
 
-                    {/* Release body */}
+                    {/* Contenu release */}
                     {release.body ? (
                       <div
                         className="prose prose-sm dark:prose-invert max-w-none text-sm text-muted-foreground leading-relaxed"
@@ -230,7 +243,7 @@ export function UpdateBanner() {
                       <p className="text-sm text-muted-foreground italic">{t('noNotes')}</p>
                     )}
 
-                    {/* Separator when there are several releases */}
+                    {/* Séparateur si plusieurs releases */}
                     {newReleases.indexOf(release) < newReleases.length - 1 && (
                       <hr className="mt-6 border-border" />
                     )}
@@ -247,7 +260,7 @@ export function UpdateBanner() {
   )
 }
 
-// ── "How to update" tab ─────────────────────────────────────────────────────
+// ── Onglet "Comment mettre à jour" ───────────────────────────────────────────
 function HowToUpdate({
   current,
   latest,
@@ -286,7 +299,7 @@ function HowToUpdate({
 
   return (
     <div className="space-y-5">
-      {/* Safety notice */}
+      {/* Bandeau info sécurité */}
       <div className="flex gap-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3">
         <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
         <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
@@ -301,11 +314,11 @@ function HowToUpdate({
         <span>{t('howto.to')} <span className="font-mono font-medium">{latest}</span></span>
       </div>
 
-      {/* Steps */}
+      {/* Étapes */}
       <div className="space-y-4">
         {steps.map((step, i) => (
           <div key={i} className="flex gap-3">
-            {/* Number */}
+            {/* Numéro */}
             <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 dark:bg-violet-900/40 text-xs font-bold text-violet-700 dark:text-violet-300 mt-0.5">
               {step.icon}
             </div>
@@ -323,7 +336,7 @@ function HowToUpdate({
         ))}
       </div>
 
-      {/* Data note */}
+      {/* Note données */}
       <div className="rounded-lg bg-muted/50 border border-border p-3 text-xs text-muted-foreground">
         <strong className="text-foreground">{t('howto.dataTitle')}</strong>{' '}
         {t('howto.dataDesc')}

@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { getMessage, deleteMessage, markRead, setFlagBulk } from '@/lib/imap'
+import { applyReadChange } from '@/lib/unreadCount'
 import { guardApiPayload, isMachineRequest } from '@/lib/promptGuard'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,12 +31,13 @@ function accountConfig(account: AccountRow) {
   }
 }
 
-export async function GET(
+async function getHandler(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -57,12 +60,13 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function patchHandler(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -72,8 +76,8 @@ export async function PATCH(
 
   try {
     const body = await req.json()
-    // `flag` carries the colour (lib/flags.ts); `isStarred` is still accepted and maps
-    // to the default colour, so existing callers keep working.
+    // `flag` porte la couleur (lib/flags.ts) ; `isStarred` reste accepté et vaut
+    // la couleur par défaut, pour ne rien casser des appels existants.
     const { isRead, isStarred, flag } = body as
       { isRead?: boolean; isStarred?: boolean; flag?: string | null }
 
@@ -84,6 +88,9 @@ export async function PATCH(
 
     if (isRead !== undefined) {
       await markRead(config, folder, params.id, isRead)
+      // Le compteur suit l'action, sinon il reste faux jusqu'au balayage du
+      // planificateur — trois minutes plus tard. Voir lib/unreadCount.ts.
+      await applyReadChange(account.id, folder, [params.id], isRead)
     }
     if (flag !== undefined) {
       if (flag !== null && !flagByKey(flag)) {
@@ -100,12 +107,13 @@ export async function PATCH(
   }
 }
 
-export async function DELETE(
+async function deleteHandler(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -123,3 +131,8 @@ export async function DELETE(
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const DELETE = withApiLog(deleteHandler)
+export const GET = withApiLog(getHandler)
+export const PATCH = withApiLog(patchHandler)

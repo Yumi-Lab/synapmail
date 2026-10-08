@@ -34,15 +34,14 @@ import puppeteer from 'puppeteer-core'
 import { ImapFlow } from 'imapflow'
 import { IDLE_FOLDER, STREAM_ACCOUNT_PARAM } from '../lib/stream.ts'
 import { decrypt } from '../lib/encrypt.ts'
-import { SCRATCH_DOMAIN } from './bench-constants.mjs'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const VIEWPORT = { width: 1440, height: 900 }
 // The DoD's deadline, decided by the human on 2026-09-19 after this bench had
-// MEASURED that the server itself only announces a new message 7.5-9.2s after the
+// MEASURED that IONOS itself only announces a new message 7.5-9.2s after the
 // append: an absolute ceiling the whole chain must hold, plus a budget on the
 // only part the app controls (the delay it adds on top of the announcement).
-// Calibration bench: one IMAP provider, test account, local dev server.
+// Calibration bench: IONOS IMAP, test account, dev server on :3106, commit 55e6995.
 const REALTIME_MS = 15000
 // How much the app may add on top of the server's announcement, measured in the
 // SAME pass by the reference arm below. This is the real criterion on our code.
@@ -189,9 +188,9 @@ try {
     try {
       await c.mailboxOpen(IDLE_FOLDER)
       const raw = Buffer.from(
-        `From: bench <${acc.email}>\r\nTo: bench <${acc.email}>\r\n` +
+        `From: lane bench <${acc.email}>\r\nTo: lane bench <${acc.email}>\r\n` +
         `Subject: ${SUBJECT}\r\nDate: ${new Date().toUTCString()}\r\n` +
-        `Message-ID: <${SUBJECT.replace(/\s/g, '-')}@${SCRATCH_DOMAIN}>\r\n\r\nbench message\r\n`)
+        `Message-ID: <${SUBJECT.replace(/\s/g, '-')}@yumi-lab.com>\r\n\r\nbench message\r\n`)
       uid = String((await c.append(IDLE_FOLDER, raw, ['\\Seen'])).uid)
     } finally { await c.logout() }
   }

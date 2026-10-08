@@ -1,6 +1,8 @@
 import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
 import { NextResponse } from 'next/server'
+import { normalizeEmail } from '@/lib/emailAddress'
+import { appOrigin } from '@/lib/appOrigin'
 import { auth } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { sendMail } from '@/lib/smtp'
@@ -83,7 +85,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       canManageRules?: boolean; canManageSignatures?: boolean; expiresAt?: string
     }
 
-    const normalizedEmail = email?.trim().toLowerCase()
+    const normalizedEmail = email ? normalizeEmail(email) : undefined
     if (!normalizedEmail) return NextResponse.json({ error: 'email is required' }, { status: 400 })
     if (normalizedEmail === session.user.email?.toLowerCase()) {
       return NextResponse.json({ error: "Cannot share an account with yourself" }, { status: 400 })
@@ -119,9 +121,16 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const ownerName = session.user.name ?? account.email
 
     const existingUsers = await query<{ id: string; name: string }>(
-      'SELECT id, name FROM users WHERE email = $1',
+      'SELECT id, name FROM users WHERE lower(email) = $1',
       [normalizedEmail]
     )
+
+    // Same rule as the login check in lib/auth.ts: two accounts that differ only by case
+    // (rows created before addresses were normalised) make the invitee ambiguous.
+    // Granting mailbox access to a guessed one would be a security defect — refuse.
+    if (existingUsers.length > 1) {
+      return NextResponse.json({ error: 'Ambiguous invitee: several accounts share this address' }, { status: 409 })
+    }
 
     let emailSent = false
     let share: ShareRow
@@ -180,7 +189,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     )
     share = rows[0]
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
+    const appUrl = appOrigin(req)
     const acceptUrl = `${appUrl}/invite/${rawToken}`
     try {
       await sendMail(smtpConfig, {

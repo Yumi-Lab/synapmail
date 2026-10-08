@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth'
 import { SettingsSidebar } from '@/components/settings/SettingsSidebar'
+import { ThinScroll } from '@/components/layout/ThinScroll'
 
 export default async function SettingsLayout({ children }: { children: React.ReactNode }) {
   const session = await auth()
@@ -8,10 +9,14 @@ export default async function SettingsLayout({ children }: { children: React.Rea
   return (
     <div className="flex h-full overflow-hidden">
       <SettingsSidebar isAdmin={isAdmin} />
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[900px]">
-          {children}
-        </div>
+      {/* L'ascenseur du thème, comme partout ailleurs : `overflow-y-auto` nu rendait
+          la barre native du système sur cet écran-là seulement. */}
+      <main className="flex-1 min-w-0 flex">
+        <ThinScroll className="flex-1">
+          <div className="mx-auto w-full max-w-[900px]">
+            {children}
+          </div>
+        </ThinScroll>
       </main>
     </div>
   )

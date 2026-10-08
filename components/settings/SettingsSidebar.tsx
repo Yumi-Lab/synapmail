@@ -1,5 +1,6 @@
 'use client'
 
+import { ThinScroll } from '@/components/layout/ThinScroll'
 import Link from 'next/link'
 import type { ComponentProps } from 'react'
 import { usePathname } from 'next/navigation'
@@ -7,7 +8,9 @@ import { useTranslations } from 'next-intl'
 import {
   User, Palette, BookOpen, Bell, PenSquare,
   Mail, FileSignature, ArrowLeft, ShieldCheck, Users, Filter, LayoutTemplate, Bot, KeyRound, Terminal,
+  Image as ImageIcon,
 } from 'lucide-react'
+import { BRANDING_ANCHOR } from '@/components/admin/BrandingSection'
 import { cn } from '@/lib/utils'
 import { useAppName } from '@/components/providers'
 
@@ -30,16 +33,25 @@ export function SettingsLink(props: Omit<ComponentProps<typeof Link>, 'prefetch'
 /** Where an account's sharing is managed — the one place the bar's shared mark points to. */
 export const ACCOUNTS_SETTINGS_HREF = `${SETTINGS_ROOT}/accounts`
 
+/** La page d'administration — la seule, et le seul endroit où son chemin s'écrit. */
+export const ADMIN_HREF = '/admin/users'
+
 /**
- * The ONE source of settings entries: this bar renders them, and the omnibar
- * offers them as you type. Adding an entry here makes it reachable from both
- * places, with no second table to keep in sync; `key` is the i18n key for the
- * label (`settings.nav.<key>`) AND for the search keywords
- * (`omnibar.keywords.<key>`), both checked by check-omnibar-commands.
+ * La page Apparence — écrite une fois, lue deux : l'entrée ordinaire ci-dessous et
+ * l'entrée d'administration qui mène à la section d'identité qu'elle héberge (lot H4a).
+ */
+export const APPEARANCE_HREF = '/settings/appearance'
+
+/**
+ * Source UNIQUE des entrees de reglages : cette barre les rend, et l'omnibar
+ * (lot H3f) les propose a la saisie. Ajouter un reglage ici le rend trouvable
+ * dans les deux endroits, sans seconde table a tenir a jour ; `key` sert de cle
+ * i18n pour le libelle (`settings.nav.<key>`) ET pour les mots-cles de recherche
+ * (`omnibar.keywords.<key>`), tous deux controles par check-omnibar-commands.
  */
 export const SETTINGS_NAV = [
   { href: '/settings/profile',       key: 'profile',       icon: User },
-  { href: '/settings/appearance',    key: 'appearance',    icon: Palette },
+  { href: APPEARANCE_HREF,           key: 'appearance',    icon: Palette },
   { href: '/settings/reading',       key: 'reading',       icon: BookOpen },
   { href: '/settings/notifications', key: 'notifications', icon: Bell },
   { href: '/settings/composition',   key: 'composition',   icon: PenSquare },
@@ -51,6 +63,18 @@ export const SETTINGS_NAV = [
   { href: '/settings/ai',            key: 'ai',            icon: Bot },
   { href: '/settings/pgp',           key: 'pgp',           icon: KeyRound },
   { href: '/settings/api-keys',      key: 'apiKeys',       icon: Terminal },
+] as const
+
+/**
+ * Les entrées réservées à l'ADMINISTRATEUR, même forme que `SETTINGS_NAV` et même
+ * rôle de source unique : cette barre les rend et l'omnibar (lot H3h) les propose,
+ * les deux pour un administrateur SEULEMENT. « Nom et icône de l'onglet » pointe sur
+ * l'ancre de la section qui les règle (`BRANDING_ANCHOR`), désormais DANS Apparence
+ * (lot H4a) : c'est là que Nicolas l'a cherchée, et elle n'existe qu'à cet endroit.
+ */
+export const ADMIN_NAV = [
+  { href: ADMIN_HREF,                          key: 'admin',    icon: ShieldCheck },
+  { href: `${APPEARANCE_HREF}#${BRANDING_ANCHOR}`, key: 'branding', icon: ImageIcon },
 ] as const
 
 export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
@@ -80,7 +104,8 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-3">
+      <ThinScroll className="flex-1" viewportClassName="px-3 py-3">
+        <nav className="space-y-0.5">
         {SETTINGS_NAV.map(({ href, key, icon: Icon }) => {
           const active = pathname.startsWith(href)
           return (
@@ -94,13 +119,34 @@ export function SettingsSidebar({ isAdmin }: { isAdmin: boolean }) {
         {isAdmin && (
           <>
             <div className="my-2 border-t border-border" />
-            <Link href="/admin/users" className={linkClass(pathname.startsWith('/admin'))}>
-              <ShieldCheck className="h-4 w-4 shrink-0" />
-              <span>{t('admin')}</span>
-            </Link>
+            {ADMIN_NAV.map(({ href, key, icon: Icon }) => {
+              // Même motif de ligne que les réglages ci-dessus. L'état actif se lit
+              // sur le CHEMIN seul : une ancre ne change pas la page où l'on est.
+              //
+              // L'Administration vit HORS du panneau des réglages (`/admin/users`, pleine
+              // page). Ouverte depuis la MODALE, une navigation interne refermait la modale
+              // sans afficher la page : le contenu derrière restait la messagerie, et on
+              // croyait que le lien ne faisait rien. Un lien ORDINAIRE force le chargement
+              // complet, donc la page s'affiche toujours. Les autres entrées, elles, restent
+              // en navigation interne : elles vivent bien dans le panneau.
+              const horsDuPanneau = href.startsWith(ADMIN_HREF)
+              const classe = linkClass(pathname.startsWith(ADMIN_HREF))
+              return horsDuPanneau ? (
+                <a key={href} href={href} className={classe}>
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span>{t(key)}</span>
+                </a>
+              ) : (
+                <Link key={href} href={href} className={classe}>
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span>{t(key)}</span>
+                </Link>
+              )
+            })}
           </>
         )}
       </nav>
+      </ThinScroll>
 
       {/* Footer */}
       <div className="border-t border-border px-4 pb-4 pt-2">

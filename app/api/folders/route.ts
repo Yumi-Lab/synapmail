@@ -1,17 +1,19 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { getAccessibleAccount } from '@/lib/accountAccess'
 import { listFolders, createFolder, renameFolder, deleteFolder } from '@/lib/imap'
 import { sanitizeFolderName, joinFolderPath, renamedPath, rewritePath, samePath, isDescendant, refuse } from '@/lib/folderActions'
 import { resolveFolder } from '@/lib/folderResolve'
 import { detectSpecials } from '@/lib/specialFolders'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function getHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('account')
@@ -74,8 +76,8 @@ export async function GET(req: Request) {
       .map(f => ({
         name: f.name,
         path: f.path,
-        // The server's delimiter: without it the client cannot tell which folder sits
-        // UNDER which other one — and "delete" must refuse to run on a parent.
+        // Le délimiteur du serveur : sans lui le client ne peut pas savoir quel dossier
+        // est rangé SOUS quel autre — et « supprimer » doit se refuser sur un parent.
         delimiter: f.delimiter ?? '/',
         special: specials.get(f.path) ?? null,
       }))
@@ -116,10 +118,10 @@ export async function GET(req: Request) {
 }
 
 /**
- * Folder mutations. Permission is NOT decided here: `resolveFolder` evaluates
- * `lib/folderActions.ts` against the facts reported by the IMAP server, and this route
- * only rejects (403) what was refused there and runs the rest. A path the server does
- * not know about never reaches IMAP.
+ * Mutations de dossier (lot H3e). Le DROIT de faire ne se décide pas ici : `resolveFolder`
+ * évalue `lib/folderActions.ts` sur les faits du serveur IMAP, la route ne fait que
+ * refuser (403) ce qu'il a refusé et exécuter le reste. Un chemin que le serveur ne
+ * connaît pas n'atteint jamais IMAP.
  */
 async function readBody(req: Request): Promise<Record<string, unknown>> {
   try {
@@ -132,10 +134,11 @@ async function readBody(req: Request): Promise<Record<string, unknown>> {
 
 const asString = (v: unknown) => (typeof v === 'string' && v ? v : null)
 
-// POST — creates a folder at the root, or under `parent` when one is supplied.
-export async function POST(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return refuse('unauthorized')
+// POST — crée un dossier à la racine, ou sous `parent` quand il est fourni.
+async function postHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const body = await readBody(req)
   const parent = asString(body.parent)
@@ -157,10 +160,11 @@ export async function POST(req: Request) {
   }
 }
 
-// PATCH — renames a folder in place (it stays under its current parent).
-export async function PATCH(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return refuse('unauthorized')
+// PATCH — renomme un dossier sur place (il reste chez son parent).
+async function patchHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const body = await readBody(req)
 
@@ -177,8 +181,8 @@ export async function PATCH(req: Request) {
     if (ctx.folders.some(f => samePath(f.path, path))) return refuse('exists')
 
     await renameFolder(ctx.config, from, path)
-    // IMAP renames the WHOLE subtree: the cache follows the same path, otherwise the
-    // subfolder rows stay orphaned under the old prefix (wrong unread counts).
+    // IMAP renomme TOUT le sous-arbre : le cache suit le même chemin, sinon les lignes
+    // des sous-dossiers restent orphelines sous l'ancien préfixe (non-lus faux).
     for (const moved of ctx.folders.filter(f => f.path === from || isDescendant(f.path, from, ctx.delimiter))) {
       const to = rewritePath(moved.path, from, path, ctx.delimiter)
       await query('UPDATE messages_cache SET folder = $1 WHERE account_id = $2 AND folder = $3', [to, ctx.account.id, moved.path])
@@ -190,10 +194,11 @@ export async function PATCH(req: Request) {
   }
 }
 
-// DELETE — removes a folder (never a special one, never a parent).
-export async function DELETE(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return refuse('unauthorized')
+// DELETE — supprime un dossier (jamais un spécial, jamais un parent).
+async function deleteHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   const { searchParams } = new URL(req.url)
 
@@ -210,3 +215,9 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const DELETE = withApiLog(deleteHandler)
+export const GET = withApiLog(getHandler)
+export const PATCH = withApiLog(patchHandler)
+export const POST = withApiLog(postHandler)

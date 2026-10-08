@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Self-check for the PURE part of progressive search: the order in which an
+ * Self-check for the PURE part of lot S2: the order in which a progressive
  * "all folders" search opens the folders. No network, no database.
  *
  *   node --experimental-strip-types scripts/check-search-order.mjs
@@ -21,8 +21,15 @@ const { orderFoldersForSearch, parseNdjsonChunk, accumulateSearchStream, EMPTY_S
   await import(new URL('../lib/search.ts', import.meta.url).href)
 
 let failed = 0
+// Les clés sont triées avant comparaison : l'ordre d'écriture d'un objet n'est pas
+// le contrat, et un champ ajouté ne doit pas faire échouer un contrôle qu'il ne
+// concerne pas.
+const stable = value => JSON.stringify(value, (_, v) =>
+  v && typeof v === 'object' && !Array.isArray(v)
+    ? Object.fromEntries(Object.keys(v).sort().map(k => [k, v[k]]))
+    : v)
 const check = (label, actual, expected) => {
-  const a = JSON.stringify(actual), e = JSON.stringify(expected)
+  const a = stable(actual), e = stable(expected)
   if (a === e) { console.log(`  ok   ${label}`); return }
   console.error(`  FAIL ${label}\n       expected ${e}\n       got      ${a}`)
   failed++
@@ -117,20 +124,24 @@ check('a line cut mid-stream is dropped rather than throwing',
 
 console.log('accumulateSearchStream')
 
-// A folder yields messages: they accumulate, the totals add up, and the progress
-// keeps the latest state announced by the server.
+// Un dossier rend des messages : ils s'ajoutent, le compte total s'additionne et
+// la progression retient le dernier état annoncé par le serveur.
 const chunk = (folder, uids, total, searched, folders) => ({
   folder, total, searched, folders,
   messages: uids.map(uid => ({ folder, uid, date: new Date(2026, 0, uid).toISOString() })),
 })
 
+// La progression par DOSSIER est ce que ces deux contrôles mesurent : les champs
+// de progression par BOÎTE ont leurs propres contrôles, plus bas.
+const folderProgress = ({ total, searched, folders }) => ({ total, searched, folders })
+
 check('a chunk adds its messages and its share of the total',
-  (({ messages, ...rest }) => ({ uids: messages.map(m => m.uid), ...rest }))(
+  (s => ({ uids: s.messages.map(m => m.uid), ...folderProgress(s) }))(
     accumulateSearchStream(EMPTY_SEARCH_STREAM, [chunk('INBOX', [2, 1], 7, 1, 40)])),
   { uids: [2, 1], total: 7, searched: 1, folders: 40 })
 
 check('totals add up across chunks, progress is the latest value',
-  (({ messages, ...rest }) => rest)(
+  folderProgress(
     accumulateSearchStream(
       accumulateSearchStream(EMPTY_SEARCH_STREAM, [chunk('INBOX', [1], 7, 1, 40)]),
       [chunk('Sent', [2], 5, 2, 40)])),
@@ -147,6 +158,28 @@ check('the same uid in two folders is not a duplicate',
     .messages.length,
   2)
 
+// Portée « toutes les boîtes » : deux boîtes ont chacune un dossier INBOX, et
+// leurs uid se recouvrent librement. Dédoublonner sur dossier+uid faisait alors
+// DISPARAÎTRE un résultat sur deux sans rien dire — c'est la même confusion que
+// le lot S4a a corrigée côté ouverture (voir `lib/mailOrigin.ts`).
+const fromAccount = (accountId, folder, uids) => ({
+  accountId, folder, total: uids.length, searched: 1, folders: 1, accounts: 2,
+  messages: uids.map(uid => ({ accountId, folder, uid, date: new Date(2026, 0, uid).toISOString() })),
+})
+
+check('the same uid in the same folder of TWO mailboxes is not a duplicate',
+  accumulateSearchStream(EMPTY_SEARCH_STREAM, [
+    fromAccount('acc-a', 'INBOX', [3231]),
+    fromAccount('acc-b', 'INBOX', [3231]),
+  ]).messages.map(m => m.accountId),
+  ['acc-a', 'acc-b'])
+
+check('the same message of the SAME mailbox is still kept once',
+  accumulateSearchStream(
+    accumulateSearchStream(EMPTY_SEARCH_STREAM, [fromAccount('acc-a', 'INBOX', [3231])]),
+    [fromAccount('acc-a', 'INBOX', [3231])]).messages.length,
+  1)
+
 check('a chunk carrying an error contributes nothing',
   accumulateSearchStream(EMPTY_SEARCH_STREAM, [{ folder: 'Broken', error: 'nope' }]),
   EMPTY_SEARCH_STREAM)
@@ -157,9 +190,9 @@ check('messages come out most recent first, across chunks',
     [chunk('Sent', [2], 1, 2, 2)]).messages.map(m => m.uid),
   [3, 2, 1])
 
-// The point the review insisted on: with no cap, a broad query pushed thousands of
-// rows into a non-virtualised list and `total > messages.length` stayed false — so
-// the banner never said "first X of N".
+// LE contrôle du verdict CHANGES_REQUESTED : sans plafond, une requête large
+// poussait des milliers de lignes dans une liste non virtualisée et `total >
+// messages.length` restait faux — le bandeau ne disait jamais « X premiers sur N ».
 const flood = accumulateSearchStream(EMPTY_SEARCH_STREAM, [
   chunk('INBOX', Array.from({ length: SEARCH_RESULT_LIMIT * 3 }, (_, i) => i + 1), 9000, 1, 2),
 ])
@@ -188,6 +221,56 @@ check('the previous state is never mutated',
     return JSON.stringify(before) === snapshot
   })(),
   true)
+
+// Progression par BOÎTE (portée « toutes les boîtes ») : ce que le bandeau dit
+// « 3 boîtes sur 8 ». Une boîte est comptée UNE fois, quel que soit le nombre de
+// dossiers qu'elle rapporte — sinon le compteur dépassait le total annoncé.
+console.log('accumulateSearchStream — boîtes')
+
+const acctChunk = (accountId, folder, uid, accounts) => ({
+  accountId, accounts, folder, total: 1, searched: 1, folders: 2,
+  messages: [{ folder, uid, date: new Date(2026, 0, uid).toISOString() }],
+})
+
+const swept = state => ({ swept: state.sweptIds.length, accounts: state.accounts })
+
+check('a mailbox is counted once, however many folders it reports',
+  swept(accumulateSearchStream(EMPTY_SEARCH_STREAM, [
+    acctChunk('a', 'INBOX', 1, 8), acctChunk('a', 'Sent', 2, 8),
+  ])),
+  { swept: 1, accounts: 8 })
+
+check('each mailbox that reports is counted',
+  swept(accumulateSearchStream(EMPTY_SEARCH_STREAM, [
+    acctChunk('a', 'INBOX', 1, 8), acctChunk('b', 'INBOX', 2, 8),
+  ])),
+  { swept: 2, accounts: 8 })
+
+check('the count never exceeds the announced total',
+  (() => {
+    const state = ['a', 'b', 'c'].reduce(
+      (acc, id) => accumulateSearchStream(acc, [acctChunk(id, 'INBOX', 1, 3)]), EMPTY_SEARCH_STREAM)
+    return state.sweptIds.length <= state.accounts
+  })(),
+  true)
+
+check('a chunk without a mailbox leaves the mailbox counters at zero',
+  swept(accumulateSearchStream(EMPTY_SEARCH_STREAM, [chunk('INBOX', [1], 1, 1, 2)])),
+  { swept: 0, accounts: 0 })
+
+check('an unreachable mailbox is reported, not swallowed',
+  accumulateSearchStream(EMPTY_SEARCH_STREAM, [{ unreachable: ['a@b.c'] }]).unreachable,
+  ['a@b.c'])
+
+check('the same unreachable mailbox is listed once',
+  accumulateSearchStream(
+    accumulateSearchStream(EMPTY_SEARCH_STREAM, [{ unreachable: ['a@b.c'] }]),
+    [{ unreachable: ['a@b.c', 'd@e.f'] }]).unreachable,
+  ['a@b.c', 'd@e.f'])
+
+check('an unreachable mailbox does not count as swept',
+  swept(accumulateSearchStream(EMPTY_SEARCH_STREAM, [{ unreachable: ['a@b.c'] }])),
+  { swept: 0, accounts: 0 })
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1) }
 console.log('\ncheck-search-order: OK')

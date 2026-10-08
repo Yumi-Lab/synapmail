@@ -35,7 +35,12 @@ export type BrandingError = (typeof BRANDING_ERRORS)[keyof typeof BRANDING_ERROR
  * SVG is deliberately ABSENT: served from our own origin, it would execute its
  * script if the icon URL were opened directly.
  */
-type Signature = { type: string; match: (b: Uint8Array) => boolean }
+type Signature = {
+  type: string
+  /** Other names browsers declare for the same format (`File.type`), accepted on pick. */
+  aliases?: readonly string[]
+  match: (b: Uint8Array) => boolean
+}
 
 const startsWith = (bytes: Uint8Array, prefix: readonly number[]): boolean =>
   bytes.length >= prefix.length && prefix.every((byte, i) => bytes[i] === byte)
@@ -43,7 +48,7 @@ const startsWith = (bytes: Uint8Array, prefix: readonly number[]): boolean =>
 const SIGNATURES: readonly Signature[] = [
   { type: 'image/png', match: b => startsWith(b, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) },
   // ICO: Windows resource header, reserved 0x0000 then type 1 (icon).
-  { type: 'image/x-icon', match: b => startsWith(b, [0x00, 0x00, 0x01, 0x00]) },
+  { type: 'image/x-icon', aliases: ['image/vnd.microsoft.icon'], match: b => startsWith(b, [0x00, 0x00, 0x01, 0x00]) },
   { type: 'image/jpeg', match: b => startsWith(b, [0xff, 0xd8, 0xff]) },
   // WebP: RIFF container, the format signature sits at bytes 8..11.
   {
@@ -58,6 +63,22 @@ const SIGNATURES: readonly Signature[] = [
 /** The file's REAL type, or `null` when no known signature matches. */
 export function detectImageType(bytes: Uint8Array): string | null {
   return SIGNATURES.find(s => s.match(bytes))?.type ?? null
+}
+
+/**
+ * The declared types the picker lets through: the same table, read by the file
+ * field's `accept=` and by the pick handler, so the browser filter and the client
+ * check can never drift from what the server detects.
+ */
+export const FAVICON_TYPES: readonly string[] = SIGNATURES.flatMap(s => [s.type, ...(s.aliases ?? [])])
+
+/**
+ * Client-side gate on a picked file's declared type: `badType` when it is not one
+ * of `FAVICON_TYPES`, `null` when it may be previewed and sent. The server still
+ * decides on the bytes; this only keeps an unknown file out of the preview.
+ */
+export function faviconTypeError(declared: string): BrandingError | null {
+  return FAVICON_TYPES.includes(declared) ? null : BRANDING_ERRORS.badType
 }
 
 /**

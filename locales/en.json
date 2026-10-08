@@ -128,7 +128,8 @@
     "expandSidebar": "Expand sidebar",
     "folders": "Folders",
     "switchAccount": "Switch account",
-    "searchAllFolders": "All folders",
+    "searchAllAccounts": "All mailboxes",
+    "searchAllFolders": "This mailbox",
     "searchThisFolder": "This folder",
     "clearSearch": "Clear search",
     "searchResults": "{count, plural, one {# result} other {# results}} for “{query}”",
@@ -140,6 +141,8 @@
     "searchShown": "{shown} shown",
     "searchDetails": "Searched in {fields} · {scope}",
     "searchProgress": "{searched} of {folders, plural, one {# folder} other {# folders}}",
+    "searchAccountProgress": "{swept} of {accounts, plural, one {# mailbox} other {# mailboxes}}",
+    "searchUnreachable": "{count, plural, one {# mailbox unreachable} other {# mailboxes unreachable}}",
     "searchStop": "Stop",
     "searchNoBodyHint": "Message bodies are not searched (mail server limitation). Try a word from the subject or an address.",
     "refresh": "Refresh",
@@ -159,6 +162,7 @@
       "gray": "Grey"
     },
     "noFolders": "No folder",
+    "filterFolders": "Filter folders",
     "messageList": "Message list",
     "folderNew": "New folder…",
     "folderNewChild": "New subfolder…",
@@ -199,8 +203,15 @@
       "soonTitle": "Coming soon",
       "resultSummary": "Summary",
       "resultTranslation": "Translation",
-      "resultReply": "AI draft, opened in the composer"
-    }
+      "resultReply": "AI draft, opened in the composer",
+      "translateModeQuick": "Quick translation (from your browser)",
+      "translateModeModel": "Translation by the AI model",
+      "translateModeOff": "Disabled",
+      "translateModeTitle": "Translation engine",
+      "translateModeNotice": "Quick translation sends the message text from YOUR browser to a third-party service (an unofficial Google Translate endpoint). That service is not official and may stop answering at any time, it is unreachable from China, and it is meant for PRIVATE use. On a shared or public instance, pick the AI model or disable it.",
+      "translateQuickFailed": "The quick translation service did not answer. Switch to the AI model in Settings, or try again later."
+    },
+    "back": "Back"
   },
   "compose": {
     "newMessage": "New message",
@@ -270,7 +281,8 @@
       "ai": "AI Copilot",
       "pgp": "PGP Encryption",
       "apiKeys": "API Keys",
-      "admin": "Administration"
+      "admin": "Administration",
+      "branding": "Tab name and icon"
     },
     "common": {
       "save": "Save",
@@ -296,6 +308,7 @@
     },
     "accounts": {
       "title": "Email accounts",
+      "description": "Your IMAP / SMTP accounts connected to {appName}",
       "add": "Add account",
       "edit": "Edit",
       "setDefault": "Set as default",
@@ -539,6 +552,11 @@
         "smartRules": "Smart AI rules",
         "personas": "Personas per account"
       }
+    },
+    "apiKeys": {
+      "docsTitle": "API documentation",
+      "docsDescription": "The reference this instance serves: every route, its parameters and its access mode. Readable without a key.",
+      "docsLink": "Open the reference"
     }
   },
   "admin": {
@@ -561,6 +579,7 @@
       "description": "The name and the icon this instance shows in the browser tab, for everyone.",
       "nameLabel": "Name",
       "iconLabel": "Tab icon",
+      "iconDrop": "Drop an icon here, or click to choose a file",
       "iconHint": "PNG, ICO, JPEG or WebP, 256 KiB at most.",
       "choose": "Choose a file",
       "save": "Save",
@@ -698,7 +717,50 @@
     "from": "from",
     "newToday": "+{count} today",
     "upToDate": "up to date",
-    "allAccounts": "All accounts"
+    "allAccounts": "All accounts",
+    "subsTitle": "Newsletters",
+    "subsCount": "{count, plural, one {# subscription} other {# subscriptions}}",
+    "subsLoading": "Reading the mailboxes…",
+    "subsEmpty": "No newsletter found in these mailboxes.",
+    "subsMeta": "{count, plural, one {# message} other {# messages}} · last on {date}",
+    "subsMethod_oneClick": "one click",
+    "subsMethod_mailto": "by email",
+    "subsMethod_link": "by link",
+    "subsAlreadyLeft": "left on {date}",
+    "subsSelectAll": "Select all",
+    "subsSelectNone": "Select none",
+    "subsUnsubscribe": "Unsubscribe",
+    "subsConfirm": "{count, plural, one {# newsletter will be left. The sender cannot undo it. Continue?} other {# newsletters will be left. The sender cannot undo it. Continue?}}",
+    "subsTooMany": "{count} selected: {max} at most per go, unselect some or work in batches.",
+    "subsResultDone": "Unsubscribed.",
+    "subsResultManual": "To finish by hand on the sender’s page:",
+    "subsResultFailed": "Failed: {reason}",
+    "subsResultNotFound": "No longer in this mailbox.",
+    "subsPurge": "Clear history",
+    "subsPurgeOnlyOne": "One newsletter at a time: keep only one selected.",
+    "subsPurgeCounting": "Counting the whole mailbox. This can take a while.",
+    "subsPurgeCount": "{count, plural, one {# message} other {# messages}} in {folders, plural, one {# folder} other {# folders}}",
+    "subsPurgeRange": "from {oldest} to {newest}",
+    "subsPurgeConfirm": "{count, plural, one {# message goes to the TRASH and stays recoverable from there. Nothing is deleted for good.} other {# messages go to the TRASH and stay recoverable from there. Nothing is deleted for good.}}",
+    "subsPurgeGo": "Move {count, plural, one {# message} other {# messages}} to trash",
+    "subsPurgeCancel": "Cancel",
+    "subsPurgeDone": "Moved {count, plural, one {# message} other {# messages}} to {trash}.",
+    "subsPurgeChanged": "The mailbox changed while counting: it now holds {total}. Count again before clearing.",
+    "subsPurgeRefused_not_found": "This newsletter is no longer in this mailbox.",
+    "subsPurgeRefused_no_trash": "This mailbox exposes no trash folder: nothing was moved.",
+    "subsPurgeError": "Failed: {reason}",
+    "cardOrderReset": "Reset to the original order",
+    "cardOrderHandle": "Move the “{card}” card",
+    "cardOrderHint": "Drag to move · arrow keys to move from the keyboard",
+    "cardFocus": "Needs attention",
+    "cardActivity": "Activity",
+    "cardAccounts": "Accounts",
+    "cardReceipts": "Read receipts",
+    "cardScheduled": "Scheduled",
+    "cardRules": "Rules",
+    "cardFollowUps": "Follow-ups",
+    "cardSubscriptions": "Newsletters",
+    "cardQuickCompose": "Quick compose"
   },
   "pgp": {
     "title": "PGP Encryption",
@@ -806,7 +868,9 @@
       "rules": "rules, filters, sieve, automation",
       "ai": "ai, copilot, assistant, llm, model",
       "pgp": "pgp, encryption, gpg, key, privacy",
-      "apiKeys": "api, key, token, bearer, mcp, agent, integration"
+      "apiKeys": "api, key, token, bearer, mcp, agent, integration",
+      "admin": "admin, users, roles, accounts, administration",
+      "branding": "tab, icon, favicon, title, site name, branding, logo"
     }
   }
 }

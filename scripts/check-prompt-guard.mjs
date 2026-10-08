@@ -3,7 +3,7 @@
  * Measures the prompt-injection guard end to end, on the running app, against a
  * battery of REAL trap messages planted in a real mailbox.
  *
- * Five messages are APPENDed to a scratch folder of the test account: the
+ * Five messages are APPENDed to a `Tests-lane` folder of the test account: the
  * same injection written (1) in plain sight, (2) behind `display:none`,
  * (3) white-on-white at font-size 0, (4) inside an HTML comment with zero-width
  * characters, plus (5) an innocuous control. They are then read back THROUGH THE
@@ -38,9 +38,8 @@ import crypto from 'node:crypto'
 import { ImapFlow } from 'imapflow'
 import { decrypt } from '../lib/encrypt.ts'
 import { HIDDEN_CONTENT_KINDS, UNTRUSTED_FIELDS } from '../lib/promptGuard.ts'
-import { SCRATCH_DOMAIN, SCRATCH_FOLDER } from './bench-constants.mjs'
 
-const FOLDER = SCRATCH_FOLDER
+const FOLDER = 'Tests-lane'
 /** An IMAP APPEND has to become visible to the route's own IMAP connection. */
 const SETTLE_MS = 1000
 
@@ -196,9 +195,9 @@ let createdFolder = false
     for (const trap of TRAPS) {
       const stamp = Date.now()
       const raw = Buffer.from(
-        `From: bench <${acc.email}>\r\nTo: bench <${acc.email}>\r\n` +
+        `From: lane bench <${acc.email}>\r\nTo: lane bench <${acc.email}>\r\n` +
         `Subject: check-prompt-guard ${trap.key} ${stamp}\r\nDate: ${new Date().toUTCString()}\r\n` +
-        `Message-ID: <check-prompt-guard-${trap.key}-${stamp}@${SCRATCH_DOMAIN}>\r\n` +
+        `Message-ID: <check-prompt-guard-${trap.key}-${stamp}@yumi-lab.com>\r\n` +
         `MIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n` +
         `Content-Transfer-Encoding: 8bit\r\n\r\n${trap.html}\r\n`, 'utf8')
       uids[trap.key] = String((await c.append(FOLDER, raw, ['\\Seen'])).uid)
@@ -315,7 +314,7 @@ try {
     await c.mailboxOpen(FOLDER)
     for (const uid of Object.values(uids)) await c.messageDelete(uid, { uid: true })
     // The folder goes only if this run made it AND nothing else landed in it:
-    // another bench may share this folder name and its messages are not ours.
+    // a sibling lane's bench shares this folder name and its messages are not ours.
     const leftovers = await c.search({ all: true }, { uid: true })
     const removeFolder = createdFolder && !leftovers.length
     if (removeFolder) { await c.mailboxClose(); await c.mailboxDelete(FOLDER) }

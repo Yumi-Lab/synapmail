@@ -1,21 +1,21 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
-import { ImapFlow } from 'imapflow'
-import nodemailer from 'nodemailer'
+import { authorize } from '@/lib/apiAuth'
 import { getAccountById } from '@/lib/accounts'
+import { query } from '@/lib/db'
 import { decrypt } from '@/lib/encrypt'
 import {
   TEST_DECISION,
-  classifyTestFailure,
   resolveTestPassword,
 } from '@/lib/accountTest'
+import { probeConnection } from '@/lib/accountProbe'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const userId = (session.user as { id: string }).id
+async function postHandler(req: Request) {
+  const access = await authorize(req)
+  if ('denied' in access) return access.denied
+  const userId = access.ctx.id
 
   try {
     const {
@@ -26,12 +26,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
     }
 
-    // Which password to try — the decision lives in `lib/accountTest.ts`, standalone and
-    // executable. The account is loaded through `getAccountById`, which only accepts its
-    // OWNER: a guest on a shared mailbox cannot test its credentials. The stored password
-    // is decrypted ONLY when the decision is `STORED`, hence only towards the REGISTERED
-    // hosts: the form comes from the browser, and a stolen session must not be able to
-    // have it read out to a server of its own choosing.
+    // Quel mot de passe essayer — la décision vit dans `lib/accountTest.ts`, seule et
+    // exécutable. Le compte est chargé par `getAccountById`, qui n'accepte QUE son
+    // propriétaire : un invité d'une boîte partagée n'en teste pas les identifiants.
+    // Le mot de passe enregistré n'est déchiffré QUE si la décision est `STORED`, donc
+    // seulement vers les hôtes ENREGISTRÉS : le formulaire vient du navigateur, et une
+    // session volée ne doit pas pouvoir le faire lire par un serveur qu'elle a choisi.
     let storedEncrypted: string | null = null
     const { decision, password: pass, connection } = await resolveTestPassword(
       {
@@ -68,54 +68,35 @@ export async function POST(req: Request) {
     if (decision === TEST_DECISION.MISSING) {
       return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
     }
-    // No connection is attempted: the form points at a different server, so the caller
-    // must supply the password.
+    // Aucune connexion n'est tentée : le formulaire vise un autre serveur, il faut le mot
+    // de passe de qui le demande.
     if (decision === TEST_DECISION.PASSWORD_REQUIRED || pass === null || !connection) {
       return NextResponse.json({ error: TEST_DECISION.PASSWORD_REQUIRED }, { status: 400 })
     }
 
-    // Test IMAP
-    let imapOk = false
-    let imapError = ''
-    try {
-      const client = new ImapFlow({
-        host: connection.imapHost,
-        port: connection.imapPort,
-        secure: connection.imapSecure,
-        auth: { user: connection.username, pass },
-        logger: false,
-        tls: { rejectUnauthorized: false },
-      })
-      await client.connect()
-      await client.logout()
-      imapOk = true
-    } catch (e) {
-      imapError = classifyTestFailure(String(e instanceof Error ? e.message : e))
+    // Une seule implémentation de l'essai, partagée avec l'ajout d'une boîte.
+    const { imap, smtp } = await probeConnection(connection, pass)
+
+    // Le serveur vient de réannoncer sa taille maximale (lot M10) : on la retient sur
+    // la boîte essayée. Un serveur qui CHANGE sa limite est ainsi suivi sans que
+    // personne ait à ressaisir quoi que ce soit — c'est le seul moment où nous
+    // l'entendons en dehors de la création. Seule la décision `STORED` l'écrit : elle
+    // est la seule qui garantisse que l'essai visait le serveur ENREGISTRÉ de cette
+    // boîte (`targetsSavedServer`). Un formulaire qui vise un autre hôte ne doit pas
+    // pouvoir remplacer le plafond d'une boîte par celui d'un serveur qu'il a choisi.
+    if (accountId && smtp.ok && decision === TEST_DECISION.STORED) {
+      await query('UPDATE email_accounts SET smtp_max_size = $1 WHERE id = $2 AND user_id = $3', [
+        smtp.maxSize,
+        accountId,
+        userId,
+      ])
     }
 
-    // Test SMTP
-    let smtpOk = false
-    let smtpError = ''
-    try {
-      const transport = nodemailer.createTransport({
-        host: connection.smtpHost,
-        port: connection.smtpPort,
-        secure: connection.smtpSecure,
-        auth: { user: connection.username, pass },
-        tls: { rejectUnauthorized: false },
-      })
-      await transport.verify()
-      smtpOk = true
-    } catch (e) {
-      smtpError = classifyTestFailure(String(e instanceof Error ? e.message : e))
-    }
-
-    return NextResponse.json({
-      tested: decision,
-      imap: { ok: imapOk, error: imapError },
-      smtp: { ok: smtpOk, error: smtpError },
-    })
+    return NextResponse.json({ tested: decision, imap, smtp })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const POST = withApiLog(postHandler)

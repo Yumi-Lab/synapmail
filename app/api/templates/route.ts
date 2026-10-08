@@ -1,19 +1,21 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authorize } from '@/lib/apiAuth'
+import { withApiLog } from '@/lib/apiLog'
 import { query } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function getHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   try {
     const templates = await query(
       `SELECT id, user_id AS "userId", name, subject,
               content_html AS "contentHtml", created_at AS "createdAt"
        FROM compose_templates WHERE user_id = $1 ORDER BY name ASC`,
-      [session.user?.id]
+      [userId]
     )
     return NextResponse.json({ data: templates })
   } catch (err) {
@@ -21,9 +23,10 @@ export async function GET() {
   }
 }
 
-export async function POST(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function postHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const userId = gate.ctx.id
 
   try {
     const body = await req.json()
@@ -36,7 +39,7 @@ export async function POST(req: Request) {
        VALUES ($1, $2, $3, $4)
        RETURNING id, user_id AS "userId", name, subject,
                  content_html AS "contentHtml", created_at AS "createdAt"`,
-      [session.user?.id, name.trim(), subject, contentHtml]
+      [userId, name.trim(), subject, contentHtml]
     )
 
     return NextResponse.json({ data: result[0] }, { status: 201 })
@@ -44,3 +47,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)
+export const POST = withApiLog(postHandler)

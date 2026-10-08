@@ -1,4 +1,6 @@
 import { query } from './db'
+import { accountColor } from './accountColor'
+import { listAccessibleAccounts } from './accountAccess'
 import type { FocusReason } from '@/types/dashboard'
 
 /**
@@ -66,7 +68,6 @@ export interface FocusItem {
   reason: FocusReason
 }
 
-type AccountRow = { id: string; name: string; color: string }
 type ContactRow = { email: string; frequency: number; is_starred: boolean }
 
 /**
@@ -79,10 +80,11 @@ export async function getFocusItems(userId: string, accountId?: string | null, l
   const byEa = scoped ? 'AND ea.id = $2' : ''
 
   const [accounts, focusRows, contactRows] = await Promise.all([
-    query<AccountRow>(
-      `SELECT id, name, color FROM email_accounts WHERE user_id = $1`,
-      [userId],
-    ),
+    // Le RANG de la boîte décide de sa couleur automatique : la liste est donc lue par
+    // la règle PARTAGÉE — mêmes boîtes et même ordre que le tableau de bord, la barre
+    // latérale et les réglages. Réduite aux boîtes possédées, elle ferait glisser les
+    // rangs dès qu'une boîte est partagée, et la même boîte porterait deux couleurs.
+    listAccessibleAccounts(userId),
     query<FocusRow>(
       `SELECT mc.uid, mc.account_id, mc.folder, mc.subject, mc.from_name, mc.from_address,
               mc.date, mc.is_starred, mc.has_attachments
@@ -103,6 +105,7 @@ export async function getFocusItems(userId: string, accountId?: string | null, l
   ])
 
   const accountById = new Map(accounts.map(a => [a.id, a]))
+  const rankById = new Map(accounts.map((a, rank) => [a.id, rank]))
   const vip = new Set(contactRows.filter(c => c.is_starred).map(c => c.email.toLowerCase()))
   const freqThreshold = Math.max(5, ...contactRows.map(c => c.frequency))
   const frequent = new Set(
@@ -120,7 +123,7 @@ export async function getFocusItems(userId: string, accountId?: string | null, l
         uid: row.uid,
         accountId: row.account_id,
         accountName: acc?.name ?? '',
-        accountColor: acc?.color ?? '#6366f1',
+        accountColor: accountColor({ badgeColor: acc?.badge_color }, rankById.get(row.account_id) ?? 0),
         folder: row.folder,
         subject: row.subject ?? '',
         fromName: row.from_name,

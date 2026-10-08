@@ -5,31 +5,42 @@ import useSWR from 'swr'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
 import {
   BRANDING_ERRORS,
   DEFAULT_APP_NAME,
+  FAVICON_TYPES,
   type Branding,
   type BrandingError,
   faviconLinks,
+  faviconTypeError,
   faviconUrl,
 } from '@/lib/branding'
 
 const ROUTE = '/api/admin/branding'
+
+/**
+ * Ancre de cette section dans la page d'administration. Source UNIQUE : la section
+ * la porte, et tout ce qui y CONDUIT (palette de l'omnibar, navigation des réglages)
+ * bâtit son lien avec — un identifiant recopié à la main finirait par ne plus
+ * désigner cette section, et le lien mènerait en haut de page sans rien dire.
+ */
+export const BRANDING_ANCHOR = 'branding'
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
-/** The two sizes at which a browser actually renders a favicon. */
-const PREVIEW_SIZES = [16, 32] as const
+/** La taille à laquelle un navigateur affiche réellement une favicon sur un écran dense. */
+const FAVICON_PREVIEW = 32
 
 const KNOWN_ERRORS: readonly string[] = Object.values(BRANDING_ERRORS)
 const isBrandingError = (value: unknown): value is BrandingError =>
   typeof value === 'string' && KNOWN_ERRORS.includes(value)
 
 /**
- * Applies the branding to the tab WITHOUT a reload: the title, then the page's
- * `<link rel="icon">` elements, rebuilt from `faviconLinks()` — the SAME source
- * as the server render, so that a reset restores BOTH shipped icons and not just
- * the first one. Creating fresh `<link>` elements (rather than changing their
- * `href`) is what forces browsers to re-read the icon.
+ * Applique l'identité à l'onglet SANS recharger : le titre, puis les
+ * `<link rel="icon">` de la page, reposés depuis `faviconLinks()` — la MÊME
+ * source que le rendu serveur, pour qu'une remise à zéro rétablisse les DEUX
+ * icônes livrées et non la seule première. Repartir de `<link>` neufs (plutôt
+ * que changer leur `href`) est ce qui force les navigateurs à relire l'icône.
  */
 function applyToTab(appName: string, faviconVersion: number | null) {
   document.title = appName
@@ -45,9 +56,10 @@ function applyToTab(appName: string, faviconVersion: number | null) {
 }
 
 /**
- * Instance branding, admin-only: the name shown in the browser tab and the icon of
- * that tab, for EVERYONE, sign-in page included. The PWA / apple-touch icons and
- * the image logo are not affected.
+ * Identité de l'instance, réservée à l'administrateur : le nom affiché dans
+ * l'onglet du navigateur et l'icône de cet onglet, pour TOUT LE MONDE, page de
+ * connexion comprise. Les icônes PWA / apple-touch et le logo image ne sont pas
+ * concernés.
  */
 export function BrandingSection() {
   const t = useTranslations('admin.branding')
@@ -56,17 +68,19 @@ export function BrandingSection() {
 
   const [name, setName] = useState<string | null>(null)
   const [file, setFile] = useState<File | null>(null)
-  // Preview URL for the picked file: created ONCE per pick and revoked on the next
-  // one, otherwise every render would leak one more blob.
+  // URL d'aperçu du fichier choisi : créée UNE fois par choix et révoquée à la
+  // suivante, sinon chaque rendu fabriquerait un blob de plus.
   const [filePreview, setFilePreview] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Survol d'un fichier au-dessus de la zone : le seul retour visuel d'un glisser-déposer. */
+  const [dragging, setDragging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  // As long as the admin has typed nothing, the field shows what is stored.
+  // Tant que l'administrateur n'a rien tapé, le champ montre ce qui est enregistré.
   const nameValue = name ?? branding?.appName ?? ''
-  // The preview shows ONE image: the first of the shipped icons, or the configured one.
+  // L'aperçu montre UNE image : la première des icônes livrées, ou celle réglée.
   const iconSrc = branding?.faviconVersion
     ? faviconUrl(branding.faviconVersion)
     : faviconLinks(null)[0].url
@@ -99,12 +113,17 @@ export function BrandingSection() {
     }
   }
 
+  // A file whose declared type is not in the list gets no preview URL at all:
+  // only an accepted file ever reaches `createObjectURL`.
   const pickFile = (next: File | null) => {
+    const refused = next ? faviconTypeError(next.type) : null
+    const accepted = refused ? null : next
+    setError(refused ? t(`errors.${refused}`) : null)
     setFilePreview(previous => {
       if (previous) URL.revokeObjectURL(previous)
-      return next ? URL.createObjectURL(next) : null
+      return accepted ? URL.createObjectURL(accepted) : null
     })
-    setFile(next)
+    setFile(accepted)
   }
 
   const save = () => {
@@ -120,11 +139,20 @@ export function BrandingSection() {
   const dirty = (name !== null && name !== branding?.appName) || file !== null
 
   return (
-    <section className="mb-6 rounded-xl border border-border bg-card p-4">
-      <h2 className="text-sm font-semibold">{t('title')}</h2>
-      <p className="mt-1 text-xs text-muted-foreground">{t('description')}</p>
+    // `scroll-mt-*` : arrivé par l'ancre, le titre ne se colle pas au bord haut du
+    // panneau des réglages — la hauteur de son en-tête est laissée au-dessus.
+    // Le fond suit celui des autres cartes de réglages (`SettingsSection`), la
+    // section étant désormais rendue parmi elles (lot H4a).
+    <section
+      id={BRANDING_ANCHOR}
+      className="scroll-mt-16 space-y-4 rounded-2xl border border-border bg-card/80 p-5 shadow-sm backdrop-blur-sm"
+    >
+      <div>
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('title')}</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">{t('description')}</p>
+      </div>
 
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label className="mb-1 block text-xs text-muted-foreground" htmlFor="branding-name">
             {t('nameLabel')}
@@ -149,29 +177,49 @@ export function BrandingSection() {
 
         <div>
           <span className="mb-1 block text-xs text-muted-foreground">{t('iconLabel')}</span>
-          <div className="flex items-center gap-3">
-            {PREVIEW_SIZES.map(size => (
-              // Preview at a favicon's ACTUAL size: that is where an over-detailed
-              // icon becomes unreadable, not in an enlarged thumbnail.
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                key={size}
-                src={filePreview ?? iconSrc}
-                alt={t('preview')}
-                width={size}
-                height={size}
-                style={{ width: size, height: size }}
-              />
-            ))}
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/png,image/x-icon,image/vnd.microsoft.icon,image/jpeg,image/webp"
-              onChange={e => { pickFile(e.target.files?.[0] ?? null); setError(null) }}
-              className="text-xs file:mr-2 file:h-7 file:rounded-md file:border file:border-border file:bg-background file:px-2 file:text-xs"
+          {/* Une zone de dépôt plutôt que le champ natif : « Aucun fichier choisi »
+              débordait de la carte, et sa largeur dépend du navigateur et de la langue.
+              Cliquer la zone ouvre le sélecteur, y glisser un fichier le prend
+              directement. Un seul aperçu, à 32 px : deux vignettes côte à côte se
+              lisaient comme un défaut d'affichage. */}
+          <button
+            type="button"
+            data-favicon-drop
+            onClick={() => fileRef.current?.click()}
+            onDragOver={e => { e.preventDefault(); setDragging(true) }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={e => {
+              e.preventDefault()
+              setDragging(false)
+              const file = e.dataTransfer.files?.[0]
+              if (file) pickFile(file)
+            }}
+            className={cn(
+              'mt-1 flex w-full items-center gap-3 rounded-lg border border-dashed px-3 py-3 text-left transition-colors',
+              dragging ? 'border-[color:var(--synap-account)] bg-muted/50' : 'border-border hover:bg-muted/30',
+            )}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={filePreview ?? iconSrc}
+              alt={t('preview')}
+              width={FAVICON_PREVIEW}
+              height={FAVICON_PREVIEW}
+              style={{ width: FAVICON_PREVIEW, height: FAVICON_PREVIEW }}
+              className="shrink-0"
             />
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">{t('iconHint')}</p>
+            <span className="min-w-0">
+              <span className="block truncate text-xs text-foreground">{file?.name ?? t('iconDrop')}</span>
+              <span className="mt-0.5 block text-[11px] text-muted-foreground">{t('iconHint')}</span>
+            </span>
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept={FAVICON_TYPES.join(',')}
+            onChange={e => pickFile(e.target.files?.[0] ?? null)}
+            className="sr-only"
+          />
           <button
             type="button"
             data-branding-reset="favicon"

@@ -1,33 +1,35 @@
 import { NextResponse } from 'next/server'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
 import { markFolderRead, emptyFolder, folderMessageCount } from '@/lib/imap'
 import { resolveFolder } from '@/lib/folderResolve'
 import { refuse } from '@/lib/folderActions'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Actions that touch a folder's CONTENT, not its structure: "mark all as read" and
- * "empty". Permission is decided in `lib/folderActions.ts` through `resolveFolder` —
- * "empty" only exists for the trash and the spam folder, whatever the client asks
- * for.
+ * Actions qui touchent au CONTENU d'un dossier, pas à sa structure (lot H3e) :
+ * « tout marquer comme lu » et « vider ». Le droit se décide dans
+ * `lib/folderActions.ts` via `resolveFolder` — « vider » n'existe que pour la
+ * corbeille et les indésirables, quoi que le client demande.
  */
 const ACTIONS = ['markRead', 'empty', 'count'] as const
 type Action = (typeof ACTIONS)[number]
 
-/** The permission each action requires — same vocabulary as `lib/accountAccess.ts`. */
+/** La permission qu'exige chaque action — même vocabulaire que `lib/accountAccess.ts`. */
 const REQUIRED = { markRead: 'organize', empty: 'delete', count: undefined } as const
 
-export async function POST(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return refuse('unauthorized')
+async function postHandler(req: Request) {
+  const gate = await authorize(req)
+  if ('denied' in gate) return gate.denied
+  const authCtx = gate.ctx
 
   let body: Record<string, unknown> = {}
   try {
     const parsed = await req.json()
     if (parsed && typeof parsed === 'object') body = parsed as Record<string, unknown>
-  } catch { /* body missing or unreadable — treated as an unknown action */ }
+  } catch { /* corps absent ou illisible — traité comme une action inconnue */ }
 
   const action = body.action as Action
   if (!ACTIONS.includes(action)) return refuse('unknownAction')
@@ -61,3 +63,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const POST = withApiLog(postHandler)

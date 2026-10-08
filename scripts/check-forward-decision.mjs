@@ -9,7 +9,15 @@
  *  2. are the sources read in the mailbox the SELECTION came from, or in the
  *     one the "From" picker happens to point at?
  *
+ *  3. is there ONE size ceiling — the server's, resolved BEFORE the IMAP fetch —
+ *     or a fixed forward ceiling that wastes the fetch and contradicts the
+ *     final check?
+ *
  *   node --experimental-strip-types scripts/check-forward-decision.mjs
+ *   node --experimental-strip-types scripts/check-forward-decision.mjs --negative
+ * NEGATIVE CONTROL (`--negative`): the route is read as it was BEFORE the fix
+ * (a fixed FORWARD_MAX_TOTAL_BYTES fed to the fetch, the server ceiling resolved
+ * after it). The ceiling assertions MUST then fail.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -19,12 +27,21 @@ import { IntlMessageFormat } from 'intl-messageformat'
 import {
   FORWARD_ERROR,
   FORWARD_MAX_MESSAGES,
-  FORWARD_MAX_TOTAL_BYTES,
   parseForwardedMessages,
   resolveForwardOrigin,
 } from '../lib/forward.ts'
 
+const NEGATIVE = process.argv.includes('--negative')
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const ok = (label) => console.log(`  ok  ${label}`)
+const failures = []
+// Under `--negative` an assertion that falls is the expected outcome: it is
+// recorded instead of aborting, so every ceiling assertion gets its turn.
+const expect = (cond, label) => {
+  if (cond) return
+  if (!NEGATIVE) assert.fail(label)
+  failures.push(label)
+}
 
 console.log('parseForwardedMessages — what the boundary refuses')
 
@@ -63,8 +80,32 @@ const dup = parseForwardedMessages({ ...valid, uids: ['5', '5', '9', '5'] })
 assert.deepEqual(dup.value.uids, ['5', '9'], 'duplicates collapse, first position wins')
 ok('a repeated uid is attached once, not three times')
 
-assert.ok(FORWARD_MAX_TOTAL_BYTES > 0 && FORWARD_MAX_TOTAL_BYTES <= 25 * 1024 * 1024)
-ok(`total size ceiling is ${Math.round(FORWARD_MAX_TOTAL_BYTES / (1024 * 1024))} MB, at or under the common SMTP limit`)
+console.log('ONE size ceiling — the server\'s, resolved before the IMAP fetch')
+
+// The route's source is read rather than reconstructed: a constant that
+// re-appears there, or a ceiling resolved after the fetch, fails here.
+let route = readFileSync(join(ROOT, 'app/api/messages/send/route.ts'), 'utf8')
+if (NEGATIVE) {
+  route = route
+    .replace('const ceiling = resolveSendCeiling(account.smtp_max_size, MESSAGE_MAX_TOTAL_BYTES)\n', '')
+    .replace('ceiling.limit\n      )\n      if (result.oversized)', 'FORWARD_MAX_TOTAL_BYTES\n      )\n      if (result.oversized)')
+    .replace('    // Fichiers joints par l\'appelant.', '    const ceiling = resolveSendCeiling(account.smtp_max_size, MESSAGE_MAX_TOTAL_BYTES)\n    // Fichiers joints par l\'appelant.')
+}
+const forwardModule = readFileSync(join(ROOT, 'lib/forward.ts'), 'utf8')
+expect(!/FORWARD_MAX_TOTAL_BYTES/.test(NEGATIVE ? route : route + forwardModule),
+  'no fixed forward ceiling may survive: the server ceiling is the only one')
+const fetchAt = route.indexOf('getMessageSources(')
+const ceilingAt = route.indexOf('const ceiling = resolveSendCeiling(')
+expect(fetchAt > 0 && ceilingAt > 0 && ceilingAt < fetchAt,
+  'the ceiling must be resolved BEFORE the IMAP fetch, not after it')
+const fetchArgs = route.match(/getMessageSources\(([\s\S]*?)\)\s*if \(result\.oversized\)/)?.[1] ?? ''
+expect(/,\s*ceiling\.limit\s*$/.test(fetchArgs),
+  'the IMAP fetch must be bounded by that same ceiling')
+expect(/FORWARD_ERROR\.tooLarge, limit: ceiling\.limit, \.\.\.ceilingOrigin\(ceiling\)/.test(route),
+  'the forward refusal must name the ceiling in force and where it comes from')
+expect((route.match(/resolveSendCeiling\(/g) ?? []).length === 1,
+  'the ceiling is resolved exactly once')
+if (!NEGATIVE) ok('one ceiling, resolved once before the IMAP fetch, named in the refusal')
 
 console.log('resolveForwardOrigin — WHICH mailbox the sources are read from')
 
@@ -136,4 +177,8 @@ for (const locale of ['en', 'fr', 'zh']) {
   ok(`${locale}: 5 refusals render, singular "${one}"`)
 }
 
+if (NEGATIVE) {
+  if (failures.length) { console.log(`\nnegative control: ${failures.length} assertion(s) fell, as expected`); process.exit(0) }
+  console.error('check-forward-decision: --negative was expected to FAIL and did not'); process.exit(1)
+}
 console.log('check-forward-decision: OK')

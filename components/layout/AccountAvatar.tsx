@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { accountColor, readableInk } from '@/lib/accountColor'
 import type { ColorableAccount } from '@/lib/accountColor'
 import type { EmailAccount } from '@/types/account'
+import { ACCOUNTS_KEY } from '@/lib/unreadSignal'
 
 export { accountColor, readableInk } from '@/lib/accountColor'
 
@@ -82,7 +83,7 @@ const fetchJson = (url: string) => fetch(url).then(r => r.json())
 export function useAccountAccent() {
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null)
   const { data: accountsData } = useSWR<{ data: EmailAccount[] }>(
-    '/api/accounts', fetchJson, { revalidateOnFocus: true, refreshInterval: 60000 },
+    ACCOUNTS_KEY, fetchJson, { revalidateOnFocus: true, refreshInterval: 60000 },
   )
   const { data: settingsData } = useSWR<{ data: { active_account_id: string | null } }>('/api/settings', fetchJson)
 
@@ -100,9 +101,9 @@ export function useAccountAccent() {
   const activeAccount = resolveActiveAccount(accounts, activeAccountId)
   const colorIndex = activeAccount ? accounts.indexOf(activeAccount) : 0
   /**
-   * Switching mailbox, in ONE place: the event fires first (so the accent turns on the
-   * click), local state follows, and the preference is written last. The sidebar and the
-   * omnibar both call THIS function, never a copy.
+   * Basculer de boite, en UN seul endroit : l'evenement part d'abord (l'accent
+   * tourne sur le clic), l'etat local suit, la preference est ecrite ensuite. La
+   * barre laterale et l'omnibar (lot H3f) appellent CETTE fonction, jamais une copie.
    */
   const switchAccount = (id: string) => {
     window.dispatchEvent(new CustomEvent('synapmail:account-change', { detail: id }))
@@ -121,18 +122,35 @@ const UNREAD_CAP = 99
 
 const formatUnread = (count: number) => (count > UNREAD_CAP ? `${UNREAD_CAP}+` : String(count))
 
-type AvatarSize = 'sm' | 'md'
+type AvatarSize = 'xs' | 'sm' | 'md'
 
 /**
- * Bubble sizes: `sm` in the bar's rows (fits the fixed icon column), `md` in the popover
- * list. The type scale is set so TWO letters fit inside the circle without touching its
- * edge: at 10 px in the 28 px bubble and 11 px in the 32 px one, the widest pair this
- * palette can produce stays clear of the rim. `scripts/check-sidebar-collapse.mjs`
- * measures the rendered glyph box against the bubble, so the fit is enforced, not assumed.
+ * Bubble sizes: `xs` inline in a line of running text (the dashboard's mail rows, where a
+ * bar-sized bubble would set the line's height), `sm` in the bar's rows (fits the fixed
+ * icon column), `md` in the popover list. The type scale is set so TWO letters fit inside
+ * the circle without touching its edge: at 10 px in the 28 px bubble and 11 px in the
+ * 32 px one, the widest pair this palette can produce stays clear of the rim, and the
+ * 20 px bubble keeps the same headroom by shrinking its type further (8 px).
+ * `scripts/check-sidebar-collapse.mjs` measures the rendered glyph box against the
+ * bubble, so the fit is enforced, not assumed.
  */
+/**
+ * La BOÎTE de la bulle, séparée de sa graisse de texte : un habillage qui doit
+ * couvrir exactement la bulle (la case à cocher de `SelectableBubble`) lit cette
+ * carte plutôt que de recopier `w-5 h-5`, sinon les deux tailles divergent au
+ * premier changement. Les classes restent littérales : Tailwind lit le texte
+ * source, une classe composée par interpolation ne serait jamais émise.
+ */
+export const BUBBLE_BOX: Record<AvatarSize, string> = {
+  xs: 'w-5 h-5',
+  sm: 'w-7 h-7',
+  md: 'w-8 h-8',
+}
+
 const SIZES: Record<AvatarSize, string> = {
-  sm: 'w-7 h-7 text-[10px]',
-  md: 'w-8 h-8 text-[11px]',
+  xs: `${BUBBLE_BOX.xs} text-[8px]`,
+  sm: `${BUBBLE_BOX.sm} text-[10px]`,
+  md: `${BUBBLE_BOX.md} text-[11px]`,
 }
 
 /** Letters kept in a bubble. Two, always — one letter reads as an accident, not an identity. */
@@ -142,17 +160,17 @@ const INITIAL_LEN = 2
  * What separates two words in a display name or an email local part: whitespace and
  * ASCII punctuation. Written as the separators rather than as "everything that is not
  * a letter" — a Unicode property escape needs the `u` flag, unavailable at this
- * project's compile target, while an ASCII letter class would cut accented or CJK
- * names in the wrong place. Punctuation must be in here: without it `Ada (Works)` renders
- * as `A(` instead of `AW`. Shared with the folder tiles, which split folder names by
+ * project's compile target, while an ASCII letter class would cut "Élodie" or "王小明"
+ * in the wrong place. Punctuation must be in here: without it `Nicolas (Yumi)` renders
+ * as `N(` instead of `NY`. Shared with the folder tiles, which split folder names by
  * the same rule — one definition of "what a word is" for the whole bar.
  */
 export const WORD_SPLIT = /[\s!-\/:-@[-`{-~]+/
 
 /**
  * Two letters from ONE source string, as the single rule for the whole bar: the
- * initials of its first two words when it has two ("Ada Lovelace" → "AL",
- * "Payment Alerts" → "PA"), otherwise its own first two letters ("ada" → "AD",
+ * initials of its first two words when it has two ("Nicolas Michaut" → "NM",
+ * "Controles EDOF" → "CE"), otherwise its own first two letters ("mathilde" → "MA",
  * "GLS" → "GL"). Returns an EMPTY string when the source cannot yield two characters,
  * so a caller can fall back to another source rather than render a lone letter —
  * one letter reads as an accident, not an identity.
@@ -196,19 +214,34 @@ export const BADGE_OFFSET_PX = 9
  * visible when the bar is collapsed and the labels have folded away.
  * Ringed with `--synap-surface` — the colour of whatever surface it is pinned on,
  * published by that surface itself, so the ring follows the theme with no second palette.
+ *
+ * `colour` is the colour of the BOX the count belongs to, read from the same source as
+ * the bubble it is pinned on (`accountColor`). Without it the badge falls back to the
+ * bar's accent — which is the colour of the ACTIVE account, correct for a folder of
+ * that account, and wrong for anything else: on the list of mailboxes it painted all
+ * eight counters violet over green, blue and amber bubbles. A counter names the box it
+ * counts, so it takes the colour of that box and not of whichever box is open.
  */
-export function UnreadBadge({ count }: { count: number }) {
+export function UnreadBadge({ count, colour }: { count: number; colour?: string }) {
   if (count <= 0) return null
   return (
     <span
       aria-hidden
-      style={{ top: -BADGE_OFFSET_PX, right: -BADGE_OFFSET_PX }}
+      style={colour
+        ? { top: -BADGE_OFFSET_PX, right: -BADGE_OFFSET_PX, backgroundColor: colour, color: readableInk(colour) }
+        : { top: -BADGE_OFFSET_PX, right: -BADGE_OFFSET_PX }}
       className={cn(
         'absolute min-w-[14px] h-[14px] px-[3px] rounded-full ring-[1.5px] ring-[color:var(--synap-surface)]',
         'text-[9px] font-semibold leading-none flex items-center justify-center tabular-nums',
-        ACCENT.solid,
+        !colour && ACCENT.solid,
       )}
-      data-unread-badge
+      // Le compteur DIT a quel titre il est peint : `account` quand il porte la couleur
+      // de sa boite (donc volontairement hors de l'accent de la barre), `folder` quand il
+      // suit l'accent du compte actif, ce qui est correct pour un dossier de CE compte.
+      // Sans cette distinction, le banc d'unite d'accent de la barre
+      // (`check-sidebar-collapse.mjs`) devrait exclure TOUS les compteurs, et ne verrait
+      // plus un compteur de dossier qui partirait dans une seconde famille de teintes.
+      data-unread-badge={colour ? 'account' : 'folder'}
     >
       {formatUnread(count)}
     </span>
@@ -216,7 +249,7 @@ export function UnreadBadge({ count }: { count: number }) {
 }
 
 interface AccountAvatarProps extends React.HTMLAttributes<HTMLSpanElement> {
-  account: Pick<EmailAccount, 'name' | 'email'> & ColorableAccount
+  account: Pick<EmailAccount, 'name' | 'email'> & ColorableAccount & { id?: string }
   /** Rank of the account in the list — used only when its owner picked no colour. */
   colorIndex: number
   unread?: number
@@ -237,6 +270,18 @@ export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', ..
     <span className="relative inline-flex shrink-0">
       <span
         {...rest}
+        // La bulle publie QUELLE boîte elle peint, sur TOUS les écrans : c'est ce qui
+        // permet de comparer la couleur RENDUE d'une même boîte d'un écran à l'autre
+        // (banc `scripts/check-account-badge-parity.mjs`). Portée ici plutôt que par chaque
+        // appelant : posée écran par écran, elle manquait justement là où les rangs
+        // divergeaient (tableau de bord), et l'écart ne se voyait plus qu'à l'œil.
+        data-account-badge={account.id}
+        // La bulle dit aussi a QUELLE taille elle est posee. C'est un fait, pas une
+        // interpretation, et c'est ce qui permet au banc de distinguer une bulle de
+        // LISTE (`sm`/`md` : une ligne de boite, qui doit porter son compteur) d'une
+        // marque INLINE dans du texte courant (`xs` : elle dit de quelle boite vient
+        // un message, un compteur de non-lus n'y voudrait rien dire).
+        data-account-badge-size={size}
         className={cn(
           'rounded-full flex items-center justify-center font-semibold select-none tracking-[0.02em]',
           SIZES[size],
@@ -245,7 +290,7 @@ export function AccountAvatar({ account, colorIndex, unread = 0, size = 'sm', ..
       >
         <span data-account-initial>{accountInitials(account)}</span>
       </span>
-      <UnreadBadge count={unread} />
+      <UnreadBadge count={unread} colour={bubble} />
     </span>
   )
 }

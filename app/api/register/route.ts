@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query, initDb } from '@/lib/db'
 import bcrypt from 'bcryptjs'
+import { normalizeEmail } from '@/lib/emailAddress'
 
 export async function POST(req: Request) {
   if (process.env.REGISTRATION_ENABLED === 'false') {
@@ -20,7 +21,10 @@ export async function POST(req: Request) {
 
     await initDb()
 
-    const existing = await query('SELECT id FROM users WHERE email = $1', [email])
+    // Enregistré en minuscules, comparé en minuscules : deux comptes ne peuvent pas
+    // différer par la seule casse, sinon la connexion ne saurait plus lequel choisir.
+    const normalizedEmail = normalizeEmail(email)
+    const existing = await query('SELECT id FROM users WHERE lower(email) = $1', [normalizedEmail])
     if (existing.length) {
       return NextResponse.json({ error: 'Email already registered' }, { status: 409 })
     }
@@ -33,7 +37,7 @@ export async function POST(req: Request) {
 
     const result = await query(
       'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, email, name, role',
-      [name, email, hash, isFirst ? 'admin' : 'user']
+      [name, normalizedEmail, hash, isFirst ? 'admin' : 'user']
     )
 
     return NextResponse.json({ data: result[0] }, { status: 201 })

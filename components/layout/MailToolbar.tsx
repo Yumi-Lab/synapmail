@@ -9,41 +9,41 @@ import type { Folder } from '@/types/email'
 import { FlagPicker } from '@/components/mail/FlagPicker'
 import { IconTooltip, type TooltipAlign } from '@/components/ui/IconTooltip'
 import {
-  MAIL_TOOLBAR_GROUPS, useMailSelection,
+  MAIL_TOOLBAR_GROUPS, movableFolders, useMailSelection,
   type MailActionName, type MailToolbarItem,
 } from '@/lib/mailSelection'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
 /**
- * The two actions that do not run on click: they open a small anchored menu
- * (the seven colors, the folder list). Everything else calls its action.
+ * Les deux actions qui ne s'exécutent pas au clic : elles ouvrent un petit menu
+ * ancré (les sept couleurs, la liste des dossiers). Le reste appelle son action.
  */
 const MENU_ACTIONS = new Set<MailActionName>(['setFlag', 'moveTo'])
 
 /**
- * Group the header renders BEFORE the compose button ("Fetch mail", which has to
- * come first). It leaves the toolbar but stays defined in `MAIL_TOOLBAR_GROUPS`:
- * neither its icon nor its label is copied over, and the overflow menu still
- * lists it first.
+ * Groupe que le header rend AVANT « Nouveau message » depuis le lot H3c (« Relever,
+ * faut qu'il soit avant »). Il sort de la barre d'outils mais reste défini dans
+ * `MAIL_TOOLBAR_GROUPS` : ni son icône ni son libellé ne sont recopiés, et le menu
+ * « … » continue de le lister en tête.
  */
 const LEAD_GROUP = 0
 
-/** The groups the bar renders itself: everything except the one the header took. */
+/** Les groupes que la barre rend elle-même — tout sauf celui que le header a pris. */
 const IN_BAR_GROUPS = MAIL_TOOLBAR_GROUPS.map((_, i) => i).filter(i => i !== LEAD_GROUP)
 
 /**
- * Order in which groups move into the « … » menu when space runs short: the
- * LAST group goes first. The archive/delete group stays visible the
- * longest: the requested priority order.
+ * Ordre dans lequel les groupes passent au menu « … » quand la place manque : le
+ * DERNIER groupe part le premier. Le groupe archiver/supprimer reste visible le plus
+ * longtemps — la priorité demandée au lot H3.
  */
 const OVERFLOW_ORDER = [...IN_BAR_GROUPS].reverse()
 
 /**
- * Width needed to display the visible groups. Measured, not guessed:
- * the bar compares the real space to the real need and folds one more group as
- * long as it overflows. No hard-coded breakpoint: a longer translation or a
- * wider font simply folds earlier.
+ * Largeur qu'il faut pour afficher les groupes visibles. Mesurée, pas devinée :
+ * la barre compare la place réelle au besoin réel et replie un groupe de plus tant
+ * que ça déborde. Aucun point de rupture en dur — une traduction plus longue ou une
+ * police plus large replie simplement plus tôt.
  */
 function useOverflowGroups(hostRef: React.RefObject<HTMLElement>, probeRef: React.RefObject<HTMLElement>) {
   const [hidden, setHidden] = useState<number[]>([])
@@ -54,10 +54,10 @@ function useOverflowGroups(hostRef: React.RefObject<HTMLElement>, probeRef: Reac
     if (!host || !probe) return
 
     const measure = () => {
-      // The bar no longer stretches: its own width no longer tells the available space.
-      // The budget is that of the row carrying it, minus the floor its
-      // neighbors reserve (the search field): floors READ from the render, so
-      // always the ones that ship, never constants copied in here.
+      // La barre ne s'étire plus : sa propre largeur ne dit plus la place disponible.
+      // Le budget est celui de la rangée qui la porte, moins le plancher que ses
+      // voisins réservent (le champ de recherche) — planchers LUS sur le rendu, donc
+      // toujours ceux qui sont livrés, jamais des constantes recopiées ici.
       const row = host.parentElement
       if (!row) return
       const reserved = Array.from(row.children)
@@ -67,14 +67,14 @@ function useOverflowGroups(hostRef: React.RefObject<HTMLElement>, probeRef: Reac
           return sum + (parseFloat(st.minWidth) || 0) + (parseFloat(st.marginLeft) || 0) + (parseFloat(st.marginRight) || 0)
         }, 0)
       const available = row.getBoundingClientRect().width - reserved
-      // The probe renders the bar's groups then, last, the « … » button:
-      // its width is MEASURED too, never guessed.
+      // La sonde rend les groupes de la barre puis, en dernier, le bouton « … » :
+      // sa largeur est MESURÉE elle aussi, jamais devinée.
       const boxes = Array.from(probe.children).map(el => el.getBoundingClientRect().width)
       const moreWidth = boxes[boxes.length - 1] ?? 0
       const widths = new Map(IN_BAR_GROUPS.map((group, i) => [group, boxes[i] ?? 0]))
       const total = IN_BAR_GROUPS.reduce((sum, group) => sum + (widths.get(group) ?? 0), 0)
       if (total <= available) { setHidden(prev => (prev.length ? [] : prev)); return }
-      // The « … » button takes space AS LONG AS it is displayed, so on every pass.
+      // Le bouton « … » prend de la place TANT QU'il est affiché, donc à chaque tour.
       const budget = available - moreWidth
       const next: number[] = []
       let used = total
@@ -88,10 +88,10 @@ function useOverflowGroups(hostRef: React.RefObject<HTMLElement>, probeRef: Reac
 
     measure()
     const observer = new ResizeObserver(measure)
-    // The row, NOT the bar: the bar is `shrink-0`, so its own box no longer
-    // changes when the window shrinks and an observer placed on it stopped
-    // firing (measured: 10 buttons still displayed at 390 px after a resize,
-    // whereas a direct load at 390 px folded 9 of them).
+    // La rangée, PAS la barre : depuis le lot H3c la barre est `shrink-0`, sa propre
+    // boîte ne change donc plus quand la fenêtre rétrécit — l'observer posé sur elle
+    // ne se déclenchait plus (mesuré : 10 boutons encore affichés à 390 px après un
+    // redimensionnement, alors qu'un chargement direct à 390 px en repliait 9).
     if (host.parentElement) observer.observe(host.parentElement)
     observer.observe(probe)
     return () => observer.disconnect()
@@ -100,11 +100,11 @@ function useOverflowGroups(hostRef: React.RefObject<HTMLElement>, probeRef: Reac
   return hidden
 }
 
-/** One pattern for every action button: icon only, never a filled button. */
+/** Un motif pour tous les boutons d'action — icône seule, jamais de bouton plein. */
 const ACTION = 'w-8 h-8 shrink-0 flex items-center justify-center rounded-lg transition-colors ' +
   'text-foreground/70 hover:text-foreground hover:bg-foreground/[0.06] ' +
   'disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-foreground/70 disabled:cursor-default'
-/** Same button, unfolded into a readable row: the « … » menu names its actions. */
+/** Même bouton, déplié en ligne lisible : le menu « … » nomme ses actions. */
 const ACTION_ROW = 'w-full h-9 shrink-0 flex items-center gap-2 rounded-lg px-2 text-xs transition-colors ' +
   'text-foreground/80 hover:text-foreground hover:bg-foreground/[0.06] ' +
   'disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-foreground/80 disabled:cursor-default'
@@ -115,9 +115,9 @@ const MENU_ROW = 'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs 
   'hover:bg-foreground/[0.06] hover:text-foreground transition-colors'
 
 /**
- * Menu anchored under a button, closed by ONE outside click that reaches its target
- * (`mousedown` listener, never an overlay) and by Escape, which gives focus back.
- * Same pattern as the user account menu.
+ * Menu ancré sous un bouton, fermé par UN clic dehors qui atteint sa cible
+ * (écouteur `mousedown`, jamais un voile) et par Échap, qui rend le focus.
+ * Même motif que le menu du compte utilisateur.
  */
 function useAnchoredMenu(open: boolean, close: () => void, triggerRef: React.RefObject<HTMLButtonElement>) {
   const boxRef = useRef<HTMLDivElement>(null)
@@ -146,11 +146,11 @@ type ButtonProps = {
   openMenu: MailActionName | null
   setOpenMenu: (a: MailActionName | null) => void
   /**
-   * `bar` = icon only, the head bar template. `row` = icon + label, the
-   * « … » menu template: once folded, a button must be READ, not guessed.
+   * `bar` = icône seule, le gabarit de la head bar. `row` = icône + libellé, le
+   * gabarit du menu « … » : replié, un bouton doit se LIRE, pas se deviner.
    */
   variant?: 'bar' | 'row'
-  /** Which edge the tooltip aligns to: see `IconTooltip`. No effect in the `row` variant. */
+  /** De quel bord l'infobulle s'aligne — voir `IconTooltip`. Sans effet en variante `row`. */
   align?: TooltipAlign
 }
 
@@ -168,7 +168,9 @@ function ToolbarButton({ item, openMenu, setOpenMenu, variant = 'bar', align = '
     open && item.action === 'moveTo' && state.accountId ? `/api/folders?account=${state.accountId}` : null,
     fetcher,
   )
-  const folders = foldersRes?.data ?? []
+  // Seuls les dossiers qu'au moins un groupe visé quitterait : proposer celui où
+  // la cible se trouve déjà promettait un déplacement qui n'aurait pas lieu.
+  const folders = movableFolders(state, foldersRes?.data ?? [])
 
   const isRow = variant === 'row'
   const button = (
@@ -191,8 +193,8 @@ function ToolbarButton({ item, openMenu, setOpenMenu, variant = 'bar', align = '
     </button>
   )
 
-  // In the « … » menu each action already carries its label in plain text: a tooltip
-  // there would be a second label for the same thing.
+  // Dans le menu « … » chaque action porte déjà son libellé en clair : une bulle y
+  // serait une seconde étiquette pour la même chose.
   const tipped = isRow ? button : <IconTooltip label={label} shortcut={item.shortcut} align={align}>{button}</IconTooltip>
 
   if (!isMenu) return tipped
@@ -225,7 +227,7 @@ function ToolbarButton({ item, openMenu, setOpenMenu, variant = 'bar', align = '
   )
 }
 
-/** A group = its buttons, preceded by a thin rule as soon as it is not the first displayed. */
+/** Un groupe = ses boutons, précédés d'un trait fin dès qu'il n'est pas le premier affiché. */
 function ToolbarGroup({ items, first, openMenu, setOpenMenu, variant = 'bar', align }: {
   items: readonly MailToolbarItem[]
   first: boolean
@@ -247,34 +249,56 @@ function ToolbarGroup({ items, first, openMenu, setOpenMenu, variant = 'bar', al
 }
 
 /**
- * The lead group of `MAIL_TOOLBAR_GROUPS` ("Fetch mail"), rendered by the header
- * between the dashboard and compose buttons. Same button, same source: this
- * component only takes it out of the toolbar, which then ignores it.
+ * Lot H4b : hors du courrier, les actions n'ont pas lieu d'être — mais leur PLACE
+ * reste prise. Le gabarit RÉEL est rendu, simplement invisible et hors d'atteinte,
+ * donc le champ de recherche garde la même position et la même largeur d'une page
+ * à l'autre. Réserver le rendu lui-même plutôt qu'une largeur recopiée : une icône
+ * ajoutée demain déplace la réserve toute seule, il n'y a rien à retoucher.
+ *
+ * `visibility: hidden` sort déjà du parcours clavier et du clic ; `aria-hidden` le
+ * dit aux lecteurs d'écran, et `data-mail-toolbar-reserved` le dit au banc de mesure
+ * (qui doit pouvoir distinguer une barre vivante d'une place réservée).
  */
-export function MailToolbarLead() {
+type ReservedProps = { shown?: boolean }
+
+function reserved(shown: boolean) {
+  return shown ? {} : { 'aria-hidden': true, 'data-mail-toolbar-reserved': '' }
+}
+
+/**
+ * Le groupe de tête de `MAIL_TOOLBAR_GROUPS` (« Relever »), rendu par le header
+ * entre le Tableau de bord et Nouveau message — lot H3c. Même bouton, même source :
+ * ce composant ne fait que le sortir de la barre d'outils, qui l'ignore ensuite.
+ */
+export function MailToolbarLead({ shown = true }: ReservedProps) {
   const [openMenu, setOpenMenu] = useState<MailActionName | null>(null)
   return (
-    <ToolbarGroup
-      items={MAIL_TOOLBAR_GROUPS[LEAD_GROUP]}
-      first
-      openMenu={openMenu}
-      setOpenMenu={setOpenMenu}
-      align="start"
-    />
+    // Une boîte TOUJOURS rendue, même hors du courrier (lot H4b) : c'est elle qui
+    // tient la place, donc l'écart `gap-1` du groupe de gauche est le même sur les
+    // deux pages et « Nouveau message » ne recule pas sur le tableau de bord.
+    <div {...reserved(shown)} className={cn('flex shrink-0 items-center gap-1', !shown && 'invisible')}>
+      <ToolbarGroup
+        items={MAIL_TOOLBAR_GROUPS[LEAD_GROUP]}
+        first
+        openMenu={openMenu}
+        setOpenMenu={setOpenMenu}
+        align="start"
+      />
+    </div>
   )
 }
 
 /**
- * Mail toolbar, in the head bar: « like Mail on Mac »: fetch |
- * archive, delete, junk | reply, reply all, forward | flag,
- * unread, move. The order, the icons and the labels come from
- * `MAIL_TOOLBAR_GROUPS`: this component knows NO mail logic, it reads
- * a capability and calls an action from the shared context.
+ * Barre d'outils du courrier, dans la head bar — « comme Mail sur Mac » : relever |
+ * archiver, supprimer, indésirable | répondre, répondre à tous, transférer | drapeau,
+ * non lu, déplacer. L'ordre, les icônes et les libellés viennent de
+ * `MAIL_TOOLBAR_GROUPS` : ce composant ne connaît AUCUNE logique de courrier, il lit
+ * une capacité et appelle une action du contexte partagé.
  *
- * A button without its capability is greyed out, never hidden: the bar does not jump when the
- * selection changes. Whatever no longer fits in the width moves into the « … » menu.
+ * Un bouton sans capacité est grisé, jamais masqué : la barre ne saute pas quand la
+ * sélection change. Ce qui ne tient plus dans la largeur passe dans le menu « … ».
  */
-export function MailToolbar() {
+export function MailToolbar({ shown = true }: ReservedProps) {
   const t = useTranslations('mail')
   const [openMenu, setOpenMenu] = useState<MailActionName | null>(null)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -285,19 +309,24 @@ export function MailToolbar() {
   const hidden = useOverflowGroups(hostRef, probeRef)
 
   const hiddenSet = useMemo(() => new Set(hidden), [hidden])
-  // The lead group is rendered by the header (MailToolbarLead): the bar does not
-  // render it a second time, but the « … » menu still lists it first.
+  // Le groupe de tête est rendu par le header (MailToolbarLead) : la barre ne le
+  // rend pas une seconde fois, mais le menu « … » le liste toujours en premier.
   const inBar = MAIL_TOOLBAR_GROUPS.map((items, i) => ({ items, i })).filter(g => g.i !== LEAD_GROUP)
   const visible = inBar.filter(g => !hiddenSet.has(g.i))
   const overflowed = inBar.filter(g => hiddenSet.has(g.i))
 
   return (
-    // `shrink-0`: the bar keeps its natural width so the
-    // field sits flush against its last icon. The fold budget is therefore read from
-    // the row that contains it, no longer from itself (see `useOverflowGroups`).
-    <div ref={hostRef} data-mail-toolbar className="relative flex shrink-0 items-center">
-      {/* Offscreen probe: the width that ALL the groups would ask for, measured
-          on the real render. It is neither visible nor clickable. */}
+    // `shrink-0` depuis le lot H3c : la barre garde sa largeur naturelle pour que le
+    // champ vienne se coller à sa dernière icône. Le budget de repli est donc lu sur
+    // la rangée qui la contient, plus sur elle-même (voir `useOverflowGroups`).
+    <div
+      ref={hostRef}
+      data-mail-toolbar
+      {...reserved(shown)}
+      className={cn('relative flex shrink-0 items-center', !shown && 'invisible')}
+    >
+      {/* Sonde hors écran : la largeur que TOUS les groupes demanderaient, mesurée
+          sur le rendu réel. Elle ne se voit pas et ne se clique pas. */}
       <div
         ref={probeRef}
         aria-hidden
@@ -347,11 +376,11 @@ export function MailToolbar() {
             </button>
           </IconTooltip>
           {moreOpen && (
-            // Centered UNDER the button: anchored left it overflowed to the right, anchored
-            // right it overflowed to the left by 3 px at 390 px once the lead group moved
-            // up into the header. Centered, both its edges hold: the button is always
-            // more than half a menu width away from both edges, and the harness
-            // asserts it at 390 px ("entirely on screen").
+            // Centré SOUS le bouton : ancré à gauche il sortait à droite, ancré à
+            // droite il sortait à gauche de 3 px à 390 px une fois « Relever » monté
+            // dans le groupe de gauche (lot H3c). Centré, ses deux bords tiennent —
+            // le bouton est toujours à plus d'une demi-largeur de menu des deux bords,
+            // et le gate le vérifie à 390 px (« entirely on screen »).
             <div
               role="menu"
               data-mail-toolbar-more-menu

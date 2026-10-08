@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Measures, with REAL clicks, that a search result opens and is acted upon in
+ * Measures lot S4a with REAL clicks: a search result opens and is acted upon in
  * ITS OWN folder, not in the folder the list happens to display.
  *
  *  1. an "all folders" search returning results from at least TWO folders;
@@ -45,7 +45,7 @@ const ROW = `[${ORIGIN_ATTR}]`
 const MENU = '[data-mail-context-menu]'
 // The "Stop" label of the running stream, read from the shipped locale.
 const STOP_LABEL = JSON.parse(readFileSync(new URL('../locales/fr.json', import.meta.url), 'utf8')).mail.searchStop
-const QUERY = process.argv[2] ?? 'invoice'
+const QUERY = process.argv[2] ?? '3d-expert'
 
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split('\n')) {
   const m = line.match(/^([A-Z_]+)=(.*)$/)

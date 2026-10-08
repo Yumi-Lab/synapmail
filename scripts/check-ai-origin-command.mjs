@@ -31,7 +31,6 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SAMPLE_ORIGIN_HOST } from './bench-constants.mjs'
 
 // `lib/` imports its siblings without an extension (the bundler resolves them);
 // node needs to be told. Hook first, then load the module under test.
@@ -78,7 +77,7 @@ const build = (os, origin) => {
   if (BREAK === 'origin-dropped') return cmd.replaceAll(origin, 'https://elsewhere.test')
   if (BREAK === 'overwrites-existing') return cmd.replace(/\$\{?CUR/g, '${EMPTY')
   if (BREAK === 'app-left-running') {
-    // What the screen shipped before the 2026-09-19 review: the app is asked to
+    // What the screen shipped before the 2026-09-19 gate: the app is asked to
     // quit (it refuses) and only the lowercase server process is killed.
     if (os === 'mac') {
       return cmd
@@ -94,8 +93,8 @@ const build = (os, origin) => {
 
 // ── 1. the origin is carried exactly ────────────────────────────────────────
 const GOOD_ORIGINS = [
-  'https://mail.example.org',
-  'https://mail.example.com',
+  'https://mail.yumi-lab.com',
+  'https://srv1774179.hstgr.cloud',
   'http://localhost:3106',
   'http://127.0.0.1:3000',
 ]
@@ -123,7 +122,7 @@ const TRAPS = [
   'file:///etc/passwd',
   'ftp://evil.test',
   '',
-  SAMPLE_ORIGIN_HOST,
+  'mail.yumi-lab.com',
 ]
 for (const origin of TRAPS) {
   let refused = false
@@ -132,14 +131,14 @@ for (const origin of TRAPS) {
 }
 
 // ── 3. persistent, additive, and it restarts Ollama ─────────────────────────
-const ORIGIN = `https://${SAMPLE_ORIGIN_HOST}`
+const ORIGIN = 'https://mail.yumi-lab.com'
 const MAC = build('mac', ORIGIN)
 const LINUX = build('linux', ORIGIN)
 const WINDOWS = build('windows', ORIGIN)
 
 check(MAC.includes('LaunchAgents'), 'macOS: the setting survives a reboot (LaunchAgent)')
 check(/open -a Ollama/.test(MAC), 'macOS: Ollama is started again')
-// Measured on a real Mac (2026-09-19): `quit app` is REFUSED by Ollama and
+// Measured on a real Mac (2026-09-19 gate): `quit app` is REFUSED by Ollama and
 // `pkill -x ollama` only reaches the server, which the app restarts at once with
 // its old environment. Both process names, and no AppleScript.
 check(/pkill -x Ollama\b/.test(MAC), 'macOS: the Ollama APP is stopped (capital O)')

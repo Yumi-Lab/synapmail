@@ -23,12 +23,104 @@ Two ways in, both handled transparently by route handlers that call `authenticat
    curl -H "Authorization: Bearer syn_..." https://your-instance/api/accounts
    ```
 
-Only routes explicitly marked **🔑 Bearer** accept an API key — everything else requires the session cookie (some additionally require the `admin` role, marked **👑 Admin**). `middleware.ts` runs at the Edge and only checks that *some* credential (cookie or `Authorization` header) is present; the actual key lookup and hashing happens server-side in each route via `authenticate()`. A key stops working immediately on revoke (`DELETE /api/api-keys/[id]`, soft — sets `revoked_at`). Keys have no per-scope restriction beyond the fixed Bearer-eligible route list below — a key grants full read/write on every 🔑 route for that user's data.
+Only routes explicitly marked **🔑 Bearer** accept an API key — everything else requires the session cookie (some additionally require the `admin` role, marked **👑 Admin**). `middleware.ts` runs at the Edge and only checks that *some* credential (cookie or `Authorization` header) is present; the actual key lookup and hashing happens server-side in each route via `authenticate()`. A key stops working immediately on revoke (`DELETE /api/api-keys/[id]`, soft — sets `revoked_at`).
+
+### Scopes
+
+A key carries **scopes** — what its owner ticked in **Settings → Clés API**, at creation or afterwards. Every 🔑 route names the scope it requires, written `🔑 Bearer (scope)` in its heading. The check happens where the key is recognised (`lib/apiAuth.ts`), against the single table in `lib/apiScopes.ts`, so a route missing from that table accepts no key at all.
+
+A key that is valid but too narrow gets **`403`**, naming what it lacks — never a silent `401`:
+
+```json
+{ "error": "Missing API key scope: accounts:delete",
+  "missingScope": "accounts:delete",
+  "missingScopeLabel": "Supprimer une boîte" }
+```
+
+| Scope | Allows |
+|---|---|
+| `accounts:read` | list mailboxes |
+| `accounts:create` | add a mailbox, and test connectivity before saving |
+| `accounts:update` | change a mailbox's settings or credentials |
+| `accounts:delete` | remove a mailbox |
+| `messages:read` | list, read, search and thread messages |
+| `messages:write` | flag, move and delete messages |
+| `messages:send` | send messages |
+| `folders:read` / `folders:write` | list folders / create, rename, delete them |
+| `contacts:read` / `contacts:write` | list and search contacts / add, edit and delete them |
+| `signatures:read` / `signatures:write` | list signatures / create, edit and delete them |
+| `templates:read` / `templates:write` | list compose templates / create, edit and delete them |
+| `rules:read` / `rules:write` | list filter rules / create, edit and delete them |
+| `settings:read` / `settings:write` | read the user's settings / change them |
+| `subscriptions:read` / `subscriptions:write` | list newsletters / unsubscribe |
+| `subscriptions:purge` | move a newsletter's whole history to the trash — destructive, never granted by unsubscribing |
+| `ai:use` | the assistance actions |
+
+A **human session is never limited by a scope**: scopes apply to keys only. Keys created before scopes existed keep exactly the routes they could already call; writing to mailboxes is granted to nobody by default and has to be ticked.
+
+### Mailbox access
+
+A scope says WHICH capability; it never says on WHICH mailbox. Both are required: a key holding `messages:read` but not mailbox B reads nothing of B. The check sits next to the scope check, in `lib/apiKeyAccounts.ts`, reading the mailbox out of the request itself (`?account=`, `accountId` in a JSON body, or the id in `/api/accounts/<id>`) — so a route cannot forget it.
+
+Two ways to hold the right, never a third:
+
+- the mailbox was **connected by that key** (`POST /api/accounts`) — it belongs to it, and needs no ticking: an agent manages its own mailboxes without touching anyone else's;
+- the mailbox was **ticked for it** in **Settings → Clés API**, on the key's expanded card.
+
+Every other mailbox is closed. A refusal is a `403` naming the mailbox, the same way a missing scope names the scope:
+
+```json
+{ "error": "API key has no access to mailbox 9f2c…",
+  "missingAccount": "9f2c…",
+  "missingAccountReason": "not_granted" }
+```
+
+#### A shared mailbox, and what a key may do with it
+
+The list you can tick is the list of mailboxes you can **reach**, not the ones you **own**: a mailbox shared with you appears there, so someone whose mailboxes are all shared can still give a key something to work on. The screen says where each one comes from.
+
+Ticking says WHICH mailbox, never WHAT may be done with it. On a **shared** mailbox a key stays bounded by the share's own permissions (`canSend`, `canDelete`, `canOrganize`, `canManageRules`, `canManageSignatures`): if the share does not allow sending, the key cannot send from that mailbox — holding `messages:send` changes nothing. The refusal names the gesture, not just the mailbox:
+
+```json
+{ "error": "API key cannot send on mailbox 9f2c…: the share granting access to it does not allow it",
+  "missingAccount": "9f2c…",
+  "missingAccountReason": "share_permission",
+  "missingSharePermission": "send" }
+```
+
+Access is read **at call time**, never frozen when the box was ticked. So a share that is revoked, expires, or loses a permission closes the key immediately, with no need to touch the key itself — the mailbox stays ticked, and the access is simply no longer there.
+
+`GET /api/accounts` lists only the mailboxes the calling key can reach — reading the list is itself knowing what exists. A **human session is limited neither by a scope nor by this list**. Keys created before this existed keep every mailbox they already reached; mailboxes added afterwards are granted to nobody.
 
 **Bearer-eligible routes** (the complete list — nothing else accepts a key):
-`GET /api/accounts`, `GET /api/folders`, `GET /api/messages`, `GET /api/messages/[id]`, `PATCH /api/messages/[id]`, `DELETE /api/messages/[id]`, `PATCH /api/messages/bulk`, `DELETE /api/messages/bulk`, `GET /api/messages/search`, `GET /api/messages/thread`, `POST /api/messages/send`, `GET /api/contacts`, `GET /api/subscriptions`, `POST /api/subscriptions/unsubscribe`, `GET /api/subscriptions/unsubscribed`.
+`GET /api/accounts`, `POST /api/accounts`, `PATCH /api/accounts/[id]`, `DELETE /api/accounts/[id]`, `POST /api/accounts/test`, `GET /api/folders`, `POST /api/folders`, `PATCH /api/folders`, `DELETE /api/folders`, `POST /api/folders/actions`, `GET /api/messages`, `GET /api/messages/[id]`, `PATCH /api/messages/[id]`, `DELETE /api/messages/[id]`, `PATCH /api/messages/bulk`, `DELETE /api/messages/bulk`, `GET /api/messages/search`, `GET /api/messages/thread`, `POST /api/messages/send`, `GET /api/contacts`, `GET /api/subscriptions`, `POST /api/subscriptions/unsubscribe`, `GET /api/subscriptions/unsubscribed`, `POST /api/ai/action`.
 
-Every other route — account/rule/template/signature/PGP/settings CRUD, admin, AI, OAuth, SSE, tracking, the older `POST /api/unsubscribe`, and the account-mutation routes (`POST`/`PATCH`/`DELETE /api/accounts...`) — is **session-only**, even where the underlying resource is otherwise Bearer-eligible for reads.
+That list is not maintained by hand: `scripts/check-api-docs.mjs` reads the access mode each method's own body enforces and refuses any heading the code contradicts.
+
+Every other route — rule/template/signature/PGP/settings CRUD, admin, the rest of the AI routes, OAuth, SSE, tracking, the older `POST /api/unsubscribe`, and the account-sharing routes (`/api/accounts/[id]/shares...`) — is **session-only**, even where the underlying resource is otherwise Bearer-eligible for reads.
+
+## This document, served
+
+The reference you are reading is served by the instance itself, so an agent can find out what it may call **before** it has a key. All three routes below are public, and none carries anything but this repository's own documents.
+
+### `GET /api/docs` — public, no auth
+This file, as `text/markdown; charset=utf-8`.
+
+`404 { error: 'docs/API.md is missing from this deployment' }` if the image was built without it — a packaging fault, named as one rather than hidden behind a `500`.
+
+### `GET /llms.txt` — public, no auth
+The [llmstxt.org](https://llmstxt.org) entry point: what this instance is, the warning that mail content is untrusted input, and a link to the reference above. Links are built from the address the owner configured for this instance (`NEXT_PUBLIC_APP_URL`, read at run time), falling back to the forwarded headers when it is absent (`X-Forwarded-Host` is accepted only as a plain host name or address with an optional port — anything else yields relative links, since the same origin ends up in invitation mails) — never the container host, which nobody outside can reach.
+
+It is `text/plain; charset=utf-8`, as that convention expects.
+
+### `GET /openapi.json` — public, no auth
+The OpenAPI 3.1 contract of the **Bearer-eligible routes only** — the ones an agent can actually call. Session-only routes are deliberately absent: a contract that describes calls a key cannot make generates code that 401s.
+
+It is `application/json; charset=utf-8`. Its `servers` entry is set as it is served, to the same configured address `/llms.txt` uses, so an importer has an absolute base URL to resolve calls against; the file on disk keeps `/` for the case where nothing says what this instance is called. Each operation carries its parameters, its request body, its responses and the `bearerAuth` scheme; the non-standard envelopes flagged in this document are described as they really are, not normalised into `{ data }`.
+
+`scripts/check-api-docs.mjs` compares it to the code both ways: every Bearer route of the code is an operation, and no operation names a route that does not accept a key.
+
+The prose here stays the reference for the side effects and the error cases a contract cannot express.
 
 ## Errors
 
@@ -51,7 +143,7 @@ Two different kinds of `id` appear in these routes — don't confuse them:
 
 ## Accounts
 
-### `GET /api/accounts` 🔑 Bearer
+### `GET /api/accounts` 🔑 Bearer (`accounts:read`)
 List the caller's email accounts, each with its authoritative INBOX unread count.
 
 **Response** `{ data: EmailAccount[] }` where each account also carries `unreadCount: number` (from `mailbox_stats`, falling back to a live cache count — see CLAUDE.md's IMAP section).
@@ -69,7 +161,7 @@ interface EmailAccount {
 }
 ```
 
-### `POST /api/accounts` — session only
+### `POST /api/accounts` 🔑 Bearer (`accounts:create`)
 Add an IMAP/SMTP account.
 
 **Body**
@@ -84,13 +176,13 @@ Add an IMAP/SMTP account.
 ```
 `name`, `email`, `imapHost`, `smtpHost`, `username`, `password` are required (`400` otherwise). Setting `isDefault: true` clears the flag on every other account first. Returns `201` with the created row (no `password`/`passwordEncrypted` field).
 
-### `PATCH /api/accounts/[id]` — session only
+### `PATCH /api/accounts/[id]` 🔑 Bearer (`accounts:update`)
 Partial update — any subset of the `POST` body fields, plus `promptGuard: boolean` (see [Prompt-injection guard](#prompt-injection-guard)). Only fields present in the body are updated (`undefined` fields are left alone). A non-empty `password` re-encrypts and replaces `password_encrypted`. `404` if the account isn't owned by the caller. `400 Nothing to update` if the body has no recognized fields.
 
-### `DELETE /api/accounts/[id]` — session only
+### `DELETE /api/accounts/[id]` 🔑 Bearer (`accounts:delete`)
 `{ success: true }`, or `404` if not owned.
 
-### `POST /api/accounts/test` — session only
+### `POST /api/accounts/test` 🔑 Bearer (`accounts:create`)
 Connectivity check, used by the account wizard before saving. Doesn't touch the DB.
 
 **Body** `{ imapHost, imapPort?, imapSecure?, smtpHost, smtpPort?, smtpSecure?, username, password }`
@@ -106,6 +198,57 @@ Connectivity check, used by the account wizard before saving. Doesn't touch the 
 
 ---
 
+## Account sharing
+
+An owner lends one of their mailboxes to another user, action by action. The three routes below are **owner-only and session-only, always** — never reachable with a Bearer key, whatever permissions a share grants: a delegate can never read credentials, and can never hand the mailbox on to someone else.
+
+The five permissions are independent booleans: `canSend`, `canDelete`, `canOrganize` (read/star/move/snooze), `canManageRules`, `canManageSignatures`. There is no `canRead` — an active, unexpired share IS read access. Contacts and templates are never shared: neither belongs to a mailbox.
+
+### `GET /api/accounts/[id]/shares` — session only
+Every share of that mailbox, newest first, including the revoked and expired ones — it is the owner's history, not just the live list.
+
+**Response** `{ data: Share[] }`
+```ts
+interface Share {
+  id: string
+  inviteeEmail: string; inviteeName: string
+  status: 'pending' | 'active' | 'revoked' | 'expired'
+  canSend: boolean; canDelete: boolean; canOrganize: boolean
+  canManageRules: boolean; canManageSignatures: boolean
+  expiresAt: string | null; acceptedAt: string | null
+  revokedAt: string | null; createdAt: string
+}
+```
+`404` if the mailbox is not yours — a mailbox you do not own reads as absent, not as forbidden.
+
+### `POST /api/accounts/[id]/shares` — session only
+Invites someone by email address.
+
+**Body** `{ email: string; canSend?, canDelete?, canOrganize?, canManageRules?, canManageSignatures?: boolean; expiresAt?: string }` — every permission defaults to `false`.
+
+If that address already has an account, the share is **active at once** and a notice goes out. If not, a `pending` user and a `pending` share are created together, and the invitation carries a single-use token by mail; only its hash is stored. Either way the mail leaves through **the shared mailbox's own SMTP** — this instance has no system-wide sender.
+
+Re-inviting someone who already holds a pending or active share updates that share's permissions in place rather than making a second one. `400` on a missing address, on your own address, or on an unreadable `expiresAt`; `404` if the mailbox is not yours; `409` when several accounts differ from that address only by case (rows older than address normalisation) — the invitee would be a guess, so nothing is written, the same rule login applies.
+
+### `DELETE /api/accounts/[id]/shares/[shareId]` — session only
+Revokes a share. Soft: the row stays, `revoked_at` is set, and access stops on the next request. → `{ success: true }` ⚠ non-standard envelope.
+
+`404` if the share is not yours to revoke.
+
+### `GET /api/invites/[token]` — public, no auth
+Previews an invitation, so the page can name what is being offered before asking for a password. Public by necessity: the invited person has no account yet.
+
+**Response** `{ data: { accountEmail, ownerName, inviteeEmail, permissions: { canSend, canDelete, canOrganize, canManageRules, canManageSignatures } } }`. `404` on an unknown, already-used or expired token — one answer for all three, so the route never confirms that a token existed.
+
+### `POST /api/invites/[token]` — public, no auth
+Accepts the invitation and sets the new user's real name and password.
+
+**Body** `{ name: string; password: string }` (8 characters minimum) → `{ data: { success: true } }`.
+
+Flips the user and the share to `active` and clears the token: single use. Until that happens, login is refused for that user — a pending account is not a way in. `400` on a missing name or a short password, `404` on a token that no longer opens anything.
+
+---
+
 ## OAuth (Microsoft)
 
 ### `GET /api/oauth/microsoft` — session only
@@ -118,7 +261,7 @@ OAuth2 callback. Validates `state` against the cookie, exchanges `code` for toke
 
 ## Folders
 
-### `GET /api/folders?account=<id>` 🔑 Bearer
+### `GET /api/folders?account=<id>` 🔑 Bearer (`folders:read`)
 Lists the IMAP folder tree for one account (defaults to the caller's default account if `account` is omitted). Special-use folders (`inbox`/`sent`/`drafts`/`spam`/`trash`) are detected via RFC 6154 flags first, then a localized (FR/EN) name/path regex fallback, and sorted first in that order; Outlook system folders (Sync Issues, Conflicts, Outbox, Calendar, …) are filtered out entirely.
 
 **Response** `{ data: FolderInfo[] }`
@@ -130,6 +273,36 @@ interface FolderInfo {
 }
 ```
 Returns `{ data: [] }` (not an error) if the account has no folders synced yet or doesn't exist.
+
+### `POST /api/folders` 🔑 Bearer (`folders:write`)
+Creates a folder. With `parent`, it is created underneath that folder, using the server's own hierarchy delimiter — never a slash written by the caller.
+
+**Body** `{ accountId?: string; name: string; parent?: string }` → `{ data: { path, name } }`.
+
+Requires the `organize` permission on the mailbox. Refusals share one shape with the two routes below: `{ error: '<code>' }`, where the code is one of `unauthorized` (401), `notFound` (404), `forbidden` (403), `badName` (400 — empty, or carrying the delimiter), `exists` (409).
+
+### `PATCH /api/folders` 🔑 Bearer (`folders:write`)
+Renames a folder in place: it keeps its parent, only the last segment changes.
+
+**Body** `{ accountId?: string; path: string; name: string }` → `{ data: { path, name } }`.
+
+Requires `organize`. A special-use folder (inbox, sent, drafts, spam, trash) is never renamable — the whole client assumes its role. IMAP renames the entire subtree, so `messages_cache` and `mailbox_stats` are rewritten along the same prefix; without that, descendants keep rows under the old path and their unread counts read false.
+
+### `DELETE /api/folders?account=<id>&path=<path>` 🔑 Bearer (`folders:write`)
+Deletes a folder, and its cached rows with it. → `{ data: { path } }`.
+
+Requires `delete`. Never a special-use folder, and never a folder that has children — a parent takes its subtree with it.
+
+### `POST /api/folders/actions` 🔑 Bearer (`folders:write`)
+The actions that touch a folder's CONTENT rather than its place in the tree.
+
+**Body** `{ accountId?: string; path: string; action: 'markRead' | 'empty' | 'count' }`
+
+- `markRead` (needs `organize`) → `{ data: { path, unreadCount: 0 } }`
+- `empty` (needs `delete`) → `{ data: { path, removed: number } }` — only ever the trash or the junk folder, whatever the caller asks: emptying is those folders' purpose, and no other's.
+- `count` (no permission beyond read) → `{ data: { count: number } }`, meant for the confirmation that names how many messages are about to go.
+
+An unknown action is `unknownAction` (400). Same refusal shape as above.
 
 ---
 
@@ -191,7 +364,7 @@ interface HiddenContentReport {
 
 > The four Bearer-readable routes below (`GET /api/messages`, `/api/messages/[id]`, `/api/messages/search`, `/api/messages/thread`) prefix their response with an `aiSafety` key when the caller uses an API key and the mailbox has the guard on — see [Prompt-injection guard](#prompt-injection-guard).
 
-### `GET /api/messages?account=&folder=&page=&perPage=&filter=` 🔑 Bearer
+### `GET /api/messages?account=&folder=&page=&perPage=&filter=` 🔑 Bearer (`messages:read`)
 Paginated list for one folder. Live IMAP fetch (with `messages_cache` reconciliation on page 1 — see CLAUDE.md's IMAP section), not a DB-only read.
 
 **Query params**: `account` (id, optional — defaults to the default account), `folder` (default `INBOX`), `page` (default `1`), `perPage` (default `30`), `filter` (`all` | `unread` | `starred`, default `all`).
@@ -224,20 +397,20 @@ interface Message {
 }
 ```
 
-### `GET /api/messages/[id]?account=&folder=` 🔑 Bearer
+### `GET /api/messages/[id]?account=&folder=` 🔑 Bearer (`messages:read`)
 Full message (headers + body + attachments metadata), by IMAP UID. `account` is required (`400` if missing). `404` if the account isn't owned, or the message doesn't exist in that folder.
 
 **Response** ⚠ non-standard envelope — the `Message` object directly (spread with `accountId`), not `{ data }`.
 
-### `PATCH /api/messages/[id]?account=&folder=` 🔑 Bearer
+### `PATCH /api/messages/[id]?account=&folder=` 🔑 Bearer (`messages:write`)
 Mark read/unread and/or starred. `account` required.
 
 **Body** `{ isRead?: boolean; isStarred?: boolean }` — either or both. `{ success: true }`.
 
-### `DELETE /api/messages/[id]?account=&folder=` 🔑 Bearer
+### `DELETE /api/messages/[id]?account=&folder=` 🔑 Bearer (`messages:write`)
 Deletes (IMAP `\Deleted` + expunge). `account` required. `{ success: true }`.
 
-### `PATCH /api/messages/bulk` 🔑 Bearer
+### `PATCH /api/messages/bulk` 🔑 Bearer (`messages:write`)
 Mark read/unread, or move, a set of messages in one call.
 
 **Body**
@@ -250,7 +423,7 @@ Mark read/unread, or move, a set of messages in one call.
 ```
 `400` if `uids` is empty or `action`/`accountId`/`folder` missing, or `destination` missing for `move`. `{ success: true }`.
 
-### `DELETE /api/messages/bulk` 🔑 Bearer
+### `DELETE /api/messages/bulk` 🔑 Bearer (`messages:write`)
 **Body** `{ uids: string[]; accountId: string; folder: string }` → `{ success: true }`.
 
 ### `GET /api/messages/[id]/attachment/[partId]?account=&folder=&inline=` — session only
@@ -271,17 +444,46 @@ Hides a message from `GET /api/messages` and the focus list until `until`.
 ### `DELETE /api/messages/[id]/snooze?account=&folder=` — session only
 Un-snoozes (moves the message back to the visible list immediately). `{ success: true }`.
 
-### `GET /api/messages/search?q=&folder=&account=` 🔑 Bearer
-Full-text IMAP search (subject/from/body, server-side `SEARCH`) in one folder. `folder` defaults to `INBOX`. Requires `q.length >= 2`, else returns `{ messages: [] }` immediately (not an error).
+### `GET /api/messages/search?q=&folder=&account=&scope=&stream=` 🔑 Bearer (`messages:read`)
+Server-side IMAP `SEARCH` over `from`, `to`, `cc` and `subject` — **not** the body (measured on IONOS: `BODY` and `TEXT` return 0 results, and adding either to the `OR` collapses the whole `OR` to 0). `q` is split into terms, all required, order-insensitive; `"quoted words"` stay one exact substring. Requires `q.length >= 2` with at least one term of that length, else returns `{ messages: [] }` immediately (not an error). Capped at 200 results **per folder searched**; `total` counts the real matches, so `total > messages.length` means the cap was hit.
 
-**Response** ⚠ non-standard envelope — `{ messages: Message[] }` (`accountId` added to each), or `{ messages: [], error }` on IMAP failure.
+**`scope`** — what gets searched. Defaults to `folder`; an unknown value falls back to it.
 
-### `GET /api/messages/thread?subject=&folder=&account=` 🔑 Bearer
+| `scope` | Searches | `stream=1` |
+|---|---|---|
+| `folder` (default) | the one `folder` (defaults to `INBOX`) of the one account | ignored — a single folder has nothing to stagger |
+| `all` | **every folder** of the one account, most-useful first (inbox, sent, then freshest) | optional |
+| `accounts` | **every folder of every accessible mailbox** (owned + shared), active mailbox first, two passes per mailbox (inbox+sent of each, then the rest), at most 3 mailboxes swept at once | optional |
+
+`account` names the mailbox to search under `folder`/`all`; under `accounts` it only decides which mailbox is swept **first** — the set swept is always the caller's accessible mailboxes.
+
+**`stream=1`** (scopes `all` and `accounts`) — the response becomes `application/x-ndjson`: one JSON object per folder covered, as it completes, plus a final `{ unreachable: string[] }` line if a mailbox could not be opened. Each line carries `messages`, `total`, `folder`, `searched`/`folders` (and, under `accounts`, `accountId`, `accountEmail`, `accounts`). Use it for a progressive UI; the caller aggregates and de-duplicates by `accountId`+`folder`+`uid`. Under `accounts`, each line carries the `aiSafety` wrapper **of its own mailbox** — a chunk from a mailbox with the guard off never inherits it from a guarded mailbox swept earlier; the aggregated (non-stream) response carries it as soon as any swept mailbox has the guard on.
+
+**Response** ⚠ non-standard envelope — `{ messages: Message[], total, fields }` (`accountId` added to each message), or `{ messages: [], total: 0, fields, error }` on IMAP failure (HTTP 500).
+
+Under `scope=accounts` **without** `stream=1` the scope is honoured all the same — the same multi-mailbox sweep runs and the result is aggregated into that one JSON — and the response additionally reports its **coverage**, because "0 results" is meaningless without it:
+
+```ts
+{
+  searched: number          // folders covered
+  folders: number           // folders known, across the mailboxes that opened
+  accounts: number          // accessible mailboxes to sweep
+  sweptAccounts: number     // mailboxes that reported at least one folder
+  unreachable: string[]     // mailbox addresses that could not be opened
+  complete: boolean         // true only when nothing stopped the sweep early
+  stoppedBecause?: ('budget' | 'unreachable')[]   // present only when `complete` is false
+}
+```
+`budget` = the sweep hit its 45 s ceiling (a single JSON shows nothing before it ends, so it cannot wait indefinitely) and returned what it had; `unreachable` = at least one mailbox could not be opened and its share was not searched. Both may appear together. A truncated sweep is never silent: it is a `200` that says so, never an empty `200` that pretends the scope was searched.
+
+⚠ **This call is slow, and a machine caller MUST read `complete`.** Measured on staging (2026-09-22, 8 mailboxes, 185 folders): **46,4 s** for one HTTP request, ending on `complete: false` with `stoppedBecause: ["budget"]` — folders were left unseen. The same address searched in the single mailbox that holds it answers in 4,0 s. So: `complete: false` means **"not found *yet*, in the part I covered"**, never "does not exist" — treating it as "nothing found" is the exact mistake this coverage block exists to prevent. Narrow the scope (name the mailbox) or use `stream=1`, which stays the fast path: it yields each folder as it completes instead of making the caller wait for the whole sweep.
+
+### `GET /api/messages/thread?subject=&folder=&account=` 🔑 Bearer (`messages:read`)
 Groups messages by normalized subject (strips `Re:`/`Fwd:`/`Rép:`/`TR:`/`AW:`/`SV:`/`VS:` prefixes recursively, case-insensitively), sorted oldest→newest. Used to render a conversation thread. Requires `subject`, ≥2 chars after normalization.
 
 **Response** ⚠ non-standard envelope — `{ messages: Message[] }`.
 
-### `POST /api/messages/send` 🔑 Bearer
+### `POST /api/messages/send` 🔑 Bearer (`messages:send`)
 Send (or reply/forward) immediately.
 
 **Body**
@@ -292,9 +494,53 @@ Send (or reply/forward) immediately.
   html?: string; text?: string
   inReplyTo?: string; references?: string
   requestReadReceipt?: boolean  // injects a 1×1 tracking pixel into `html` + Disposition-Notification-To
+  attachments?: { filename: string; content: string; contentType?: string }[]  // `content` is base64
 }
 ```
-`accountId`, `to`, `subject` required. On send: appends a copy to the account's IMAP Sent folder (fire-and-forget), extracts `to`+`cc` as contacts (fire-and-forget, `lib/contacts.ts`), and if `requestReadReceipt` is set, records a `sent_tracking` row keyed by a fresh UUID token embedded in the pixel URL (`GET /api/track/[token]`). **Response** `{ success: true }`. Note: forwarded-attachment resolution (by IMAP descriptor) is handled by the legacy `/api/send` route, not this one — see [Legacy routes](#legacy--internal-routes).
+`accountId`, `to`, `subject` required.
+
+**Attachments.** `content` is the file's bytes in base64 (line breaks at 76 columns are accepted). They join the
+same array that carries forwarded `.eml` messages, so both kinds share one ceiling. The boundary is
+`lib/attachments.ts`; every refusal names its ceiling in the response body.
+
+| Rule | Value | Refusal |
+|---|---|---|
+| Attachments per message | 20 | `400 { error: "attachment_too_many", limit: 20 }` |
+| Bytes per attachment (decoded) | the ceiling in force (below) | `413 { error: "attachment_too_large", limit, filename, limitSource, announcedSize }` |
+| Bytes per message (decoded, forwarded messages included) | the ceiling in force (below) | `413 { error: "attachment_message_too_large", limit, limitSource, announcedSize }` |
+| Forwarded messages (`forwardedMessages`), on their IMAP-announced size, before any is fetched | the same ceiling | `413 { error: "forward_too_large", limit, limitSource, announcedSize }` |
+| `content` is valid base64 | — | `400 { error: "attachment_bad_base64", filename }` |
+| Shape of the list or of one entry | — | `400 { error: "attachment_invalid" }` |
+
+**The ceiling comes from the SMTP server, not from a constant.** When the account's server announced a size in
+its EHLO reply (`250 SIZE <bytes>`, read by `lib/accountProbe.ts` at account creation and at every connection
+test, stored in `email_accounts.smtp_max_size`), that number is the ceiling: `lib/smtpSize.ts` converts the
+announced on-the-wire budget into decoded bytes, deducting base64's cost (4 characters per 3 bytes, plus CRLF
+every 76 characters) and a 1 MiB reserve for headers and MIME boundaries. Example measured on `smtp.ionos.fr`:
+`250 SIZE 141557760` (135 MB announced) yields a 102679788-byte decoded ceiling. When the server announced
+nothing, the prudent fallback applies instead: 17825792 bytes (17 MiB), calibrated backwards from the common
+25 MB limit — base64 costs a third more on the wire, so 17 MiB decoded weighs ~23.8 MB sent. Every size
+refusal carries `limitSource` (`"server"` or `"fallback"`) and `announcedSize` (the raw announced number, or
+`null`), so a caller can tell "this server really refuses it" from "we never heard its limit".
+
+**When the server itself refuses on size.** The ceiling above is what the server announced *last time we
+heard it*; a server that lowers its limit would otherwise refuse every send forever. So a size refusal from
+the server (SMTP `523`/`552`, or nodemailer declining before it writes) — and only a size refusal — makes
+the account's SMTP server re-announce its size, which is stored back on the account. The response is
+`413 { error: "server_refused_size", reason, announcedSize, refreshed }`: `reason` is the server's own
+sentence, never a reformulation; `announcedSize` is what it announces now (`null` when nothing usable was
+heard — a network incident never erases a valid ceiling); `refreshed` says whether that differs from what
+we held. The message is **not** re-sent automatically: it has not shrunk, and the server may have refused
+after accepting the envelope, so a retry could deliver twice. The *next* send uses the corrected ceiling.
+
+**Size warning — never a refusal.** The sending server's limit is not the recipient's: IONOS accepts 135 MB
+while Gmail refuses past 25 MB and Outlook around 20. Past 20971520 decoded bytes the message is still sent,
+and the response carries `{ success: true, warning: "recipient_may_refuse_size", bytes }` — a 100 MB message
+would leave and come back as a bounce.
+
+`filename` is sanitised, never used as a path: separators, control characters and `..` are stripped and the
+name is cut to 100 characters (`attachment` if nothing usable is left). `contentType` falls back to
+`application/octet-stream` when absent or not a valid MIME type. On send: appends a copy to the account's IMAP Sent folder (fire-and-forget), extracts `to`+`cc` as contacts (fire-and-forget, `lib/contacts.ts`), and if `requestReadReceipt` is set, records a `sent_tracking` row keyed by a fresh UUID token embedded in the pixel URL (`GET /api/track/[token]`). **Response** `{ success: true }`, plus `warning` + `bytes` past the warning threshold. Note: forwarded-attachment resolution (by IMAP descriptor) is handled by the legacy `/api/send` route, not this one — see [Legacy routes](#legacy--internal-routes).
 
 ---
 
@@ -377,7 +623,7 @@ Cancels — only while still `pending` (a race with the scheduler picking it up 
 
 Auto-extracted from sent/received mail (`lib/contacts.ts`), plus manually-added entries.
 
-### `GET /api/contacts?q=&limit=&all=&sort=&account=` 🔑 Bearer
+### `GET /api/contacts?q=&limit=&all=&sort=&account=` 🔑 Bearer (`contacts:read`)
 **Query params**: `q` (fuzzy name/email match, default empty = all), `limit` (default 8, capped at 50), `all` (`true` bypasses the `frequency >= 2 OR is_manual` filter — used by the Settings page's full list), `sort` (`score` default | `name` | `frequency` | `recent`), `account` (id — restricts to contacts seen via `messages_cache.from_address` on that account).
 
 `score` sort = `frequency*0.5 + recency-decay*35 + (bidirectional bonus 15)`, starred always first.
@@ -391,23 +637,23 @@ interface Contact {
 }
 ```
 
-### `POST /api/contacts` — session only
+### `POST /api/contacts` 🔑 Bearer (`contacts:write`)
 Manually add/upsert a contact. **Body** `{ email: string; name?: string; notes?: string }`. `email` required and validated by regex (`400 email invalide` otherwise). On conflict (existing email for this user), merges: keeps the existing name if `name` is blank, sets `isManual: true`. **Response** `201 { data: { id: string } }`.
 
-### `PATCH /api/contacts/[id]` — session only
+### `PATCH /api/contacts/[id]` 🔑 Bearer (`contacts:write`)
 **Body** `{ name?: string; notes?: string; isStarred?: boolean }` — any subset. `400` if `name` is provided but empty. `{ success: true }`.
 
-### `DELETE /api/contacts/[id]` — session only
+### `DELETE /api/contacts/[id]` 🔑 Bearer (`contacts:write`)
 `{ success: true }`.
 
-### `DELETE /api/contacts?oneshots=true` — session only
+### `DELETE /api/contacts?oneshots=true` 🔑 Bearer (`contacts:write`)
 Bulk-cleans low-signal contacts: `frequency < 2 AND is_manual = false AND is_starred = false`. `400` without the `oneshots=true` param (safety — prevents an accidental bare `DELETE /api/contacts`). **Response** `{ data: { deleted: number } }`.
 
 ---
 
 ## Rules (email filters)
 
-### `GET /api/rules?account=` — session only
+### `GET /api/rules?account=` 🔑 Bearer (`rules:read`)
 `{ data: EmailRule[] }`, optionally filtered to one account client-side.
 
 ```ts
@@ -425,16 +671,16 @@ interface EmailRule {
 }
 ```
 
-### `POST /api/rules` — session only
+### `POST /api/rules` 🔑 Bearer (`rules:write`)
 **Body** `{ accountId: string; name: string; conditions: RuleCondition[]; actions: RuleAction[]; enabled?: boolean; conditionLogic?: 'all'|'any'; stopProcessing?: boolean }`. Requires a non-empty `name`, at least one condition, at least one action, and an owned `accountId` (`400`/`404` otherwise). New rule gets `priority = max(existing) + 1` for that account. `201 { data: EmailRule }`.
 
-### `GET /api/rules/[id]` — session only
+### `GET /api/rules/[id]` 🔑 Bearer (`rules:read`)
 `{ data: EmailRule }` or `404`.
 
-### `PATCH /api/rules/[id]` — session only
+### `PATCH /api/rules/[id]` 🔑 Bearer (`rules:write`)
 **Body**: any subset of `EmailRule` fields. `{ data: EmailRule }` or `404`.
 
-### `DELETE /api/rules/[id]` — session only
+### `DELETE /api/rules/[id]` 🔑 Bearer (`rules:write`)
 `{ data: { deleted: true } }` or `404`.
 
 ### `POST /api/rules/[id]/test` — session only
@@ -467,32 +713,32 @@ Downloads the equivalent Sieve script (`.sieve` file download), optionally scope
 
 ## Templates
 
-### `GET /api/templates` — session only
+### `GET /api/templates` 🔑 Bearer (`templates:read`)
 `{ data: ComposeTemplate[] }` where `ComposeTemplate = { id, userId, name, subject, contentHtml, createdAt }`.
 
-### `POST /api/templates` — session only
+### `POST /api/templates` 🔑 Bearer (`templates:write`)
 **Body** `{ name: string; subject?: string; contentHtml?: string }`. `400` if `name` blank. `201 { data: ComposeTemplate }`.
 
-### `PATCH /api/templates/[id]` — session only
+### `PATCH /api/templates/[id]` 🔑 Bearer (`templates:write`)
 **Body**: any subset of `{ name, subject, contentHtml }` (unset fields keep their current value via `COALESCE`). `{ data: ComposeTemplate }` or `404`.
 
-### `DELETE /api/templates/[id]` — session only
+### `DELETE /api/templates/[id]` 🔑 Bearer (`templates:write`)
 `{ success: true }`.
 
 ---
 
 ## Signatures
 
-### `GET /api/signatures` — session only
+### `GET /api/signatures` 🔑 Bearer (`signatures:read`)
 `{ data: Signature[] }` where `Signature = { id, userId, accountId: string | null, name, contentHtml, isDefault }` (`accountId: null` = usable with any account).
 
-### `POST /api/signatures` — session only
+### `POST /api/signatures` 🔑 Bearer (`signatures:write`)
 **Body** `{ name: string; contentHtml?: string; isDefault?: boolean; accountId?: string | null }`. `400` if `name` missing. Setting `isDefault: true` clears the flag on the caller's other signatures first. `201 { data: Signature }`.
 
-### `PATCH /api/signatures/[id]` — session only
+### `PATCH /api/signatures/[id]` 🔑 Bearer (`signatures:write`)
 **Body**: any subset of the `POST` fields (`COALESCE`-merged). `{ data: Signature }` or `404`.
 
-### `DELETE /api/signatures/[id]` — session only
+### `DELETE /api/signatures/[id]` 🔑 Bearer (`signatures:write`)
 `{ success: true }`.
 
 ---
@@ -525,16 +771,27 @@ Import a contact's public key. **Body** `{ email: string; armoredKey: string; fi
 Manage the Bearer keys documented in [Authentication](#authentication) above. This management surface is itself session-only — you can't mint or revoke keys using a key.
 
 ### `GET /api/api-keys` — session only
-`{ data: ApiKey[] }` (active keys only — revoked ones are excluded), where `ApiKey = { id, name, keyPrefix, lastUsedAt: string | null, createdAt, requestCount24h: number }`. Never includes the raw key or its hash. `requestCount24h` is a live `COUNT` over `api_key_requests` in the last 24h (see the logs endpoint below).
+`{ data: ApiKey[] }` (active keys only — revoked ones are excluded), where `ApiKey = { id, name, keyPrefix, lastUsedAt: string | null, createdAt, scopes: string[], accountIds: string[], ownedAccountIds: string[], requestCount24h: number, revealable: boolean, allowedIps: string[] }`. `accountIds` is what was ticked for the key and `ownedAccountIds` the mailboxes it connected itself — see [Mailbox access](#mailbox-access). `revealable` says whether the key can be shown again (see the reveal endpoint below); it is `false` for keys created before that feature, whose cleartext exists nowhere. `scopes` is what the key may do — see [Scopes](#scopes). Never includes the raw key or its hash. `requestCount24h` is a live `COUNT` over `api_key_requests` in the last 24h (see the logs endpoint below).
 
 ### `POST /api/api-keys` — session only
-**Body** `{ name: string }`, required. Generates `syn_<48 hex chars>`, stores only its SHA-256 hash + 12-char prefix. **Response** `201 { data: ApiKey & { key: string } }` — `key` is the **only time** the raw value is ever returned; it is not retrievable again.
+**Body** `{ name: string, scopes: string[], accountIds?: string[], allowedIps?: string[] }`; name and scopes are required. `accountIds` ticks the mailboxes the key may reach (ids not owned by the caller are dropped); omitted or empty, the key reaches only the mailboxes it connects itself. `scopes` must hold at least one scope from the [table above](#scopes) — unknown entries are dropped, and an empty result is `400`: a key with no scope could do nothing. Generates `syn_<48 hex chars>`, stores its SHA-256 hash (what authenticates), its 12-char prefix, and the key itself **encrypted** with the instance master key (`ENCRYPTION_KEY`, same mechanism as IMAP passwords) so it can be shown again — see the reveal endpoint below. **Response** `201 { data: ApiKey & { key: string } }`.
+
+### `PATCH /api/api-keys/[id]` — session only
+Re-tick what an existing key may do, without reissuing it. **Body** `{ scopes: string[], accountIds?: string[], allowedIps?: string[] }`; scopes follow the same rules as `POST` (at least one known scope, `400` otherwise). Omitting `accountIds` leaves the mailbox list untouched; sending one REPLACES it, so an empty array removes every ticked mailbox. **Response** `{ data: { id, scopes, accountIds, allowedIps } }`, or `404` if the key isn't the caller's or is already revoked. The change takes effect on the key's next request.
+
+`allowedIps` restricts where a key may be used from: exact addresses (`198.51.100.4`) or CIDR ranges (`198.51.100.0/24`), IPv4 only. Empty — the default, and the state of every key created before this — means no restriction at all. Non-empty, a request from any other address is refused with `403 { error, deniedIp }` naming the rejected address, and the refusal is written to the key's log with reason `ip`. The check runs in `authorize()` **before** the scope check, so a key calling from a forbidden address learns nothing about what else it is missing; a human session is never subject to it. An unreadable entry is refused with `400 { error }` naming it — never dropped, since dropping could empty the list and lift the restriction altogether. **Caveat, measured not assumed:** the address compared is the one the app can see — the **last** hop of `X-Forwarded-For` (the one appended by the reverse proxy in front of the app; earlier hops arrive in the caller's own request and are ignored), then `X-Real-IP`. It is only trustworthy if the reverse proxy appends its hop (`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`) and is the sole route to the app. Without that, this is an operational guardrail ("this key should only be used from that server"), not a security barrier.
 
 ### `DELETE /api/api-keys/[id]` — session only
 Soft-revoke (`revoked_at = NOW()`) — the key stops authenticating immediately. `{ success: true }` (idempotent — succeeds even if the id doesn't belong to the caller or doesn't exist, since the `UPDATE` predicate just matches zero rows).
 
+### `POST /api/api-keys/[id]/reveal` — session only
+Show a key's cleartext again. Session only by design — a key can never read itself, nor any other. **Body** `{ password: string }`: the account password is re-entered, as for any sensitive operation. The cleartext comes from the encrypted column, never from the hash (`key_hash` stays the only thing consulted to authenticate). Every attempt is written to the key's own log as a `REVEAL` row (when, from which IP, and the status): a wrong password is a `403` row with reason `password`, and a success is written only *after* decryption returned, so the log never claims a reveal that did not happen. Wrong passwords are counted per user, in process memory: after 5 within 15 minutes the route answers `429` with `Retry-After` (also logged), even to the right password, until the window has passed; a correct password resets the count. **Response** `{ data: { key: string } }`; `400` without a password, `403` on a wrong one, `404` if the key isn't the caller's or is revoked, `409` for a key created before this feature — its cleartext exists nowhere and is not recoverable, `429` while locked out.
+
+### `GET /api/api-keys/[id]/ips` — session only
+Where a key has been used from, aggregated over the same `api_key_requests` rows the log endpoint returns — nothing extra is collected. **Response** `{ data: ApiKeyIp[] }`, most recently seen first, where `ApiKeyIp = { ipAddress, firstSeen, lastSeen, callCount: number, isNew: boolean }`. `isNew` is true when the address was seen for the *first* time within the last 7 days: that is the signal that catches a stolen key, not the list itself. `404` if the key isn't the caller's. The address is whatever the app can see (the last hop of `X-Forwarded-For`, then `X-Real-IP`) — an application-level header, so it is only trustworthy if the reverse proxy is the only route to the app.
+
 ### `GET /api/api-keys/[id]/logs?limit=` — session only
-Per-key request log — every successful Bearer authentication against this key (not session-cookie requests) is logged fire-and-forget by `authenticate()` (`lib/apiAuth.ts`): method, path, IP (`X-Forwarded-For`/`X-Real-IP`), timestamp. **Does not log the response status or body** — only that a request came in and was authenticated. `limit` defaults to 50, capped at 200. `404` if the key id isn't owned by the caller. Rows older than 30 days are purged automatically every 6h (`lib/scheduler.ts` → `processApiKeyLogCleanup`) — this is an audit trail, not permanent storage.
+Per-key request log — every successful Bearer authentication against this key (not session-cookie requests) is logged fire-and-forget by `authenticate()` (`lib/apiAuth.ts`): method, path, IP (last hop of `X-Forwarded-For`, then `X-Real-IP`), timestamp. **Does not log the response status or body** — only that a request came in and was authenticated. `limit` defaults to 50, capped at 200. `404` if the key id isn't owned by the caller. Rows older than 30 days are purged automatically every 6h (`lib/scheduler.ts` → `processApiKeyLogCleanup`) — this is an audit trail, not permanent storage.
 
 **Response** `{ data: ApiKeyRequestLog[] }`, newest first:
 ```ts
@@ -586,7 +843,7 @@ The same "à traiter" heuristic ranking as the dashboard's `focus` widget (`lib/
 
 ## Settings
 
-### `GET /api/settings` — session only
+### `GET /api/settings` 🔑 Bearer (`settings:read`)
 Returns the caller's row from `user_settings`, or hard-coded defaults if none exists yet (first login).
 
 **Response** `{ data: UserSettings }`
@@ -602,7 +859,7 @@ interface UserSettings {
 ```
 Defaults: `theme: 'system', language: 'fr', messages_per_page: 30, thread_view: true, reading_pane: true, notifications: true, undo_send_delay: 10, start_view: 'inbox', active_account_id: null, sidebar_collapsed: false, mail_density: 'comfortable', list_width: 320, dashboard_account_id: null`.
 
-### `PATCH /api/settings` — session only
+### `PATCH /api/settings` 🔑 Bearer (`settings:write`)
 **Body**: any subset of the fields above (snake_case keys, matching the DB columns — not camelCase). Unrecognized keys are silently ignored; `400 No valid fields` if the body has none of the allowed keys. UPSERTs, then returns the full row.
 
 **Response** `{ data: UserSettings }` (full, post-update).
@@ -668,7 +925,7 @@ Probes common local network locations (`localhost`, `host.docker.internal`, `oll
 
 **Response** `{ data: { found: boolean; url: string | null; models: string[] } }`.
 
-### `POST /api/ai/action` — session only
+### `POST /api/ai/action` 🔑 Bearer (`ai:use`)
 Runs one AI transformation against arbitrary text, using the caller's configured provider. `400 AI not configured` if `ai_settings` has no row for the user yet.
 
 **Body**
@@ -710,9 +967,9 @@ Batch lookup of tracking state by subject (not message id — works around Outlo
 
 ## Subscriptions
 
-Three routes so an agent can clean a mailbox in three calls: **list** what it is subscribed to, **unsubscribe** from the chosen lists, then **file the messages away** with the existing `PATCH`/`DELETE /api/messages/bulk` — there is no cleaning route here. A fourth, `GET /api/subscriptions/unsubscribed`, is the history, and it outlives the cleaning. All accept a Bearer key or a session. The older `POST /api/unsubscribe` (below) stays: the reading pane's banner uses it.
+Routes so an agent can clean a mailbox: **list** what it is subscribed to, **unsubscribe** from the chosen lists, then file the messages away — either the ones the list named, with the existing `PATCH`/`DELETE /api/messages/bulk`, or a list's **whole history** with the two routes at the end of this section. `GET /api/subscriptions/unsubscribed` is the history of departures, and it outlives the cleaning. All accept a Bearer key or a session. The older `POST /api/unsubscribe` (below) stays: the reading pane's banner uses it.
 
-### `GET /api/subscriptions?account=<id>[&folder=INBOX]` — Bearer or session
+### `GET /api/subscriptions?account=<id>[&folder=INBOX]` — Bearer or session (`subscriptions:read`)
 Lists the newsletters of a mailbox, grouped per list. Same access rule as `GET /api/messages` (ownership or an active share). **Reads headers only** — `From`, `List-Id`, `List-Unsubscribe`, `List-Unsubscribe-Post`, `Date`, `Subject` — of the 400 most recent messages of the folder; a message body is never read and never logged. A message with no `List-Unsubscribe` is not a subscription and is absent from the list.
 
 Grouping key: `List-Id` when the sender declares one (stable across the address rotations a large sender uses), else the `From` address. Folded headers are unfolded (RFC 5322 §2.2.3), and every URI between angle brackets is read (RFC 2369) — not just the first line.
@@ -741,7 +998,7 @@ interface Subscription {
 
 A sender's name and a subject are content written by a third party, so a Bearer response carries the same `aiSafety` wrapper as the message routes when the mailbox's guard is on (see [Prompt-injection guard](#prompt-injection-guard)).
 
-### `POST /api/subscriptions/unsubscribe` — Bearer or session
+### `POST /api/subscriptions/unsubscribe` — Bearer or session (`subscriptions:write`)
 Leaves the named lists. Same access rule as sending a message (`send` permission), since it either posts to the sender's endpoint or sends mail from this mailbox.
 
 **Body** `{ account: string; ids: string[]; folder?: string /* default 'INBOX' */ }` — at most **50** ids per call. The client **never** sends a URL or an address: it names ids and nothing else. The server re-reads the headers of each group's most recent message and decides from them alone, so an id cannot be used to make the server call an arbitrary address.
@@ -768,7 +1025,7 @@ Each `done` is recorded (per mailbox and grouping key, with the sender) and come
 
 A call is bounded so one command gives one answer: at most 8 lists are left at a time with a 3 s deadline each, so even a full batch of 50 that all time out answers in about 21 s — inside the 60 s a proxy usually allows. The report follows the order of the request.
 
-### `GET /api/subscriptions/unsubscribed[?account=<id>]` — Bearer or session
+### `GET /api/subscriptions/unsubscribed[?account=<id>]` — Bearer or session (`subscriptions:read`)
 The lists already left, newest first. With `account`, that one mailbox (same access rule as `GET /api/subscriptions`); without it, **every mailbox the caller may read** and nothing else.
 
 It is read from the database, not from the folder, so it **survives the cleaning**: once the messages are filed away the group disappears from `GET /api/subscriptions`, but its entry stays here.
@@ -809,6 +1066,74 @@ curl -s -X PATCH -H "Authorization: Bearer $SYN_KEY" -H 'Content-Type: applicati
 # 4. the history outlives step 3: the group is gone from step 1, the entry stays
 curl -s -H "Authorization: Bearer $SYN_KEY" \
   "$BASE/api/subscriptions/unsubscribed?account=$ACCOUNT" | jq '.data[] | {sender: .sender.address, method, unsubscribedAt}'
+```
+
+### `GET /api/subscriptions/history?account=<id>&id=<subscription>[&folder=INBOX]` — Bearer or session (`subscriptions:read`)
+Counts, across the **whole mailbox**, the messages of one newsletter — including the ones `GET /api/subscriptions` never sees, since that route reads only the 400 most recent messages of a single folder. Same access rule as `GET /api/subscriptions`: counting is reading. **Read only**: nothing is moved and nothing is deleted.
+
+`id` is an id `GET /api/subscriptions` answered, and `folder` is the folder it was listed from — that is where the id is resolved back to a newsletter. The search then uses the identity that group already carries: `List-Id` when the sender declares one (stable across a sender's address rotations), the `From` address otherwise.
+
+**Scope**: every folder of the mailbox **except** the sent, the drafts and the trash. The sent and the drafts hold what the owner wrote themselves; the trash is where the purge below puts things, so reading it would make a second purge shuffle the trash into itself.
+
+**Response** `{ data: SubscriptionHistory }`:
+
+```ts
+interface SubscriptionHistory {
+  id: string
+  sender: { name: string; address: string }
+  listId: string | null
+  header: 'list-id' | 'from'   // what was searched, so the purge replays the same thing
+  value: string
+  total: number                // across every folder of the scope
+  oldest: string | null        // server dates (INTERNALDATE), not the sender's Date header
+  newest: string | null
+  folders: Array<{ folder: string; count: number; oldest: string | null; newest: string | null }>
+}
+```
+
+`404` when no group of that folder produces that id. A sender's name carries the same `aiSafety` wrapper as the list when the mailbox's guard is on.
+
+A search by header is a server-side `SEARCH HEADER`, folder by folder, over 4 shared connections — the same shape and the same budget as `GET /api/messages/search`. On a mailbox with many folders it is a **slow call**: count once, then purge.
+
+### `POST /api/subscriptions/purge` — Bearer or session (`subscriptions:purge`)
+Moves a newsletter's whole history to the mailbox's **trash**. Access rule `delete` — strictly above the `send` an unsubscribe asks for, because this repeats what `DELETE /api/messages/bulk` does on messages the caller never listed one by one.
+
+**Never a permanent deletion and never an expunge**: everything lands in the trash, so a mistake stays recoverable by the mailbox's owner.
+
+**Body** `{ account: string; id: string; expected: number; folder?: string /* default 'INBOX' */ }`. `expected` is the `total` the count above answered. The purge re-runs the same search and **refuses** if the mailbox no longer holds that number: between the two calls a message may have arrived or left, and the caller only ever consented to what it saw.
+
+**Response** `{ data: PurgeReport }` on success, `{ data: PurgeRefused }` with status **409** on a refusal:
+
+```ts
+interface PurgeReport {
+  id: string
+  moved: number
+  trash: string                                     // the folder everything went to
+  folders: Array<{ folder: string; moved: number }>
+}
+
+interface PurgeRefused {
+  id: string
+  refused: 'not_found' | 'count_changed' | 'no_trash'
+  total?: number   // on `count_changed`: what the mailbox holds now, to replay with
+}
+```
+
+- `count_changed` → re-read the count and call again with the new total.
+- `no_trash` → the mailbox declares no trash folder; the route refuses rather than deleting anything.
+- `not_found` → no group of that folder produces that id.
+
+**Agent example: clean out one newsletter's whole history**
+
+```bash
+# 1. how much is there, everywhere, for this list?
+curl -s -H "Authorization: Bearer $SYN_KEY" \
+  "$BASE/api/subscriptions/history?account=$ACCOUNT&id=3f2a…" | jq '{total, oldest, newest, folders}'
+
+# 2. move exactly that many to the trash — a different number refuses with 409
+curl -s -X POST -H "Authorization: Bearer $SYN_KEY" -H 'Content-Type: application/json' \
+  -d '{"account":"'$ACCOUNT'","id":"3f2a…","expected":1743}' \
+  "$BASE/api/subscriptions/purge" | jq '.data'
 ```
 
 ### `POST /api/unsubscribe` — session only

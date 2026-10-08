@@ -1,22 +1,26 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
-import { authenticate } from '@/lib/apiAuth'
+import { authorize } from '@/lib/apiAuth'
 import { query } from '@/lib/db'
-import { accountOrderBy } from '@/lib/accounts'
+import { ACCESSIBLE_ORDER_BY_ALIASED, ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
 import { encrypt } from '@/lib/encrypt'
+import { DEFAULT_IMAP_PORT, DEFAULT_SMTP_PORT } from '@/lib/accountTest'
+import { probeConnection } from '@/lib/accountProbe'
+import { keyAccountIds } from '@/lib/apiKeyAccounts'
+import { withApiLog } from '@/lib/apiLog'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: Request) {
-  const authCtx = await authenticate(req)
-  if (!authCtx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function getHandler(req: Request) {
+  const access = await authorize(req)
+  if ('denied' in access) return access.denied
+  const authCtx = access.ctx
 
   try {
     const accounts = await query(
       `SELECT a.id, a.name, a.email,
               a.imap_host AS "imapHost", a.imap_port AS "imapPort", a.imap_secure AS "imapSecure",
               a.smtp_host AS "smtpHost", a.smtp_port AS "smtpPort", a.smtp_secure AS "smtpSecure",
-              a.username, a.is_default AS "isDefault", a.color,
+              a.username, a.is_default AS "isDefault",
               a.oauth_provider AS "oauthProvider", a.prompt_guard AS "promptGuard",
               a.badge_color AS "badgeColor",
               a.created_at AS "createdAt",
@@ -42,7 +46,7 @@ export async function GET(req: Request) {
        SELECT a.id, a.name, a.email,
               a.imap_host AS "imapHost", a.imap_port AS "imapPort", a.imap_secure AS "imapSecure",
               a.smtp_host AS "smtpHost", a.smtp_port AS "smtpPort", a.smtp_secure AS "smtpSecure",
-              a.username, false AS "isDefault", a.color,
+              a.username, false AS "isDefault",
               a.oauth_provider AS "oauthProvider", a.prompt_guard AS "promptGuard",
               a.badge_color AS "badgeColor",
               a.created_at AS "createdAt",
@@ -61,14 +65,22 @@ export async function GET(req: Request) {
          WHERE is_read = false AND folder ILIKE 'INBOX'
          GROUP BY account_id
        ) um ON um.account_id = a.id
-       WHERE sh.invitee_user_id = $1 AND sh.status = 'active'
-         AND (sh.expires_at IS NULL OR sh.expires_at > NOW())
+       WHERE sh.invitee_user_id = $1 AND ${ACTIVE_SHARE_SQL}
 
-       ${accountOrderBy({ isDefault: '"isDefault"', createdAt: '"createdAt"', id: 'id' })}`,
+       ${ACCESSIBLE_ORDER_BY_ALIASED}`,
       [authCtx.id]
     )
 
-    const data = accounts.map((a: Record<string, unknown>) => {
+    // Cette liste ne désigne AUCUNE boîte : la barrière de `lib/apiAuth.ts` la laisse
+    // donc passer, à raison. Mais une clé qui lirait les huit boîtes de Nicolas saurait
+    // ce qu'elle n'a pas le droit de toucher — le filtre est ici, sur l'ENSEMBLE, avec
+    // la même règle. Une session humaine (`apiKeyId` nul) voit tout.
+    const reachable = access.ctx.apiKeyId ? await keyAccountIds(access.ctx.apiKeyId) : null
+    const visible = reachable
+      ? accounts.filter((a: Record<string, unknown>) => reachable.has(String(a.id)))
+      : accounts
+
+    const data = visible.map((a: Record<string, unknown>) => {
       const { canSend, canDelete, canOrganize, canManageRules, canManageSignatures, ...rest } = a
       return {
         ...rest,
@@ -81,20 +93,44 @@ export async function GET(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
-  const session = await auth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function postHandler(req: Request) {
+  const access = await authorize(req)
+  if ('denied' in access) return access.denied
+  const userId = access.ctx.id
 
   try {
     const body = await req.json()
     const {
       name, email, imapHost, imapPort, imapSecure,
       smtpHost, smtpPort, smtpSecure, username, password,
-      isDefault = false, color = '#6366f1',
+      isDefault = false,
     } = body
 
     if (!name || !email || !imapHost || !smtpHost || !username || !password) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    }
+
+    // On ESSAIE la boîte avant de l'enregistrer. Sans cela, un appelant — un agent en
+    // particulier — pouvait déposer des identifiants faux et obtenir un 201 : la boîte
+    // apparaissait dans la barre latérale et ne chargeait jamais le moindre message, sans
+    // que personne n'ait été prévenu. Un IMAP qui refuse la connexion rend la boîte
+    // inutilisable, donc on ne l'enregistre pas ; un SMTP qui refuse n'empêche que l'envoi,
+    // on l'enregistre et on le SIGNALE. `verify: false` reste possible pour qui enregistre
+    // une boîte volontairement hors ligne.
+    const connection = {
+      imapHost, imapPort: imapPort ?? DEFAULT_IMAP_PORT, imapSecure: imapSecure ?? true,
+      smtpHost, smtpPort: smtpPort ?? DEFAULT_SMTP_PORT, smtpSecure: smtpSecure ?? true,
+      username,
+    }
+    let verified: Awaited<ReturnType<typeof probeConnection>> | null = null
+    if (body.verify !== false) {
+      verified = await probeConnection(connection, password)
+      if (!verified.imap.ok) {
+        return NextResponse.json(
+          { error: 'imap_unreachable', imap: verified.imap, smtp: verified.smtp },
+          { status: 422 }
+        )
+      }
     }
 
     const passwordEncrypted = encrypt(password)
@@ -102,27 +138,44 @@ export async function POST(req: Request) {
     if (isDefault) {
       await query(
         'UPDATE email_accounts SET is_default = false WHERE user_id = $1',
-        [session.user?.id]
+        [userId]
       )
     }
 
+    // La boîte connectée PAR une clé lui APPARTIENT : elle pourra la lire, l'écrire,
+    // la modifier et la supprimer sans qu'on ait rien à cocher — c'est l'intérêt du
+    // modèle, un agent gère ses propres boîtes sans toucher à celles de Nicolas. Une
+    // boîte créée en session humaine n'appartient à aucune clé (`null`).
+    // La taille annoncée par le serveur est enregistrée DÈS la création : elle est
+    // sortie gratuitement de l'essai de connexion ci-dessus (lot M10). `null` si la
+    // boîte a été enregistrée sans essai, ou si le serveur n'annonce rien — l'envoi
+    // retombe alors sur le plafond prudent.
     const result = await query(
       `INSERT INTO email_accounts
         (user_id, name, email, imap_host, imap_port, imap_secure,
-         smtp_host, smtp_port, smtp_secure, username, password_encrypted, is_default, color)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         smtp_host, smtp_port, smtp_secure, username, password_encrypted, is_default,
+         created_by_api_key, smtp_max_size)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING id, name, email, imap_host, imap_port, imap_secure,
-                 smtp_host, smtp_port, smtp_secure, username, is_default, color, created_at`,
+                 smtp_host, smtp_port, smtp_secure, username, is_default, created_at,
+                 smtp_max_size`,
       [
-        session.user?.id, name, email,
-        imapHost, imapPort ?? 993, imapSecure ?? true,
-        smtpHost, smtpPort ?? 587, smtpSecure ?? false,
-        username, passwordEncrypted, isDefault, color,
+        userId, name, email,
+        imapHost, connection.imapPort, connection.imapSecure,
+        smtpHost, connection.smtpPort, connection.smtpSecure,
+        username, passwordEncrypted, isDefault,
+        access.ctx.apiKeyId, verified?.smtp.maxSize ?? null,
       ]
     )
 
-    return NextResponse.json({ data: result[0] }, { status: 201 })
+    // L'appelant repart avec le verdict : une boîte qui reçoit mais n'envoie pas est
+    // utilisable, encore faut-il le savoir avant d'essayer d'écrire à quelqu'un.
+    return NextResponse.json({ data: result[0], verified }, { status: 201 })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
+
+// Le journal se termine avec la réponse : statut et durée n'existent qu'ici. Voir lib/apiLog.ts.
+export const GET = withApiLog(getHandler)
+export const POST = withApiLog(postHandler)

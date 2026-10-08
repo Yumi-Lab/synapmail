@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useTranslations } from 'next-intl'
+import { useAppName } from '@/components/providers'
 import useSWR from 'swr'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -32,7 +33,6 @@ interface EditFormState {
   username: string
   password: string
   isDefault: boolean
-  color: string
 }
 
 interface Props {
@@ -42,6 +42,8 @@ interface Props {
 
 export function AccountsClient({ initialError, initialSuccess }: Props) {
   const t = useTranslations('settings.accounts')
+  // Le produit se renomme (lot F1) : le sous-titre lit le nom RÉGLÉ, jamais « Synapmail » écrit en dur.
+  const appName = useAppName()
   const tShared = useTranslations('settings.accounts.receivedShares')
   const { data: accountsData, mutate } = useSWR<{ data: EmailAccount[] }>('/api/accounts', fetcher)
   // Credentials/sharing management is owner-only — accounts shared with this user
@@ -85,7 +87,7 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
       imapHost: account.imapHost, imapPort: String(account.imapPort), imapSecure: account.imapSecure,
       smtpHost: account.smtpHost, smtpPort: String(account.smtpPort), smtpSecure: account.smtpSecure,
       username: account.username, password: '',
-      isDefault: account.isDefault, color: account.color,
+      isDefault: account.isDefault,
     })
     setTestResult(null)
     setError('')
@@ -113,9 +115,9 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
     mutate()
   }
 
-  // The confirmation NAMES the mailbox and states the consequence: "delete" on an
-  // accounts screen can be read as "erase my mail", which is wrong — the messages stay
-  // with the provider. Cancelling sends no request.
+  // La confirmation NOMME la boîte et dit la conséquence : « supprimer » sur un écran
+  // de comptes peut se lire « effacer mes mails », ce qui est faux — ils restent chez
+  // l'hébergeur. Annuler ne part pas en requête.
   const handleDelete = async (account: EmailAccount) => {
     if (!confirm(t('deleteConfirm', { email: account.email }))) return
     await fetch(`/api/accounts/${account.id}`, { method: 'DELETE' })
@@ -176,11 +178,12 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // The account id, and the password ONLY if one was typed. The field starts empty
-          // (the stored password never leaves the server): sending it as-is made the test
-          // fail, or shipped to the provider whatever a password manager had dropped in.
-          // Empty means "unchanged", so "test the one you already have". Hosts and ports
-          // come from the FORM: a port can be corrected and tried without saving.
+          // L'identifiant du compte, et le mot de passe SEULEMENT s'il a été tapé. Le champ
+          // part vide (le mot de passe enregistré ne quitte pas le serveur) : l'envoyer tel
+          // quel faisait échouer le test, ou expédiait à l'hébergeur ce qu'un gestionnaire de
+          // mots de passe y avait glissé. Vide veut dire « inchangé », donc « teste celui que
+          // tu as ». Les hôtes et ports viennent du FORMULAIRE : on corrige un port et on
+          // essaie sans enregistrer.
           accountId: editId,
           imapHost: editForm.imapHost, imapPort: parseInt(editForm.imapPort), imapSecure: editForm.imapSecure,
           smtpHost: editForm.smtpHost, smtpPort: parseInt(editForm.smtpPort), smtpSecure: editForm.smtpSecure,
@@ -194,8 +197,8 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
       } else if (data.imap && data.smtp) {
         setTestResult(data)
       } else if (data.error === TEST_DECISION.PASSWORD_REQUIRED) {
-        // The form points at a different server: nothing was attempted, and the stored
-        // password was untouched. Say so in a sentence, not with the bare error code.
+        // Le formulaire vise un autre serveur : rien n'a été tenté, et le mot de passe
+        // enregistré n'a pas bougé. Le dire en une phrase, pas avec le code nu.
         setError(t(`testFailure.${TEST_DECISION.PASSWORD_REQUIRED}`))
       } else {
         setError(data.error ?? t('testError'))
@@ -236,14 +239,14 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
     }
   }
 
-  // ── MODE: LIST ───────────────────────────────────────────────────────────
+  // ── MODE : LISTE ─────────────────────────────────────────────────────────
   if (mode === 'list') {
     return (
       <SettingsPage width="2xl">
         <SettingsHeader
           icon={<Mail className="h-4 w-4" />}
           title={t('title')}
-          description="Vos comptes IMAP / SMTP connectés à Synapmail"
+          description={t('description', { appName })}
         />
 
         <p className="mb-4 text-xs text-muted-foreground">{t('promptGuardDesc')}</p>
@@ -279,12 +282,17 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
           {accounts?.map(account => (
             <div key={account.id}>
               <div className="rounded-xl border border-border bg-card shadow-sm">
-                {/* Clicking the row opens "Edit": that is the obvious action for a mailbox.
-                    The gesture fires from the row background only (`e.target ===
-                    e.currentTarget` would not hold: the name and address are part of it), so
-                    a click on the colour dot, the toggle or "..." keeps ITS own action. */}
+                {/* La ligne publie SA surface (`--synap-surface`) : le compteur épinglé sur
+                    la bulle se cercle de la couleur réellement derrière lui — ici la carte —
+                    comme la barre latérale le fait déjà avec `var(--sidebar)`. Sans elle, le
+                    cercle du compteur n'a aucune couleur à résoudre sur cet écran.
+                    Cliquer la ligne ouvre « Modifier » : c'est l'action évidente d'une boîte.
+                    Le geste part du fond de la ligne seul (`e.target === e.currentTarget` ne
+                    tiendrait pas : le nom et l'adresse en font partie), donc un clic sur la
+                    pastille de couleur, l'interrupteur ou « … » garde SON action. */}
                 <div
                   className="flex items-center gap-3 p-4 cursor-pointer"
+                  style={{ ['--synap-surface' as string]: 'var(--card)' }}
                   data-account-row={account.id}
                   onClick={e => {
                     if ((e.target as HTMLElement).closest('button,input,a,[role="menu"]')) return
@@ -294,8 +302,8 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
                   <AccountAvatar
                     account={account}
                     colorIndex={rankOf(account)}
+                    unread={account.unreadCount ?? 0}
                     size="md"
-                    data-account-badge={account.id}
                   />
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-sm">{account.name}</div>
@@ -383,7 +391,7 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
     )
   }
 
-  // ── MODE: ADD (wizard) ───────────────────────────────────────────────────
+  // ── MODE : AJOUT (wizard) ────────────────────────────────────────────────
   if (mode === 'add') {
     return (
       <div className="w-full p-6 overflow-y-auto">
@@ -396,7 +404,7 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
     )
   }
 
-  // ── MODE: EDIT (plain form) ──────────────────────────────────────────────
+  // ── MODE : ÉDITION (formulaire classique) ────────────────────────────────
   if (mode === 'edit' && editForm) {
     const ef = editForm
     const set = (k: keyof EditFormState) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -435,9 +443,9 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
               <Input value={ef.username} onChange={set('username')} required />
             </div>
             <div className="space-y-1.5"><Label>{t('password')}</Label>
-              {/* `new-password`: without it the browser's password manager fills this field
-                  on its own, often with the WEBMAIL password, and the test ships it to the
-                  provider, which records one more failed authentication. */}
+              {/* `new-password` : sans cela le gestionnaire du navigateur remplit ce champ tout
+                  seul, souvent avec le mot de passe du WEBMAIL, et le test l'expédie à
+                  l'hébergeur qui compte une authentification ratée de plus. */}
               <PasswordInput
                 value={ef.password}
                 onChange={set('password')}
@@ -450,8 +458,8 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
 
           {testResult && (
             <div className="rounded-lg border border-border p-3 space-y-1.5 text-sm">
-              {/* State WHICH password was tried: without it a green test proves nothing to
-                  someone who has just typed a new password. */}
+              {/* Dire LEQUEL a été essayé : sans cela un test vert ne prouve rien pour qui
+                  vient justement de taper un nouveau mot de passe. */}
               <p className="text-xs text-muted-foreground">{t(`tested.${testResult.tested}`)}</p>
               {(['imap', 'smtp'] as const).map(proto => {
                 const r = testResult[proto]
@@ -459,8 +467,8 @@ export function AccountsClient({ initialError, initialSuccess }: Props) {
                 return (
                   <div key={proto} className={`flex items-center gap-2 ${r.ok ? 'text-green-600' : 'text-destructive'}`}>
                     <span>{r.ok ? '✓' : '✗'} {proto.toUpperCase()}</span>
-                    {/* The CAUSE, not the server's raw error: "535 Invalid login" does not
-                        tell the reader what they need to fix. */}
+                    {/* La CAUSE, pas l'erreur brute du serveur : « 535 Invalid login » ne dit
+                        pas à qui le lit ce qu'il doit corriger. */}
                     {!r.ok && <span className="text-xs opacity-75">{t(`testFailure.${r.error}`)}</span>}
                   </div>
                 )

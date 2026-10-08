@@ -17,12 +17,12 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 // is expected; anything a human could see is not. GOAL.md fixes this at 1 px.
 const MAX_DRIFT_PX = 1
 const VIEWPORT = { width: 1440, height: 900 }
-// Clearance demanded between the share mark and the fold chevron of the
-// header row. Origin: the spec's floor of a gap >= 6 px; the product lays the
+// Lot H3c2: clearance demanded between the share mark and the fold chevron of the
+// header row. Origin: GOAL.md's box for H3c2 ("écart >= 6 px"); the product lays the
 // two columns out 8 px apart (ACCOUNT_ROW_RIGHT.gap in components/layout/Sidebar.tsx),
 // so the floor is the spec's, not the implementation's. Bench: this file, 1440x900.
 const MIN_CONTROL_GAP_PX = 6
-// No round button straddles the bar's edge any more: the bar now
+// Lot H1 removed the round button that used to straddle the bar's edge: the bar now
 // folds from the application header's menu button. The old marker must be absent.
 const EDGE_TOGGLE = '[data-sidebar-edge-toggle]'
 // Same trap for the drawer itself: the desktop <aside> stays in the DOM below `lg` with
@@ -30,27 +30,27 @@ const EDGE_TOGGLE = '[data-sidebar-edge-toggle]'
 // through it is vacuous (observed: "256px off the edge", and a drawer reported still open
 // after it had closed). The drawer is addressed through its own marker.
 const DRAWER = '[data-sidebar-drawer]'
-// The application header's menu button — the app's ONLY bar control:
+// The application header's menu button — the app's ONLY bar control since lot H1:
 // above `lg` it folds the bar, below it opens the drawer. Selecting "the first button
 // of main" once clicked whatever the page rendered first and reported a drawer that
 // never opened (a harness failure, not a product one), so it is addressed by marker.
 const DRAWER_TRIGGER = '[data-omnibar-menu]'
-// Badge geometry thresholds, from a visual review that rejected a badge
+// Badge geometry thresholds, from the human gate of 2026-09-17 that rejected a badge
 // covering 37% of the bubble and 40% of the initial's text box: the badge may clip the
 // bubble's corner, but the letter underneath must stay whole.
 const MAX_BADGE_OVER_BUBBLE = 0.25
 const MAX_BADGE_OVER_GLYPH = 0
 // WCAG AA floor for small bold text — the letters are 9-12px, so 4.5:1 is the minimum.
 const MIN_CONTRAST = 4.5
-// A bubble carries TWO letters, never one: a lone initial reads as an accident.
+// Lot A10: a bubble carries TWO letters, never one — a lone initial reads as an accident.
 const BUBBLE_LETTERS = 2
-// Every name and email of the account list starts at the same x. Same tolerance
+// Lot A11: every name and email of the account list starts at the same x. Same tolerance
 // as the collapse contract (MAX_DRIFT_PX) — one pixel is where sub-pixel text layout lands,
 // anything above it is a real indent difference between two rows.
 const MAX_TEXT_X_SPREAD_PX = MAX_DRIFT_PX
 
 /**
- * The unfolded account list is the bar's own surface, so it may not round its
+ * Lot A14. The unfolded account list is the bar's own surface, so it may not round its
  * corners like the card it replaces: 0 px is the target and 1 px the tolerance for a
  * sub-pixel resolved value, calibrated against the bar's own root (radius 0) in the same
  * run — the card this lot removes measured 12 px (`rounded-xl`).
@@ -58,13 +58,12 @@ const MAX_TEXT_X_SPREAD_PX = MAX_DRIFT_PX
 const MAX_LIST_RADIUS_PX = 1
 /**
  * Fraction of an unread badge's own box that must survive every clipping ancestor.
- * 1 = nothing may be cropped, which is the whole point of the change (the reported
- * defect was the first account's badge being cut); the card it replaces cropped the
- * first row's badge to ~50 %.
+ * 1 = nothing may be cropped, which is the whole point of the lot ("ça vient couper le
+ * badge du premier compte"); the card it replaces cropped the first row's badge to ~50 %.
  * No calibration bench: the criterion is geometric, not a measured threshold.
  */
 const MIN_BADGE_VISIBLE = 1
-// The sentence that must NOT be rendered any more, and the destination of the
+// Lot H3b — the sentence that must NOT be rendered any more, and the destination of the
 // glyph that replaces it. Both are read from the shipped sources (`locales/fr.json`,
 // `components/settings/SettingsSidebar.tsx`) so this check follows the product instead of
 // carrying its own stale copy. The prefix stops at the interpolation: only the fixed part
@@ -74,7 +73,7 @@ const SHARED_BY_PREFIX = JSON.parse(readFileSync(new URL('../locales/fr.json', i
 const ACCOUNTS_SETTINGS_HREF = readFileSync(new URL('../components/settings/SettingsSidebar.tsx', import.meta.url), 'utf8')
   .match(/ACCOUNTS_SETTINGS_HREF\s*=\s*'([^']+)'/)?.[1]
 /**
- * The separator the collapsed account tooltip must use between a name and an
+ * Lot A15 — the separator the collapsed account tooltip must use between a name and an
  * address. House rule: no em dash in product copy. Read out of the shipped `accountTooltip`
  * sentence (placeholders stripped) so this check follows the locale instead of carrying its
  * own copy of the glyph; the em dash below is the character the rule forbids, not a target.
@@ -95,9 +94,9 @@ if (!SHARED_BY_PREFIX || !ACCOUNTS_SETTINGS_HREF) {
 // ...and those letters must stay INSIDE the circle. The inked box is measured with a
 // Range over the text node (the span is a flex child stretched to the line box, so its
 // own rect says nothing about where the ink is), and compared against the bubble's box
-// shrunk by this margin on each side — the visual breathing room a reviewer asks for.
+// shrunk by this margin on each side — the visual breathing room the human gate asks for.
 const GLYPH_INSET_PX = 2
-// The bar's scrollbar is DRAWN (`components/layout/ThinScroll.tsx`), because a
+// Lot A8 — the bar's scrollbar is DRAWN (`components/layout/ThinScroll.tsx`), because a
 // native bar cannot fade. These mirror THIN_SCROLL there: one source, asserted here.
 const THIN_SCROLL_WIDTH_PX = 6
 const THIN_SCROLL_IDLE_MS = 2000
@@ -134,9 +133,9 @@ const MAX_ACCENT_HUE_SPREAD_DEG = 15
 // Below this saturation a painted surface is a neutral (the bar's own greys), not an accent.
 const ACCENT_MIN_SATURATION = 0.12
 
-// A custom folder is told apart when the bar is folded by the characters on its
+// Lot A7b: a custom folder is told apart when the bar is folded by the characters on its
 // tile, and a tile carries EXACTLY two of them — not a floor of two with a ceiling above.
-// Measured on the largest real mailbox of the test database (92 custom folders, reviewed
+// Measured on the largest real mailbox of this lane's database (92 custom folders, gate of
 // 19/09/2026): the previous lengthening rule produced 13 three-character tiles whose ink
 // spilled 2.2 to 4.7 px past the 16 px plate, AND still left duplicate pairs. Three glyphs
 // at the 10 px semibold this plate is drawn for do not fit in it, in either direction.
@@ -144,8 +143,8 @@ const FOLDER_GLYPH_LETTERS = 2
 // Stand-in the rule pads with when a name has only one character to give (FolderGlyph's
 // `GLYPH_PAD`): the only character a tile may carry that its folder's name does not.
 const GLYPH_PAD = '\u00b7'
-// The tile must READ as a tile, not as letters floating on the bar. Origin: a human
-// review measured the shipped `bg-secondary` fill at 1.03:1 (light) and 1.30:1 (dark)
+// The tile must READ as a tile, not as letters floating on the bar. Origin: the human
+// gate measured the shipped `bg-secondary` fill at 1.03:1 (light) and 1.30:1 (dark)
 // against the bar and could not see a plate at all; the ceiling it asked for is 1.5:1.
 // Calibration bench: this script, headless Chrome, the bar's own light/dark `--sidebar`
 // — the shipped 24 % mix measures ~1.9:1 in both themes, so the floor is not grazed.
@@ -154,7 +153,7 @@ const GLYPH_PAD = '\u00b7'
 const FOLDER_GLYPH_MIN_TILE_CONTRAST = 1.5
 // Two letters at a readable weight do not fit a 16 px plate: measured on this bench, in
 // this browser, with the app's own system stack, the widest pair the rule can produce
-// (`WM`) inks 17.88 px at the 10 px semibold / 0.3 px tracking the design asks for,
+// (`WM`) inks 17.88 px at the 10 px semibold / 0.3 px tracking the human gate asked for,
 // and still 16.69 px at 9 px with no tracking. The plate size is fixed by the collapse
 // contract (it IS a row icon), so a small symmetric bleed is inherent, not a defect —
 // what would be a defect is a letter CLIPPED or pushed out of the icon column, both
@@ -163,7 +162,7 @@ const FOLDER_GLYPH_MAX_PLATE_BLEED_PX = 1.2
 // The tile must stay monochrome: it carries no accent, so its ink and its background must
 // be grey — measured as HSV saturation, the same metric the cleanliness pass already uses.
 const FOLDER_GLYPH_MAX_SATURATION = ACCENT_MIN_SATURATION
-// A folder tile is a CASE; an account bubble is a BUBBLE. A visual review
+// A folder tile is a CASE; an account bubble is a BUBBLE. The human gate of 19/09/2026
 // found the two wearing one shape: `rounded-md` resolves to `calc(var(--radius) - 2px)`
 // = 8 px in this theme, and 8 px on a 16 px box is a perfect circle. The two ceilings
 // below are a SHAPE A/B measured in the same pass on the same page: the tile's corner
@@ -174,20 +173,20 @@ const FOLDER_GLYPH_MAX_RADIUS_PX = 4
 // A bubble is round when its corner reaches half its own side; below that it is a case.
 const BUBBLE_MIN_RADIUS_RATIO = 0.5
 
-// This project maps every theme colour to a bare `var(--x)`, a form Tailwind
+// Lot A13: this project maps every theme colour to a bare `var(--x)`, a form Tailwind
 // cannot compose an alpha onto — it emitted NO rule at all for the slash variants the bar
-// is written with, so a folder row had no hover feedback whatsoever (measured: background-
-// color rgba(0, 0, 0, 0) at rest AND under the pointer, identical) and resting label ink
-// rendered at full strength instead of the 70 % it asks for. The check
+// is written with, so a folder row had no hover feedback whatsoever (measured at the A8
+// gate: background-color rgba(0, 0, 0, 0) at rest AND under the pointer, identical) and
+// resting label ink rendered at full strength instead of the 70 % it asks for. The gate
 // below is a same-run A/B on ONE real row: its computed background at rest vs under a
 // real pointer move. No absolute colour is demanded — only that the two differ, which is
 // exactly what a dropped rule cannot produce.
 // Calibration bench: this script, headless Chrome, the shipped bar, both themes.
 const HOVER_MIN_ALPHA = 0.01
 
-// The bar's accent must BE the active account's own colour, so that switching
+// Lot A12: the bar's accent must BE the active account's own colour, so that switching
 // mailbox repaints the whole bar rather than leaving one violet bar behind five coloured
-// bubbles. The check is a same-run A/B across TWO accounts of different colours: for each,
+// bubbles. The gate is a same-run A/B across TWO accounts of different colours: for each,
 // the accent-bearing surfaces of the bar (active folder tint, unread badge, selection
 // ring, shadows) are read back and compared to the colour of THAT account's own bubble,
 // measured in the same pass on the same page — never to a constant, so the check stays
@@ -227,7 +226,7 @@ const probe = strayToggle => {
   return {
     collapsed: bar.dataset.collapsed,
     asideRight: asideRect ? asideRect.right : null,
-    // There is no floating round toggle: its absence is measured in the same
+    // Lot H1 removed the floating round toggle: its absence is measured in the same
     // frame as the geometry, in BOTH states, so a re-introduction fails here.
     strayToggles: document.querySelectorAll(strayToggle).length,
     horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -251,7 +250,7 @@ const probe = strayToggle => {
 /**
  * Reads every account bubble: how much of it (and of its initial's text box) the
  * unread badge covers, and the contrast of the initial against the bubble colour.
- * Overlap is measured between bounding boxes — the same metric a reviewer reads on screen.
+ * Overlap is measured between bounding boxes — the same metric the human gate used.
  */
 const probeBubbles = () => {
   const rgb = c => c.match(/[\d.]+/g).slice(0, 3).map(Number)
@@ -337,7 +336,7 @@ const probeAccountList = () => {
       })
       .filter(l => l.x !== null)
     const bubble = row.querySelector('[data-account-initial]')?.parentElement
-    // The mark is a sibling of the button (a link inside a button is invalid
+    // Lot H3b: the mark is a sibling of the button (a link inside a button is invalid
     // HTML), so it is read from the row's wrapper, not from the button itself.
     const mark = row.parentElement?.querySelector('[data-account-shared-mark]') ?? null
     const markBox = mark?.getBoundingClientRect() ?? null
@@ -360,7 +359,7 @@ const probeAccountList = () => {
         : null,
       rowCy: rowBox.top + rowBox.height / 2,
       rowRight: rowBox.right,
-      // In the unfolded list too, a list row's mark is laid
+      // Lot H3c2, extended to the unfolded list by lot A14: a list row's mark is laid
       // out from the same columns as the header's, so it is measured the same way —
       // against the text it must never cover, and against the bar's own edge.
       textRight: Math.max(...lines.map(l => l.right ?? -Infinity)),
@@ -374,7 +373,7 @@ const probeAccountList = () => {
     // it comes back — the target is one glyph, not one glyph plus the old sentence.
     popoverText: (popover.textContent ?? '').trim(),
     headerMarks: document.querySelectorAll('[data-sidebar] [data-account-shared-mark]').length,
-    // In the header row the mark and the fold chevron are two clickable
+    // Lot H3c2: in the header row the mark and the fold chevron are two clickable
     // boxes in two different flows (absolute link / in-flow span). Their overlap is
     // measured, not assumed: the x-intersection of the two boxes, in pixels.
     // All three boxes are read from the SAME bar: the page can carry two (desktop bar
@@ -387,7 +386,7 @@ const probeAccountList = () => {
       // shared row in it carries the same marker, so a lookup widened by one ancestor
       // returns a LIST row's mark whenever the active account is not itself shared — a
       // box that has nothing to do with the header and that happened to land on the
-      // chevron's own 28 px. That list is not a fixed popover but an
+      // chevron's own 28 px. Lot A14 turned that list from a fixed popover into an
       // in-bar accordion, so the exclusion is read from the accordion's own marker.
       const mark = [...(row?.parentElement?.querySelectorAll('[data-account-shared-mark]') ?? [])]
         .find(m => !m.closest('[data-account-list]'))
@@ -442,7 +441,7 @@ const probeAccountList = () => {
 }
 
 /**
- * The list of accounts unfolds INSIDE the bar. Reads, for the list as it is
+ * Lot A14 — the list of accounts unfolds INSIDE the bar. Reads, for the list as it is
  * currently rendered: how it is positioned (a `fixed` layer would be the card this lot
  * removes), and — for every unread badge it carries — how much of the badge's own box
  * actually survives clipping. Visibility is computed by walking the ancestors and
@@ -574,7 +573,7 @@ const probeFolderGlyphs = () => {
     // edge, since that column is the row's first child in every state. This, NOT the
     // 16 px plate, is what the letters must fit inside: a plate that size cannot hold
     // two letters at a readable weight (measured on this bench: the widest pair the rule
-    // can produce inks 17.88 px at the 10 px semibold the design asks for), so the
+    // can produce inks 17.88 px at the 10 px semibold the human gate asked for), so the
     // meaningful question is whether the glyphs stay in their column and unclipped.
     const rowRect = (row ?? el).getBoundingClientRect()
     const slot = { left: rowRect.left, right: rowRect.left + iconColW, top: rowRect.top, bottom: rowRect.bottom, width: iconColW }
@@ -598,7 +597,7 @@ const probeFolderGlyphs = () => {
       title: row?.getAttribute('title') ?? null,
       text: (el.textContent || '').trim(),
       // Code points, not UTF-16 units: an accented character the rule can legitimately
-      // pick is one character to a reader, and `.length` would have to agree.
+      // pick (`CÉ`) is one character to a reader and `.length` would have to agree.
       chars: [...(el.textContent || '').trim()].length,
       visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && Number(cs.opacity) > 0,
       inkSat: sat(cs.color),
@@ -748,6 +747,13 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
     // Account bubbles are excluded: their palette is deliberately multi-colour and is
     // contrast-gated above. Everything else the bar paints must share one accent hue.
     if (el.hasAttribute('data-account-initial') || el.querySelector('[data-account-initial]')) continue
+    // Lot H4c: an account's unread counter carries the colour of ITS box, by the same
+    // source as the bubble it hangs on — so the eight counters of the mailbox list are
+    // as deliberately multi-colour as the eight bubbles, and for the same reason. Only
+    // the counters that say `account` are excluded: a FOLDER counter still follows the
+    // active account's accent, so it stays measured here and a second hue family
+    // appearing on one would still fail this check.
+    if (el.getAttribute('data-unread-badge') === 'account') continue
     // A gradient lives in background-IMAGE and a ring/glow in box-SHADOW: both compute
     // background-color to transparent, so reading that property alone is blind to exactly
     // the two decorations this lot removes. Every colour token of all three is measured.
@@ -763,7 +769,7 @@ const probeCleanliness = (minSaturation, colourTokenSource) => {
     theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
     collapsed: bar.dataset.collapsed,
     barBg: show(barBg),
-    // The theme and the settings live in the header's user menu: the bar's
+    // Lot H2 moved the theme and the settings into the header's user menu: the bar's
     // footer is gone, and a slot or a settings row coming back here is a regression.
     footer: {
       themeSlots: bar.querySelectorAll('[data-sidebar-slot="theme-toggle"]').length,
@@ -861,7 +867,7 @@ const probeAccountAccent = () => {
   const published = getComputedStyle(bar).getPropertyValue('--synap-account').trim()
   const publishedPainted = published ? paint(published) : null
 
-  // The bar carries no compose row (the head bar carries it on every
+  // Lot H3c2 removed the compose row from the bar (the head bar carries it on every
   // page), so the unread badge is now the bar's only white-ink-on-accent surface: it
   // is the one that has to hold contrast at every account colour.
   const badge = bar.querySelector('[data-unread-badge]')
@@ -915,14 +921,14 @@ const alphaOf = colour => {
   const parts = channels.split(/[,\s]+/).filter(Boolean)
   return parts.length > 3 ? Number(parts[3]) : 1
 }
-// Self-check: the three serialisations this helper can meet, plus the no-op it must catch.
+// Self-check: the three serialisations this gate can meet, plus the no-op it must catch.
 for (const [colour, expected] of [
   ['rgba(0, 0, 0, 0)', 0],
   ['rgb(12, 12, 12)', 1],
   ['color(srgb 0.039 0.039 0.039 / 0.22)', 0.22],
   ['color(srgb 0.039 0.039 0.039)', 1],
   // Chrome serialises a color-mix() over an oklch token in oklab — the exact form the
-  // hover fill comes back as, and the one a rgb-only parser reads as null.
+  // hover fill of lot A13 comes back as, and the one a rgb-only parser reads as null.
   ['oklab(0.145 0 0 / 0.06)', 0.06],
   ['oklab(0.985 0 0)', 1],
   ['not a colour', null],
@@ -982,7 +988,7 @@ try {
 
   await land('/mail')
   // Which account of this database carries the most custom folders — asked of the app's own
-  // API, not hard-coded to a name: this bench exists because the rule was only ever measured on
+  // API, not hard-coded to a name: lot A7b exists because the rule was only ever measured on
   // the small box the bench happens to sign into, and "the biggest one" must stay true as the
   // database changes. Read once, up front, so the second pass below knows where to click.
   const inventory = await page.evaluate(async base => {
@@ -1020,7 +1026,7 @@ try {
   await activate(smallest.id)
   const signedInAs = smallest.label
   console.log(`accounts in this database: ${inventory.map(a => `${a.label}=${a.custom}`).join(', ')} — starting on "${signedInAs}" (${smallest.custom}), biggest is "${biggest.label}" (${biggest.custom})`)
-  // The bar folds from the application header's menu button — a REAL click on
+  // The bar folds from the application header's menu button (lot H1) — a REAL click on
   // the shipped control, not a programmatic state change.
   const toggle = async () => {
     await page.click(DRAWER_TRIGGER)
@@ -1089,10 +1095,10 @@ try {
     if (s.horizontalOverflow) failures.push(`horizontal scrollbar present while collapsed=${s.collapsed}`)
   }
 
-  // --- The round floating toggle is gone, in BOTH states ---
+  // --- The round floating toggle is gone, in BOTH states (lot H1) ---
   for (const s of [before, after]) {
     console.log(`floating ${EDGE_TOGGLE} elements while collapsed=${s.collapsed}: ${s.strayToggles}`)
-    if (s.strayToggles) failures.push(`${s.strayToggles} floating collapse button(s) in the DOM while collapsed=${s.collapsed}, expected none`)
+    if (s.strayToggles) failures.push(`${s.strayToggles} floating collapse button(s) in the DOM while collapsed=${s.collapsed} — lot H1 removes them`)
   }
 
   // The two states must actually differ, otherwise the check above passes vacuously
@@ -1104,7 +1110,7 @@ try {
 
   // --- Custom folders: a tile of letters, readable folded, monochrome, full path on hover ---
   // Named because it runs twice: once on the account the bench signs into, and once on the
-  // account of this database that has the MOST custom folders — the whole point of this arm
+  // account of this database that has the MOST custom folders — the whole point of lot A7b
   // is that a rule green on a 20-folder test box failed on a 92-folder real one.
   const checkGlyphs = (label, expanded, collapsed) => {
     if (!expanded || !collapsed) { console.error(`HARNESS: the sidebar root was not found when reading folder tiles (${label})`); process.exit(2) }
@@ -1167,7 +1173,7 @@ try {
   }
   const signedInTiles = checkGlyphs(signedInAs, glyphsExpanded, glyphsCollapsed)
 
-  // --- The SAME checks on the biggest real mailbox of this database ---
+  // --- Lot A7b: the SAME checks on the biggest real mailbox of this database ---
   // The bar is still collapsed here. Switching account is done by a REAL click on the row
   // of the shipped popover, exactly as a user would — not by writing a setting — so the
   // whole switch path (popover, filter, SWR re-key, folder re-fetch) is what gets measured.
@@ -1262,7 +1268,7 @@ try {
     failures.push(`account list: ${list.checkGlyphs} check icon(s) and ${list.checkChars} check character(s) left in the popover (expected none)`)
   }
 
-  // --- A shared inbox is signalled by ONE glyph, never by a line of text ---
+  // --- Lot H3b: a shared inbox is signalled by ONE glyph, never by a line of text ---
   // The sentence is read from the shipped locale, never retyped here: a re-worded
   // `sharedBy` must keep failing this check, and a check carrying its own copy of the
   // sentence would silently stop matching the product the day the wording changes.
@@ -1270,7 +1276,7 @@ try {
   const sharedSentence = SHARED_BY_PREFIX && list.popoverText.includes(SHARED_BY_PREFIX)
   console.log(`shared inboxes: ${sharedRows.length} row(s) marked, header marks ${list.headerMarks}, "${SHARED_BY_PREFIX}" as a text line in the popover: ${sharedSentence}`)
 
-  // --- The mark and the chevron of the header row never cover each other ---
+  // --- Lot H3c2: the mark and the chevron of the header row never cover each other ---
   // The defect only exists when the ACTIVE account is itself shared, so the bench makes
   // it so: it switches to the shared mailbox of the list, measures both bar states, then
   // puts the previous account back. Reading the header without that switch measured a
@@ -1328,7 +1334,7 @@ try {
     process.exit(2)
   }
   if (sharedSentence) {
-    failures.push(`account list: the "${SHARED_BY_PREFIX}…" text line is still rendered, expected a single glyph instead`)
+    failures.push(`account list: the "${SHARED_BY_PREFIX}…" text line is still rendered — lot H3b replaces it with a single glyph`)
   }
   for (const r of sharedRows) {
     const m = r.mark
@@ -1341,7 +1347,7 @@ try {
       failures.push(`shared row "${r.label}": mark centred at y=${m.cy.toFixed(2)}, row centre y=${r.rowCy.toFixed(2)} (max ${MAX_DRIFT_PX}px) — it must sit on the row's axis`)
     }
   }
-  // A shared row of the UNFOLDED list carries a mark too,
+  // Lot H3c2 extended by lot A14: a shared row of the UNFOLDED list carries a mark too,
   // and that list is now inside the bar rather than in a popover of its own — so the
   // mark is judged against the same two things the header's is: the text it must never
   // cover, and the bar's own right edge it must never spill past. A list row has no
@@ -1375,7 +1381,7 @@ try {
     console.log('name x: every account of this list is shared — no same-run reference row, indent not judged')
   }
 
-  // --- The account list unfolds IN the bar, and crops no badge ---
+  // --- Lot A14: the account list unfolds IN the bar, and crops no badge ---
   // Measured in BOTH states of the bar: the list is the same markup folded or not, so a
   // 56 px bar is the harder case — a card would overflow it, and a badge hanging 9 px off
   // its bubble is the first thing an `overflow-hidden` edge cuts.
@@ -1411,7 +1417,7 @@ try {
         failures.push(`account list (${state}): badge "${b.text}" is ${(b.visible * 100).toFixed(1)}% visible (min ${(MIN_BADGE_VISIBLE * 100).toFixed(0)}%) — something crops it`)
       }
     }
-    // Collapsed, the name and the address live in the tooltip — and they are
+    // Lot A15: collapsed, the name and the address live in the tooltip — and they are
     // joined by the house separator, never an em dash. Only judged in that state: the
     // expanded list prints them as rows and renders no tooltip at all.
     if (state === 'collapsed') {
@@ -1474,7 +1480,7 @@ try {
     failures.push(`account list: the outside click on ${outsideTarget.path} did not reach its target (url unchanged) — the dismiss swallowed it`)
   }
 
-  // --- The bar's accent IS the active account's colour, in both themes ---
+  // --- Lot A12: the bar's accent IS the active account's colour, in both themes ---
   // Measured across TWO accounts in the SAME run: the bar's accent surfaces are compared
   // to the colour of the bubble heading the bar at that moment, never to a constant. The
   // popover is already open here, so the switch below is a real click on a shipped row.
@@ -1584,7 +1590,7 @@ try {
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
 
-  // --- Scrollbar: native bar hidden, drawn thumb that fades when scrolling stops ---
+  // --- Scrollbar (lot A8): native bar hidden, drawn thumb that fades when scrolling stops ---
   const sb = await page.evaluate(probeScrollbars)
   console.log(`scroll-hidden vs native reference (same run): scrollbar-width ${sb.styled.widthProp} vs ${sb.bare.widthProp}, gutter ${sb.styled.gutter}px vs ${sb.bare.gutter}px`)
   console.log(`shipped .scroll-hidden::-webkit-scrollbar display in the compiled stylesheet: ${sb.webkitDisplay ?? 'MISSING'}`)
@@ -1638,7 +1644,7 @@ try {
     // The pointer STAYS on the list while the idle delay runs: scrolling with the cursor
     // left over the content is how a user actually scrolls, and an earlier version of this
     // check moved it away first — which is precisely why it stayed green while the thumb
-    // was pinned visible by a hover rule (found on review, 19/09/2026).
+    // was pinned visible by a hover rule (gate of 19/09/2026).
     await new Promise(r => setTimeout(r, THIN_SCROLL_IDLE_MS + THIN_SCROLL_FADE_MS + FADE_SETTLE_MS))
     const idle = (await page.evaluate(probeScrollbars)).containers[scroller]
     fade[theme] = { during, idle }
@@ -1693,8 +1699,8 @@ try {
     }
     if (c.animated.length) failures.push(`${theme}: ${c.animated.length} animated element(s) in the bar: ${c.animated.join(', ')}`)
     console.log(`  footer: theme-toggle slots=${c.footer.themeSlots}, settings rows=${c.footer.settingsRows}`)
-    if (c.footer.themeSlots) failures.push(`${theme}: ${c.footer.themeSlots} theme-toggle slot(s) still in the bar, expected the theme in the user menu`)
-    if (c.footer.settingsRows) failures.push(`${theme}: ${c.footer.settingsRows} settings row(s) still in the bar, expected the settings in the user menu`)
+    if (c.footer.themeSlots) failures.push(`${theme}: ${c.footer.themeSlots} theme-toggle slot(s) still in the bar — lot H2 moves the theme into the user menu`)
+    if (c.footer.settingsRows) failures.push(`${theme}: ${c.footer.settingsRows} settings row(s) still in the bar — lot H2 moves the settings into the user menu`)
     const heights = [...new Set(c.rows.map(r => r.height.toFixed(2)))]
     console.log(`  row heights: ${heights.join(', ')} (rows: ${c.rows.length})`)
     if (heights.length > 1) failures.push(`${theme}: rows use ${heights.length} different heights (${heights.join(', ')}) — one motif expected`)
@@ -1705,7 +1711,7 @@ try {
     }
     const worst = c.rows.reduce((a, b) => (a.contrast < b.contrast ? a : b))
     console.log(`  worst row contrast: ${worst.contrast.toFixed(2)}:1 ("${worst.key}", ${worst.ink} on ${worst.on})`)
-    // Hover feedback, measured as a same-run A/B on ONE real row: read at rest,
+    // Lot A13 — hover feedback, measured as a same-run A/B on ONE real row: read at rest,
     // then with the pointer really moved over it. A theme token that cannot carry an alpha
     // makes Tailwind drop `hover:bg-foreground/[0.06]` entirely, and the two reads come
     // back byte-identical — which is precisely what this compares.
@@ -1725,8 +1731,8 @@ try {
       failures.push(`${theme}: row "${atRest.key}" hover fill ${hovered.background} has alpha ${hoverAlpha.toFixed(3)} (min ${HOVER_MIN_ALPHA}) — the class emitted no paint`)
     }
     // The folder tiles, re-measured in THIS theme: the plate is painted from the theme's
-    // own tokens, so a fill that reads in dark can vanish in light (the defect a human
-    // review found on 19/09/2026). Both themes are measured in the SAME run, each against
+    // own tokens, so a fill that reads in dark can vanish in light (the defect the human
+    // gate of 19/09/2026 found). Both themes are measured in the SAME run, each against
     // the bar background of that same theme — the reference travels with the measurement.
     const tiles = await page.evaluate(probeFolderGlyphs)
     const worstTile = tiles.reduce((a, b) => (a.tileContrast < b.tileContrast ? a : b))
@@ -1770,11 +1776,11 @@ try {
   if (mobile.overflow > 0) failures.push(`mobile ${MOBILE_VIEWPORT.width}px: ${mobile.overflow}px of horizontal overflow`)
   if (mobile.widest > MOBILE_VIEWPORT.width) failures.push(`mobile ${MOBILE_VIEWPORT.width}px: an element of the bar reaches ${mobile.widest.toFixed(1)}px, past the viewport`)
 
-  // The drawer has no round button: it closes on ONE click on the veil.
+  // Lot H1 removed the drawer's own round button: it closes on ONE click on the veil.
   const drawerStray = await page.evaluate(({ sel, drawer }) =>
     document.querySelector(drawer)?.querySelectorAll(sel).length ?? null, { sel: EDGE_TOGGLE, drawer: DRAWER })
   if (drawerStray == null) { console.error('HARNESS: the drawer is not in the DOM — nothing measured'); process.exit(2) }
-  if (drawerStray) failures.push(`mobile: ${drawerStray} floating collapse button(s) in the drawer, expected none`)
+  if (drawerStray) failures.push(`mobile: ${drawerStray} floating collapse button(s) in the drawer — lot H1 removes them`)
   await page.evaluate(drawer => document.querySelector(`${drawer} > div`)?.click(), DRAWER)
   await new Promise(r => setTimeout(r, SETTLE_MS))
   const drawerClosed = await page.evaluate(drawer => !document.querySelector(drawer), DRAWER)

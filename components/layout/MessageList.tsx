@@ -4,12 +4,17 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useLocale, useTranslations } from 'next-intl'
 import { RefreshCw, Search, X, Paperclip, CheckSquare, Square, Eye, EyeOff, Flag, Info } from 'lucide-react'
 import { MAIL_SELECTION_COUNT_ATTR, useMailSelection } from '@/lib/mailSelection'
-import { MAIL_ORIGIN_ATTR, groupByOrigin, originKey, type MessageOrigin } from '@/lib/mailOrigin'
+import { MAIL_ORIGIN_ATTR, groupByOrigin, groupsToMove, originKey, type MessageOrigin } from '@/lib/mailOrigin'
 import { DEFAULT_FLAG_KEY, MAIL_LIST_FILTERS, flagByKey, type MailListFilter } from '@/lib/flags'
+import { unreadRefresh, unreadShift } from '@/lib/unreadSignal'
+import {
+  explorerSelect, gestureOf, isAllSelected, selectAll,
+  type ExplorerGesture, type ExplorerSelection,
+} from '@/lib/explorerSelection'
 import { cn } from '@/lib/utils'
 import { formatRowDate } from '@/lib/dates'
 import {
-  EMPTY_SEARCH_STREAM, SCOPE_ALL, SCOPE_FOLDER, SCOPE_PARAM, SEARCH_PARAM, STREAM_PARAM,
+  EMPTY_SEARCH_STREAM, SCOPE_ACCOUNTS, SCOPE_FOLDER, SCOPE_LABEL, SCOPE_PARAM, SEARCH_PARAM, STREAM_PARAM, isWideScope,
   accumulateSearchStream, isSearchQuery, parseNdjsonChunk,
   type SearchField, type SearchScope, type SearchStreamChunk, type SearchStreamState,
 } from '@/lib/search'
@@ -19,6 +24,7 @@ import type { EmailAccount } from '@/types/account'
 import { MessageContextMenu, type ContextMenuState } from '@/components/ui/MessageContextMenu'
 import { IconTooltip } from '@/components/ui/IconTooltip'
 import { ThinScroll } from './ThinScroll'
+import { accountColor, accountInitials, readableInk, useAccountAccent } from './AccountAvatar'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
 import { useEmailNotifications } from '@/hooks/useEmailNotifications'
@@ -31,12 +37,12 @@ const fetcher = async (url: string) => {
   return res.json()
 }
 
-// Marquee selection. Below this threshold, the gesture stays a click:
-// it is also the threshold the system file explorer uses.
+// Rectangle de sélection (lot M3c). Sous ce seuil, le geste reste un clic —
+// c'est aussi le seuil qu'utilise l'explorateur du système.
 const MARQUEE_MIN_PX = 4
-// Sensitive band along the container edges, step and rate of the automatic
-// scrolling during the gesture: measured by hand on the bench, slow enough to
-// stay aimable, brisk enough to cross a page.
+// Bande sensible le long des bords du conteneur, pas et cadence du défilement
+// automatique pendant le geste : mesurés à la main sur le banc, assez lents pour
+// rester visés, assez vifs pour traverser une page.
 const MARQUEE_EDGE_PX = 40
 const MARQUEE_SCROLL_PX = 24
 const MARQUEE_SCROLL_MS = 50
@@ -81,7 +87,7 @@ interface ThreadGroup {
   count: number
 }
 
-const groupIntoThreads = (messages: Message[]): ThreadGroup[] => {
+const groupIntoThreads = (messages: readonly Message[]): ThreadGroup[] => {
   const map = new Map<string, Message[]>()
   for (const msg of messages) {
     const key = normalizeSubject(msg.subject) || msg.uid
@@ -108,6 +114,17 @@ const groupIntoThreads = (messages: Message[]): ThreadGroup[] => {
 // ─── time bucketing (Direction B — grouped list) ──────────────────────────
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
 
+/**
+ * « Pas encore de résultats » doit être LE MÊME tableau d'un rendu à l'autre. Un
+ * `?? []` écrit dans le corps en fabrique un neuf à chaque rendu : `threads` puis
+ * `checkedOrigins` changeaient alors d'identité sans que rien ne bouge, l'effet
+ * qui PUBLIE l'état de la boîte se rejouait, son nettoyage publiait `null`, le
+ * fournisseur re-rendait la liste — et la boucle repartait. Mesuré le 20/09/2026 :
+ * 478 « Maximum update depth exceeded » sur `/mail?q=facture`, au point qu'un clic
+ * sur le sélecteur de portée n'obtenait plus sa navigation.
+ */
+const NO_MESSAGES: readonly Message[] = []
+
 type DensityMode = 'comfortable' | 'compact'
 
 // Account-sharing permissions (defense-in-depth UX gating — the real
@@ -120,12 +137,12 @@ const DEFAULT_PERMISSIONS: MailPermissions = {
 
 interface Props {
   folder: string
-  /** Open message, with ITS origin: a uid alone would designate several messages. */
+  /** Message ouvert, avec SON origine : un uid seul désignerait plusieurs messages. */
   selectedOrigin: MessageOrigin | null
   onSelect: (origin: MessageOrigin) => void
   onSelectThread: (messages: Message[], subject: string) => void
   activeAccountId?: string | null
-  /** Current search, carried by the mailbox URL and driven by the app bar. */
+  /** Recherche en cours, portée par l'URL de la boîte et pilotée par la barre d'application. */
   search?: string
   searchScope?: SearchScope
   permissions?: MailPermissions
@@ -133,7 +150,7 @@ interface Props {
 
 interface AppSettings {
   thread_view: boolean; messages_per_page: number; mail_density: DensityMode
-  /** Displayed mailbox, as stored: what tells whether the received account is the right one. */
+  /** Boîte affichée, telle qu'enregistrée : ce qui dit si le compte reçu est le bon. */
   active_account_id: string | null
 }
 
@@ -141,7 +158,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const perms = permissions ?? DEFAULT_PERMISSIONS
   const t = useTranslations('mail')
   const locale = useLocale()
-  // Shared state: the list is the ONLY one to publish and to register actions.
+  // État partagé : la liste est la SEULE à publier et à enregistrer des actions.
   const { publish, register } = useMailSelection()
   const [filter, setFilter] = useState<MailListFilter>('all')
   const [page, setPage] = useState(1)
@@ -149,6 +166,11 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const [refreshKey, setRefreshKey] = useState(0)
   const [readUids, setReadUids] = useState<Set<string>>(new Set())
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null)
+
+  // Les boîtes de l'utilisateur, prises à la MÊME source que la barre latérale
+  // (mêmes clés SWR, donc aucune requête de plus) : la pastille d'un résultat doit
+  // porter exactement la couleur et les lettres que la barre lui donne déjà.
+  const { accounts } = useAccountAccent()
 
   const { data: settingsData } = useSWR<{ data: AppSettings }>('/api/settings', fetcher)
   const threadView = settingsData?.data?.thread_view ?? true
@@ -178,21 +200,21 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   // Drag state
   const [draggingUid, setDraggingUid] = useState<string | null>(null)
 
-  // Marquee selection: only the DRAWN state lives in the render;
-  // the gesture itself (origin, previous selection, additive mode) stays in a
-  // ref: it changes on every pixel and must not re-render anything.
+  // Rectangle de sélection (lot M3c) — seul l'état DESSINÉ vit dans le rendu ;
+  // le geste lui-même (origine, sélection d'avant, mode additif) reste en
+  // référence : il change à chaque pixel et ne doit rien re-rendre.
   const [marquee, setMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
   const marqueeRef = useRef<{
     startX: number; startY: number; startScroll: number
-    /** Last known pointer position: this is what gives the DIRECTION. */
+    /** Dernière position connue du pointeur — c'est elle qui donne la DIRECTION. */
     lastX: number; lastY: number
     additive: boolean; before: Set<string>; armed: boolean
-    /** Has a rectangle really been drawn? Armed is not enough: a plain click arms it too. */
+    /** Un rectangle a-t-il vraiment été tracé ? Armé ne suffit pas : un simple clic arme aussi. */
     drew: boolean
   } | null>(null)
 
-  // File-explorer style selection: the last clicked row is the anchor of a
-  // Shift-click range. A ref is enough: it drives no render.
+  // Sélection façon explorateur : la dernière ligne cliquée est l'ancre d'une
+  // plage Maj-clic. Une référence suffit — elle ne pilote aucun rendu.
   const rangeAnchorKey = useRef<string | null>(null)
 
   // Infinite scroll — sentinel + observer replace the "load more" button
@@ -247,10 +269,10 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     { refreshInterval: 60000 }
   )
 
-  // `total` = real server-side matches, `fields` = queried fields:
-  // the banner states them rather than retyping them (single source: lib/search.ts).
-  // The "this folder" scope fits in one response: a single folder, nothing to spread out.
-  const isStreamingScope = isSearchMode && searchScope === SCOPE_ALL
+  // `total` = correspondances réelles côté serveur, `fields` = champs interrogés :
+  // le bandeau les dit plutôt que de les retaper (source unique : lib/search.ts).
+  // La portée « ce dossier » tient en une réponse : un seul dossier, rien à étaler.
+  const isStreamingScope = isSearchMode && isWideScope(searchScope)
   // Same wait as the list (`accountSettled`): a SINGLE condition holds back both
   // scopes, and the banner stays in its pending state instead of announcing a
   // definitive "0 results".
@@ -263,26 +285,38 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     fetcher
   )
 
-  // The "all folders" scope: the response arrives folder by folder (NDJSON).
-  // Results accumulate as they come, the progress is displayed, and
-  // changing the query aborts the previous one instead of letting it run.
+  // Portée « tous les dossiers » : la réponse arrive dossier par dossier (NDJSON).
+  // Les résultats s'accumulent au fil de l'eau, la progression est affichée, et
+  // changer de requête interrompt la précédente au lieu de la laisser courir.
   const [streamed, setStreamed] = useState<SearchStreamState<Message>>(EMPTY_SEARCH_STREAM)
   const [streaming, setStreaming] = useState(false)
   const streamAbort = useRef<AbortController | null>(null)
   const stopStream = useCallback(() => { streamAbort.current?.abort() }, [])
+
+  // CE que le flux doit couvrir. Un effet ne s'exécute qu'APRÈS la peinture : entre
+  // le rendu où la recherche devient prête et celui où l'effet lève `streaming`, le
+  // bandeau affichait un « 0 résultat » SANS « Recherche… », donc présenté comme
+  // définitif (mesuré le 20/09/2026 : 52 ms de faux zéro au chargement à froid).
+  // Comparer la clé visée à celle que le flux a démarrée rend l'attente visible dès
+  // le PREMIER rendu, sans second drapeau à tenir en accord avec le premier.
+  const streamKey = isStreamingScope && searchReady
+    ? `${search}|${folder}|${searchScope}|${accountParam}`
+    : null
+  const [streamedKey, setStreamedKey] = useState<string | null>(null)
 
   useEffect(() => {
     if (!isStreamingScope || !searchReady) { setStreamed(EMPTY_SEARCH_STREAM); return }
     const controller = new AbortController()
     streamAbort.current = controller
     setStreamed(EMPTY_SEARCH_STREAM)
+    setStreamedKey(streamKey)
     setStreaming(true)
     const url = `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}` +
-      `&folder=${encodeURIComponent(folder)}&${SCOPE_PARAM}=${SCOPE_ALL}&${STREAM_PARAM}=1${accountParam}`
-    // A stream read TO THE END has nothing left to abort: aborting it anyway
-    // on unmount made the browser conclude `net::ERR_ABORTED` on a
-    // response that was nonetheless complete: misleading in the network tools, and
-    // indistinguishable from a real abort.
+      `&folder=${encodeURIComponent(folder)}&${SCOPE_PARAM}=${searchScope}&${STREAM_PARAM}=1${accountParam}`
+    // Un flux lu JUSQU'AU BOUT n'a plus rien à abandonner : l'interrompre quand même
+    // au démontage faisait conclure le navigateur à `net::ERR_ABORTED` sur une
+    // réponse pourtant complète — trompeur dans les outils réseau, et indissociable
+    // d'un vrai abandon.
     let complete = false
     ;(async () => {
       try {
@@ -303,24 +337,24 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
         }
         complete = true
       } catch {
-        // A deliberate abort is not a failure: the results already
-        // received stay displayed, and the banner simply stops progressing.
+        // Une interruption volontaire n'est pas une panne : les résultats déjà
+        // reçus restent affichés, et le bandeau cesse simplement de progresser.
       } finally {
-        // ONLY the CURRENT search clears the flag. An aborted search
-        // finishes AFTER the next one has started: without this test, its `finally`
-        // cleared the progress of the running one: no more Stop button, no more
-        // "N folders out of M", and a "0 results" presented as definitive.
+        // SEULE la recherche COURANTE éteint le drapeau. Une recherche abandonnée
+        // termine APRÈS que la suivante a démarré : sans ce test, son `finally`
+        // éteignait la progression de celle qui court — plus de bouton Arrêter, plus
+        // de « N dossiers sur M », et un « 0 résultat » présenté comme définitif.
         if (streamAbort.current === controller) setStreaming(false)
       }
     })()
     return () => { if (!complete) controller.abort() }
-  }, [isStreamingScope, searchReady, search, folder, accountParam])
+  }, [isStreamingScope, searchReady, search, folder, accountParam, searchScope, streamKey])
 
-  // As long as the account is not resolved, the search is STILL starting up:
-  // the banner says "Searching..." rather than asserting a result it does not have.
+  // Tant que le compte n'est pas résolu, la recherche est EN COURS de démarrage :
+  // le bandeau dit « Recherche… » plutôt que d'affirmer un résultat qu'il n'a pas.
   const isSearching = isSearchMode && !searchReady
     ? true
-    : (isStreamingScope ? streaming : isSearchingOne)
+    : (isStreamingScope ? (streaming || streamedKey !== streamKey) : isSearchingOne)
 
   // Folders — needed for the move menu, the context menu AND the row "Archive"
   // quick action, so it is fetched whenever an account is active. The key is
@@ -335,9 +369,9 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     () => folders.find(f => /archives?\b/i.test(f.name) || /archives?\b/i.test(f.path))?.path ?? null,
     [folders]
   )
-  // A result carries its IMAP PATH (e.g. "INBOX.Clients.2026"): the banner displays
-  // the name already known from the folder list, and failing that the last segment:
-  // the separator is server-specific, so it comes from the folder itself.
+  // Un résultat porte son CHEMIN IMAP (« INBOX.Clients.2026 ») : le bandeau affiche
+  // le nom déjà connu de la liste des dossiers, et à défaut le dernier segment —
+  // le séparateur est propre au serveur, il vient donc du dossier lui-même.
   const folderNames = useMemo(() => {
     const byPath = new Map<string, string>()
     const walk = (list: Folder[]) => list.forEach(f => {
@@ -361,6 +395,14 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     if (!data?.messages) return
     if (page === 1) {
       setAccumulated(data.messages)
+      // Le compteur monte APRÈS ce listage, pas en même temps. C'est lui qui
+      // réécrit le nombre autoritatif (SEARCH UNSEEN, `mailbox_stats`), et il
+      // dure le temps d'un aller-retour IMAP : demander les comptes en parallèle
+      // — ce que faisait l'annonce du flux — relisait donc l'ANCIENNE valeur,
+      // `/api/accounts` étant une simple lecture SQL, bien plus rapide. Aucun
+      // sondage de plus : on se branche sur la relecture que la liste fait déjà,
+      // que ce soit l'annonce IMAP IDLE ou son intervalle.
+      unreadRefresh()
     } else {
       setAccumulated(prev => {
         const existingUids = new Set(prev.map(m => m.uid))
@@ -370,16 +412,38 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     }
   }, [data, page, refreshKey])
 
-  const searchMessages = isStreamingScope ? streamed.messages : (searchData?.messages ?? [])
+  const searchMessages = isStreamingScope ? streamed.messages : (searchData?.messages ?? NO_MESSAGES)
   const messages = isSearchMode ? searchMessages : accumulated
   // The folder as loaded (not a search): no extra poll.
   useEmailNotifications(isSearchMode ? EMPTY_MESSAGES : accumulated, folder, activeAccountId ?? undefined)
   const total = data?.total ?? 0
-  // The server may have found more than it returns (SEARCH_RESULT_LIMIT cap):
-  // the banner then announces "first X of N" instead of implying N = X.
+  // Le serveur peut avoir trouvé plus que ce qu'il rend (plafond SEARCH_RESULT_LIMIT) :
+  // le bandeau annonce alors « X premiers sur N » au lieu de laisser croire à N = X.
   const searchTotal = isStreamingScope ? streamed.total : (searchData?.total ?? messages.length)
   const searchTruncated = searchTotal > messages.length
-  const showResultFolder = isSearchMode && searchScope === SCOPE_ALL
+  const showResultFolder = isSearchMode && isWideScope(searchScope)
+  // Portée « toutes les boîtes » : le dossier seul ne suffit plus, deux boîtes ont
+  // chacune une « Réception ». La bulle à deux lettres dit laquelle, sans grossir
+  // la ligne (elle remplace le seul dossier, elle ne s'y ajoute pas).
+  const showResultAccount = isSearchMode && searchScope === SCOPE_ACCOUNTS
+  // Ce que la pastille d'un résultat affiche, résolu UNE fois par boîte et non à
+  // chaque ligne : les lettres et la couleur viennent des mêmes fonctions que la
+  // bulle de la barre latérale (AccountAvatar), donc une boîte ne peut pas
+  // s'épeler ni se colorer autrement ici que là-bas. Le rang dans la liste EST la
+  // clé de la palette automatique — c'est ce même rang que la barre emploie.
+  const resultAccountBadges = useMemo(() => {
+    const byId = new Map<string, { letters: string; background: string; ink: string; email: string }>()
+    accounts.forEach((account, rank) => {
+      const background = accountColor(account, rank)
+      byId.set(account.id, {
+        letters: accountInitials(account),
+        background,
+        ink: readableInk(background),
+        email: account.email,
+      })
+    })
+    return byId
+  }, [accounts])
   const loadError = !isSearchMode && !!error && accumulated.length === 0
   const loading = isSearchMode ? (messages.length === 0 && isSearching) : (!data && !error)
 
@@ -456,10 +520,10 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   }, [threads, isSearchMode, timeBucket])
 
   /**
-   * The origin of a row: ITS account and ITS folder, not those of the screen. A
-   * "all folders" search returns messages from several folders, and
-   * a uid designates a message only within its own. Missing fields
-   * fall back to the displayed context (outside search, they are identical).
+   * L'origine d'une ligne : SON compte et SON dossier, pas ceux de l'écran. Une
+   * recherche « tous les dossiers » rend des messages de plusieurs dossiers, et
+   * un uid ne désigne un message que dans le sien. Les champs manquants
+   * retombent sur le contexte affiché (hors recherche, ils sont identiques).
    */
   const originOf = useCallback((msg: Message): MessageOrigin => ({
     accountId: msg.accountId || activeAccountId || '',
@@ -471,41 +535,30 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     () => threads.map(t => originKey(originOf(t.lastMessage))),
     [threads, originOf]
   )
-  const isAllChecked = allVisibleKeys.length > 0 && allVisibleKeys.every(key => checkedKeys.has(key))
+  const isAllChecked = isAllSelected(allVisibleKeys, checkedKeys)
   const isIndeterminate = !isAllChecked && allVisibleKeys.some(key => checkedKeys.has(key))
 
-  const toggleAll = () => {
-    setCheckedKeys(isAllChecked ? new Set() : new Set(allVisibleKeys))
+  /**
+   * La RÈGLE (clic, Cmd/Ctrl-clic, Maj-clic, tout prendre) vit dans
+   * `lib/explorerSelection.ts` et sert aussi la liste des abonnements du
+   * tableau de bord. Ici on ne fait que ranger le résultat : l'ensemble dans
+   * l'état, l'ancre dans sa référence.
+   */
+  const applySelection = (next: ExplorerSelection) => {
+    setCheckedKeys(next.selected)
+    rangeAnchorKey.current = next.anchor
   }
 
-  const toggleChecked = (key: string) => {
-    setCheckedKeys(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
+  const currentSelection = (): ExplorerSelection => ({ selected: checkedKeys, anchor: rangeAnchorKey.current })
+
+  const clickRow = (key: string, gesture: ExplorerGesture) =>
+    applySelection(explorerSelect(allVisibleKeys, currentSelection(), key, gesture))
+
+  const toggleAll = () => applySelection(selectAll(allVisibleKeys, isAllChecked))
 
   const toggleRow = (key: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    rangeAnchorKey.current = key
-    toggleChecked(key)
-  }
-
-  /** Shift-click: range from the anchor, in displayed order. Without an anchor, the row alone. */
-  const selectRangeTo = (key: string) => {
-    const anchor = rangeAnchorKey.current
-    const from = anchor ? allVisibleKeys.indexOf(anchor) : -1
-    const to = allVisibleKeys.indexOf(key)
-    if (to < 0) return
-    if (from < 0) {
-      rangeAnchorKey.current = key
-      setCheckedKeys(new Set([key]))
-      return
-    }
-    const [lo, hi] = from <= to ? [from, to] : [to, from]
-    setCheckedKeys(new Set(allVisibleKeys.slice(lo, hi + 1)))
+    clickRow(key, 'toggle')
   }
 
   const clearSelection = () => {
@@ -513,7 +566,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     rangeAnchorKey.current = null
   }
 
-  /** The checked origins, thread by thread: a checked thread targets all its messages. */
+  /** Les origines cochées, fil par fil : un fil coché vise tous ses messages. */
   const checkedOrigins = useMemo(() => {
     const origins: MessageOrigin[] = []
     for (const thread of threads) {
@@ -525,17 +578,18 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   }, [threads, checkedKeys, originOf])
 
   /**
-   * The primitives take the TARGETED ORIGINS: they group by (account,
-   * folder) and send ONE bulk request per group, with ITS folder. The
-   * DISPLAYED folder no longer enters any request: it was what made
-   * actions fire on the wrong messages when a result came from another
-   * folder. The bulk API contract does not change.
+   * Les primitives prennent les ORIGINES visées : elles groupent par (compte,
+   * dossier) et envoient UNE requête groupée par groupe, avec SON dossier. Le
+   * dossier AFFICHÉ n'entre plus dans aucune requête — c'est lui qui faisait
+   * partir les actions sur les mauvais messages quand un résultat venait d'un
+   * autre dossier. Le contrat de l'API groupée ne change pas.
    */
   const bulkByOrigin = (
     origins: MessageOrigin[],
     body: (group: { accountId: string; folder: string; uids: string[] }) => Record<string, unknown>,
     method: 'PATCH' | 'DELETE' = 'PATCH',
-  ) => Promise.all(groupByOrigin(origins).map(group =>
+    groups = groupByOrigin(origins),
+  ) => Promise.all(groups.map(group =>
     fetch('/api/messages/bulk', {
       method,
       headers: { 'Content-Type': 'application/json' },
@@ -543,12 +597,21 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     })
   ))
 
-  /** The targeted uids, across all folders: what the display must remove. */
+  /** Les uid visés, tous dossiers confondus : ce que l'affichage doit retirer. */
   const uidsOf = (origins: MessageOrigin[]) => new Set(origins.map(x => x.uid))
 
   const markReadUids = async (origins: MessageOrigin[], read: boolean) => {
     if (!origins.length) return
     const uids = uidsOf(origins)
+    // Le badge descend sur le clic, pas à la relecture suivante. On ne décale
+    // que les lignes qui CHANGENT d'état — l'état LU À L'ÉCRAN, `readUids`
+    // compris — sinon remarquer « lu » un message déjà lu ferait baisser le
+    // compteur une seconde fois. Voir lib/unreadSignal.ts.
+    const shown = new Map(accumulated.map(m => [originKey(originOf(m)), m]))
+    unreadShift(origins.filter(o => {
+      const msg = shown.get(originKey(o))
+      return msg ? (msg.isRead || readUids.has(msg.uid)) === !read : false
+    }), read)
     await bulkByOrigin(origins, g => ({ ...g, action: read ? 'read' : 'unread' }))
     setAccumulated(prev => prev.map(m => uids.has(m.uid) ? { ...m, isRead: read } : m))
     setReadUids(prev => {
@@ -569,10 +632,13 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     mutate()
   }
 
+  // Un groupe déjà dans la destination n'émet AUCUNE requête (`groupsToMove`), et
+  // ses lignes restent affichées : elles n'ont pas bougé.
   const moveUids = async (origins: MessageOrigin[], destination: string) => {
-    if (!origins.length) return
-    const uids = uidsOf(origins)
-    await bulkByOrigin(origins, g => ({ ...g, action: 'move', destination }))
+    const groups = groupsToMove(origins, destination)
+    if (!groups.length) return
+    const uids = new Set(groups.flatMap(g => g.uids))
+    await bulkByOrigin(origins, g => ({ ...g, action: 'move', destination }), 'PATCH', groups)
     setAccumulated(prev => prev.filter(m => !uids.has(m.uid)))
     clearSelection()
     mutate()
@@ -587,9 +653,9 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   }
 
   /**
-   * Snoozes the targeted uids. The snooze is set message by message (the route
-   * carries the uid in its path); the rows disappear all at once, as
-   * for a move, and the bar's popover refreshes.
+   * Reporte les uids visés. Le report est posé message par message (la route
+   * porte l'uid dans son chemin) ; les lignes disparaissent d'un coup, comme
+   * pour un déplacement, et le popover de la barre se rafraîchit.
    */
   const snoozeUids = async (origins: MessageOrigin[], until: Date) => {
     if (!origins.length) return
@@ -618,12 +684,12 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
 
   // Drag handlers
   const handleDragStart = useCallback((e: React.DragEvent, thread: ThreadGroup) => {
-    // Direction arbitration: a mostly VERTICAL gesture from a
-    // row is a marquee selection, not a drag toward a folder.
+    // Arbitrage de direction (lot M3c) : un geste surtout VERTICAL depuis une
+    // ligne est un rectangle de sélection, pas un glisser vers un dossier.
     const pending = marqueeRef.current
     if (pending && !pending.armed) {
-      // The direction is read from the pointer trail, not from the coordinates of
-      // the drag event: those are not reliable from one engine to another.
+      // La direction se lit sur la trace du pointeur, pas sur les coordonnées de
+      // l'événement de glisser : celles-ci ne sont pas fiables d'un moteur à l'autre.
       if (Math.abs(pending.lastY - pending.startY) >= Math.abs(pending.lastX - pending.startX)) {
         e.preventDefault()
         pending.armed = true
@@ -636,12 +702,12 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       ? checkedOrigins
       : thread.messages.map(originOf)
     const groups = groupByOrigin(dragged)
-    // The drop target (sidebar) moves ONE group: `{ uids, accountId, folder }`.
-    // A selection mixing several folders has no single folder to
-    // announce: dragging it would move part of it with the wrong folder.
-    // We therefore refuse the gesture rather than act on wrong messages.
-    // ponytail: refusal, not a second protocol. The day the drop target can read
-    // several groups, it will be enough to pass them to it here.
+    // Le dépôt (barre latérale) déplace UN groupe : `{ uids, accountId, folder }`.
+    // Une sélection qui mêle plusieurs dossiers n'a pas de dossier unique à
+    // annoncer — la glisser en déplacerait une partie avec le mauvais dossier.
+    // On refuse alors le geste plutôt que d'agir sur de mauvais messages.
+    // ponytail: refus, pas un second protocole. Le jour où le dépôt saura lire
+    // plusieurs groupes, il suffira de les lui passer ici.
     if (groups.length !== 1) { e.preventDefault(); return }
     e.dataTransfer.setData('application/synapmail', JSON.stringify(groups[0]))
     e.dataTransfer.effectAllowed = 'move'
@@ -651,21 +717,21 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const handleDragEnd = useCallback(() => setDraggingUid(null), [])
 
   /**
-   * Mouse marquee selection.
+   * Rectangle de sélection à la souris (lot M3c).
    *
-   * The rows are `draggable` and take the full width: there is no
-   * empty space to start a rectangle in. The gesture direction therefore decides, at
-   * `dragstart`: mostly VERTICAL (|dy| >= |dx|) → the native drag is cancelled
-   * and the rectangle begins; mostly HORIZONTAL → we head toward the
-   * sidebar, drag-and-drop stays what it was. A press outside a row
-   * (date header, bottom margin) has no native drag to arbitrate: the
-   * rectangle starts as soon as the pointer has moved.
+   * Les lignes sont `draggable` et occupent toute la largeur : il n'y a pas de
+   * vide où commencer un rectangle. La direction du geste tranche donc, au
+   * `dragstart` : surtout VERTICAL (|dy| >= |dx|) → le glisser natif est annulé
+   * et le rectangle commence ; surtout HORIZONTAL → on part vers la barre
+   * latérale, le glisser-déposer reste ce qu'il était. Un appui hors d'une ligne
+   * (en-tête de date, marge basse) n'a pas de glisser natif à arbitrer : le
+   * rectangle démarre dès que le pointeur a bougé.
    *
-   * Everything goes through the M1 selection: the toolbar and the right click
-   * see the result without one extra line of code.
+   * Tout passe par la sélection de M1 : la barre d'outils et le clic droit
+   * voient le résultat sans une ligne de code en plus.
    */
 
-  /** Selects the rows the rectangle INTERSECTS, in screen coordinates. */
+  /** Sélectionne les lignes que le rectangle COUPE, dans les coordonnées de l'écran. */
   const selectIntersecting = useCallback((top: number, bottom: number) => {
     const state = marqueeRef.current
     if (!state) return
@@ -683,8 +749,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     setCheckedKeys(next)
   }, [])
 
-  // A rectangle released on a row is followed by a `click`: without this flag,
-  // it would open the message and clear the selection just drawn.
+  // Un rectangle relâché sur une ligne fait suivre un `click` : sans ce drapeau,
+  // il ouvrirait le message et effacerait la sélection qu'on vient de tracer.
   const marqueeDrewRef = useRef(false)
 
   const endMarquee = useCallback((restore: boolean) => {
@@ -697,16 +763,16 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   }, [])
 
   const beginMarquee = useCallback((e: React.MouseEvent) => {
-    // Left button only: the right click opens the menu, the middle one is none of our business.
+    // Bouton gauche seul : le clic droit ouvre le menu, le milieu ne nous regarde pas.
     if (e.button !== 0) return
-    // A rectangle drawn from one row to ANOTHER produces no `click` (the
-    // two ends do not have the same element): the flag cannot
-    // rely on a click to clear itself, the next press is what does it.
+    // Un rectangle tracé d'une ligne à une AUTRE ne produit aucun `click` (les
+    // deux extrémités n'ont pas le même élément) : le drapeau ne peut pas
+    // compter sur un clic pour se vider, c'est l'appui suivant qui le fait.
     marqueeDrewRef.current = false
     const box = scrollRef.current
     if (!box) return
     const target = e.target as HTMLElement | null
-    // The avatar already carries the checkbox: a press on it is not a rectangle.
+    // La bulle porte déjà la case à cocher : un appui dessus n'est pas un rectangle.
     if (target?.closest('.group\\/avatar')) return
     marqueeRef.current = {
       startX: e.clientX,
@@ -717,17 +783,17 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       additive: e.metaKey || e.ctrlKey || e.shiftKey,
       before: new Set(checkedKeys),
       drew: false,
-      // On a row, the rectangle waits for the `dragstart` arbitration; elsewhere,
-      // there is nothing to arbitrate.
+      // Sur une ligne, le rectangle attend l'arbitrage du `dragstart` ; ailleurs,
+      // il n'y a rien à arbitrer.
       armed: !target?.closest('[data-mail-row]'),
     }
   }, [checkedKeys])
 
   /**
-   * The gesture lives on the WINDOW, not on the container: the pointer leaves the
-   * list without the rectangle freezing, and a release outside ends it.
-   * A single set of listeners, installed once: it bails out immediately when no
-   * gesture is in progress.
+   * Le geste vit sur la FENÊTRE, pas sur le conteneur : le pointeur sort de la
+   * liste sans que le rectangle se fige, et un relâchement dehors le termine.
+   * Un seul jeu d'écouteurs, posé une fois — il sort tout de suite quand aucun
+   * geste n'est en cours.
    */
   useEffect(() => {
     let pointer: { x: number; y: number } | null = null
@@ -737,7 +803,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       if (scroller) { clearInterval(scroller); scroller = null }
     }
 
-    /** Redraws and re-selects from the last known position. */
+    /** Redessine et re-sélectionne à partir de la dernière position connue. */
     const paint = () => {
       const state = marqueeRef.current
       const box = scrollRef.current
@@ -760,10 +826,10 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       pointer = { x: e.clientX, y: e.clientY }
       state.lastX = e.clientX
       state.lastY = e.clientY
-      // On a row, the rectangle is armed only once the native drag has been ruled out.
+      // Sur une ligne, le rectangle n'est armé qu'une fois le glisser natif écarté.
       if (!state.armed) return
       if (Math.abs(e.clientX - state.startX) < MARQUEE_MIN_PX && Math.abs(e.clientY - state.startY) < MARQUEE_MIN_PX) return
-      // The rectangle replaces the text selection the browser would make.
+      // Le rectangle remplace la sélection du texte que le navigateur ferait.
       e.preventDefault()
       state.drew = true
       paint()
@@ -792,26 +858,22 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   }, [selectIntersecting, endMarquee])
 
   /**
-   * Click on a row, file-explorer style: Cmd/Ctrl toggles the row, Shift
-   * extends the range from the last clicked row, a plain click CLEARS the
-   * selection and opens that row: even while a selection is in progress
-   * (otherwise a right click, which selects, would make the list unopenable).
-   * The checkbox on avatar hover (`toggleRow`) remains the path that accumulates.
+   * Clic sur une ligne, façon explorateur : Cmd/Ctrl bascule la ligne, Maj
+   * étend la plage depuis la dernière ligne cliquée, un clic simple VIDE la
+   * sélection et ouvre cette ligne — même quand une sélection est en cours
+   * (sinon un clic droit, qui sélectionne, rendrait la liste inouvrable).
+   * La case au survol de la bulle (`toggleRow`) reste le chemin qui accumule.
    */
   const handleRowClick = (thread: ThreadGroup, e: React.MouseEvent) => {
     if (marqueeDrewRef.current) { marqueeDrewRef.current = false; return }
     const key = originKey(originOf(thread.lastMessage))
-    if (e.metaKey || e.ctrlKey) {
-      toggleChecked(key)
-      rangeAnchorKey.current = key
+    const gesture = gestureOf(e.nativeEvent)
+    if (gesture !== 'replace') {
+      clickRow(key, gesture)
       return
     }
-    if (e.shiftKey) {
-      selectRangeTo(key)
-      return
-    }
-    // The anchor is set AFTER the opening: `handleSelectThread` clears the
-    // selection, which erases the anchor: a later Shift-click must start from here.
+    // L'ancre est posée APRÈS l'ouverture : `handleSelectThread` vide la
+    // sélection, ce qui efface l'ancre — un Maj-clic ensuite doit partir d'ici.
     handleSelectThread(thread)
     rangeAnchorKey.current = key
   }
@@ -822,6 +884,12 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     thread.messages.forEach(msg => {
       if (!msg.isRead && !readUids.has(msg.uid)) {
         setReadUids(prev => new Set(prev).add(msg.uid))
+        // La ligne se grise ICI, sur le clic : le compteur descend au même
+        // instant. L'écriture, elle, part du volet de lecture quand le message
+        // est chargé — attendre cet aller-retour IMAP pour bouger le badge le
+        // faisait arriver une seconde trop tard (mesuré : 1029 ms pour 1000).
+        // Le volet décale la même origine ; `unreadShift` ne compte qu'une fois.
+        unreadShift([originOf(msg)], true)
       }
     })
     if (thread.count === 1) {
@@ -832,24 +900,21 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   }
 
   /**
-   * Right click, file-explorer style: INSIDE the selection it keeps it whole (the
-   * menu acts on everything); outside it, it selects that row alone first,
-   * so that the targeted item is always the one seen highlighted.
+   * Clic droit, façon explorateur : DANS la sélection il la garde entière (le
+   * menu agit sur tout) ; hors d'elle il sélectionne cette ligne seule d'abord,
+   * pour que la cible visée soit toujours celle qu'on voit surlignée.
    */
   const handleContextMenu = (e: React.MouseEvent, thread: ThreadGroup) => {
     e.preventDefault()
     const msg = thread.lastMessage
     const key = originKey(originOf(msg))
-    if (!checkedKeys.has(key)) {
-      setCheckedKeys(new Set([key]))
-      rangeAnchorKey.current = key
-    }
+    if (!checkedKeys.has(key)) clickRow(key, 'replace')
     setContextMenu({
       x: e.clientX,
       y: e.clientY,
       isRead: msg.isRead || readUids.has(msg.uid),
       flag: msg.flag ?? (msg.isStarred ? DEFAULT_FLAG_KEY : null),
-      // "Move to" removes the row's ORIGIN folder, not the screen's.
+      // « Déplacer vers » retire le dossier d'ORIGINE de la ligne, pas celui de l'écran.
       folderPath: originOf(msg).folder,
     })
   }
@@ -858,9 +923,9 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const hasSelection = checkedKeys.size > 0
 
   /**
-   * Target of the shared actions: the selection if it exists, otherwise the OPEN
-   * message. A single place decides: the context capabilities follow the same
-   * rule (`targetCount`), so an enabled button always has something to target.
+   * Cible des actions partagées : la sélection si elle existe, sinon le message
+   * OUVERT. Un seul endroit décide — les capacités du contexte suivent la même
+   * règle (`targetCount`), donc un bouton actif a toujours quelque chose à viser.
    */
   const targetOrigins = useMemo(
     () => (checkedOrigins.length ? checkedOrigins : selectedOrigin ? [selectedOrigin] : []),
@@ -869,8 +934,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   const targetOriginsRef = useRef(targetOrigins)
   targetOriginsRef.current = targetOrigins
 
-  // The list primitives change identity on every render: a
-  // ref makes them callable without re-registering the whole registry.
+  // Les primitives de la liste changent d'identité à chaque rendu : une
+  // référence les rend appelables sans ré-enregistrer tout le registre.
   const moveUidsRef = useRef(moveUids)
   moveUidsRef.current = moveUids
   const deleteUidsRef = useRef(deleteUids)
@@ -897,8 +962,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     deleteUidsRef.current(origins)
   }, [t])
 
-  // Publishes what a toolbar needs to know, and withdraws the publication when
-  // leaving the mailbox (the provider then falls back to an empty state).
+  // Publie ce qu'une barre d'outils doit connaître, et retire la publication en
+  // quittant la boîte (le fournisseur retombe alors sur un état vide).
   useEffect(() => {
     publish({
       accountId: activeAccountId ?? null,
@@ -928,8 +993,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
     })
   }, [register, archivePath, spamPath, moveTarget, deleteTarget])
 
-  // List keyboard: Cmd/Ctrl+A selects everything loaded, Escape clears,
-  // Delete deletes the selection (confirmation beyond one message).
+  // Clavier de la liste : Cmd/Ctrl+A sélectionne tout le chargé, Échap vide,
+  // Suppr supprime la sélection (confirmation au-delà d'un message).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
@@ -937,7 +1002,7 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
         if (allVisibleKeys.length === 0) return
         e.preventDefault()
-        setCheckedKeys(new Set(allVisibleKeys))
+        applySelection(selectAll(allVisibleKeys, false))
         return
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return
@@ -968,8 +1033,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
         data-mail-row={msg.uid}
         {...{ [MAIL_ORIGIN_ATTR]: rowKey }}
         role="option"
-        // Selected = checked OR open: what the eye sees highlighted is what
-        // the screen reader announces, and it is what the actions target.
+        // Sélectionné = coché OU ouvert : ce que l'œil voit surligné est ce que
+        // le lecteur d'écran annonce, et c'est ce que les actions visent.
         aria-selected={isChecked || isSelected}
         tabIndex={-1}
         draggable={perms.canOrganize}
@@ -1026,11 +1091,28 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
                 : (msg.from.name || msg.from.address)
               }
             </span>
-            {/* The "all folders" scope: a result says nothing if it does not say
-                where it comes from. Discreet, and only when the folder can vary. */}
+            {/* Portée « tous les dossiers » : un résultat ne dit rien s'il ne dit pas
+                d'où il vient. Discret, et seulement quand le dossier peut varier. */}
             {showResultFolder && msg.folder && (
-              <span className="shrink-0 max-w-[40%] truncate text-[11px] text-muted-foreground/70" data-result-folder>
-                {folderLabel(msg.folder)}
+              <span className="shrink-0 max-w-[40%] flex items-center gap-1 text-[11px] text-muted-foreground/70" data-result-folder>
+                {/* Portée « toutes les boîtes » : la pastille dit DE QUELLE boîte
+                    vient ce résultat. Un point coloré à deux lettres, pas une
+                    seconde bulle : la ligne garde exactement la même hauteur. */}
+                {showResultAccount && (() => {
+                  const badge = resultAccountBadges.get(msg.accountId)
+                  if (!badge) return null
+                  return (
+                    <span
+                      data-result-account={msg.accountId}
+                      title={badge.email}
+                      className="shrink-0 inline-flex h-[14px] items-center rounded-full px-1 text-[9px] font-semibold leading-none tracking-[0.02em]"
+                      style={{ backgroundColor: badge.background, color: badge.ink }}
+                    >
+                      {badge.letters}
+                    </span>
+                  )
+                })()}
+                <span className="truncate">{folderLabel(msg.folder)}</span>
               </span>
             )}
             <div className="flex items-center gap-1 shrink-0">
@@ -1081,16 +1163,22 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   return (
     <div className="flex flex-col h-full bg-background border-r border-border" {...{ [MAIL_SELECTION_COUNT_ATTR]: checkedOrigins.length }}>
       {/*
-        Toolbar. Its three states do not have the same height (in a narrow column
-        the normal header wraps onto two lines). If the selection bar
-        REPLACED the header, the whole list would shift up as soon as the first row is
-        checked, and a marquee selection would no longer intersect the targeted rows
-        under the pointer. Both therefore live in the SAME grid cell: the
-        height is that of the tallest, the same with and without a selection, with no
-        hard-coded height and no JS measurement. `invisible` also removes from the tab
-        order whatever is not displayed.
+        Toolbar. Ses trois états n'ont pas la même hauteur (à colonne étroite
+        l'en-tête normal passe sur deux lignes). Si la barre de sélection
+        REMPLAÇAIT l'en-tête, toute la liste remonterait dès la première ligne
+        cochée, et un rectangle de sélection ne couperait plus les lignes visées
+        sous le pointeur. Les deux vivent donc dans la MÊME case de grille : la
+        hauteur est celle du plus grand, la même avec et sans sélection, sans
+        hauteur en dur ni mesure en JS. `invisible` retire aussi de l'ordre de
+        tabulation ce qui n'est pas affiché.
       */}
-      <div className="grid shrink-0">
+      {/* Les deux bandeaux se superposent dans UNE piste de grille. Un élément de
+          grille garde `min-width:auto` : sans `minmax(0,1fr)`, celui qui dépasse
+          ÉLARGIT la piste au lieu de se tronquer, et le bandeau de recherche
+          poussait Arrêter et l'icône d'information hors de la colonne, sous le
+          volet de lecture (mesuré le 20/09/2026 : piste de 318 px pour un
+          contenu de 444 px, bouton à 130 px dehors). */}
+      <div className="grid grid-cols-[minmax(0,1fr)] shrink-0">
         <div className={cn('col-start-1 row-start-1 flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border bg-primary/5', !hasSelection && 'invisible')} aria-hidden={!hasSelection || undefined}>
           <button
             onClick={toggleAll}
@@ -1136,20 +1224,32 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
         </div>
         ) : (
         <div className="px-4 py-2 border-b border-border h-full">
-          {/* ONE line: the count, what is displayed, and the progress while it
-              runs. The searched fields and the scope (secondary information)
-              move into a tooltip on the right-hand icon. */}
+          {/* UNE ligne : le compte, ce qui est affiché, et la progression quand elle
+              court. Les champs cherchés et la portée — information secondaire —
+              passent en infobulle sur l'icône de droite. */}
           <div className="flex items-center gap-2 min-w-0">
-            <p className="text-xs text-muted-foreground truncate" data-search-summary>
+            {/* `min-w-0` : un élément de flex garde `min-width:auto`, donc `truncate`
+                ne mordait JAMAIS — le texte poussait Arrêter et l'icône HORS de la
+                colonne (mesuré le 20/09/2026 à 1440 px : bouton à 130 px dehors,
+                sous le volet de lecture, donc plus cliquable). Les deux cibles
+                restent dans la colonne, c'est le texte qui cède. */}
+            <p className="min-w-0 text-xs text-muted-foreground truncate" data-search-summary>
               {t('searchCount', { count: searchTotal })}
               {searchTruncated && ` · ${t('searchShown', { shown: messages.length })}`}
               {isSearching && streamed.folders > 0 &&
                 ` · ${t('searchProgress', { searched: streamed.searched, folders: streamed.folders })}`}
+              {/* Portée « toutes les boîtes » : combien de BOÎTES ont rapporté, en plus
+                  des dossiers — « 3 boîtes sur 8 ». Les boîtes injoignables sont dites
+                  plutôt que tues : un total plus court a sinon l'air d'un vrai résultat. */}
+              {streamed.accounts > 0 &&
+                ` · ${t('searchAccountProgress', { swept: streamed.sweptIds.length, accounts: streamed.accounts })}`}
+              {streamed.unreachable.length > 0 &&
+                ` · ${t('searchUnreachable', { count: streamed.unreachable.length })}`}
               {isSearching && streamed.folders === 0 && ` · ${t('searching')}`}
             </p>
-            {/* Gated on `streaming` and not on `isSearching`: before the account
-                is resolved, no stream is running yet: a Stop button would have
-                nothing to stop. */}
+            {/* Gardé sur `streaming` et non sur `isSearching` : avant que le compte
+                soit résolu, aucun flux ne court encore — un bouton Arrêter n'aurait
+                rien à arrêter. */}
             {streaming && isStreamingScope && (
               <button
                 onClick={stopStream}
@@ -1158,15 +1258,15 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
                 {t('searchStop')}
               </button>
             )}
-            {/* `IconTooltip` and not the native `title` attribute: a single tooltip, in the
-                app's style, placed under the icon. `align="end"`: the icon is flush against the
-                right edge of the list, a centered tooltip would overflow it. */}
+            {/* `IconTooltip` et non l'attribut `title` natif : une seule bulle, au style de
+                l'application, posée sous l'icône. `align="end"` — l'icône est collée au
+                bord droit de la liste, une bulle centrée en sortirait. */}
             <span className="ml-auto flex shrink-0 text-muted-foreground/60">
               <IconTooltip
                 align="end"
                 label={t('searchDetails', {
                   fields: t('searchFieldsLabel'),
-                  scope: searchScope === SCOPE_ALL ? t('searchAllFolders') : t('searchThisFolder'),
+                  scope: t(SCOPE_LABEL[searchScope]),
                 })}
               >
                 <Info className="w-3.5 h-3.5" data-search-details />
@@ -1182,10 +1282,10 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
       </div>
 
       {/* Thread List */}
-      {/* `select-none`: a rectangle starting on a date header used to highlight
-          text along the way: text selection is born at `mousedown`, which no
-          `preventDefault()` placed at `mousemove` can cancel anymore. The list has
-          no text to copy; elsewhere (reading pane) nothing changes. */}
+      {/* `select-none` : un rectangle qui démarre sur un en-tête de date surlignait
+          du texte au passage — la sélection de texte naît au `mousedown`, qu'aucun
+          `preventDefault()` posé au `mousemove` ne peut plus annuler. La liste n'a
+          pas de texte à copier ; ailleurs (volet de lecture) rien ne change. */}
       <ThinScroll
         className="flex-1"
         viewportClassName="relative select-none"

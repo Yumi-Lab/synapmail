@@ -6,13 +6,13 @@ import { detectSpecials } from '../lib/specialFolders.ts'
 const f = (path, specialUse) => ({ path, name: path.split('/').pop(), delimiter: '/', specialUse })
 const pick = (folders, type) => [...detectSpecials(folders)].filter(([, t]) => t === type).map(([p]) => p)
 
-// A server that declares its special folders: sub-folders keep their own identity.
-const declared = [f('INBOX', '\\Inbox'), f('Objets envoyés', '\\Sent'), f('Brouillons', '\\Drafts'), f('Spam', '\\Junk'),
+// A server that declares its special folders (IONOS): sub-folders keep their own identity.
+const ionos = [f('INBOX', '\\Inbox'), f('Objets envoyés', '\\Sent'), f('Brouillons', '\\Drafts'), f('Spam', '\\Junk'),
   f('Corbeille', '\\Trash'), f('Archive', '\\Archive'), f('Spam/AMELI'), f('Spam/Crypto'), f('Corbeille/CONVENTIONS'),
   f('Corbeille/CONVENTIONS/Manga'), f('Newsletters/SpamBrevo'), f('Administratif/Spam')]
-assert.deepEqual(pick(declared, 'spam'), ['Spam'])
-assert.deepEqual(pick(declared, 'trash'), ['Corbeille'])
-assert.deepEqual(pick(declared, 'inbox'), ['INBOX'])
+assert.deepEqual(pick(ionos, 'spam'), ['Spam'])
+assert.deepEqual(pick(ionos, 'trash'), ['Corbeille'])
+assert.deepEqual(pick(ionos, 'inbox'), ['INBOX'])
 
 // A server that declares nothing: top-level names are still recognised, sub-folders are not.
 const bare = [f('INBOX'), f('Sent'), f('Drafts'), f('Junk'), f('Trash'), f('Trash/Old'), f('Projects/Sent'), f('Sentiments')]

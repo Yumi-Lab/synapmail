@@ -1,8 +1,8 @@
 'use client'
 
+import { ThinScroll } from '@/components/layout/ThinScroll'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useSession } from 'next-auth/react'
 import { useTranslations } from 'next-intl'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import {
@@ -13,6 +13,7 @@ import { Dialog, DialogPortal, DialogOverlay } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { SettingsModalPanel } from './SettingsModalPanel'
 import { SETTINGS_ROOT, SettingsLink } from './SettingsSidebar'
+import { useIsAdmin } from '@/hooks/useIsAdmin'
 
 const NAV_ITEMS = [
   { seg: 'profile',       key: 'profile',       icon: User },
@@ -34,8 +35,7 @@ export function SettingsModal() {
   const router = useRouter()
   const pathname = usePathname()
   const t = useTranslations('settings.nav')
-  const { data: session } = useSession()
-  const isAdmin = (session?.user as { role?: string } | undefined)?.role === 'admin'
+  const isAdmin = useIsAdmin()
 
   const segment = pathname.replace(/^\/settings\/?/, '').split('/')[0] || 'profile'
 
@@ -75,8 +75,8 @@ export function SettingsModal() {
             )}
           >
             {NAV_ITEMS.map(({ seg, key, icon: Icon }) => (
-              // `replace`: switching tabs must not push a history entry, otherwise the close
-              // button (a single back step) returns to the previous tab instead of closing.
+              // `replace` : changer d'onglet ne doit pas empiler d'entrée d'historique, sinon la croix
+              // (un seul retour arrière) ramène à l'onglet précédent au lieu de fermer la fenêtre.
               <SettingsLink key={seg} href={`${SETTINGS_ROOT}/${seg}`} replace className={linkClass(segment === seg)}>
                 <Icon className="h-4 w-4 shrink-0" />
                 <span>{t(key)}</span>
@@ -93,8 +93,9 @@ export function SettingsModal() {
             )}
           </nav>
 
-          {/* Panel */}
-          <div className="relative min-w-0 flex-1 overflow-y-auto">
+          {/* Panel — l'ascenseur du thème, pas celui du système : le reste de
+              l'application défile déjà avec `ThinScroll`, cette modale faisait exception. */}
+          <ThinScroll className="relative min-w-0 flex-1">
             <DialogPrimitive.Close
               aria-label="Fermer"
               className="absolute right-3 top-3 z-10 grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -102,7 +103,7 @@ export function SettingsModal() {
               <X className="h-4 w-4" />
             </DialogPrimitive.Close>
             <SettingsModalPanel segment={segment} />
-          </div>
+          </ThinScroll>
         </DialogPrimitive.Popup>
       </DialogPortal>
     </Dialog>

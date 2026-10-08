@@ -17,23 +17,26 @@ import puppeteer from 'puppeteer-core'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 // Tolerance for a position/size drift, in CSS pixels — same floor as the sidebar
-// check: sub-pixel layout rounding is expected, anything a human could see is not.
+// gate: sub-pixel layout rounding is expected, anything a human could see is not.
 const MAX_DRIFT_PX = 1
-// The field is not centred, it is BUTTED against the last icon. The expected value
-// is read from the component, never transcribed here.
+// Le champ est centré par `mx-auto` dans l'espace restant : le reste de la ligne
+// (marges, bornes min/max) peut le décaler de quelques pixels sans que ce soit un
+// défaut. Calibré sur le rendu réel du lot H3 (1440/1280/1024/390, cf. Journal).
+// Lot H3c : le champ n'est plus centré, il est COLLÉ à la dernière icône. La valeur
+// attendue est lue dans le composant, jamais transcrite ici.
 const EXPECTED_FIELD_GAP = Number(readFileSync(new URL('../components/layout/Omnibar.tsx', import.meta.url), 'utf8').match(/searchGap:\s*(\d+)/)?.[1])
 
-// Tooltip geometry and delay, read from the component that exports them.
+// Géométrie et délai de l'infobulle, lus dans le composant qui les expose.
 const TOOLTIP_SRC = readFileSync(new URL('../components/ui/IconTooltip.tsx', import.meta.url), 'utf8')
 const EXPECTED_TOOLTIP_OFFSET = Number(TOOLTIP_SRC.match(/TOOLTIP_OFFSET_PX = (\d+)/)?.[1])
 const EXPECTED_TOOLTIP_DELAY = Number(TOOLTIP_SRC.match(/TOOLTIP_DELAY_MS = (\d+)/)?.[1])
-/** Hover + appearance delay + render margin: the tooltip has had time to show up. */
+/** Survol + délai d'apparition + marge de rendu : la bulle a eu le temps de paraître. */
 const TOOLTIP_SETTLE_MS = EXPECTED_TOOLTIP_DELAY + 400
 const VIEWPORT = { width: 1440, height: 900 }
-// `hasTouch`: this check opens the overflow menu with a REAL tap (`page.tap`), the
-// gesture a person makes — a programmatic `click()` would not prove the same thing.
+// `hasTouch` : le gate ouvre le menu « … » par un VRAI tap (`page.tap`), le geste
+// que l'humain a fait — un `click()` programmatique ne prouverait pas le même chose.
 const MOBILE_VIEWPORT = { width: 390, height: 844, hasTouch: true, isMobile: true }
-// Pages the header must be present on.
+// Pages the header must be present on, per GOAL.md lot O1.
 const PAGES = ['/mail', '/dashboard', '/settings']
 // The header's height is NOT an absolute constant calibrated elsewhere: it is read
 // out of the component's own `OMNIBAR` export in this same run, so the shipped value
@@ -46,28 +49,28 @@ if (!EXPECTED_HEIGHT) { console.error('HARNESS: could not read OMNIBAR.height fr
 if (!EXPECTED_FIELD_MAX_WIDTH) { console.error('HARNESS: could not read OMNIBAR.searchMaxWidth from the component'); process.exit(2) }
 const BAR = '[data-omnibar]'
 const SEARCH = '[data-omnibar-search]'
-// ONE menu button, inside the header, first of the left group. Above `lg` it
+// Lot H1: ONE menu button, inside the header, first of the left group. Above `lg` it
 // folds the bar, below it opens the drawer.
 const MENU = '[data-omnibar-menu]'
-// The round button that used to straddle the bar's edge is gone: this check asserts its
-// absence, so re-introducing it fails here instead of only during visual review.
+// The round button that used to straddle the bar's edge is gone: the gate asserts its
+// absence, so re-introducing it fails here instead of only at the human gate.
 const EDGE_TOGGLE = '[data-sidebar-edge-toggle]'
 const action = name => `[data-omnibar-action="${name}"]`
 
-// --- The mail toolbar ---
+// --- Lot H3: la barre d'outils du courrier ---
 const TOOLBAR = '[data-mail-toolbar]'
 const ROW = '[data-mail-row]'
-// The widths under test, from the widest to the narrowest.
+// Les largeurs que le lot nomme, de la plus large à la plus étroite.
 const TOOLBAR_WIDTHS = [1440, 1280, 1024, 390]
-// The expected order is READ from the shared constant: neither the order nor the names
-// are copied here, otherwise the harness would measure its own copy.
+// L'ordre attendu est LU dans la constante partagée : ni l'ordre ni les noms ne se
+// recopient ici, sinon le banc mesurerait sa propre copie.
 const SELECTION_SRC = readFileSync(new URL('../lib/mailSelection.tsx', import.meta.url), 'utf8')
 const GROUPS_SRC = SELECTION_SRC.slice(
   SELECTION_SRC.indexOf('MAIL_TOOLBAR_GROUPS'),
   SELECTION_SRC.indexOf('] as const', SELECTION_SRC.indexOf('MAIL_TOOLBAR_GROUPS')))
 const TOOLBAR_ORDER = [...GROUPS_SRC.matchAll(/action:\s*'(\w+)'/g)].map(m => m[1])
-// The menu's first colour is READ from the flags source: the harness names no colour
-// of its own.
+// La première couleur du menu est LUE dans la source des drapeaux : le banc ne
+// nomme aucune couleur de son côté.
 const FLAGS_SRC = readFileSync(new URL('../lib/flags.ts', import.meta.url), 'utf8')
 const FIRST_FLAG_KEY = FLAGS_SRC.match(/\{\s*key:\s*'(\w+)'/)?.[1]
 const SELECTION_ATTR = SELECTION_SRC.match(/MAIL_SELECTION_COUNT_ATTR = '([\w-]+)'/)?.[1]
@@ -75,33 +78,33 @@ if (TOOLBAR_ORDER.length < 2 || !SELECTION_ATTR || !FIRST_FLAG_KEY) {
   console.error('HARNESS: could not read MAIL_TOOLBAR_GROUPS / MAIL_SELECTION_COUNT_ATTR / MAIL_FLAGS')
   process.exit(2)
 }
-// The signed-in user sits at the far right of the header, and the one door to
+// Lot H2: the signed-in user sits at the far right of the header, and the one door to
 // the settings is inside its menu — the left group's "settings" action is gone.
 const USER_TRIGGER = '[data-user-menu-trigger]'
 const USER_MENU = '[data-user-menu]'
 const userItem = name => `[data-user-menu-item="${name}"]`
 // Two letters, like an account bubble — the rule lives in AccountAvatar.twoLetters.
 const USER_INITIALS_LEN = 2
-// Every clickable box of the header, measured together at 390 px: no two of them may
-// ever overlap.
+// Toutes les boîtes cliquables du header, mesurées ensemble à 390 px : deux
+// d'entre elles ne doivent jamais se recouvrir.
 const HEADER_BOXES = `${MENU}, [data-omnibar-action], [data-mail-toolbar-more], ${SEARCH}, ${USER_TRIGGER}`
-// Minimum gap between two neighbouring touch targets, in CSS pixels — the value asked
-// for during visual review (gaps of at least 4 px) and the one `gap-1` delivers.
+// Plancher d'écart entre deux cibles tactiles voisines, en pixels CSS — la valeur
+// que le gate humain du 19/09 a demandée (« écarts ≥ 4 px ») et que `gap-1` livre.
 const MIN_HIT_GAP_PX = 4
-// Width of a button in the `ACTION` template (`w-8`), applied by the component through
-// Tailwind: an overflow button narrower than that is a squashed button, not a button.
+// Largeur d'un bouton du gabarit `ACTION` (`w-8`), LUE dans la feuille Tailwind par
+// le composant : un « … » plus étroit que ça est un bouton écrasé, pas un bouton.
 const MORE_BUTTON_PX = 32
-// Search debounce delay, READ from the shared contract (`lib/search.ts`): after clearing
-// the field, the harness lets the navigation it triggers go through.
+// Delai du debounce de la recherche, LU dans le contrat partage (`lib/search.ts`) :
+// apres avoir vide le champ, le banc laisse passer la navigation qu'il declenche.
 const SEARCH_SRC = readFileSync(new URL('../lib/search.ts', import.meta.url), 'utf8')
 const SEARCH_DEBOUNCE_MS = Number(SEARCH_SRC.match(/SEARCH_DEBOUNCE_MS = (\d+)/)?.[1])
 if (!SEARCH_DEBOUNCE_MS) { console.error('HARNESS: could not read SEARCH_DEBOUNCE_MS from lib/search.ts'); process.exit(2) }
 const SEARCH_SETTLE_MS = SEARCH_DEBOUNCE_MS + 400
 
-// --- The omnibar panel ---
+// --- Lot H3f : le panneau de l'omnibar ---
 const PANEL = '[data-omnibar-panel]'
-// The settings entries and the languages are READ from the product sources: the harness
-// keeps no list of its own, otherwise it would measure its copy.
+// Les entrees de reglages et les langues sont LUES dans les sources du produit :
+// le banc n'en tient aucune liste de son cote, sinon il mesurerait sa copie.
 const NAV_SRC = readFileSync(new URL('../components/settings/SettingsSidebar.tsx', import.meta.url), 'utf8')
 const NAV_BLOCK = NAV_SRC.slice(NAV_SRC.indexOf('export const SETTINGS_NAV'), NAV_SRC.indexOf('] as const', NAV_SRC.indexOf('export const SETTINGS_NAV')))
 const SETTINGS_NAV_KEYS = [...NAV_BLOCK.matchAll(/key:\s*'([\w-]+)'/g)].map(m => m[1])
@@ -157,10 +160,13 @@ const probeBar = sel => {
     windowWidth: document.documentElement.clientWidth,
     asideRight: ar && ar.height ? ar.right : null,
     field: box('[data-omnibar-search]'),
-    // The mail toolbar sits between the left group and the field.
+    // Lot H3: the mail toolbar sits between the left group and the field.
     toolbar: box('[data-mail-toolbar]'),
-    // The field butts against the last ICON, not against the toolbar container
-    // (which is `flex-1` and therefore stretches up to the field).
+    // Lot H4b: hors de la boîte la barre n'agit plus mais sa PLACE reste prise —
+    // le gabarit réel, rendu invisible. Ce marqueur dit laquelle des deux on mesure.
+    toolbarReserved: !!document.querySelector('[data-mail-toolbar-reserved]'),
+    // Lot H3c: le champ se colle à la dernière ICÔNE, pas au conteneur de la barre
+    // (qui est `flex-1` et s'étend donc jusqu'au champ).
     lastToolbarButton: (() => {
       const buttons = [...bar.querySelectorAll('[data-mail-toolbar] button')]
         .filter(el => el.getBoundingClientRect().width > 0)
@@ -169,7 +175,7 @@ const probeBar = sel => {
       const b = last.getBoundingClientRect()
       return { left: b.left, right: b.right, centre: b.left + b.width / 2, width: b.width }
     })(),
-    // ONE tooltip per button: no native `title` anywhere in the header.
+    // Lot H3c: une SEULE bulle par bouton — plus aucun `title` natif dans le header.
     titled: [...bar.querySelectorAll('[title]')].map(el => el.getAttribute('title')),
     menu: box('[data-omnibar-menu]'),
     actions: ['dashboard', 'compose'].map(n => box(`[data-omnibar-action="${n}"]`)),
@@ -178,7 +184,7 @@ const probeBar = sel => {
     strayActions: [...bar.querySelectorAll('[data-omnibar-action]')].map(el => el.dataset.omnibarAction),
     background: style.backgroundColor,
     horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-    // Decorative animation is forbidden by the spec: the header's state is static.
+    // Decorative animation is forbidden by GOAL.md: the header's state is static.
     animated: [bar, ...bar.querySelectorAll('*')].some(el => {
       const st = getComputedStyle(el)
       return st.animationName !== 'none' && st.animationDuration !== '0s'
@@ -190,11 +196,11 @@ const browser = await puppeteer.launch({ executablePath: CHROME, headless: true,
 const failures = []
 try {
   const page = await browser.newPage()
-// The dev server recompiles a route on its first visit and the mailbox keeps an SSE
-// stream open: `networkidle2` sometimes takes longer than puppeteer's 30 s default.
-// Observed: two runs failing on two DIFFERENT `goto` calls, both outside the measured
-// sections — a harness failure, not a product one. The ceiling goes up; nothing about
-// what is measured changes.
+// Le serveur de développement recompile une route à la première visite et la boîte
+// tient un flux SSE ouvert : `networkidle2` y met parfois plus que les 30 s par
+// défaut de puppeteer. Mesuré le 19/09 : deux exécutions tombées sur deux `goto`
+// DIFFÉRENTS, toutes deux hors des sections mesurées — une panne de banc, pas du
+// produit. Le plafond monte, le banc ne change rien de ce qu'il mesure.
 page.setDefaultNavigationTimeout(120000)
   await page.setViewport(VIEWPORT)
 
@@ -233,13 +239,13 @@ page.setDefaultNavigationTimeout(120000)
     if (bar.actions.some(a => !a)) failures.push(`${path}: an action is missing from the header`)
     else if (!bar.field || !bar.menu) failures.push(`${path}: no search field in the header`)
     else {
-      // Order of the left group: menu, dashboard, compose, settings.
+      // Lot H1 orders the left group: menu, dashboard, compose, settings.
       const xs = [bar.menu, ...bar.actions].map(a => a.left)
       if (xs.some((x, i) => i > 0 && x <= xs[i - 1])) failures.push(`${path}: the left group is not in order menu, dashboard, compose (x = ${xs.map(v => v.toFixed(0)).join(', ')})`)
       if (bar.actions.at(-1).right > bar.field.left) failures.push(`${path}: the actions are not left of the search field (last action ends at ${bar.actions.at(-1).right.toFixed(2)}, field starts at ${bar.field.left.toFixed(2)})`)
-      // The field starts right after the LAST visible icon — the toolbar's on /mail,
-      // the left group's elsewhere — at the `searchGap` distance read from the
-      // component. The free space runs off to its right.
+      // Lot H3c : le champ commence juste après la DERNIÈRE icône visible — celle de
+      // la barre d'outils sur /mail, celle du groupe de gauche ailleurs — à l'écart
+      // `searchGap` lu dans le composant. L'espace libre part à sa droite.
       const lastIcon = Math.max(bar.actions.at(-1).right, bar.lastToolbarButton?.right ?? 0)
       const gap = bar.field.left - lastIcon
       const freeRight = (bar.user ? bar.user.left : bar.right) - bar.field.right
@@ -251,14 +257,18 @@ page.setDefaultNavigationTimeout(120000)
     }
     if (bar.horizontalOverflow) failures.push(`${path}: horizontal scrollbar at ${VIEWPORT.width}px`)
     if (bar.animated) failures.push(`${path}: an element of the header is running an animation (state must be static)`)
-    // The native tooltip (placed on the POINTER) is replaced everywhere.
+    // Lot H3c : la bulle système (positionnée sur le POINTEUR) est remplacée partout.
     if (bar.titled.length) failures.push(`${path}: ${bar.titled.length} header element(s) still carry a native title: ${bar.titled.join(' | ')}`)
     const missing = await page.evaluate(sels => sels.filter(s => !document.querySelector(s)), [SEARCH, action('dashboard'), action('compose'), USER_TRIGGER])
     if (missing.length) failures.push(`${path}: missing from the header: ${missing.join(', ')}`)
-    // One door to the settings: the left group no longer carries the action.
-    // Outside the mailbox the mail group does not exist (nothing to grey out for nothing).
+    // One door to the settings (lot H2): the left group no longer carries the action.
+    // Lot H4b : hors de la boîte la barre est RÉSERVÉE, pas retirée — sa boîte reste
+    // dans le flux (le champ ne bouge plus d'une page à l'autre) mais elle est
+    // invisible et hors d'atteinte. Le banc distingue les deux par le marqueur, et
+    // `check-header-stability.mjs` mesure l'écart page à page qui le justifie.
     if (path === '/mail' && !bar.toolbar) failures.push(`${path}: no mail toolbar in the header`)
-    if (path !== '/mail' && bar.toolbar) failures.push(`${path}: the mail toolbar shows outside the mailbox`)
+    if (path === '/mail' && bar.toolbarReserved) failures.push(`${path}: the mail toolbar is reserved inside the mailbox, it must be live`)
+    if (path !== '/mail' && !bar.toolbarReserved) failures.push(`${path}: the mail toolbar's place is not reserved outside the mailbox`)
     if (bar.strayActions.includes('settings')) failures.push(`${path}: the header still carries a "settings" action on the left`)
     // The user bubble is the RIGHTMOST thing in the header, past the field, with two letters.
     if (!bar.user) failures.push(`${path}: no user bubble in the header`)
@@ -270,7 +280,7 @@ page.setDefaultNavigationTimeout(120000)
   }
 
   // --- The header follows the bar's right edge in BOTH collapse states ---
-  // Driven by the header's own menu button: a REAL click on the shipped
+  // Driven by the header's own menu button (lot H1): a REAL click on the shipped
   // control, measured on the SAME page one state after the other, so the two readings
   // share everything but the collapse.
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
@@ -324,17 +334,17 @@ page.setDefaultNavigationTimeout(120000)
     console.error('HARNESS: the bar kept the same width across the click — the collapse was not exercised')
     process.exit(2)
   }
-  // Put the persisted preference back the way this check found it.
+  // Put the persisted preference back the way the gate found it.
   await page.click(MENU)
   await new Promise(r => setTimeout(r, SETTLE_MS))
   if (!(await settle())) { console.error('HARNESS: the bar never settled after restoring the collapse state'); process.exit(2) }
 
-  // --- The round floating toggle is gone (removed for both the bar AND the drawer) ---
+  // --- The round floating toggle is gone (lot H1 removes it, bar AND drawer) ---
   const strayToggles = await page.evaluate(s2 => document.querySelectorAll(s2).length, EDGE_TOGGLE)
   console.log(`floating ${EDGE_TOGGLE} elements in the DOM: ${strayToggles}`)
-  if (strayToggles) failures.push(`${strayToggles} floating collapse button(s) still in the DOM, expected none`)
+  if (strayToggles) failures.push(`${strayToggles} floating collapse button(s) still in the DOM — lot H1 removes them`)
 
-  // --- The dashboard row left the sidebar (it is reached from the header now) ---
+  // --- The dashboard row left the sidebar (lot O1 removes it from there) ---
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
   await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
   await new Promise(r => setTimeout(r, SETTLE_MS))
@@ -343,13 +353,13 @@ page.setDefaultNavigationTimeout(120000)
   console.log(`sidebar rows: ${sidebarRows.join(', ')}`)
   if (!sidebarRows.length) { console.error('HARNESS: no sidebar row measured'); process.exit(2) }
   if (sidebarRows.includes('dashboard')) failures.push('the sidebar still carries a "dashboard" row')
-  // The bar's footer is empty: theme and settings live in the user menu.
+  // Lot H2 empties the bar's footer: theme and settings moved into the user menu.
   if (sidebarRows.includes('settings')) failures.push('the sidebar still carries a "settings" row')
-  // The header carries compose on every page, so the bar does not.
-  if (sidebarRows.includes('compose')) failures.push('the sidebar still carries a "compose" row, expected none')
+  // Lot H3c2: the header carries compose on every page, so the bar no longer does.
+  if (sidebarRows.includes('compose')) failures.push('the sidebar still carries a "compose" row — lot H3c2 removes it')
   const themeSlots = await page.evaluate(() => document.querySelectorAll('[data-sidebar] [data-sidebar-slot="theme-toggle"]').length)
   console.log(`sidebar footer: theme-toggle slots=${themeSlots}`)
-  if (themeSlots) failures.push(`${themeSlots} theme-toggle slot(s) still in the sidebar, expected the theme in the user menu`)
+  if (themeSlots) failures.push(`${themeSlots} theme-toggle slot(s) still in the sidebar — lot H2 moves the theme into the user menu`)
 
   // --- Cmd/Ctrl+K focuses the field, from anywhere on the page ---
   await page.evaluate(() => document.body.click())
@@ -387,7 +397,7 @@ page.setDefaultNavigationTimeout(120000)
   console.log(`click dashboard -> ${url}`)
   if (!url.startsWith('/dashboard')) failures.push(`clicking the dashboard action landed on ${url}`)
 
-  // --- The user menu is the one door to the settings, the theme and the exit ---
+  // --- Lot H2: the user menu is the one door to the settings, the theme and the exit ---
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
   await page.waitForSelector(USER_TRIGGER, { timeout: 20000 })
   await page.waitForSelector('[data-sidebar] [data-sidebar-row]', { timeout: 20000 })
@@ -467,7 +477,7 @@ page.setDefaultNavigationTimeout(120000)
     if (!composeOpen) failures.push(`clicking the compose action from ${from} did not open the compose window (landed on ${composeUrl.pathname}${composeUrl.search})`)
   }
 
-  // --- The mail toolbar in the header ---
+  // --- Lot H3: the mail toolbar in the header ---
   // Order, disabled states and what a button actually DOES, measured on the running
   // app. The expected order is READ from the shared constant, never transcribed here.
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
@@ -485,8 +495,8 @@ page.setDefaultNavigationTimeout(120000)
   if (order.join(',') !== TOOLBAR_ORDER.join(','))
     failures.push(`toolbar order is ${order.join(',')}, MAIL_TOOLBAR_GROUPS says ${TOOLBAR_ORDER.join(',')}`)
 
-  // --- The refresh action before compose, and anchored tooltips ---
-  // The leading action is READ from the shared constant, never transcribed here.
+  // --- Lot H3c: « Relever » avant « Nouveau message », et les infobulles ancrées ---
+  // L'action de tête est LUE dans la constante partagée, jamais transcrite ici.
   const leadAction = TOOLBAR_ORDER[0]
   const leadOrder = await page.evaluate(lead => {
     const bar = document.querySelector('[data-omnibar]')
@@ -507,11 +517,11 @@ page.setDefaultNavigationTimeout(120000)
   if (!leadOrder.lead || !leadOrder.compose || !leadOrder.dashboard) failures.push(`the header is missing one of ${leadAction} / compose / dashboard`)
   else {
     if (!(leadOrder.dashboard.right <= leadOrder.lead.left)) failures.push(`"${leadAction}" (x=${leadOrder.lead.left.toFixed(2)}) is not right of the dashboard action (${leadOrder.dashboard.right.toFixed(2)})`)
-    if (!(leadOrder.lead.right <= leadOrder.compose.left)) failures.push(`"${leadAction}" (ends ${leadOrder.lead.right.toFixed(2)}) is not BEFORE compose (${leadOrder.compose.left.toFixed(2)}), expected that order`)
+    if (!(leadOrder.lead.right <= leadOrder.compose.left)) failures.push(`"${leadAction}" (ends ${leadOrder.lead.right.toFixed(2)}) is not BEFORE compose (${leadOrder.compose.left.toFixed(2)}) — lot H3c asked for the swap`)
   }
   if (leadOrder.inToolbar) failures.push(`"${leadAction}" is rendered twice: the header took it and the mail toolbar still shows it`)
 
-  // A tooltip appears on a REAL hover and sits under the icon, not under the pointer.
+  // Une bulle apparaît au SURVOL RÉEL et se pose sous l'icône, pas sous le pointeur.
   const TIP = '[data-icon-tooltip]'
   const tipVisible = () => page.evaluate(sel => [...document.querySelectorAll(sel)]
     .filter(el => getComputedStyle(el).visibility !== 'hidden' && Number(getComputedStyle(el).opacity) > 0.5)
@@ -527,7 +537,7 @@ page.setDefaultNavigationTimeout(120000)
   console.log(`tooltips visible without hovering: ${tipsAtRest.length}`)
   if (tipsAtRest.length) failures.push(`${tipsAtRest.length} tooltip(s) visible without any hover: ${tipsAtRest.map(t => t.text).join(' | ')}`)
 
-  // Three positions: one at the left edge, one in the middle, one at the right edge.
+  // Trois positions : une au bord gauche, une au milieu, une au bord droit.
   for (const [where, selector] of [['left edge', MENU], ['middle', `[data-mail-action="${TOOLBAR_ORDER[1]}"]`], ['right edge', USER_TRIGGER]]) {
     await page.hover(selector)
     await new Promise(r => setTimeout(r, TOOLTIP_SETTLE_MS))
@@ -539,16 +549,16 @@ page.setDefaultNavigationTimeout(120000)
     console.log(`  ${where}: "${tip.text}" centre off by ${offCentre.toFixed(2)}px, top = icon bottom + ${below.toFixed(2)}px, x ${tip.left.toFixed(0)}..${tip.right.toFixed(0)}/${tip.windowWidth}`)
     if (Math.abs(below - EXPECTED_TOOLTIP_OFFSET) > MAX_DRIFT_PX) failures.push(`${where}: the tooltip sits ${below.toFixed(2)}px under the icon, expected ${EXPECTED_TOOLTIP_OFFSET}px (IconTooltip.tsx)`)
     if (tip.left < -MAX_DRIFT_PX || tip.right > tip.windowWidth + MAX_DRIFT_PX) failures.push(`${where}: the tooltip runs out of the window (${tip.left.toFixed(2)}..${tip.right.toFixed(2)} of ${tip.windowWidth})`)
-    // In the middle the tooltip is centred on the icon; at the edges it aligns to it, so
-    // only the "stays on screen" constraint above applies.
+    // Au milieu la bulle est centrée sur l'icône ; aux bords elle s'aligne dessus, donc
+    // seule la contrainte « dans l'écran » ci-dessus s'applique.
     if (where === 'middle' && offCentre > MAX_DRIFT_PX) failures.push(`middle: the tooltip centre is ${offCentre.toFixed(2)}px off its icon's centre`)
     await page.mouse.move(0, 0)
     await new Promise(r => setTimeout(r, SETTLE_MS))
   }
 
-  // A mouse CLICK must leave NOTHING behind: the button keeps the focus, but the tooltip
-  // only shows on KEYBOARD focus. Without this assertion the tooltip stayed stuck on
-  // screen until the next click (a defect raised during visual review).
+  // Un CLIC souris ne doit RIEN laisser derrière lui : le bouton garde le focus, mais
+  // la bulle ne s'affiche qu'au focus CLAVIER. Sans cette assertion, la bulle restait
+  // plantée sur l'écran jusqu'au clic suivant (défaut relevé au gate humain du lot H3c).
   const CLICKED = `[data-mail-action="${leadAction}"]`
   await page.click(CLICKED)
   await page.mouse.move(0, 0)
@@ -556,13 +566,13 @@ page.setDefaultNavigationTimeout(120000)
   const afterClick = await tipVisible()
   const keptFocus = await page.evaluate(sel => document.activeElement === document.querySelector(sel), CLICKED)
   console.log(`after clicking "${leadAction}" and moving the mouse away -> ${afterClick.length} tooltip(s) (button still focused: ${keptFocus})`)
-  // Without a residual focus the check would run vacuously: it would prove nothing.
+  // Sans focus résiduel le test passerait à vide : il ne prouverait rien.
   if (!keptFocus) { console.error('HARNESS: the clicked button did not keep the focus — nothing measured'); process.exit(2) }
   if (afterClick.length) failures.push(`${afterClick.length} tooltip(s) still showing after a mouse click: ${afterClick.map(t => t.text).join(' | ')}`)
 
-  // Keyboard focus: the same tooltip comes back, without the mouse. A real Tab key (not a
-  // programmatic `.focus()`) — that is the gesture which switches the browser into
-  // keyboard modality, so the only one that measures `:focus-visible`.
+  // Focus clavier : la même bulle revient, sans souris. Vraie touche Tab (et non un
+  // `.focus()` programmatique) — c'est le geste qui bascule le navigateur en modalité
+  // clavier, donc le seul qui mesure `:focus-visible`.
   await page.click(SEARCH)
   await page.keyboard.down('Shift'); await page.keyboard.press('Tab'); await page.keyboard.up('Shift')
   await new Promise(r => setTimeout(r, TOOLTIP_SETTLE_MS))
@@ -607,9 +617,9 @@ page.setDefaultNavigationTimeout(120000)
   }
   if (at2.remove) failures.push('delete is disabled with 2 messages selected, although it acts on the whole target')
 
-  // Back to one message: Escape empties the selection (the list's shortcut), then the
-  // 3rd row is reopened. Without this the target would stay at two messages and reply
-  // would be greyed out rightly so — a harness defect, not a product one.
+  // Back to one message: Échap vide la sélection (raccourci de la liste), puis on
+  // rouvre la 3e ligne. Sans cela la cible resterait à deux messages et « répondre »
+  // serait grisé à juste titre — un défaut de banc, pas du produit.
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
   await (await page.$$(ROW))[2].click()
@@ -617,12 +627,12 @@ page.setDefaultNavigationTimeout(120000)
   const backToOne = await page.evaluate(attr => document.querySelector(`[${attr}]`)?.getAttribute(attr), SELECTION_ATTR)
   if (backToOne !== '0') { console.error(`HARNESS: selection is ${backToOne} after Escape, expected 0 — nothing measured`); process.exit(2) }
 
-  // Flag: set then removed on a TEST message, read back through the API rather than off
-  // the button (the toolbar carries no flag state to trust).
+  // Flag: posé puis retiré sur un message de TEST, relu par l'API plutôt que sur le
+  // bouton (la barre d'outils n'a pas d'état de drapeau à qui se fier).
   const target = await page.evaluate(async () => {
     const uid = document.querySelectorAll('[data-mail-row]')[2]?.dataset.mailRow
-    // The target is the ACTIVE account (`user_settings.active_account_id`), not a
-    // "default" one: none of the accounts in this setup carries `isDefault`.
+    // Le compte visé est le compte ACTIF (`user_settings.active_account_id`), pas un
+    // compte « par défaut » : aucun des comptes de ce banc ne porte `isDefault`.
     const settings = (await (await fetch('/api/settings')).json())?.data ?? {}
     const accounts = (await (await fetch('/api/accounts')).json())?.data ?? []
     const account = settings.active_account_id ?? accounts.find(a => a.isDefault)?.id ?? accounts[0]?.id ?? null
@@ -642,8 +652,8 @@ page.setDefaultNavigationTimeout(120000)
   const flagMenuOpen = await page.evaluate(() => !!document.querySelector('[data-mail-action-menu="setFlag"]'))
   if (!flagMenuOpen) failures.push('the flag button does not open its anchored menu')
   else {
-    // The menu renders `FlagPicker` (single source, lib/flags.ts): its swatches carry
-    // `data-flag`, not an attribute specific to the toolbar.
+    // Le menu rend `FlagPicker` (source unique, lib/flags.ts) : ses pastilles
+    // portent `data-flag`, pas un attribut propre à la barre d'outils.
     await page.click(`[data-mail-action-menu="setFlag"] [data-flag="${FIRST_FLAG_KEY}"]`)
     await new Promise(r => setTimeout(r, SETTLE_MS * 2))
     const afterSet = await flagged()
@@ -739,8 +749,8 @@ page.setDefaultNavigationTimeout(120000)
   console.log(`mobile: floating toggles in the drawer=${drawerToggles}, one click on the veil closes it: ${drawerClosed}`)
   if (!drawerClosed) failures.push('mobile: one click on the veil does not close the drawer')
 
-  // --- At 390 px no clickable box of the header overlaps its neighbour, and a REAL tap
-  // on the overflow button opens a menu that names the 10 actions, on screen ---
+  // --- Lot H3 / gate 390 : aucune boîte cliquable du header ne recouvre sa voisine,
+  // et un VRAI tap sur « … » ouvre un menu qui nomme les 10 actions, dans l'écran ---
   const boxes = await page.evaluate(sel => [...document.querySelectorAll(sel)]
     .map(el => {
       const r = el.getBoundingClientRect()
@@ -752,7 +762,7 @@ page.setDefaultNavigationTimeout(120000)
     .filter(b => b.w > 0 && b.h > 0), HEADER_BOXES)
   for (const [i, a] of boxes.entries()) {
     for (const b of boxes.slice(i + 1)) {
-      // Real horizontal gap between two boxes; negative = they overlap.
+      // Écart horizontal réel entre deux boîtes; négatif = elles se recouvrent.
       const gapX = Math.max(a.x, b.x) - Math.min(a.x + a.w, b.x + b.w)
       const gapY = Math.max(a.y, b.y) - Math.min(a.y + a.h, b.y + b.h)
       if (gapX < MIN_HIT_GAP_PX && gapY < MIN_HIT_GAP_PX)
@@ -766,7 +776,7 @@ page.setDefaultNavigationTimeout(120000)
   else {
     if (Math.abs(moreBox.w - MORE_BUTTON_PX) > MAX_DRIFT_PX)
       failures.push(`mobile: the « … » button is ${moreBox.w.toFixed(1)}px wide, the ACTION template says ${MORE_BUTTON_PX}px — it is being crushed`)
-    // A REAL tap (touch), not a programmatic `click()`: that is the gesture under test.
+    // Un VRAI tap (touche), pas un `click()` programmatique : c'est le geste du gate.
     await page.tap('[data-mail-toolbar-more]')
     await new Promise(r => setTimeout(r, SETTLE_MS))
     const menu = await page.evaluate(() => {
@@ -791,26 +801,26 @@ page.setDefaultNavigationTimeout(120000)
     await new Promise(r => setTimeout(r, SETTLE_MS))
   }
 
-  // --- Settings, accounts, theme and language all live in the omnibar ---
+  // --- Lot H3f : les reglages, les comptes, le theme et la langue remontent dans l'omnibar ---
   await page.setViewport(VIEWPORT)
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
   await page.waitForSelector(SEARCH, { timeout: 20000 })
   await new Promise(r => setTimeout(r, SETTLE_MS))
 
   /**
-   * Clears the field, types `text`, and returns what the panel then proposes.
+   * Vide le champ puis tape `text`, et rend ce que le panneau propose alors.
    *
-   * The wait after clearing is not decorative: clearing triggers the debounced search
-   * (SEARCH_DEBOUNCE_MS), hence a navigation that REALIGNS the field on the URL. Typing
-   * before it has happened would let that navigation wipe the input, and the harness
-   * would measure its own race instead of the product.
+   * L'attente apres le vidage n'est pas decorative : vider declenche la recherche
+   * debouncee (SEARCH_DEBOUNCE_MS), donc une navigation qui REALIGNE le champ sur
+   * l'URL. Taper avant qu'elle soit passee ferait effacer la saisie par cette
+   * navigation, et le banc mesurerait sa propre course au lieu du produit.
    */
   const typeInOmnibar = async text => {
     await page.click(SEARCH)
-    // Cleared character by character: as observed, a triple-click followed by a
-    // Backspace (like a Cmd+A) deletes only ONE character in this headless Chrome, and
-    // the typed strings piled up on each other, which made the harness fail on its own
-    // input rather than on the product.
+    // Vidage caractere par caractere : mesure faite le 19/09, un triple-clic suivi
+    // d'un Backspace (comme un Cmd+A) n'efface QU'UN caractere dans ce Chrome
+    // headless, et les saisies s'empilaient (« api » puis « dark » -> « apdark »),
+    // ce qui faisait echouer le banc sur sa propre saisie et non sur le produit.
     const length = await page.$eval(SEARCH, el => el.value.length)
     for (let i = 0; i < length; i++) await page.keyboard.press('Backspace')
     await new Promise(r => setTimeout(r, SEARCH_SETTLE_MS))
@@ -824,7 +834,7 @@ page.setDefaultNavigationTimeout(120000)
         ids: rows.map(r => r.dataset.omnibarEntry),
         labels: rows.map(r => r.textContent.trim()),
         sections: [...panel.querySelectorAll('[data-omnibar-section]')].map(d => d.dataset.omnibarSection),
-        // The panel must match the field width exactly and stay on screen.
+        // Le panneau doit couvrir exactement la largeur du champ et rester a l'ecran.
         sameWidthAsField: (() => {
           const f = document.querySelector('[data-omnibar-search]')
           if (!f) return null
@@ -835,7 +845,7 @@ page.setDefaultNavigationTimeout(120000)
     }, PANEL)
   }
 
-  // (1) "api" proposes the API-keys entry, and nothing else on the settings side.
+  // (1) « api » propose l'entree des cles API, et rien d'autre du cote des reglages.
   const apiPanel = await typeInOmnibar('api')
   if (!apiPanel) failures.push('H3f: typing « api » opened no panel')
   else {
@@ -845,7 +855,7 @@ page.setDefaultNavigationTimeout(120000)
     if (apiPanel.sameWidthAsField === false) failures.push('H3f: the panel does not match the field width / leaves the screen')
   }
 
-  // (2) Arrow down + Enter goes to the page, NOT to /mail?q=api.
+  // (2) Fleche bas + Entree emmene a la page, PAS a /mail?q=api.
   await page.keyboard.press('ArrowDown')
   await new Promise(r => setTimeout(r, 150))
   await Promise.all([
@@ -857,7 +867,7 @@ page.setDefaultNavigationTimeout(120000)
   console.log(`H3f: ArrowDown + Enter on « api » -> ${apiLanding}`)
   if (apiLanding !== API_KEYS_HREF) failures.push(`H3f: choosing the API entry landed on ${apiLanding}, expected ${API_KEYS_HREF}`)
 
-  // (3) The DEFAULT behaviour is unchanged: Enter with no choice searches the mail.
+  // (3) Le comportement par DEFAUT est inchange : Entree sans choix cherche le courrier.
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
   await page.waitForSelector(SEARCH, { timeout: 20000 })
   await new Promise(r => setTimeout(r, SETTLE_MS))
@@ -872,14 +882,14 @@ page.setDefaultNavigationTimeout(120000)
   if (searchLanding.pathname !== '/mail' || searchLanding.searchParams.get('q') !== 'api')
     failures.push(`H3f: plain Enter landed on ${searchLanding.pathname}?${searchLanding.searchParams} instead of /mail?q=api`)
 
-  // (4) Every entry of the settings navigation is findable by its label, in the current
-  //     language — the list comes from SETTINGS_NAV, not from a copy.
+  // (4) Chaque entree de la navigation des reglages est trouvable par son libelle,
+  //     dans la langue courante — la liste vient de SETTINGS_NAV, pas d'une copie.
   await page.goto(`${BASE}/mail`, { waitUntil: 'networkidle2' })
   await page.waitForSelector(SEARCH, { timeout: 20000 })
   await new Promise(r => setTimeout(r, SETTLE_MS))
   const activeLocale = await page.evaluate(() => document.documentElement.lang || 'en')
-  // The expected labels are those of the language the page ACTUALLY renders: the harness
-  // does not assume English, it reads `<html lang>` then the matching locale file.
+  // Les libelles attendus sont ceux de la langue REELLEMENT rendue par la page :
+  // le banc ne suppose pas l'anglais, il lit `<html lang>` puis le fichier assorti.
   if (!LOCALE_CODES.includes(activeLocale)) { console.error(`HARNESS: the page renders lang="${activeLocale}", which lib/locales does not declare`); process.exit(2) }
   const LABELS = JSON.parse(readFileSync(new URL(`../locales/${activeLocale}.json`, import.meta.url), 'utf8')).settings.nav
   const notFound = []
@@ -890,7 +900,7 @@ page.setDefaultNavigationTimeout(120000)
   console.log(`H3f: ${SETTINGS_NAV_KEYS.length - notFound.length}/${SETTINGS_NAV_KEYS.length} settings entries found by their ${activeLocale} label`)
   if (notFound.length) failures.push(`H3f: settings entries not findable by their label: ${notFound.join(', ')}`)
 
-  // (5) The theme surfaces, and the action REALLY changes the theme (not just a row).
+  // (5) Le theme remonte, et l'action change VRAIMENT le theme (pas seulement une ligne).
   const themeWord = LABELS.appearance
   const themePanel = await typeInOmnibar(themeWord)
   console.log(`H3f: « ${themeWord} » -> ${themePanel?.ids.join(' | ')}`)
@@ -910,17 +920,17 @@ page.setDefaultNavigationTimeout(120000)
     if (new URL(page.url()).pathname !== '/mail') failures.push('H3f: choosing a theme navigated away from the mailbox')
   }
 
-  // (5b) What the input NAMES comes out first, and the KEYBOARD really applies it.
-  // Observed before the fix: the word for "dark" proposed the light theme first (the
-  // three modes shared one keyword list), so the first arrow + Enter LIGHTENED the page
-  // instead of darkening it.
+  // (5b) Ce que la saisie NOMME sort en tete, et le CLAVIER l'applique vraiment.
+  // Mesure du 19/09 avant correction : « sombre » proposait « Thème clair » en
+  // premier (les trois modes partageaient une liste de mots-cles), donc la
+  // premiere fleche + Entree ECLAIRCISSAIT la page au lieu de l'assombrir.
   for (const [word, wanted] of [['sombre', 'action:theme-dark'], ['clair', 'action:theme-light']]) {
     const ranked = await typeInOmnibar(word)
     console.log(`H3f: « ${word} » -> ${ranked?.ids.join(' | ')}`)
     if (ranked?.ids[0] !== wanted)
       failures.push(`H3f: « ${word} » proposes ${ranked?.ids[0]} first, expected ${wanted}`)
   }
-  // Back to light first, so that darkening is a REAL change.
+  // Remise au clair d'abord, pour que l'assombrissement soit un VRAI changement.
   await page.click('[data-omnibar-entry="action:theme-light"]')
   await new Promise(r => setTimeout(r, SETTLE_MS))
   const beforeKeyboard = await page.evaluate(() => document.documentElement.classList.contains('dark'))
@@ -933,7 +943,7 @@ page.setDefaultNavigationTimeout(120000)
   if (beforeKeyboard) failures.push('H3f: the light-theme entry did not lighten the page before the keyboard measurement')
   if (!afterKeyboard) failures.push('H3f: « sombre » + ArrowDown + Enter did not darken the page')
 
-  // (6) The language is also a row of the account menu, with the 3 declared languages.
+  // (6) La langue est aussi une ligne du menu du compte, avec les 3 langues declarees.
   await page.click(USER_TRIGGER)
   await new Promise(r => setTimeout(r, SETTLE_MS))
   const langRow = await page.evaluate(() => {
@@ -956,7 +966,7 @@ page.setDefaultNavigationTimeout(120000)
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, SETTLE_MS))
 
-  // (7) The panel closes on Escape, and the field keeps what was typed.
+  // (7) Le panneau se ferme sur Echap, et le champ garde sa saisie.
   await typeInOmnibar('api')
   await page.keyboard.press('Escape')
   await new Promise(r => setTimeout(r, 250))

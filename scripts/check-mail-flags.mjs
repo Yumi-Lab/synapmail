@@ -15,7 +15,7 @@
  * MIN_CONTRAST against the surface they are painted on (WCAG 1.4.11).
  *
  * Nothing touches a real mailbox: the bench APPENDs its own message into a
- * scratch folder of the test account and deletes it at the end. No other
+ * `Tests-lane` folder of the test account and deletes it at the end. No other
  * message is read, moved, flagged or deleted.
  *
  * Needs a running dev server and SYNAPMAIL_TEST_* credentials (see .env).
@@ -30,13 +30,12 @@ import puppeteer from 'puppeteer-core'
 import { ImapFlow } from 'imapflow'
 import { MAIL_FLAGS, flagFromKeywords } from '../lib/flags.ts'
 import { decrypt } from '../lib/encrypt.ts'
-import { SCRATCH_DOMAIN, SCRATCH_FOLDER } from './bench-constants.mjs'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const VIEWPORT = { width: 1440, height: 900 }
 // A flag click is one PATCH against IMAP: slower than a local re-render.
 const SETTLE_MS = 1500
-const FOLDER = SCRATCH_FOLDER
+const FOLDER = 'Tests-lane'
 const THEMES = ['light', 'dark']
 // WCAG 2.1 SC 1.4.11 (non-text contrast) — the flag IS the information here.
 const MIN_CONTRAST = 3
@@ -133,9 +132,9 @@ let uid
     if (!(await c.list()).some(b => b.path === FOLDER)) await c.mailboxCreate(FOLDER)
     await c.mailboxOpen(FOLDER)
     const raw = Buffer.from(
-      `From: bench <${acc.email}>\r\nTo: bench <${acc.email}>\r\n` +
+      `From: lane bench <${acc.email}>\r\nTo: lane bench <${acc.email}>\r\n` +
       `Subject: check-mail-flags ${Date.now()}\r\nDate: ${new Date().toUTCString()}\r\n` +
-      `Message-ID: <check-mail-flags-${Date.now()}@${SCRATCH_DOMAIN}>\r\n\r\nbench message\r\n`)
+      `Message-ID: <check-mail-flags-${Date.now()}@yumi-lab.com>\r\n\r\nbench message\r\n`)
     uid = String((await c.append(FOLDER, raw, ['\\Seen'])).uid)
   } finally { await c.logout() }
 }

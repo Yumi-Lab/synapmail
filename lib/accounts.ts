@@ -1,9 +1,6 @@
 import { query } from './db'
 import { encrypt, decrypt } from './encrypt'
 import { getAccessibleAccount } from './accountAccess'
-import { accountOrderBy } from './accountColor'
-
-export { accountOrderBy }
 
 export interface DbEmailAccount {
   id: string
@@ -24,8 +21,17 @@ export interface DbEmailAccount {
   oauth_expires_at: number | null
   is_default: boolean
   color: string
+  /** La couleur CHOISIE pour la pastille, ou null quand c'est celle du rang. */
+  badge_color: string | null
   /** Prompt-injection guard for this mailbox — see lib/promptGuard.ts. */
   prompt_guard: boolean
+  /**
+   * Taille maximale d'un message ANNONCÉE par ce serveur SMTP (`250 SIZE`), lue par
+   * `lib/accountProbe.ts`. `null` = rien annoncé, ou boîte jamais essayée : l'envoi
+   * retombe alors sur le plafond prudent (lot M10, `lib/smtpSize.ts`). Le pilote
+   * Postgres rend un BIGINT en chaîne, d'où `unknown` : `parseAnnouncedSize` le lit.
+   */
+  smtp_max_size: unknown
   created_at: string
 }
 
@@ -43,16 +49,6 @@ export async function getAccountById(id: string, userId: string): Promise<DbEmai
     [id, userId]
   )
   return accounts[0] ?? null
-}
-
-export async function listAccounts(userId: string): Promise<Omit<DbEmailAccount, 'password_encrypted'>[]> {
-  return query(
-    `SELECT id, user_id, name, email, imap_host, imap_port, imap_secure,
-            smtp_host, smtp_port, smtp_secure, username,
-            is_default, color, prompt_guard, oauth_provider, created_at
-     FROM email_accounts WHERE user_id = $1 ${accountOrderBy()}`,
-    [userId]
-  )
 }
 
 /**
@@ -88,9 +84,9 @@ export const encryptPassword = encrypt
 export const decryptPassword = decrypt
 
 /**
- * `email_accounts` row → IMAP configuration. The conversion used to be repeated in every
- * route that opens a connection; a renamed column would have survived there silently.
- * It accepts anything carrying these columns (a full row or a partial `SELECT`).
+ * Ligne `email_accounts` → configuration IMAP. La conversion était recopiée dans chaque
+ * route qui ouvre une connexion ; une colonne renommée y aurait survécu en silence.
+ * Elle accepte tout ce qui porte ces colonnes (ligne complète ou `SELECT` partiel).
  */
 export type ImapAccountRow = Pick<
   DbEmailAccount,
@@ -111,4 +107,18 @@ export function toImapConfig(a: ImapAccountRow) {
     oauthRefreshToken: a.oauth_refresh_token,
     oauthExpiresAt: a.oauth_expires_at,
   }
+}
+
+/**
+ * Retient sur la boîte la taille que son serveur SMTP vient d'annoncer (lot
+ * M10). Une seule écriture de cette colonne dans tout le dépôt : l'essai de
+ * connexion et la relecture qui suit un refus de taille passent par ici.
+ *
+ * L'APPELANT a déjà prouvé son droit sur la boîte — décision `STORED` de
+ * `lib/accountTest.ts` d'un côté, `getAccessibleAccount` de l'autre. Ce n'est
+ * pas une frontière de confiance : un identifiant de boîte arbitraire ne doit
+ * jamais arriver jusqu'ici.
+ */
+export async function saveAnnouncedSize(accountId: string, size: number | null): Promise<void> {
+  await query('UPDATE email_accounts SET smtp_max_size = $1 WHERE id = $2', [size, accountId])
 }

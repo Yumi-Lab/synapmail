@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/PasswordInput'
 import { Label } from '@/components/ui/label'
-import { ArrowLeft, Wifi, Info, Check } from 'lucide-react'
+import { ArrowLeft, Wifi, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // ── Vrais logos brand SVG ────────────────────────────────────────────────────
@@ -214,16 +214,14 @@ export interface AccountFormData {
   name: string; email: string
   imapHost: string; imapPort: number; imapSecure: boolean
   smtpHost: string; smtpPort: number; smtpSecure: boolean
-  username: string; password: string; isDefault: boolean; color: string
+  username: string; password: string; isDefault: boolean
 }
 
 interface TestResult {
-  /** Absent when the route refuses before any attempt, returning a bare error instead. */
+  /** Absents quand la route refuse avant tout essai (elle ne renvoie alors qu'une erreur). */
   imap?: { ok: boolean; error: string }
   smtp?: { ok: boolean; error: string }
 }
-
-const COLORS = ['#6366f1','#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316']
 
 interface Props {
   onSave: (data: AccountFormData) => Promise<void>
@@ -238,7 +236,6 @@ export function AccountWizard({ onSave, onCancel, saving }: Props) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [accountName, setAccountName] = useState('')
-  const [color, setColor] = useState('#6366f1')
   const [imapHost, setImapHost] = useState('')
   const [imapPort, setImapPort] = useState('993')
   const [imapSecure, setImapSecure] = useState(true)
@@ -289,7 +286,7 @@ export function AccountWizard({ onSave, onCancel, saving }: Props) {
     if (!email || !password) { setError('Email et mot de passe requis'); return }
     if (!imapHost || !smtpHost) { setError('Serveurs IMAP et SMTP requis'); return }
     setError('')
-    await onSave({ name: accountName || email.split('@')[0], email, imapHost, imapPort: parseInt(imapPort), imapSecure, smtpHost, smtpPort: parseInt(smtpPort), smtpSecure, username: email, password, isDefault: false, color })
+    await onSave({ name: accountName || email.split('@')[0], email, imapHost, imapPort: parseInt(imapPort), imapSecure, smtpHost, smtpPort: parseInt(smtpPort), smtpSecure, username: email, password, isDefault: false })
   }
 
   const TestResultBlock = () => testResult ? (
@@ -303,28 +300,15 @@ export function AccountWizard({ onSave, onCancel, saving }: Props) {
               {r.ok ? '✓' : '✗'}
             </span>
             <span className="font-medium">{proto.toUpperCase()}</span>
-            {/* The route returns a CAUSE (`lib/accountTest.ts`), no longer the raw
-                server error. It is read through the SAME key as the edit screen,
-                otherwise creation would display the bare code "unreachable". */}
+            {/* La route ne renvoie plus l'erreur brute du serveur mais une CAUSE
+                (`lib/accountTest.ts`) : elle se lit par la MEME cle que l'ecran d'edition,
+                sinon la creation afficherait le code nu « unreachable ». */}
             {!r.ok && <span className="text-xs opacity-70 truncate">{t(`testFailure.${r.error}`)}</span>}
           </div>
         )
       })}
     </div>
   ) : null
-
-  const ColorPicker = () => (
-    <div className="flex gap-2.5">
-      {COLORS.map(c => (
-        <button key={c} onClick={() => setColor(c)} type="button"
-          className="w-7 h-7 rounded-full transition-all hover:scale-110 relative"
-          style={{ backgroundColor: c, boxShadow: color === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : 'none' }}
-        >
-          {color === c && <Check className="w-3.5 h-3.5 text-white absolute inset-0 m-auto" />}
-        </button>
-      ))}
-    </div>
-  )
 
   // ── STEP 1 : Grille fournisseurs ──────────────────────────────────────────
   if (step === 'provider') {
@@ -427,10 +411,6 @@ export function AccountWizard({ onSave, onCancel, saving }: Props) {
             <Label>{selectedProvider.requiresAppPassword ? 'Mot de passe d\'application' : 'Mot de passe'}</Label>
             <PasswordInput value={password} onChange={e => setPassword(e.target.value)} className="h-11" />
           </div>
-          <div className="col-span-2 space-y-2">
-            <Label>Couleur du compte</Label>
-            <ColorPicker />
-          </div>
         </div>
 
         <TestResultBlock />
@@ -501,10 +481,6 @@ export function AccountWizard({ onSave, onCancel, saving }: Props) {
           <div className="space-y-2">
             <Label>Mot de passe</Label>
             <PasswordInput value={password} onChange={e => setPassword(e.target.value)} className="h-11" />
-          </div>
-          <div className="space-y-2">
-            <Label>Couleur du compte</Label>
-            <div className="pt-1.5"><ColorPicker /></div>
           </div>
         </div>
 

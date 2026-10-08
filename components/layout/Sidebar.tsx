@@ -17,8 +17,9 @@ import { ThinScroll } from './ThinScroll'
 import { ACCOUNTS_SETTINGS_HREF, SettingsLink } from '@/components/settings/SettingsSidebar'
 import { FolderContextMenu, type FolderMenuState } from './FolderContextMenu'
 import { accountDelimiter, isDescendant, sanitizeFolderName, type FolderAction } from '@/lib/folderActions'
-import { DEFAULT_FOLDER, FOLDER_PARAM, folderHref, pushFolder } from '@/app/(app)/mail/mailboxUrl'
 import { MAIL_PATH } from '@/lib/compose'
+import { ACCOUNT_PICKER_FILTER_FROM, AccountPickerFilter, AccountPickerText, useAccountPicker } from './AccountPicker'
+import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, folderHref, mailboxSwitchHref, pushFolder } from '@/app/(app)/mail/mailboxUrl'
 import type { EmailAccount } from '@/types/account'
 
 /**
@@ -36,8 +37,8 @@ export const SIDEBAR = {
   headerPadY: 8,
   /** Rows the unfolded account list shows before it starts scrolling. */
   accountListRows: 8,
-  /** Past this many other accounts the list offers a filter field. */
-  accountFilterFrom: 8,
+  /** Past this many other accounts the list offers a filter field — source partagée. */
+  accountFilterFrom: ACCOUNT_PICKER_FILTER_FROM,
 } as const
 
 /** The bar's surface, as a CSS value: the theme's own sidebar token, so the bar
@@ -79,7 +80,7 @@ const ROW = 'flex w-full items-center h-[var(--synap-row-h)] rounded-lg transiti
 // Idle ink is derived from the theme's own foreground rather than the muted token:
 // muted-foreground on the light sidebar measures ~3.2:1, under the 4.5:1 floor for
 // body text. At 70% opacity the same ink measures 5.8:1 light / 7.0:1 dark — the
-// check recomputes both from the rendered rows, so the floor is enforced, not asserted.
+// gate recomputes both from the rendered rows, so the floor is enforced, not asserted.
 const ROW_IDLE = 'text-foreground/70 hover:text-foreground hover:bg-foreground/[0.06]'
 const ROW_ACTIVE = cn(ACCENT.tint, 'text-foreground font-medium')
 // Drop target: the same accent, one step stronger — not a second colour.
@@ -205,16 +206,15 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const pathname = usePathname()
   const [currentFolder, setCurrentFolder] = useState(DEFAULT_FOLDER)
   const [accountOpen, setAccountOpen] = useState(false)
-  const [accountFilter, setAccountFilter] = useState('')
   const accountBoxRef = useRef<HTMLDivElement>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
   const [folderMenu, setFolderMenu] = useState<FolderMenuState | null>(null)
-  /** INLINE entry of a folder name — never `window.prompt`. An empty `path` = create at the root. */
+  /** Saisie EN LIGNE d'un nom de dossier — jamais `window.prompt`. `path` vide = création à la racine. */
   const [naming, setNaming] = useState<{ action: 'create' | 'createChild' | 'rename'; parent: string; path: string; value: string } | null>(null)
   const [folderError, setFolderError] = useState<string | null>(null)
 
-  // The highlight follows the URL, the source of the displayed folder. Going back
-  // changes the parameters without changing the path: it is listened to as well.
+  // La surbrillance suit l'URL, qui est la source du dossier affiché. Le retour
+  // arrière change les paramètres sans changer le chemin : il est aussi écouté.
   useEffect(() => {
     const readUrl = () => {
       const params = new URLSearchParams(window.location.search)
@@ -224,6 +224,21 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     window.addEventListener('popstate', readUrl)
     return () => window.removeEventListener('popstate', readUrl)
   }, [pathname])
+
+  // Un changement de boîte ramène l'URL sur la réception SANS changer de chemin :
+  // `pathname` ne bouge pas, donc l'effet ci-dessus ne rejoue pas et la barre
+  // serait restée allumée sur le dossier de l'ANCIENNE boîte. Le dossier est
+  // relu de la MÊME fonction que celle qui écrit l'URL, et non de l'URL
+  // elle-même : les deux écouteurs de l'événement sont appelés dans un ordre que
+  // rien ne garantit, et lire l'URL trop tôt rendrait l'ancien dossier.
+  useEffect(() => {
+    const onAccountChange = () => {
+      const next = new URL(mailboxSwitchHref(window.location.search), window.location.origin)
+      setCurrentFolder(next.searchParams.get(FOLDER_PARAM) ?? DEFAULT_FOLDER)
+    }
+    window.addEventListener(ACCOUNT_CHANGE_EVENT, onAccountChange)
+    return () => window.removeEventListener(ACCOUNT_CHANGE_EVENT, onAccountChange)
+  }, [])
 
   // Close the account dropdown on outside click / Escape
   useEffect(() => {
@@ -245,10 +260,6 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     }
   }, [accountOpen])
 
-  useEffect(() => {
-    if (!accountOpen) setAccountFilter('')
-  }, [accountOpen])
-
   const toggleAccountList = useCallback(() => setAccountOpen(o => !o), [])
 
   // Active account + the accent it publishes — the same hook the shell's edge toggle
@@ -262,9 +273,27 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   // The list offers the OTHER accounts only: the active one already heads the bar,
   // repeating it as a row would be a line that does nothing.
   const otherAccounts = accounts.filter(acc => acc.id !== activeAccount?.id)
-  const filteredAccounts = otherAccounts.filter(acc => {
-    const q = accountFilter.trim().toLowerCase()
-    return !q || acc.email.toLowerCase().includes(q) || (acc.name ?? '').toLowerCase().includes(q)
+  // La bascule elle-meme vit dans `useAccountAccent` (source unique, partagee avec
+  // l'omnibar) ; ici on ne lui ajoute que la fermeture de la liste depliee.
+  const pickAccount = (id: string) => {
+    switchAccount(id)
+    setAccountOpen(false)
+  }
+
+  // Le filtre, son focus et son clavier vivent dans `AccountPicker` — le tableau de
+  // bord ouvre le MÊME code. La barre ne lui passe que ce qui lui est propre : le
+  // pli à attendre avant de prendre le focus, et le fait qu'une barre repliée n'a
+  // pas de champ du tout.
+  const {
+    filter: accountFilter, setFilter: setAccountFilter, filtered: filteredAccounts,
+    highlight: accountHighlight, showFilter: showAccountFilter,
+    inputRef: accountFilterRef, onKeyDown: onAccountFilterKey,
+  } = useAccountPicker({
+    open: accountOpen,
+    accounts: otherAccounts,
+    onPick: pickAccount,
+    focusDelayMs: SIDEBAR.transitionMs,
+    enabled: !collapsed,
   })
 
   const { data: foldersData, error: foldersError, mutate: mutateFolders } = useSWR<{ data: FolderItem[] }>(
@@ -279,13 +308,6 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const customFolders = folders.filter(f => !f.special)
   // Resolved once per list: a folder grows to two letters only when a sibling shares its first.
   const customInitials = folderInitials(customFolders)
-
-  // The switch itself lives in `useAccountAccent` (single source, shared with the
-  // omnibar); here we only add closing the expanded list on top of it.
-  const pickAccount = (id: string) => {
-    switchAccount(id)
-    setAccountOpen(false)
-  }
 
   // From the mail page, a PLAIN click changes folder without a server round-trip
   // (`pushFolder`); a modified click (new tab) or one from another page stays a
@@ -331,8 +353,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
    * bubbles alone, at the exact x the header's bubble sits at, and the name and the
    * address move into the tooltip instead of overflowing 56 px.
    */
-  const accountRow = (acc: EmailAccount) => {
-    const label = acc.name || acc.email
+  const accountRow = (acc: EmailAccount, highlighted = false) => {
     const bubble = (
       <AccountAvatar account={acc} colorIndex={accounts.indexOf(acc)} unread={acc.unreadCount ?? 0} />
     )
@@ -345,7 +366,8 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
         <button
           onClick={() => pickAccount(acc.id)}
           data-sidebar-row={`account:${acc.id}`}
-          className={cn(ROW, ROW_IDLE, 'text-left')}
+          data-account-highlight={highlighted ? 'true' : undefined}
+          className={cn(ROW, ROW_IDLE, 'text-left', highlighted && 'bg-foreground/[0.06]')}
         >
           <span className={ICON_COL}>
             {collapsed ? <IconTooltip label={acc.name ? t('accountTooltip', { name: acc.name, email: acc.email }) : acc.email} align="start">{bubble}</IconTooltip> : bubble}
@@ -355,15 +377,10 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
             style={{ transitionDuration: `${SIDEBAR.transitionMs}ms`, paddingRight: ACCOUNT_ROW_RIGHT.edge }}
             aria-hidden={collapsed}
           >
-            <span
-              className="flex-1 min-w-0 text-left"
+            <AccountPickerText
+              account={acc}
               style={acc.isShared ? { marginRight: textInset(false) } : undefined}
-            >
-              <span className="block text-sm font-medium truncate leading-tight">{label}</span>
-              {acc.name && (
-                <span className="block text-[11px] text-muted-foreground truncate leading-tight">{acc.email}</span>
-              )}
-            </span>
+            />
           </span>
         </button>
         {!collapsed && <SharedMark account={acc} label={t('sharedBy', { name: acc.ownerName ?? acc.email })} />}
@@ -371,7 +388,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     )
   }
 
-  // Permissions of the active account — the menu greys out what the server will refuse.
+  // Permissions du compte actif — le menu grise ce que le serveur refusera.
   const canOrganize = activeAccount?.permissions?.canOrganize ?? true
   const canDelete = activeAccount?.permissions?.canDelete ?? true
 
@@ -388,7 +405,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     })
   }
 
-  /** The server has the final say: its message replaces any optimism from the UI. */
+  /** Le serveur a la dernière décision : son message remplace tout optimisme de l'IHM. */
   const callFolderApi = async (input: string, init: RequestInit) => {
     const res = await fetch(input, init)
     const body = await res.json().catch(() => ({}))
@@ -401,7 +418,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
     if (!resolvedAccountId) return
     setFolderError(null)
 
-    // The three actions that need a NAME open the inline field; they call nothing.
+    // Les trois actions qui demandent un NOM ouvrent le champ en ligne, elles n'appellent rien.
     if (action === 'create' || action === 'createChild' || action === 'rename') {
       setNaming({
         action,
@@ -422,8 +439,8 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
         return
       }
 
-      // Delete and empty are confirmed against facts: the folder NAMED and its real
-      // message count, asked of the server — not the sidebar's unread counter.
+      // Supprimer et vider se confirment sur des faits : le dossier NOMMÉ et son nombre
+      // réel de messages, demandé au serveur — pas le compteur de non-lus de la barre.
       const counted = await fetch('/api/folders/actions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -455,8 +472,8 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   const submitFolderName = async () => {
     if (!naming || !resolvedAccountId) return
     if (!naming.value.trim()) { setNaming(null); return }
-    // The SAME function as the route: we do not send a name already known to be refused.
-    // The server stays the authority — its 400/409 surfaces in the same place.
+    // La MÊME fonction que la route : on n'envoie pas un nom qu'on sait déjà refusé.
+    // Le serveur reste l'autorité — ses 400/409 s'affichent au même endroit.
     const delimiter = accountDelimiter(folders)
     const value = sanitizeFolderName(naming.value, delimiter)
     if (!value) { setFolderError(t('folderNameInvalid', { delimiter })); return }
@@ -562,17 +579,11 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                 }}
                 aria-hidden={collapsed}
               >
-                <span
-                  className="flex-1 min-w-0 text-left"
+                <AccountPickerText
+                  account={activeAccount}
+                  className="text-foreground"
                   style={activeAccount.isShared ? { marginRight: textInset(hasMultipleAccounts) } : undefined}
-                >
-                  <span className="block text-sm font-medium text-foreground truncate leading-tight">
-                    {activeAccount.name || activeAccount.email}
-                  </span>
-                  {activeAccount.name && (
-                    <span className="block text-[11px] text-muted-foreground truncate leading-tight">{activeAccount.email}</span>
-                  )}
-                </span>
+                />
                 {hasMultipleAccounts && (
                   <span
                     className="shrink-0 flex items-center justify-center"
@@ -617,16 +628,16 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                 data-account-list
                 data-account-list-open={accountOpen ? 'true' : 'false'}
               >
-                {otherAccounts.length > SIDEBAR.accountFilterFrom && (
-                  <div className="px-1.5 pb-1.5">
-                    <input
+                {showAccountFilter && (
+                  // `p-1.5`, not `px-1.5 pb-1.5`: the accordion clips (`overflow-hidden`,
+                  // needed by the `0fr → 1fr` animation) and the focus ring is painted
+                  // OUTSIDE the field's border — with no top margin it was cut by 1–2 px.
+                  <div className="p-1.5">
+                    <AccountPickerFilter
                       value={accountFilter}
-                      onChange={e => setAccountFilter(e.target.value)}
-                      placeholder={t('searchAccounts')}
-                      className={cn(
-                        'w-full px-2.5 py-1.5 rounded-md bg-foreground/[0.06] text-sm text-foreground',
-                        'placeholder:text-muted-foreground outline-none focus:ring-1', ACCENT.ring,
-                      )}
+                      onChange={setAccountFilter}
+                      onKeyDown={onAccountFilterKey}
+                      inputRef={accountFilterRef}
                     />
                   </div>
                 )}
@@ -642,7 +653,7 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
                       {t('noAccountMatch')}
                     </p>
                   )}
-                  {filteredAccounts.map(acc => accountRow(acc))}
+                  {filteredAccounts.map((acc, i) => accountRow(acc, i === accountHighlight))}
                 </ThinScroll>
               </div>
             </div>

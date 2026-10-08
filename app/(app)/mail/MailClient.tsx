@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import { COMPOSE_EVENT, COMPOSE_QUERY, MAIL_PATH } from '@/lib/compose'
-import { DEFAULT_FOLDER, FOLDER_PARAM, pushFolder } from './mailboxUrl'
 import { SCOPE_PARAM, SEARCH_PARAM, focusSearch, readScope } from '@/lib/search'
+import { ACCOUNT_CHANGE_EVENT, DEFAULT_FOLDER, FOLDER_PARAM, mailboxSwitchHref, pushFolder } from './mailboxUrl'
 import { ArrowLeft } from 'lucide-react'
 import useSWR from 'swr'
 import { MessageList } from '@/components/layout/MessageList'
@@ -25,16 +26,17 @@ const fetcher = (url: string) => fetch(url).then(r => r.json())
 
 type SelectionMode = 'none' | 'single' | 'thread'
 
-/** The three ways of opening the composer from an existing message. */
+/** Les trois façons d'ouvrir la rédaction à partir d'un message. */
 type ComposeKind = 'reply' | 'replyAll' | 'forward'
 
 export function MailClient() {
+  const t = useTranslations('mail')
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('none')
   /**
-   * The open message, identified by its ORIGIN (account, folder, uid): a result from
-   * an "all folders" search must be read in ITS own folder, not in the one currently
-   * displayed. Resolving against the displayed folder opened the wrong message, and
-   * could crash the application.
+   * Message ouvert, par son ORIGINE (compte, dossier, uid) : ouvrir un résultat
+   * d'une recherche « tous les dossiers » doit le lire dans SON dossier, pas
+   * dans celui qui est à l'écran — c'est ce raccourci qui ouvrait un autre
+   * message, voire faisait tomber l'application.
    */
   const [selectedOrigin, setSelectedOrigin] = useState<MessageOrigin | null>(null)
   const [selectedThread, setSelectedThread] = useState<Message[] | null>(null)
@@ -44,7 +46,6 @@ export function MailClient() {
   const [aiReplyDraft, setAiReplyDraft] = useState<string | null>(null)
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null)
   const [showReadingPane, setShowReadingPane] = useState(false)
-  const settingsPaneInitialized = useRef(false)
   const [currentMessage, setCurrentMessage] = useState<Message | null>(null)
   const [mdnToast, setMdnToast] = useState<{
     uid: string; accountId: string; folder: string;
@@ -62,12 +63,33 @@ export function MailClient() {
 
   const searchParams = useSearchParams()
   const router = useRouter()
-  const folder = searchParams.get(FOLDER_PARAM) ?? DEFAULT_FOLDER
-  // The search query lives in the URL: the app bar writes it, the list reads it.
-  const search = searchParams.get(SEARCH_PARAM) ?? ''
-  const searchScope = readScope(searchParams.get(SCOPE_PARAM))
+  /**
+   * Un changement de boîte réécrit l'URL dans le même geste, mais le routeur ne
+   * la relit qu'au rendu SUIVANT : pendant ce rendu-là, le compte est déjà le
+   * nouveau et `searchParams` porte encore le dossier de l'ancien — la liste
+   * partait alors chercher ce dossier DANS LA NOUVELLE BOÎTE (mesuré le
+   * 20/09/2026 : 2 requêtes par changement). On lit donc les paramètres à
+   * travers la MÊME fonction qui écrit l'URL, le temps que celle-ci suive :
+   * les deux ne peuvent pas diverger, puisqu'il n'y en a qu'une.
+   */
+  const [switching, setSwitching] = useState(false)
+  /** Les paramètres tels qu'ils seront, une fois l'URL rattrapée. */
+  const switchedParams = useMemo(
+    () => new URLSearchParams(mailboxSwitchHref(searchParams.toString()).split('?')[1] ?? ''),
+    [searchParams],
+  )
+  const caughtUp = switchedParams.toString() === searchParams.toString()
+  const effectiveParams = switching && !caughtUp ? switchedParams : searchParams
+  // L'attente prend fin quand l'URL porte ce que le changement a écrit — mesuré
+  // sur l'URL elle-même, jamais sur une minuterie.
+  useEffect(() => { if (switching && caughtUp) setSwitching(false) }, [switching, caughtUp])
 
-  const { data: settingsData } = useSWR<{ data: { active_account_id: string | null; list_width: number; reading_pane: boolean; notifications: boolean } }>('/api/settings', fetcher)
+  const folder = effectiveParams.get(FOLDER_PARAM) ?? DEFAULT_FOLDER
+  // La recherche vit dans l'URL : la barre d'application l'écrit, la liste la lit.
+  const search = effectiveParams.get(SEARCH_PARAM) ?? ''
+  const searchScope = readScope(effectiveParams.get(SCOPE_PARAM))
+
+  const { data: settingsData } = useSWR<{ data: { active_account_id: string | null; list_width: number; notifications: boolean } }>('/api/settings', fetcher)
   const didInitFromSettings = useRef(false)
   useEffect(() => {
     if (!settingsData?.data || didInitFromSettings.current) return
@@ -122,8 +144,9 @@ export function MailClient() {
     return () => window.removeEventListener(COMPOSE_EVENT, handler)
   }, [])
 
-  // Arriving from another page with `?compose=1` (sidebar, dashboard): open the
-  // composer, then strip the parameter so a reload does not reopen it.
+  // Arrivée depuis une autre page avec `?compose=1` (barre latérale, tableau de
+  // bord) : ouvrir la composition puis retirer le paramètre pour qu'un
+  // rechargement ne la rouvre pas.
   useEffect(() => {
     if (!searchParams.get(COMPOSE_QUERY)) return
     setComposeMode('compose')
@@ -135,22 +158,40 @@ export function MailClient() {
   useEffect(() => {
     const handler = (e: Event) => {
       const id = (e as CustomEvent<string>).detail
+      // La nouvelle boîte s'ouvre sur SA réception : le dossier de l'ancienne
+      // n'existe souvent pas chez elle, et la liste partait le chercher pour
+      // rien. L'URL est lue au moment de l'événement (elle est la source), pas
+      // capturée à l'inscription de l'écouteur.
+      const href = mailboxSwitchHref(window.location.search)
+      // Même idiome que le sélecteur de portée de la barre : seuls des
+      // PARAMÈTRES changent, et `router.replace` refait alors rendre la route
+      // côté serveur (mesuré le 20/09/2026 dans ce dépôt : 4,0 s avant que
+      // l'URL ne bouge). L'API d'historique, que le routeur suit depuis
+      // Next 14.2, met `useSearchParams` à jour au rendu suivant — et ce rendu
+      // a lieu, puisque le compte actif change juste après.
+      if (href !== `${window.location.pathname}${window.location.search}`) {
+        window.history.replaceState(null, '', href)
+      }
+      // Posé dans le MÊME lot que le compte : la liste ne voit jamais un rendu où
+      // le compte a changé mais pas le dossier.
+      setSwitching(true)
       setActiveAccountId(id)
       setSelectedOrigin(null)
       setSelectedThread(null)
       setSelectionMode('none')
       setCurrentMessage(null)
     }
-    window.addEventListener('synapmail:account-change', handler)
-    return () => window.removeEventListener('synapmail:account-change', handler)
+    window.addEventListener(ACCOUNT_CHANGE_EVENT, handler)
+    return () => window.removeEventListener(ACCOUNT_CHANGE_EVENT, handler)
   }, [])
 
-  // Listen for notification click / to-handle list click → open specific message
+  // Listen for notification click / "à traiter" click → open specific message
   useEffect(() => {
     const handler = (e: Event) => {
       const { uid, accountId, folder: targetFolder } = (e as CustomEvent<{ uid: string; accountId: string; folder?: string }>).detail
-      // The full origin travels with the event: the pane reads the message in ITS own
-      // folder, without the list having to switch folders first.
+      // L'origine voyage entière : le volet lit le message dans SON dossier, sans
+      // que la liste ait à changer de dossier d'abord. `pushFolder`: changement
+      // d'URL côté client seul, sans rendu serveur (voir mailboxUrl.ts).
       if (targetFolder) pushFolder(targetFolder)
       handleSelect({ uid, accountId, folder: targetFolder ?? folder })
       setShowReadingPane(true)
@@ -159,13 +200,12 @@ export function MailClient() {
     return () => window.removeEventListener('synapmail:open-message', handler)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Initialize showReadingPane from DB setting (once, before any user interaction)
-  useEffect(() => {
-    if (settingsData?.data && !settingsPaneInitialized.current) {
-      settingsPaneInitialized.current = true
-      setShowReadingPane(settingsData.data.reading_pane)
-    }
-  }, [settingsData])
+  // `showReadingPane` ne dit qu'UNE chose : un message est ouvert. Au-dessus de `lg` il
+  // n'a aucun effet de mise en page (les deux colonnes portent `lg:flex` dans les deux
+  // états) ; en dessous, c'est lui qui décide LAQUELLE des deux colonnes occupe l'écran.
+  // L'initialiser depuis le réglage `reading_pane` faisait donc arriver sur le volet de
+  // lecture, sans liste à cliquer, en fenêtre étroite (mesuré le 20/09/2026 à 900 px sur
+  // le staging) — alors que ce réglage vise la vue à DEUX colonnes.
 
   const { data: accountsData } = useSWR<{ data: EmailAccount[] }>(
     '/api/accounts',
@@ -185,9 +225,9 @@ export function MailClient() {
 
   const { state: mailTarget, register: registerMailActions, run: runMail } = useMailSelection()
 
-  // SSE stream: scheduler events AND real-time mailbox events. The active account is
-  // passed to the server, which puts its inbox under IDLE; switching accounts reopens
-  // the stream on the new mailbox.
+  // Flux SSE : événements du planificateur ET temps réel de la boîte. Le compte
+  // actif est passé au serveur, qui met sa boîte de réception sous IDLE ; changer
+  // de compte rouvre le flux sur la nouvelle boîte.
   useEffect(() => {
     const url = resolvedActiveId
       ? `/api/stream?${STREAM_ACCOUNT_PARAM}=${encodeURIComponent(resolvedActiveId)}`
@@ -205,8 +245,8 @@ export function MailClient() {
           })
           window.dispatchEvent(new CustomEvent('synapmail:scheduled-sent'))
         } else if (data.type === MAILBOX_CHANGED) {
-          // The list already knows how to reload itself: trigger ITS action, so no
-          // reload logic is duplicated here.
+          // La liste sait déjà se relire : on déclenche SON action, aucune
+          // logique de relecture dupliquée ici.
           runMail('refresh')
         }
       } catch { /* ignore malformed */ }
@@ -280,19 +320,20 @@ export function MailClient() {
     handleDelete()
   }, [handleDelete])
 
-  // Reply / Reply all / Forward for a toolbar outside the reading pane (the
-  // `lib/mailSelection` context). The target is the selected message, otherwise the open
-  // one. If it is not loaded yet (a row Cmd-clicked without being opened), it is opened
-  // and the action fires as soon as the message arrives.
-  // The deferred target records the INTENDED message, not just the gesture: without it,
-  // opening another row (or a message pushed by a notification) while loading would
-  // silently reply to the wrong message.
+  // Répondre / Répondre à tous / Transférer pour une barre d'outils hors du volet de
+  // lecture (contexte `lib/mailSelection`). La cible est le message sélectionné, sinon
+  // le message ouvert. Si elle n'est pas encore chargée (une ligne Cmd-cliquée sans
+  // être ouverte), on l'ouvre et l'action part dès que le message arrive.
+  // La cible différée retient le message VISÉ, pas seulement le geste : sans lui, ouvrir
+  // une autre ligne (ou un message poussé par une notification) pendant le chargement
+  // ferait répondre au mauvais message, à l'insu de la personne.
   const pendingCompose = useRef<{ kind: ComposeKind; origin: MessageOrigin } | null>(null)
-  // Forwarding a MULTIPLE selection: each message is attached whole. No message is
-  // opened for this — only the ORIGIN account, the folder and the checked uids are
-  // needed, and the server re-reads them itself. The origin account travels with the
-  // selection: the sender chosen in the "From" field may be a different one, and uids
-  // look alike from one mailbox to the next.
+  // Transfert d'une sélection MULTIPLE : chaque message part entier en pièce
+  // jointe. Aucun message n'est ouvert pour ça — on n'a besoin que du compte
+  // d'ORIGINE, du dossier et des uid cochés, que le serveur relit lui-même
+  // (lot M5). Le compte d'origine voyage avec la sélection : l'expéditeur choisi
+  // dans « De » peut en être un autre, et les uid se ressemblent d'une boîte à
+  // l'autre.
   const [forwardedMessages, setForwardedMessages] = useState<ForwardedMessages | null>(null)
   const composeHandlers = useMemo(
     () => ({ reply: handleReply, replyAll: handleReplyAll, forward: handleForward }),
@@ -303,10 +344,10 @@ export function MailClient() {
     const composeFromToolbar = (kind: ComposeKind) => () => {
       const origins = targetOrigins(mailTarget)
       if (kind === 'forward' && origins.length > 1) {
-        // A multi-forward re-reads the messages at the source, within ONE folder: the
-        // origin travels with the selection, never the displayed folder. A selection
-        // mixing folders never reaches this point (`deriveCapabilities` disables forward
-        // in that case), but the guard stays: exactly one group.
+        // Un transfert multiple relit les messages à la source, dans UN dossier :
+        // l'origine part avec la sélection, jamais le dossier affiché. Une
+        // sélection qui mêle des dossiers n'arrive pas ici (`deriveCapabilities`
+        // désactive alors le transfert), mais la garde reste : un seul groupe.
         const groups = groupByOrigin(origins)
         if (groups.length !== 1) return
         setForwardedMessages(groups[0])
@@ -427,7 +468,7 @@ export function MailClient() {
           <div className="lg:hidden flex items-center gap-2 px-4 py-2 border-b border-border shrink-0">
             <button onClick={handleBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
               <ArrowLeft className="w-4 h-4" />
-              Retour
+              {t('back')}
             </button>
           </div>
         )}

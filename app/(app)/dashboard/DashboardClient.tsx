@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import { openCompose as openComposeFrom } from '@/lib/compose'
@@ -10,10 +10,20 @@ import { useTranslations, useLocale } from 'next-intl'
 import {
   Mail, Send, Eye, Clock, Sparkles, BarChart3, Users, Filter,
   PenSquare, RefreshCw, ArrowUpRight, Minus, CheckCheck,
-  Paperclip, Star, FileText, AlarmClock, ChevronRight, ChevronDown, Check,
+  Paperclip, Star, FileText, AlarmClock, ChevronRight, ChevronDown, Check, MailX,
+  GripVertical, Undo2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ACCOUNTS_SETTINGS_HREF, SETTINGS_ROOT, SettingsLink } from '@/components/settings/SettingsSidebar'
+import { AccountAvatar } from '@/components/layout/AccountAvatar'
+import { AccountPickerFilter, AccountPickerText, useAccountPicker } from '@/components/layout/AccountPicker'
+import { SubscriptionsCard } from './SubscriptionsCard'
+import { ContextMenuSurface, type ContextMenuAnchor } from '@/components/ui/ContextMenu'
+import { accountColor } from '@/lib/accountColor'
+import {
+  cardSpan, isDefaultCardOrder, moveCard, normalizeCardOrder, shiftCard,
+  DASHBOARD_CARD_MIME, type DashboardCardId,
+} from '@/lib/dashboardOrder'
 import type { DashboardData, DashboardAccount, FocusReason, ActivityPoint } from '@/types/dashboard'
 
 const fetcher = (url: string) => fetch(url).then(r => r.json())
@@ -78,8 +88,42 @@ function Skeleton() {
 
 /* ─── section shell ────────────────────────────────────────── */
 
+/**
+ * La poignée d'une carte : c'est ELLE qui arme le glissement, jamais la carte
+ * entière — sinon le moindre balayage sur un titre partirait en déplacement et
+ * le texte deviendrait insélectionnable. Au clavier elle porte le même geste
+ * avec les flèches, parce qu'un déplacement réservé à la souris n'en est pas un.
+ */
+function CardHandle({
+  label, hint, onShift,
+}: {
+  label: string
+  hint: string
+  onShift: (delta: number) => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={`${label} — ${hint}`}
+      onKeyDown={e => {
+        const delta = e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1
+          : e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : 0
+        if (delta === 0) return
+        e.preventDefault()
+        onShift(delta)
+      }}
+      className="grid h-7 w-6 shrink-0 cursor-grab place-items-center rounded-md text-muted-foreground/50 transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 active:cursor-grabbing"
+    >
+      <GripVertical className="h-4 w-4" />
+    </button>
+  )
+}
+
 function Card({
   className, icon, title, action, children, index = 0,
+  cardId, handle, draggable, dragging, dropTarget,
+  onDragStart, onDragOver, onDrop, onDragEnd,
 }: {
   className?: string
   icon?: React.ReactNode
@@ -87,19 +131,38 @@ function Card({
   action?: React.ReactNode
   children: React.ReactNode
   index?: number
+  cardId?: DashboardCardId
+  handle?: React.ReactNode
+  draggable?: boolean
+  dragging?: boolean
+  dropTarget?: boolean
+  onDragStart?: (e: React.DragEvent) => void
+  onDragOver?: (e: React.DragEvent) => void
+  onDrop?: (e: React.DragEvent) => void
+  onDragEnd?: () => void
 }) {
   return (
     <section
+      data-dashboard-card={cardId}
+      data-dashboard-rank={cardId ? index : undefined}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
       className={cn(
         'rounded-2xl border border-border bg-card/80 p-[18px] shadow-sm backdrop-blur-sm',
         'motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:duration-500',
+        dragging && 'opacity-50',
+        dropTarget && 'ring-2 ring-violet-500/60',
         className,
       )}
       style={{ animationDelay: `${index * 45}ms`, animationFillMode: 'backwards' }}
     >
-      {(title || action) && (
+      {(title || action || handle) && (
         <div className="mb-3.5 flex items-center justify-between gap-3">
-          <h2 className="flex items-center gap-2 text-sm font-semibold tracking-tight">
+          <h2 className="flex min-w-0 items-center gap-2 text-sm font-semibold tracking-tight">
+            {handle}
             {icon && (
               <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-400">
                 {icon}
@@ -238,6 +301,19 @@ const REASON_ICON: Record<FocusReason, React.ReactNode> = {
   attachment: <Paperclip className="h-3 w-3" />,
 }
 
+/** Le nom lisible d'une carte, pour la poignée. Même source d'identités que l'ordre. */
+const CARD_LABEL_KEY: Record<DashboardCardId, string> = {
+  focus: 'cardFocus',
+  activity: 'cardActivity',
+  accounts: 'cardAccounts',
+  receipts: 'cardReceipts',
+  scheduled: 'cardScheduled',
+  rules: 'cardRules',
+  followUps: 'cardFollowUps',
+  subscriptions: 'cardSubscriptions',
+  quickCompose: 'cardQuickCompose',
+}
+
 export function DashboardClient() {
   const t = useTranslations('dashboard')
   const locale = useLocale()
@@ -245,7 +321,9 @@ export function DashboardClient() {
   const pathname = usePathname()
 
   // Account scope — null = all accounts combined. Persisted server-side per user.
-  const { data: settingsRes, isLoading: settingsLoading } = useSWR<{ data: { dashboard_account_id: string | null } }>('/api/settings', fetcher)
+  const { data: settingsRes, isLoading: settingsLoading } = useSWR<{
+    data: { dashboard_account_id: string | null; dashboard_card_order: DashboardCardId[] | null }
+  }>('/api/settings', fetcher)
   const filterAccount = settingsRes?.data?.dashboard_account_id ?? null
   const filterReady = !settingsLoading
   const changeFilter = (id: string | null) => {
@@ -257,6 +335,24 @@ export function DashboardClient() {
       body: JSON.stringify({ dashboard_account_id: id }),
     }).then(() => globalMutate('/api/settings'))
   }
+
+  // L'ordre des cartes vient du serveur et passe par la règle partagée : une valeur
+  // abîmée ou incomplète ne peut donc pas faire disparaître une carte de l'écran.
+  const cardOrder = useMemo(
+    () => normalizeCardOrder(settingsRes?.data?.dashboard_card_order),
+    [settingsRes],
+  )
+  const saveCardOrder = (order: DashboardCardId[] | null) => {
+    globalMutate('/api/settings', (curr: { data: Record<string, unknown> } | undefined) =>
+      curr ? { data: { ...curr.data, dashboard_card_order: order } } : curr, false)
+    fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dashboard_card_order: order }),
+    }).then(() => globalMutate('/api/settings'))
+  }
+  const [draggedCard, setDraggedCard] = useState<DashboardCardId | null>(null)
+  const [dropCard, setDropCard] = useState<DashboardCardId | null>(null)
 
   const swrKey = filterReady
     ? `/api/dashboard${filterAccount ? `?account=${filterAccount}` : ''}`
@@ -343,6 +439,354 @@ export function DashboardClient() {
   const currentAccount = filterAccount ? d.accounts.find(a => a.id === filterAccount) ?? null : null
   const scoped = !!currentAccount
 
+  /**
+   * Ce qu'une carte reçoit pour être déplaçable : son rang d'affichage, sa
+   * largeur (depuis la source unique), la poignée, et le dépôt. Un seul endroit :
+   * neuf cartes ne peuvent pas diverger sur la façon d'être saisies.
+   */
+  const cardProps = (id: DashboardCardId) => ({
+    cardId: id,
+    index: cardOrder.indexOf(id),
+    className: cardSpan(id),
+    draggable: true,
+    dragging: draggedCard === id,
+    dropTarget: dropCard === id && draggedCard !== id,
+    handle: (
+      <CardHandle
+        label={t('cardOrderHandle', { card: t(CARD_LABEL_KEY[id]) })}
+        hint={t('cardOrderHint')}
+        onShift={delta => saveCardOrder(shiftCard(cardOrder, id, delta))}
+      />
+    ),
+    onDragStart: (e: React.DragEvent) => {
+      // L'identité voyage DANS le geste : au survol le navigateur ne laisse lire
+      // que les types, et l'état React n'est pas encore à jour quand le premier
+      // `dragover` arrive.
+      e.dataTransfer.setData(DASHBOARD_CARD_MIME, id)
+      e.dataTransfer.effectAllowed = 'move'
+      setDraggedCard(id)
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes(DASHBOARD_CARD_MIME)) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      setDropCard(id)
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault()
+      const from = e.dataTransfer.getData(DASHBOARD_CARD_MIME) as DashboardCardId
+      if (from && from !== id) saveCardOrder(moveCard(cardOrder, from, id))
+      setDraggedCard(null)
+      setDropCard(null)
+    },
+    onDragEnd: () => { setDraggedCard(null); setDropCard(null) },
+  })
+
+  // Chaque carte, sous son identité. Le RANG ne vit plus ici : il vient de `cardOrder`,
+  // si bien qu'un déplacement ne déplace aucune ligne de ce fichier.
+  const cards: Record<DashboardCardId, React.ReactNode> = {
+    focus: (
+      <Card
+        {...cardProps('focus')}
+        className="bg-gradient-to-b from-card to-card/40"
+        icon={<Sparkles className="h-[15px] w-[15px]" />}
+        title={<span>{t('focusTitle')} <span className="font-normal text-muted-foreground">— {t('focusSubtitle')}</span></span>}
+        action={<Link href="/mail" className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('viewAll')}</Link>}
+      >
+        {d.focus.length === 0 ? (
+          <Empty>{t('focusEmpty')}</Empty>
+        ) : (
+          <ul className="divide-y divide-border">
+            {d.focus.map(f => (
+              <li key={`${f.accountId}-${f.uid}`}>
+                <Link
+                  href={folderHref(f.folder)}
+                  prefetch={false}
+                  className="grid grid-cols-[36px_1fr_auto] items-start gap-3 py-3 first:pt-1 last:pb-0"
+                >
+                  <span
+                    className="grid h-9 w-9 place-items-center rounded-[10px] font-mono text-[13px] font-semibold text-white"
+                    style={{ background: colorOf(d.accounts, f.accountId) ?? undefined }}
+                  >
+                    {initials(f.fromName, f.fromAddress)}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold">{f.subject || t('from')}</span>
+                    <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-[2px] font-semibold', REASON_STYLE[f.reason])}>
+                        {REASON_ICON[f.reason]}{reasonLabel(t, f.reason)}
+                      </span>
+                      {!scoped && f.accountName && (
+                        <span className="inline-flex items-center gap-1">
+                          <AccountBubble accounts={d.accounts} id={f.accountId} />
+                          {f.accountName}
+                        </span>
+                      )}
+                      <span className="truncate">{f.fromName || f.fromAddress}</span>
+                    </span>
+                  </span>
+                  <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">{rel(f.date)}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    ),
+    activity: (
+      <Card
+        {...cardProps('activity')}
+        icon={<BarChart3 className="h-[15px] w-[15px]" />}
+        title={<span>{t('activityTitle')} <span className="font-normal text-muted-foreground">· {t('activityRange')}</span></span>}
+        action={
+          <span className={cn('rounded-full border border-border px-2 py-[3px] text-xs font-semibold',
+            trafficPct >= 0 ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400' : 'bg-muted text-muted-foreground')}>
+            {t('trafficDelta', { sign: trafficPct >= 0 ? '+' : '−', percent: Math.abs(trafficPct) })}
+          </span>
+        }
+      >
+        <ActivityChart
+          data={d.activity}
+          locale={locale}
+          recLabel={t('activityReceived')}
+          sentLabel={t('activitySent')}
+        />
+        <div className="mt-1.5 flex gap-4 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-violet-500" /> {t('activityReceived')}</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-emerald-500" /> {t('activitySent')}</span>
+          <span className="ml-auto font-mono">{t('activityStart')}</span>
+        </div>
+      </Card>
+    ),
+    accounts: (
+      <Card
+        {...cardProps('accounts')}
+        icon={<Mail className="h-[15px] w-[15px]" />}
+        title={t('accountsTitle')}
+        action={<SettingsLink href={ACCOUNTS_SETTINGS_HREF} className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('manage')}</SettingsLink>}
+      >
+        {d.accounts.length === 0 ? (
+          <Empty>
+            {t('accountsEmpty')}
+            <SettingsLink href={ACCOUNTS_SETTINGS_HREF} className="mt-2 block text-violet-500 hover:underline">{t('addAccount')}</SettingsLink>
+          </Empty>
+        ) : (
+          <ul className="-mx-2 space-y-0.5">
+            {d.accounts.map(a => {
+              const active = filterAccount === a.id
+              return (
+                <li key={a.id}>
+                  <button
+                    type="button"
+                    onClick={() => changeFilter(active ? null : a.id)}
+                    aria-pressed={active}
+                    className={cn(
+                      'w-full rounded-lg px-2 py-2 text-left transition-colors',
+                      active ? 'bg-violet-500/10 ring-1 ring-inset ring-violet-500/40' : 'hover:bg-muted',
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span className="flex min-w-0 items-center gap-2 font-semibold">
+                        <AccountBubble accounts={d.accounts} id={a.id} />
+                        <span className="truncate">{a.name}</span>
+                      </span>
+                      <span className="font-mono text-sm font-semibold tabular-nums">{a.unread}</span>
+                    </div>
+                    <div className="truncate pl-3.5 font-mono text-xs text-muted-foreground">{a.email}</div>
+                    <div className="mt-1.5 h-[5px] overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full" style={{ width: `${(a.unread / maxUnread) * 100}%`, background: colorOf(d.accounts, a.id) ?? undefined }} />
+                    </div>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </Card>
+    ),
+    receipts: (
+      <Card
+        {...cardProps('receipts')}
+        icon={<Eye className="h-[15px] w-[15px]" />}
+        title={t('receiptsTitle')}
+        action={<Link href="/mail?folder=Sent" className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('history')}</Link>}
+      >
+        {d.receipts.length === 0 ? (
+          <Empty>{t('receiptsEmpty')}</Empty>
+        ) : (
+          <ul className="divide-y divide-border">
+            {d.receipts.map((r, i) => (
+              <li key={i} className="grid grid-cols-[24px_1fr_auto] items-start gap-2.5 py-2.5 first:pt-0 last:pb-0">
+                <span className="grid h-6 w-6 place-items-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <CheckCheck className="h-3.5 w-3.5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold">{r.subject || '—'}</span>
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                    {!scoped && r.accountName && (
+                      <>
+                        <AccountBubble accounts={d.accounts} id={r.accountId} />
+                        <span className="shrink-0">{r.accountName} ·</span>
+                      </>
+                    )}
+                    <span className="truncate">
+                      {r.sentTo}{r.openCount > 1 && ` · ${t('reopened', { count: r.openCount })}`}
+                    </span>
+                  </span>
+                </span>
+                <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">{rel(r.openedAt)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    ),
+    scheduled: (
+      <Card
+        {...cardProps('scheduled')}
+        icon={<Clock className="h-[15px] w-[15px]" />}
+        title={t('scheduledTitle')}
+        action={<SettingsLink href={SETTINGS_ROOT} className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('pendingCount', { count: d.kpis.scheduledPending })}</SettingsLink>}
+      >
+        {d.scheduled.length === 0 ? (
+          <Empty>{t('scheduledEmpty')}</Empty>
+        ) : (
+          <ol className="relative space-y-1 pl-[18px] before:absolute before:inset-y-1.5 before:left-1 before:w-[2px] before:bg-border">
+            {d.scheduled.map(s => (
+              <li key={s.id} className="relative py-2 before:absolute before:-left-[18px] before:top-[13px] before:h-[9px] before:w-[9px] before:rounded-full before:bg-violet-500 before:shadow-[0_0_0_4px_rgba(139,92,246,0.15)]">
+                <div className="font-mono text-xs font-semibold text-violet-600 dark:text-violet-400">
+                  {new Date(s.sendAt).toLocaleString(locale, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}
+                </div>
+                <div className="truncate text-sm font-semibold">{s.subject}</div>
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  {!scoped && s.accountName && (
+                    <>
+                      <AccountBubble accounts={d.accounts} id={s.accountId} />
+                      <span className="shrink-0">{s.accountName} ·</span>
+                    </>
+                  )}
+                  <span className="truncate">→ {s.to[0]}{s.to.length > 1 && ` +${s.to.length - 1}`}</span>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </Card>
+    ),
+    rules: (
+      <Card
+        {...cardProps('rules')}
+        icon={<Filter className="h-[15px] w-[15px]" />}
+        title={<span>{t('rulesTitle')} <span className="font-normal text-muted-foreground">— {t('rulesActionsWeek', { count: d.rules.actions7d })}</span></span>}
+        action={<span className="rounded-full border border-border bg-emerald-500/10 px-2 py-[3px] text-xs font-semibold text-emerald-600 dark:text-emerald-400">{t('rulesActive', { count: d.rules.activeCount })}</span>}
+      >
+        {d.rules.items.length === 0 ? (
+          <Empty>
+            {t('rulesEmpty')}
+            <SettingsLink href={`${SETTINGS_ROOT}/rules`} className="mt-2 block text-violet-500 hover:underline">{t('rulesConfigure')}</SettingsLink>
+          </Empty>
+        ) : (
+          <ul className="space-y-2.5">
+            {d.rules.items.map(r => (
+              <li key={r.id}>
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className={cn('truncate font-medium', !r.enabled && 'text-muted-foreground line-through')}>{r.name}</span>
+                  <span className="shrink-0 font-mono text-xs font-semibold text-muted-foreground tabular-nums">{r.matched7d}</span>
+                </div>
+                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-500" style={{ width: `${(r.matched7d / maxRule) * 100}%` }} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    ),
+    followUps: (
+      <Card
+        {...cardProps('followUps')}
+        icon={<Users className="h-[15px] w-[15px]" />}
+        title={t('followUpTitle')}
+      >
+        {d.followUps.length === 0 ? (
+          <Empty>{t('followUpEmpty')}</Empty>
+        ) : (
+          <ul className="divide-y divide-border">
+            {d.followUps.map((c, i) => (
+              <li key={i} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-muted font-mono text-xs font-semibold">
+                  {initials(c.name, c.email)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold">{c.name || c.email}</span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {t('followUpMeta', { days: daysSince(c.lastContactAt), count: c.frequency })}
+                  </span>
+                </span>
+                <button
+                  onClick={openCompose}
+                  className="shrink-0 rounded-lg border border-border bg-violet-500/10 px-2.5 py-1.5 text-xs font-semibold text-violet-600 dark:text-violet-400 hover:bg-violet-500/20"
+                >
+                  {t('write')}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    ),
+    subscriptions: (
+      <SubscriptionsCard
+        accounts={d.accounts}
+        filterAccount={filterAccount}
+        renderCard={({ title, action, children }) => (
+          <Card
+            {...cardProps('subscriptions')}
+            icon={<MailX className="h-[15px] w-[15px]" />}
+            title={title}
+            action={action}
+          >
+            {children}
+          </Card>
+        )}
+      />
+    ),
+    quickCompose: (
+      <Card
+        {...cardProps('quickCompose')}
+        icon={<PenSquare className="h-[15px] w-[15px]" />}
+        title={t('quickComposeTitle')}
+      >
+        <button
+          onClick={openCompose}
+          className="flex w-full items-center gap-2.5 rounded-xl border border-dashed border-border bg-card/60 px-3 py-3 text-left text-sm text-muted-foreground hover:border-violet-500/40"
+        >
+          <Mail className="h-4 w-4" />
+          {t('quickComposePlaceholder')}
+          <span className="ml-auto text-xs">
+            {d.accounts[0] && t('quickComposeFrom', { account: d.accounts[0].name })}
+          </span>
+        </button>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {[
+            { label: t('quickNewMessage'), onClick: openCompose },
+            { label: t('quickFromTemplate'), onClick: () => router.push(`${SETTINGS_ROOT}/templates`) },
+            { label: t('quickSchedule'), onClick: openCompose },
+          ].map(chip => (
+            <button
+              key={chip.label}
+              onClick={chip.onClick}
+              className="rounded-lg border border-border bg-card/60 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              {chip.label}
+            </button>
+          ))}
+        </div>
+      </Card>
+    ),
+  }
+
+
   return (
     <div className="relative flex-1 overflow-y-auto">
       {/* ambient mesh */}
@@ -385,6 +829,17 @@ export function DashboardClient() {
           >
             <PenSquare className="h-4 w-4" /> {t('compose')}
           </button>
+          {!isDefaultCardOrder(cardOrder) && (
+            <button
+              onClick={() => saveCardOrder(null)}
+              aria-label={t('cardOrderReset')}
+              title={t('cardOrderReset')}
+              data-dashboard-order-reset
+              className="grid h-9 w-9 place-items-center rounded-lg border border-border bg-card/70 text-muted-foreground backdrop-blur-sm transition hover:text-foreground"
+            >
+              <Undo2 className="h-4 w-4" />
+            </button>
+          )}
           <button
             onClick={() => mutate()}
             aria-label={t('refresh')}
@@ -438,302 +893,12 @@ export function DashboardClient() {
           />
         </div>
 
-        {/* bento */}
+        {/* bento — l'ordre vient de `cardOrder`, pas de la position dans ce fichier */}
         <div
           aria-busy={isValidating}
           className={cn('grid grid-cols-12 gap-3.5 transition-opacity', isValidating && 'opacity-60')}
         >
-
-          {/* Focus */}
-          <Card
-            index={0}
-            className="col-span-12 bg-gradient-to-b from-card to-card/40 lg:col-span-6"
-            icon={<Sparkles className="h-[15px] w-[15px]" />}
-            title={<span>{t('focusTitle')} <span className="font-normal text-muted-foreground">— {t('focusSubtitle')}</span></span>}
-            action={<Link href="/mail" className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('viewAll')}</Link>}
-          >
-            {d.focus.length === 0 ? (
-              <Empty>{t('focusEmpty')}</Empty>
-            ) : (
-              <ul className="divide-y divide-border">
-                {d.focus.map(f => (
-                  <li key={`${f.accountId}-${f.uid}`}>
-                    <Link
-                      href={folderHref(f.folder)}
-                      prefetch={false}
-                      className="grid grid-cols-[36px_1fr_auto] items-start gap-3 py-3 first:pt-1 last:pb-0"
-                    >
-                      <span
-                        className="grid h-9 w-9 place-items-center rounded-[10px] font-mono text-[13px] font-semibold text-white"
-                        style={{ background: f.accountColor }}
-                      >
-                        {initials(f.fromName, f.fromAddress)}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-semibold">{f.subject || t('from')}</span>
-                        <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                          <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-[2px] font-semibold', REASON_STYLE[f.reason])}>
-                            {REASON_ICON[f.reason]}{reasonLabel(t, f.reason)}
-                          </span>
-                          {!scoped && f.accountName && (
-                            <span className="inline-flex items-center gap-1">
-                              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: f.accountColor }} />
-                              {f.accountName}
-                            </span>
-                          )}
-                          <span className="truncate">{f.fromName || f.fromAddress}</span>
-                        </span>
-                      </span>
-                      <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">{rel(f.date)}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-
-          {/* Activity */}
-          <Card
-            index={1}
-            className="col-span-12 lg:col-span-6"
-            icon={<BarChart3 className="h-[15px] w-[15px]" />}
-            title={<span>{t('activityTitle')} <span className="font-normal text-muted-foreground">· {t('activityRange')}</span></span>}
-            action={
-              <span className={cn('rounded-full border border-border px-2 py-[3px] text-xs font-semibold',
-                trafficPct >= 0 ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400' : 'bg-muted text-muted-foreground')}>
-                {t('trafficDelta', { sign: trafficPct >= 0 ? '+' : '−', percent: Math.abs(trafficPct) })}
-              </span>
-            }
-          >
-            <ActivityChart
-              data={d.activity}
-              locale={locale}
-              recLabel={t('activityReceived')}
-              sentLabel={t('activitySent')}
-            />
-            <div className="mt-1.5 flex gap-4 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-violet-500" /> {t('activityReceived')}</span>
-              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-emerald-500" /> {t('activitySent')}</span>
-              <span className="ml-auto font-mono">{t('activityStart')}</span>
-            </div>
-          </Card>
-
-          {/* Accounts */}
-          <Card
-            index={2}
-            className="col-span-12 sm:col-span-6 lg:col-span-4"
-            icon={<Mail className="h-[15px] w-[15px]" />}
-            title={t('accountsTitle')}
-            action={<SettingsLink href={ACCOUNTS_SETTINGS_HREF} className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('manage')}</SettingsLink>}
-          >
-            {d.accounts.length === 0 ? (
-              <Empty>
-                {t('accountsEmpty')}
-                <SettingsLink href={ACCOUNTS_SETTINGS_HREF} className="mt-2 block text-violet-500 hover:underline">{t('addAccount')}</SettingsLink>
-              </Empty>
-            ) : (
-              <ul className="-mx-2 space-y-0.5">
-                {d.accounts.map(a => {
-                  const active = filterAccount === a.id
-                  return (
-                    <li key={a.id}>
-                      <button
-                        type="button"
-                        onClick={() => changeFilter(active ? null : a.id)}
-                        aria-pressed={active}
-                        className={cn(
-                          'w-full rounded-lg px-2 py-2 text-left transition-colors',
-                          active ? 'bg-violet-500/10 ring-1 ring-inset ring-violet-500/40' : 'hover:bg-muted',
-                        )}
-                      >
-                        <div className="flex items-center justify-between gap-2 text-sm">
-                          <span className="flex min-w-0 items-center gap-2 font-semibold">
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: a.color }} />
-                            <span className="truncate">{a.name}</span>
-                          </span>
-                          <span className="font-mono text-sm font-semibold tabular-nums">{a.unread}</span>
-                        </div>
-                        <div className="truncate pl-3.5 font-mono text-xs text-muted-foreground">{a.email}</div>
-                        <div className="mt-1.5 h-[5px] overflow-hidden rounded-full bg-muted">
-                          <div className="h-full rounded-full" style={{ width: `${(a.unread / maxUnread) * 100}%`, background: a.color }} />
-                        </div>
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </Card>
-
-          {/* Read receipts */}
-          <Card
-            index={3}
-            className="col-span-12 sm:col-span-6 lg:col-span-4"
-            icon={<Eye className="h-[15px] w-[15px]" />}
-            title={t('receiptsTitle')}
-            action={<Link href="/mail?folder=Sent" className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('history')}</Link>}
-          >
-            {d.receipts.length === 0 ? (
-              <Empty>{t('receiptsEmpty')}</Empty>
-            ) : (
-              <ul className="divide-y divide-border">
-                {d.receipts.map((r, i) => (
-                  <li key={i} className="grid grid-cols-[24px_1fr_auto] items-start gap-2.5 py-2.5 first:pt-0 last:pb-0">
-                    <span className="grid h-6 w-6 place-items-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                      <CheckCheck className="h-3.5 w-3.5" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold">{r.subject || '—'}</span>
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                        {!scoped && r.accountName && (
-                          <>
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: r.accountColor ?? '#6366f1' }} />
-                            <span className="shrink-0">{r.accountName} ·</span>
-                          </>
-                        )}
-                        <span className="truncate">
-                          {r.sentTo}{r.openCount > 1 && ` · ${t('reopened', { count: r.openCount })}`}
-                        </span>
-                      </span>
-                    </span>
-                    <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">{rel(r.openedAt)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-
-          {/* Scheduled */}
-          <Card
-            index={4}
-            className="col-span-12 sm:col-span-6 lg:col-span-4"
-            icon={<Clock className="h-[15px] w-[15px]" />}
-            title={t('scheduledTitle')}
-            action={<SettingsLink href={SETTINGS_ROOT} className="text-xs font-medium text-muted-foreground hover:text-violet-500">{t('pendingCount', { count: d.kpis.scheduledPending })}</SettingsLink>}
-          >
-            {d.scheduled.length === 0 ? (
-              <Empty>{t('scheduledEmpty')}</Empty>
-            ) : (
-              <ol className="relative space-y-1 pl-[18px] before:absolute before:inset-y-1.5 before:left-1 before:w-[2px] before:bg-border">
-                {d.scheduled.map(s => (
-                  <li key={s.id} className="relative py-2 before:absolute before:-left-[18px] before:top-[13px] before:h-[9px] before:w-[9px] before:rounded-full before:bg-violet-500 before:shadow-[0_0_0_4px_rgba(139,92,246,0.15)]">
-                    <div className="font-mono text-xs font-semibold text-violet-600 dark:text-violet-400">
-                      {new Date(s.sendAt).toLocaleString(locale, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}
-                    </div>
-                    <div className="truncate text-sm font-semibold">{s.subject}</div>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      {!scoped && s.accountName && (
-                        <>
-                          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: s.accountColor ?? '#6366f1' }} />
-                          <span className="shrink-0">{s.accountName} ·</span>
-                        </>
-                      )}
-                      <span className="truncate">→ {s.to[0]}{s.to.length > 1 && ` +${s.to.length - 1}`}</span>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </Card>
-
-          {/* Rules */}
-          <Card
-            index={5}
-            className="col-span-12 lg:col-span-8"
-            icon={<Filter className="h-[15px] w-[15px]" />}
-            title={<span>{t('rulesTitle')} <span className="font-normal text-muted-foreground">— {t('rulesActionsWeek', { count: d.rules.actions7d })}</span></span>}
-            action={<span className="rounded-full border border-border bg-emerald-500/10 px-2 py-[3px] text-xs font-semibold text-emerald-600 dark:text-emerald-400">{t('rulesActive', { count: d.rules.activeCount })}</span>}
-          >
-            {d.rules.items.length === 0 ? (
-              <Empty>
-                {t('rulesEmpty')}
-                <SettingsLink href={`${SETTINGS_ROOT}/rules`} className="mt-2 block text-violet-500 hover:underline">{t('rulesConfigure')}</SettingsLink>
-              </Empty>
-            ) : (
-              <ul className="space-y-2.5">
-                {d.rules.items.map(r => (
-                  <li key={r.id}>
-                    <div className="flex items-center justify-between gap-3 text-sm">
-                      <span className={cn('truncate font-medium', !r.enabled && 'text-muted-foreground line-through')}>{r.name}</span>
-                      <span className="shrink-0 font-mono text-xs font-semibold text-muted-foreground tabular-nums">{r.matched7d}</span>
-                    </div>
-                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
-                      <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-500" style={{ width: `${(r.matched7d / maxRule) * 100}%` }} />
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-
-          {/* Follow-ups */}
-          <Card
-            index={6}
-            className="col-span-12 sm:col-span-6 lg:col-span-4"
-            icon={<Users className="h-[15px] w-[15px]" />}
-            title={t('followUpTitle')}
-          >
-            {d.followUps.length === 0 ? (
-              <Empty>{t('followUpEmpty')}</Empty>
-            ) : (
-              <ul className="divide-y divide-border">
-                {d.followUps.map((c, i) => (
-                  <li key={i} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
-                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-muted font-mono text-xs font-semibold">
-                      {initials(c.name, c.email)}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold">{c.name || c.email}</span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {t('followUpMeta', { days: daysSince(c.lastContactAt), count: c.frequency })}
-                      </span>
-                    </span>
-                    <button
-                      onClick={openCompose}
-                      className="shrink-0 rounded-lg border border-border bg-violet-500/10 px-2.5 py-1.5 text-xs font-semibold text-violet-600 dark:text-violet-400 hover:bg-violet-500/20"
-                    >
-                      {t('write')}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-
-          {/* Quick compose */}
-          <Card
-            index={7}
-            className="col-span-12"
-            icon={<PenSquare className="h-[15px] w-[15px]" />}
-            title={t('quickComposeTitle')}
-          >
-            <button
-              onClick={openCompose}
-              className="flex w-full items-center gap-2.5 rounded-xl border border-dashed border-border bg-card/60 px-3 py-3 text-left text-sm text-muted-foreground hover:border-violet-500/40"
-            >
-              <Mail className="h-4 w-4" />
-              {t('quickComposePlaceholder')}
-              <span className="ml-auto text-xs">
-                {d.accounts[0] && t('quickComposeFrom', { account: d.accounts[0].name })}
-              </span>
-            </button>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {[
-                { label: t('quickNewMessage'), onClick: openCompose },
-                { label: t('quickFromTemplate'), onClick: () => router.push(`${SETTINGS_ROOT}/templates`) },
-                { label: t('quickSchedule'), onClick: openCompose },
-              ].map(chip => (
-                <button
-                  key={chip.label}
-                  onClick={chip.onClick}
-                  className="rounded-lg border border-border bg-card/60 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  {chip.label}
-                </button>
-              ))}
-            </div>
-          </Card>
-
+          {cardOrder.map(id => <React.Fragment key={id}>{cards[id]}</React.Fragment>)}
         </div>
       </div>
     </div>
@@ -772,12 +937,58 @@ function Kpi({
   )
 }
 
+/**
+ * La boîte que porte une ligne, cherchée par son identifiant. `null` quand la ligne n'en
+ * porte pas, ou quand elle en nomme une que cet écran ne liste pas. Tout ce qui peint une
+ * boîte ici passe par elle, puis par SON rang (`account.rank`) : celui que le serveur a
+ * calculé sur la liste partagée (boîtes possédées + partages actifs), jamais l'index dans
+ * la liste de cet écran. Celle-ci ne montre que les boîtes possédées, donc un index local
+ * glisserait d'un cran par boîte partagée et repeindrait la même boîte d'une autre couleur
+ * que la barre latérale et les réglages — c'est le défaut mesuré au banc le 20/09/2026.
+ */
+const accountOf = (accounts: DashboardAccount[], id: string | null) =>
+  (id ? accounts.find(a => a.id === id) ?? null : null)
+
+/**
+ * La couleur d'une boîte, pour ce que le tableau de bord peint À CÔTÉ de sa bulle
+ * (la vignette d'un expéditeur, une barre de proportion) : exactement la même
+ * fonction que la bulle elle-même, donc jamais une seconde teinte pour la même boîte.
+ */
+const colorOf = (accounts: DashboardAccount[], id: string | null) => {
+  const account = accountOf(accounts, id)
+  return account ? accountColor(account, account.rank) : null
+}
+
+/**
+ * La bulle d'une boîte, sur une ligne du tableau de bord. Elle ne dessine RIEN :
+ * c'est `AccountAvatar`, celui de la barre latérale, nourri du rang de la boîte —
+ * donc les mêmes initiales et la même couleur des deux côtés de l'écran.
+ */
+function AccountBubble({ accounts, id }: { accounts: DashboardAccount[]; id: string | null }) {
+  const account = accountOf(accounts, id)
+  // Une ligne sans boîte (l'enregistrement n'en porte pas) ne montre RIEN plutôt
+  // qu'un repli qui ferait croire à une vraie boîte.
+  if (!account) return null
+  return <AccountAvatar account={account} colorIndex={account.rank} size="xs" />
+}
+
 function Empty({ children }: { children: React.ReactNode }) {
   return (
     <p className="py-6 text-center text-sm text-muted-foreground">{children}</p>
   )
 }
 
+/** Écart entre le bas du bouton et le haut de la liste qu'il ouvre, en px. */
+const PICKER_GAP = 4
+
+/**
+ * Le sélecteur de boîte du tableau de bord. Il ne recode RIEN : la bulle, le texte,
+ * le filtre et son clavier viennent du composant partagé avec la barre latérale
+ * (`components/layout/AccountPicker.tsx`), et la surface qui les porte est celle des
+ * autres menus de l'application (`ContextMenuSurface` : portail, maintien dans
+ * l'écran, fermeture en UN clic qui atteint sa cible). Ce qui lui est propre tient
+ * en une chose : l'entrée « Toutes les boîtes » en tête.
+ */
 function AccountFilter({
   accounts, value, onChange, allLabel,
 }: {
@@ -786,83 +997,115 @@ function AccountFilter({
   onChange: (id: string | null) => void
   allLabel: string
 }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const [anchor, setAnchor] = useState<ContextMenuAnchor | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const open = anchor !== null
 
-  useEffect(() => {
-    if (!open) return
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
+  const pick = (id: string | null) => {
+    onChange(id)
+    setAnchor(null)
+  }
 
-  const current = accounts.find(a => a.id === value) ?? null
-  const rows: { id: string | null; label: string; email?: string; color?: string; unread?: number }[] = [
-    { id: null, label: allLabel },
-    ...accounts.map(a => ({ id: a.id, label: a.name, email: a.email, color: a.color, unread: a.unread })),
-  ]
+  const {
+    filter, setFilter, filtered, highlight, showFilter, inputRef, onKeyDown,
+  } = useAccountPicker({ open, accounts, onPick: pick })
+
+  // La liste s'ouvre SOUS le bouton et alignée sur son bord gauche ; la surface
+  // partagée se charge ensuite de la garder dans l'écran.
+  const toggle = () => {
+    if (open) { setAnchor(null); return }
+    const box = triggerRef.current?.getBoundingClientRect()
+    if (box) setAnchor({ x: box.left, y: box.bottom + PICKER_GAP })
+  }
+
+  const current = accountOf(accounts, value)
+
+  const row = (
+    id: string | null,
+    selected: boolean,
+    highlighted: boolean,
+    body: React.ReactNode,
+  ) => (
+    <button
+      key={id ?? 'all'}
+      type="button"
+      role="option"
+      aria-selected={selected}
+      onClick={() => pick(id)}
+      data-account-highlight={highlighted ? 'true' : undefined}
+      className={cn(
+        'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
+        selected ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400' : 'hover:bg-muted',
+        highlighted && !selected && 'bg-foreground/[0.06]',
+      )}
+    >
+      {body}
+      {selected && <Check className="h-3.5 w-3.5 shrink-0" />}
+    </button>
+  )
 
   return (
-    <div ref={ref} className="relative mt-2 inline-block text-left">
+    <>
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen(o => !o)}
+        onClick={toggle}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="inline-flex items-center gap-2 rounded-lg border border-border bg-card/70 px-2.5 py-1.5 text-xs font-medium backdrop-blur-sm transition-colors hover:bg-card"
+        data-dashboard-account-trigger
+        className="mt-2 inline-flex items-center gap-2 rounded-lg border border-border bg-card/70 px-2.5 py-1.5 text-xs font-medium backdrop-blur-sm transition-colors hover:bg-card"
       >
-        <span
-          className={cn('h-2 w-2 shrink-0 rounded-full', !current && 'bg-gradient-to-br from-violet-500 to-blue-500')}
-          style={current ? { background: current.color } : undefined}
-        />
+        {current
+          ? <AccountAvatar account={current} colorIndex={current.rank} size="sm" />
+          : <Filter className="h-3.5 w-3.5 text-muted-foreground" />}
         {current ? current.name : allLabel}
         <ChevronDown className={cn('h-3.5 w-3.5 text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
 
-      {open && (
-        <div
+      {anchor && (
+        <ContextMenuSurface
+          anchor={anchor}
+          onClose={() => setAnchor(null)}
+          ignoreRef={triggerRef}
           role="listbox"
-          className="absolute left-0 z-20 mt-1.5 w-64 overflow-hidden rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg"
+          data-dashboard-account-list
+          // La surface place et ferme ; la classe n'ajoute que la LARGEUR des lignes
+          // de boîte. `fixed z-[100]` est répété parce qu'un `className` passé à la
+          // surface REMPLACE le sien : `components/ui/ContextMenu.tsx` est tenu hors
+          // de ce lot (la lane `search` le corrige au lot S7), donc pas de fusion ici.
+          className="fixed z-[100] w-72 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-xl"
         >
-          {rows.map(row => {
-            const selected = row.id === value
-            return (
-              <button
-                key={row.id ?? '__all__'}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                onClick={() => { onChange(row.id); setOpen(false) }}
-                className={cn(
-                  'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
-                  selected ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400' : 'hover:bg-muted',
-                )}
-              >
-                <span
-                  className={cn('h-2 w-2 shrink-0 rounded-full', !row.color && 'bg-gradient-to-br from-violet-500 to-blue-500')}
-                  style={row.color ? { background: row.color } : undefined}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{row.label}</span>
-                  {row.email && <span className="block truncate font-mono text-xs text-muted-foreground">{row.email}</span>}
-                </span>
-                {typeof row.unread === 'number' && row.unread > 0 && (
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">{row.unread}</span>
-                )}
-                {selected && <Check className="h-3.5 w-3.5 shrink-0" />}
-              </button>
-            )
-          })}
-        </div>
+          {showFilter && (
+            <div className="p-1">
+              <AccountPickerFilter
+                value={filter}
+                onChange={setFilter}
+                onKeyDown={onKeyDown}
+                inputRef={inputRef}
+              />
+            </div>
+          )}
+          {row(
+            null,
+            value === null,
+            false,
+            <>
+              <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate font-medium">{allLabel}</span>
+            </>,
+          )}
+          {filtered.map((a, i) => row(
+            a.id,
+            a.id === value,
+            i === highlight,
+            <>
+              <AccountAvatar account={a} colorIndex={a.rank} unread={a.unread} size="sm" />
+              <AccountPickerText account={a} />
+            </>,
+          ))}
+        </ContextMenuSurface>
       )}
-    </div>
+    </>
   )
 }
 

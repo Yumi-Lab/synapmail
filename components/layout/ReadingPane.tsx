@@ -15,6 +15,7 @@ import { PgpDecryptPrompt } from '@/components/mail/PgpDecryptPrompt'
 import type { EmailAccount } from '@/types/account'
 import { useMailSelection } from '@/lib/mailSelection'
 import { messageHref, originOfMessage } from '@/lib/mailOrigin'
+import { unreadRefresh, unreadShift } from '@/lib/unreadSignal'
 import { DEFAULT_FLAG_KEY, flagByKey } from '@/lib/flags'
 import { FlagPicker } from '@/components/mail/FlagPicker'
 import { ThinScroll } from './ThinScroll'
@@ -745,10 +746,10 @@ interface Props {
   accountId: string | null
   folder: string
   activeAccountId?: string | null
-  /** Opens the composer from the AI banner — the Reply button lives in the head bar. */
+  /** Ouvre la rédaction depuis la bannière IA — le bouton Répondre vit dans la head bar. */
   onReply?: (msg: Message) => void
-  /** Still accepted for `ThreadPane` and the shared caller, but no longer wired here:
-   *  delete, reply-all and forward are head bar buttons. */
+  /** Encore acceptées pour `ThreadPane` et l'appelant commun, mais plus câblées ici :
+   *  supprimer, répondre à tous et transférer sont des boutons de la head bar. */
   onDelete?: () => void
   onReplyAll?: (msg: Message) => void
   onForward?: (msg: Message) => void
@@ -793,15 +794,15 @@ const REASON_CLASS: Record<FocusReason, string> = {
 export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, onMessageLoaded, onAiReply, permissions }: Props) {
   const t = useTranslations('mail')
   const perms = permissions ?? DEFAULT_PERMISSIONS
-  // `null` = not touched yet in this session: the message's own value is authoritative.
+  // `null` = pas encore touché dans cette session : la valeur du message fait foi.
   const [flagKey, setFlagKey] = useState<string | null | undefined>(undefined)
   const [flagMenu, setFlagMenu] = useState(false)
-  // The head bar toolbar carries the actions; this pane only calls `setFlag`.
+  // La barre d'outils de la head bar porte les actions ; le volet ne fait qu'appeler `setFlag`.
   const { run } = useMailSelection()
   const flagMenuRef = useRef<HTMLDivElement>(null)
 
-  // Light dismiss: ONE outside click closes, and that click still reaches its target (no
-  // overlay swallowing it). Escape closes too. The listener only exists while open.
+  // Light-dismiss : UN clic dehors ferme, et ce clic atteint sa cible (pas de
+  // voile qui l'avale). Échap ferme aussi. L'écouteur n'existe que menu ouvert.
   useEffect(() => {
     if (!flagMenu) return
     const onDown = (e: MouseEvent) => {
@@ -820,7 +821,7 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
 
   const { data: message, isLoading, error, mutate } = useSWR<Message>(swrKey, fetcher)
 
-  // Follow-up list for the empty state (heuristic, no LLM)
+  // Direction B — "à traiter" list for the empty state (heuristic, no LLM)
   const { data: focusRes } = useSWR<{ data: FocusItem[] }>(
     !uid ? `/api/focus${activeAccountId ? `?account=${activeAccountId}` : ''}` : null,
     fetcher,
@@ -837,20 +838,26 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
     if (message) {
       setFlagKey(undefined)
       onMessageLoaded?.(message)
-      // Marking as read targets the LOADED message, by its origin: that is the correct
-      // one even if the list has switched folders in the meantime.
+      // Marquer « lu » vise le message CHARGÉ, par son origine : c'est celle-là
+      // qui est juste, même si la liste a changé de dossier entre-temps.
       if (!message.isRead && perms.canOrganize) {
-        fetch(messageHref(originOfMessage(message)), {
+        const origin = originOfMessage(message)
+        // La LISTE a déjà décalé le compteur sur le clic ; `unreadShift` ne
+        // compte qu'une fois par message, donc ce second appel ne double rien.
+        // Il couvre les ouvertures qui ne passent PAS par la liste : clic sur
+        // une notification, « à traiter » du volet vide. Voir lib/unreadSignal.ts.
+        unreadShift([origin], true)
+        fetch(messageHref(origin), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ isRead: true }),
-        })
+        }).then(res => { if (!res.ok) unreadRefresh() })
       }
     }
   }, [message?.uid]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The write belongs to the list (shared action): it sets the flag AND refreshes its
-  // rows. The pane only keeps the state of its own icon.
+  // L'écriture appartient à la liste (action partagée du lot M1) : elle pose le
+  // drapeau ET rafraîchit ses lignes. Le volet ne garde que l'état de son icône.
   const handleFlag = (flag: string | null) => {
     if (!message) return
     setFlagKey(flag)
@@ -990,8 +997,8 @@ export function ReadingPane({ uid, accountId, folder, activeAccountId, onReply, 
         </div>
       </div>
 
-      {/* Actions — reply / forward / archive / delete live in the head bar (the shared
-          toolbar): only what it does not carry stays here. */}
+      {/* Actions — répondre / transférer / archiver / supprimer vivent dans la head bar
+          (barre d'outils partagée) : ici ne restent que ce qu'elle ne porte pas. */}
       <div className="flex items-center gap-1.5 px-4 py-2 border-b border-border shrink-0">
         <div className="flex-1" />
         {perms.canOrganize && (

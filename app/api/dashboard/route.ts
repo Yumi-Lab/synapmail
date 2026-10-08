@@ -5,6 +5,7 @@ import type {
   DashboardData, ActivityPoint,
 } from '@/types/dashboard'
 import { scoreFocus } from '@/lib/focus'
+import { listAccessibleAccounts } from '@/lib/accountAccess'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,15 +21,14 @@ type FocusRow = {
   from_name: string | null; from_address: string | null; date: string
   is_starred: boolean; has_attachments: boolean
 }
-type AccountRow = { id: string; name: string; email: string; color: string }
 type ContactRow = { email: string; frequency: number; is_starred: boolean }
 type ReceiptRow = {
   subject: string | null; sent_to: string; opened_at: string; open_count: number
-  account_name: string | null; account_color: string | null
+  account_name: string | null; account_id: string | null
 }
 type ScheduledRow = {
   id: string; subject: string; to_addresses: string; send_at: string
-  account_name: string | null; account_color: string | null
+  account_name: string | null; account_id: string | null
 }
 type RuleRow = { id: string; name: string; enabled: boolean; matched_7d: string }
 type FollowUpRow = { name: string; email: string; frequency: number; last_contact_at: string }
@@ -73,11 +73,12 @@ export async function GET(req: Request) {
       ruleRows,
       followUpRows,
     ] = await Promise.all([
-      query<AccountRow>(
-        `SELECT id, name, email, color FROM email_accounts
-         WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC`,
-        [userId]
-      ),
+      // Le RANG dans CETTE liste décide de la couleur automatique d'une boîte. Elle
+      // est donc lue par la règle PARTAGÉE — mêmes boîtes, même ordre que la barre
+      // latérale et les réglages, qui lisent `/api/accounts`. Une liste réduite aux
+      // boîtes possédées ferait glisser les rangs dès qu'une boîte est partagée, et
+      // la même boîte porterait deux couleurs selon l'écran.
+      listAccessibleAccounts(userId),
       // Always global — feeds the account list / switcher context.
       query<UnreadRow>(
         `SELECT mc.account_id, COUNT(*)::text AS n
@@ -148,7 +149,7 @@ export async function GET(req: Request) {
       ),
       query<ReceiptRow>(
         `SELECT st.subject, st.sent_to, st.opened_at, st.open_count,
-                ea.name AS account_name, ea.color AS account_color
+                ea.name AS account_name, ea.id AS account_id
          FROM sent_tracking st LEFT JOIN email_accounts ea ON ea.id = st.account_id
          WHERE st.user_id = $1 AND st.opened_at IS NOT NULL
            ${acct ? 'AND st.account_id = $2' : ''}
@@ -157,7 +158,7 @@ export async function GET(req: Request) {
       ),
       query<ScheduledRow>(
         `SELECT se.id, se.subject, se.to_addresses, se.send_at,
-                ea.name AS account_name, ea.color AS account_color
+                ea.name AS account_name, ea.id AS account_id
          FROM scheduled_emails se LEFT JOIN email_accounts ea ON ea.id = se.account_id
          WHERE se.user_id = $1 AND se.status = 'pending'
            ${acct ? 'AND se.account_id = $2' : ''}
@@ -182,7 +183,18 @@ export async function GET(req: Request) {
       ),
     ])
 
+    // Le RANG vient de la liste PARTAGÉE (boîtes possédées + partages actifs) ; le
+    // tableau de bord, lui, ne montre que les boîtes POSSÉDÉES, puisque tous ses
+    // chiffres sont comptés sur `user_id = $1`. Le rang part donc avec chaque boîte
+    // au lieu d'être recalculé côté client sur cette liste réduite : recalculé là,
+    // il ne serait plus celui de la barre latérale.
+    const rankById = new Map(accounts.map((a, rank) => [a.id, rank]))
+    const ownedAccounts = accounts.filter(a => a.user_id === userId)
     const accountById = new Map(accounts.map(a => [a.id, a]))
+    // La couleur n'est PAS résolue ici : la liste des boîtes part avec la couleur
+    // CHOISIE et son RANG (l'ordre de `accountOrderBy`), et chaque vignette de mail
+    // porte l'id de sa boîte. Le client y lit la même bulle `AccountAvatar` que la
+    // barre latérale — une seule source pour la bulle comme pour la couleur.
     const unreadByAccount = new Map(unreadAllRows.map(r => [r.account_id, Number(r.n)]))
     const unreadTotal = acct
       ? (unreadByAccount.get(acct) ?? 0)
@@ -207,7 +219,6 @@ export async function GET(req: Request) {
           uid: row.uid,
           accountId: row.account_id,
           accountName: acc?.name ?? '',
-          accountColor: acc?.color ?? '#6366f1',
           folder: row.folder,
           subject: row.subject ?? '',
           fromName: row.from_name,
@@ -262,11 +273,12 @@ export async function GET(req: Request) {
         scheduledPending: Number(scheduledCountRow[0]?.n ?? 0),
         nextScheduledAt: nextScheduledRow[0]?.send_at ?? null,
       },
-      accounts: accounts.map(a => ({
+      accounts: ownedAccounts.map(a => ({
         id: a.id,
         name: a.name,
         email: a.email,
-        color: a.color,
+        badgeColor: a.badge_color,
+        rank: rankById.get(a.id) ?? 0,
         unread: unreadByAccount.get(a.id) ?? 0,
       })),
       activity,
@@ -277,7 +289,7 @@ export async function GET(req: Request) {
         openedAt: r.opened_at,
         openCount: r.open_count,
         accountName: r.account_name,
-        accountColor: r.account_color,
+        accountId: r.account_id,
       })),
       scheduled: scheduledRows.map(s => ({
         id: s.id,
@@ -285,7 +297,7 @@ export async function GET(req: Request) {
         to: parseAddrs(s.to_addresses),
         sendAt: s.send_at,
         accountName: s.account_name,
-        accountColor: s.account_color,
+        accountId: s.account_id,
       })),
       rules: {
         items: ruleItems,

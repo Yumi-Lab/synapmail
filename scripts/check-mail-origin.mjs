@@ -8,7 +8,7 @@
  *
  *   node --experimental-strip-types scripts/check-mail-origin.mjs
  */
-const { originKey, parseOriginKey, sameOrigin, groupByOrigin } =
+const { originKey, parseOriginKey, sameOrigin, groupByOrigin, groupsToMove } =
   await import(new URL('../lib/mailOrigin.ts', import.meta.url).href)
 
 let failed = 0
@@ -61,6 +61,22 @@ check('an incomplete origin is dropped, never sent with a wrong folder',
   groupByOrigin([o('a', '', '1'), o('a', 'INBOX', '2')]),
   [{ accountId: 'a', folder: 'INBOX', uids: ['2'] }])
 check('an empty selection sends nothing', groupByOrigin([]), [])
+
+console.log('groupsToMove')
+check('a group already in the destination emits no request',
+  groupsToMove([o('a', 'INBOX', '1'), o('a', 'INBOX', '2')], 'INBOX'), [])
+check('only the groups that would leave are kept',
+  groupsToMove([o('a', 'INBOX', '1'), o('a', 'Sent', '9')], 'INBOX'),
+  [{ accountId: 'a', folder: 'Sent', uids: ['9'] }])
+check('the same folder name in another account still moves',
+  groupsToMove([o('b', 'INBOX', '1')], 'INBOX').length, 0)
+check('a destination nobody is in keeps every group',
+  groupsToMove([o('a', 'INBOX', '1'), o('a', 'Sent', '9')], 'Archive').map(g => g.folder),
+  ['INBOX', 'Sent'])
+check('an empty destination moves nothing', groupsToMove([o('a', 'INBOX', '1')], ''), [])
+check('an empty selection moves nothing', groupsToMove([], 'Archive'), [])
+check('the destination is compared exactly, not by prefix',
+  groupsToMove([o('a', 'INBOX', '1')], 'INBOX/Old').map(g => g.folder), ['INBOX'])
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1) }
 console.log('\ncheck-mail-origin: OK')

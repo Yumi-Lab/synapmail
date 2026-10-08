@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Measures the instance identity end to end, on a running dev server: an admin uploads a 1-pixel PNG the
+ * Measures lot F1 end to end, on a running dev server: an admin uploads a 1-pixel PNG the
  * script builds itself, and the browser tab actually changes -- the `<link rel=icon>` points
  * at the instance route, that route returns EXACTLY those bytes with the detected type and
  * `nosniff`, the tab title carries the chosen name, and the LOGGED-OUT login page shows the
@@ -23,7 +23,7 @@ import { BUNDLED_FAVICONS, DEFAULT_APP_NAME, FAVICON_PATH, detectImageType } fro
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const VIEWPORT = { width: 1440, height: 900 }
 /** A name that cannot be the default, so "the tab shows the chosen name" cannot pass by accident. */
-const CHOSEN_NAME = 'Acme Mail Bench'
+const CHOSEN_NAME = 'Yumi Mail Bench'
 const HTTP_FORBIDDEN = 403
 const HTTP_NOT_FOUND = 404
 const SETTLE_MS = 400
@@ -245,7 +245,7 @@ try {
   await db.query("UPDATE users SET role = 'admin' WHERE id = $1", [benchId])
 
   console.log('== the screen\'s own reset buttons restore EVERY bundled link, without a reload ==')
-  // A visual check found that after "restore the default icon" the page kept only ONE of the two
+  // Nicolas' F1 gate: after "restore the default icon" the page kept only ONE of the two
   // bundled links until a reload. The bench now drives the BUTTON, not the route, and reads
   // the links the page really declares -- compared against the shipped list itself.
   await page.goto(`${BASE}/admin/users`, { waitUntil: 'networkidle2' })

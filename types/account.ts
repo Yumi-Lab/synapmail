@@ -1,3 +1,5 @@
+import type { DenialReason } from '@/lib/apiLog'
+
 export interface EmailAccount {
   id: string
   userId: string
@@ -11,7 +13,6 @@ export interface EmailAccount {
   smtpSecure: boolean
   username: string
   isDefault: boolean
-  color: string
   oauthProvider?: 'google' | 'microsoft' | null
   /** Prompt-injection guard for this mailbox (default on) — see lib/promptGuard.ts. */
   promptGuard: boolean
@@ -83,6 +84,56 @@ export interface ApiKey {
   requestCount24h: number
 }
 
+/**
+ * Depuis combien de jours une adresse compte comme vue pour la PREMIÈRE fois.
+ * C'est ce marquage, pas la liste elle-même, qui attrape une clé volée.
+ */
+export const API_KEY_NEW_IP_DAYS = 7
+
+/** Une adresse d'où une clé a servi — agrégée depuis `api_key_requests`. */
+export interface ApiKeyIp {
+  ipAddress: string
+  firstSeen: string
+  lastSeen: string
+  callCount: number
+  /** Vue pour la première fois depuis moins de `API_KEY_NEW_IP_DAYS` jours. */
+  isNew: boolean
+  /**
+   * Où l'adresse a été vue (lot P15), ou `null` si elle n'a pas pu être située : service
+   * indisponible, adresse privée ou réservée. Un `null` s'affiche en LISTE sans point sur
+   * la carte — il ne fabrique jamais un faux lieu. Voir `lib/ipLocation.ts`.
+   */
+  location: ApiKeyIpLocation | null
+}
+
+/** La position d'une adresse telle que l'écran l'affiche — voir `lib/ipLocation.ts`. */
+export interface ApiKeyIpLocation {
+  city: string | null
+  region: string | null
+  country: string | null
+  countryCode: string | null
+  latitude: number
+  longitude: number
+}
+
+/**
+ * La « méthode » sous laquelle une RÉVÉLATION du clair d'une clé s'inscrit au journal.
+ * Ce n'est pas une requête Bearer : c'est une opération sensible du propriétaire, qui
+ * se lit dans le même journal que le reste de la vie de la clé. Elle vit ici, avec le
+ * contrat de la ligne qu'elle qualifie, et non dans `lib/apiLog.ts` : ce module tire
+ * la base de données, qu'un banc ne peut pas charger.
+ */
+export const API_KEY_REVEAL_METHOD = 'REVEAL'
+
+/**
+ * How many wrong passwords a user may present to the reveal route before it stops
+ * answering, and for how long. A stolen session could otherwise try the account
+ * password without limit. Same home as the method above, for the same reason: the
+ * bench reads them, and it cannot load the route.
+ */
+export const API_KEY_REVEAL_MAX_ATTEMPTS = 5
+export const API_KEY_REVEAL_WINDOW_MS = 15 * 60 * 1000
+
 /** One row from GET /api/api-keys/[id]/logs — a single logged Bearer request. */
 export interface ApiKeyRequestLog {
   id: string
@@ -90,4 +141,16 @@ export interface ApiKeyRequestLog {
   path: string
   ipAddress: string | null
   createdAt: string
+  /** Ce qui s'est PASSÉ — complété au retour de la requête, voir lib/apiLog.ts. */
+  status: number | null
+  durationMs: number | null
+  /** La boîte visée, quand la requête en désignait une. */
+  accountId: string | null
+  /**
+   * Le motif du refus et ce qui manquait : la portée, ou la boîte fermée. Le
+   * vocabulaire vient de la barrière elle-même (`lib/apiLog.ts`) : il s'écrivait
+   * ici en second exemplaire, et l'exemplaire oublié faisait mentir l'écran.
+   */
+  denialReason: DenialReason | null
+  denialDetail: string | null
 }

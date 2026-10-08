@@ -1,4 +1,7 @@
 import { Pool } from 'pg'
+import { LEGACY_SCOPES, OPT_IN_SCOPES } from '@/lib/apiScopes'
+import { TRANSLATE_MODE_DEFAULT } from '@/lib/quickTranslate'
+import { ACTIVE_SHARE_SQL } from '@/lib/accountAccess'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -114,22 +117,32 @@ export async function initDb(): Promise<void> {
     )
   `)
 
-  // Migrations — columns added after the initial creation
+  // Migrations — colonnes ajoutées après la création initiale
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS undo_send_delay INTEGER NOT NULL DEFAULT 10`)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS start_view VARCHAR(20) NOT NULL DEFAULT 'inbox'`)
-  // UI preferences previously in localStorage — persisted here to survive reloads / multiple devices
+  // Préférences UI auparavant en localStorage — persistées ici pour survivre au reload / multi-device
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS active_account_id UUID REFERENCES email_accounts(id) ON DELETE SET NULL`)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sidebar_collapsed BOOLEAN NOT NULL DEFAULT false`)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS mail_density VARCHAR(20) NOT NULL DEFAULT 'comfortable'`)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS list_width INTEGER NOT NULL DEFAULT 320`)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS dashboard_account_id UUID REFERENCES email_accounts(id) ON DELETE SET NULL`)
-  // Update banner: the version whose announcement the user dismissed (previously in sessionStorage)
+  // Ordre des cartes du tableau de bord, rangees a la souris. NULL = ordre d'origine :
+  // aucun tableau de bord existant ne bouge a la mise a jour. Les identites sont celles
+  // de lib/dashboardOrder.ts, qui remet d'office toute carte absente de la valeur lue.
+  await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS dashboard_card_order JSONB`)
+  // Bandeau de mise à jour : version dont l'utilisateur a fermé l'annonce (auparavant en sessionStorage)
   await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS update_dismissed_version VARCHAR(50)`)
-  // Prompt-injection guard, per mailbox. Enabled by default: safety is the default.
+  // Garde contre l'injection d'instructions, par boîte. Activée par défaut : la sécurité est le défaut.
   await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS prompt_guard BOOLEAN NOT NULL DEFAULT true`)
-  // Badge colour chosen by the user. NULL = automatic colour derived from position:
-  // no existing mailbox changes appearance on upgrade.
+  // Couleur de badge choisie par l'utilisateur. NULL = couleur automatique par rang :
+  // aucune boîte existante ne change d'apparence à la mise à jour.
   await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS badge_color VARCHAR(7)`)
+  // Taille maximale d'un message ANNONCÉE par le serveur SMTP dans sa réponse EHLO
+  // (`250 SIZE <octets>`), lue par lib/accountProbe.ts au moment où la connexion est
+  // essayée. NULL = le serveur n'a rien annoncé, ou n'a pas encore été essayé : l'envoi
+  // retombe alors sur le plafond prudent de lib/attachments.ts. BIGINT car la valeur est
+  // un nombre d'octets (IONOS annonce 141557760).
+  await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS smtp_max_size BIGINT`)
 
   await query(`
     CREATE TABLE IF NOT EXISTS contacts (
@@ -276,6 +289,12 @@ export async function initDb(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)
+  // Moteur derrière le bouton « Traduire » (lib/quickTranslate.ts en porte les valeurs).
+  // Défaut « quick » : la traduction depuis le navigateur ne demande ni modèle ni réglage,
+  // donc le bouton marche dès l'installation. Se change, ou s'éteint, dans Réglages → IA.
+  // ALTER après le CREATE TABLE ci-dessus : sur une base neuve, la table n'existe pas encore
+  // avant cette ligne (défaut n°1 de la revue amont — l'ALTER tournait avant le CREATE).
+  await query(`ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS translate_mode VARCHAR(20) NOT NULL DEFAULT '${TRANSLATE_MODE_DEFAULT}'`)
 
   // PGP end-to-end encryption — server stores public keys only.
   // Private keys are generated and kept exclusively in browser IndexedDB (lib/pgp/keystore.ts).
@@ -303,7 +322,7 @@ export async function initDb(): Promise<void> {
     )
   `)
 
-  // Compose drafts — one per (user, account), replaces the localStorage `synapmail:draft:${accountId}`
+  // Brouillons de composition — un par (utilisateur, compte), remplace le localStorage `synapmail:draft:${accountId}`
   await query(`
     CREATE TABLE IF NOT EXISTS drafts (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -319,7 +338,7 @@ export async function initDb(): Promise<void> {
     )
   `)
 
-  // API keys — read+write Bearer access for machine/agent use, alongside the session cookie
+  // Clés API — accès Bearer lecture+écriture pour usage machine/agent, en plus du cookie de session
   await query(`
     CREATE TABLE IF NOT EXISTS api_keys (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -334,9 +353,48 @@ export async function initDb(): Promise<void> {
   `)
   await query(`CREATE INDEX IF NOT EXISTS api_keys_hash_idx ON api_keys(key_hash)`)
 
-  // Per-key log of Bearer requests — a lightweight log (method + path + IP), not the
-  // session requests. Filled fire-and-forget by lib/apiAuth.ts on every successful auth;
-  // purged by the scheduler beyond 30 days (see lib/scheduler.ts processApiKeyLogCleanup).
+  // Portées par clé (lot P8) : ce que la clé a le droit de faire, source unique dans
+  // lib/apiScopes.ts. Les clés déjà créées reçoivent EXACTEMENT ce qu'elles pouvaient
+  // déjà faire (LEGACY_SCOPES) — l'écriture sur les boîtes n'est donnée à personne,
+  // il faut la cocher. Le DEFAULT ne vaut que pour une insertion sans portées.
+  await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scopes TEXT[] NOT NULL DEFAULT '{}'`)
+  await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scopes_migrated_at TIMESTAMPTZ`)
+  await query(
+    `UPDATE api_keys SET scopes = $1::text[], scopes_migrated_at = NOW() WHERE scopes_migrated_at IS NULL`,
+    [LEGACY_SCOPES]
+  )
+
+  // Une portée OPTIONNELLE ne s'obtient qu'en la cochant (règle : « les capacités
+  // nouvelles ne sont accordées à personne par défaut »). Or une migration antérieure
+  // en a distribué : `contacts:write` a brièvement fait partie de LEGACY_SCOPES, et
+  // les clés créées avant l'ont reçue sans que personne ne la coche — inoffensif tant
+  // qu'aucune route d'écriture n'acceptait de clé, plus du tout depuis qu'elles s'ouvrent.
+  // Ce rattrapage passe UNE fois par clé (le marqueur le garantit) : une portée cochée
+  // APRÈS ce passage n'est jamais reprise.
+  await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS optin_scopes_revoked_at TIMESTAMPTZ`)
+  await query(
+    `UPDATE api_keys
+        SET scopes = ARRAY(SELECT unnest(scopes) EXCEPT SELECT unnest($1::text[])),
+            optin_scopes_revoked_at = NOW()
+      WHERE optin_scopes_revoked_at IS NULL`,
+    [OPT_IN_SCOPES]
+  )
+
+  // Revoir une clé (lot P14) : le clair est gardé CHIFFRÉ avec la clé maître hors base
+  // (lib/encrypt.ts, la même mécanique que les mots de passe IMAP), jamais en clair.
+  // `key_hash` reste seul utilisé pour l'AUTHENTIFICATION — on ne déchiffre que pour
+  // afficher, après re-saisie du mot de passe. Nullable : les clés créées AVANT ce lot
+  // n'ont pas de clair à stocker, il n'existe nulle part, et elles restent irrécupérables.
+  await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_encrypted TEXT`)
+
+  // Restreindre une clé à des adresses (lot P14) : liste vide = aucune restriction,
+  // ce qui est le cas de toute clé existante — la migration ne restreint personne.
+  // Le verrou est appliqué dans lib/apiAuth.ts, à côté des portées et des boîtes.
+  await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_ips TEXT[] NOT NULL DEFAULT '{}'`)
+
+  // Journal des requêtes Bearer par clé — un log léger (méthode + chemin + IP), pas les
+  // requêtes de session. Alimenté fire-and-forget par lib/apiAuth.ts à chaque auth réussie ;
+  // purgé par le scheduler au-delà de 30 jours (voir lib/scheduler.ts processApiKeyLogCleanup).
   await query(`
     CREATE TABLE IF NOT EXISTS api_key_requests (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -349,13 +407,61 @@ export async function initDb(): Promise<void> {
   `)
   await query(`CREATE INDEX IF NOT EXISTS api_key_requests_key_idx ON api_key_requests(api_key_id, created_at DESC)`)
 
-  // Invitee awaiting acceptance: blocks sign-in until the placeholder password has been
-  // replaced through /api/invites/[token] (see account_shares below)
+  // Ce qui s'est PASSÉ (lot P11) : la ligne ouverte à l'entrée se complète au RETOUR avec le
+  // statut HTTP, la durée, la boîte visée et le motif du refus — voir lib/apiLog.ts. Toutes
+  // nullables : une ligne écrite avant ce lot, ou une requête dont la réponse n'est jamais
+  // revenue, reste lisible sans mentir sur ce qu'elle ne sait pas.
+  await query(`ALTER TABLE api_key_requests ADD COLUMN IF NOT EXISTS status INTEGER`)
+  await query(`ALTER TABLE api_key_requests ADD COLUMN IF NOT EXISTS duration_ms INTEGER`)
+  await query(`ALTER TABLE api_key_requests ADD COLUMN IF NOT EXISTS account_id UUID`)
+  await query(`ALTER TABLE api_key_requests ADD COLUMN IF NOT EXISTS denial_reason VARCHAR(20)`)
+  await query(`ALTER TABLE api_key_requests ADD COLUMN IF NOT EXISTS denial_detail TEXT`)
+
+  // OÙ une adresse a été vue (lot P15) — le résultat d'ip-api.com, écrit à la PREMIÈRE
+  // apparition de l'adresse et relu ensuite. C'est cette table qui fait la différence entre
+  // « une interrogation par adresse » et « une interrogation par ouverture d'écran ».
+  // Un verdict d'échec du service ('unlocatable') s'y écrit aussi : sans lui, une adresse
+  // privée repartirait chez le service à chaque fois. Voir lib/ipLocation.ts.
+  await query(`
+    CREATE TABLE IF NOT EXISTS ip_locations (
+      ip_address VARCHAR(45) PRIMARY KEY,
+      status VARCHAR(20) NOT NULL,
+      city TEXT,
+      region TEXT,
+      country TEXT,
+      country_code VARCHAR(4),
+      latitude DOUBLE PRECISION,
+      longitude DOUBLE PRECISION,
+      located_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+
+  // Boîtes autorisées PAR CLÉ (lot P10) : les portées disent quelle capacité, cette table
+  // dit sur quelle boîte. Les deux sont exigées — voir lib/apiKeyAccounts.ts, qui est la
+  // SEULE barrière, appelée depuis lib/apiAuth.ts. Une boîte connectée PAR une clé lui
+  // appartient (colonne ci-dessous) et n'a pas besoin d'y figurer.
+  await query(`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS created_by_api_key UUID REFERENCES api_keys(id) ON DELETE SET NULL`)
+  await query(`
+    CREATE TABLE IF NOT EXISTS api_key_accounts (
+      api_key_id UUID NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+      account_id UUID NOT NULL REFERENCES email_accounts(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (api_key_id, account_id)
+    )
+  `)
+
+  // Le drapeau de la migration ci-dessous est posé ici (colonne créée avant d'être lue),
+  // mais la migration elle-même tourne plus bas : elle doit aussi backfill les boîtes
+  // PARTAGÉES actives (table account_shares), pas encore créée à ce point du fichier.
+  await query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS accounts_migrated_at TIMESTAMPTZ`)
+
+  // Invité en attente d'acceptation : bloque la connexion tant que le mot de passe placeholder
+  // n'a pas été remplacé via /api/invites/[token] (voir account_shares ci-dessous)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'`)
 
-  // Account sharing — inviting another user with fine-grained per-action permissions.
-  // No can_read column: the existence of a status='active' row IS the read right;
-  // there is no use case for "invited but read revoked" in v1.
+  // Partage de compte — invitation d'un autre utilisateur avec permissions fines par action.
+  // Pas de colonne can_read : l'existence d'une ligne status='active' EST le droit de lecture ;
+  // il n'y a pas de cas d'usage pour "invité mais lecture coupée" en v1.
   await query(`
     CREATE TABLE IF NOT EXISTS account_shares (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -379,17 +485,38 @@ export async function initDb(): Promise<void> {
   await query(`CREATE INDEX IF NOT EXISTS account_shares_account_idx ON account_shares(account_id)`)
   await query(`CREATE INDEX IF NOT EXISTS account_shares_invitee_idx ON account_shares(invitee_user_id)`)
   await query(`CREATE INDEX IF NOT EXISTS account_shares_token_hash_idx ON account_shares(invite_token_hash)`)
-  // Prevents a second pending/active share to the same user for the same account;
-  // re-inviting after a revocation simply inserts a new row (the old one stays as history)
+  // Empêche un second partage pending/active vers la même personne pour le même compte ;
+  // une relance après révocation insère simplement une nouvelle ligne (l'ancienne reste en historique)
   await query(`
     CREATE UNIQUE INDEX IF NOT EXISTS account_shares_active_unique_idx
     ON account_shares(account_id, invitee_user_id)
     WHERE status IN ('pending', 'active')
   `)
 
-  // Completed unsubscribes — so an agent does not start over on a newsletter already left.
-  // The grouping key (List-Id or sender address) is stored as is: it is what ties a row
-  // to the group listed by `GET /api/subscriptions`.
+  // Suite du backfill posé plus haut (colonne accounts_migrated_at) : une clé migrée doit
+  // aussi voir les boîtes qu'elle lisait déjà PAR PARTAGE actif (account_shares), sinon une
+  // clé qui lisait une boîte partagée perd l'accès (403) au déploiement — défaut n°6 de la
+  // revue amont. `sh` est l'alias attendu par ACTIVE_SHARE_SQL (source unique de la règle).
+  await query(`
+    INSERT INTO api_key_accounts (api_key_id, account_id)
+    SELECT ak.id, sh.account_id FROM api_keys ak
+      JOIN account_shares sh ON sh.invitee_user_id = ak.user_id
+     WHERE ak.accounts_migrated_at IS NULL
+       AND ${ACTIVE_SHARE_SQL}
+    ON CONFLICT DO NOTHING
+  `)
+  await query(`
+    INSERT INTO api_key_accounts (api_key_id, account_id)
+    SELECT ak.id, a.id FROM api_keys ak
+      JOIN email_accounts a ON a.user_id = ak.user_id
+     WHERE ak.accounts_migrated_at IS NULL
+    ON CONFLICT DO NOTHING
+  `)
+  await query(`UPDATE api_keys SET accounts_migrated_at = NOW() WHERE accounts_migrated_at IS NULL`)
+
+  // Désabonnements effectués — pour qu'un agent ne recommence pas une lettre déjà quittée.
+  // La clé de regroupement (List-Id ou adresse d'expéditeur) est stockée telle quelle :
+  // c'est elle qui relie une ligne au groupe listé par `GET /api/subscriptions`.
   await query(`
     CREATE TABLE IF NOT EXISTS unsubscriptions (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -400,16 +527,16 @@ export async function initDb(): Promise<void> {
       UNIQUE(account_id, group_key)
     )
   `)
-  // The history survives tidying up: once the messages are moved, the group
-  // disappears from `GET /api/subscriptions` but the row stays, with enough to
-  // read it without the mailbox (sender, List-Id, outcome).
+  // L'historique survit au rangement : une fois les messages déplacés, le groupe
+  // disparaît de `GET /api/subscriptions` mais la ligne reste, avec de quoi la
+  // lire sans la boîte (expéditeur, List-Id, résultat).
   await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS sender_address TEXT`)
   await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS sender_name TEXT`)
   await query(`ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS list_id TEXT`)
 
-  // Instance identity — ONE single row, enforced by `id BOOLEAN PRIMARY KEY DEFAULT TRUE`
-  // constrained to TRUE: a second insert violates the primary key. Everything NULL = the
-  // original appearance, so no instance changes look on upgrade.
+  // Identité de l'instance — UNE seule ligne, forcée par `id BOOLEAN PRIMARY KEY DEFAULT TRUE`
+  // contraint à TRUE : une deuxième insertion viole la clé primaire. Tout à NULL = apparence
+  // d'origine, donc aucune instance ne change d'aspect à la mise à jour.
   await query(`
     CREATE TABLE IF NOT EXISTS instance_settings (
       id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
