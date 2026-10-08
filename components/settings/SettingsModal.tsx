@@ -12,6 +12,7 @@ import {
 import { Dialog, DialogPortal, DialogOverlay } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { SettingsModalPanel } from './SettingsModalPanel'
+import { SETTINGS_ROOT, SettingsLink } from './SettingsSidebar'
 
 const NAV_ITEMS = [
   { seg: 'profile',       key: 'profile',       icon: User },
@@ -76,10 +77,10 @@ export function SettingsModal() {
             {NAV_ITEMS.map(({ seg, key, icon: Icon }) => (
               // `replace`: switching tabs must not push a history entry, otherwise the close
               // button (a single back step) returns to the previous tab instead of closing.
-              <Link key={seg} href={`/settings/${seg}`} replace className={linkClass(segment === seg)}>
+              <SettingsLink key={seg} href={`${SETTINGS_ROOT}/${seg}`} replace className={linkClass(segment === seg)}>
                 <Icon className="h-4 w-4 shrink-0" />
                 <span>{t(key)}</span>
-              </Link>
+              </SettingsLink>
             ))}
             {isAdmin && (
               <>
