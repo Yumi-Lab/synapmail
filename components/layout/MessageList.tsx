@@ -21,6 +21,9 @@ import { IconTooltip } from '@/components/ui/IconTooltip'
 import { ThinScroll } from './ThinScroll'
 import { ScheduledPopover } from '@/components/mail/ScheduledPopover'
 import { SnoozePopover } from '@/components/mail/SnoozePopover'
+import { useEmailNotifications } from '@/hooks/useEmailNotifications'
+
+const EMPTY_MESSAGES: Message[] = []
 
 const fetcher = async (url: string) => {
   const res = await fetch(url)
@@ -149,7 +152,9 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
 
   const { data: settingsData } = useSWR<{ data: AppSettings }>('/api/settings', fetcher)
   const threadView = settingsData?.data?.thread_view ?? true
-  const perPage = settingsData?.data?.messages_per_page ?? 30
+  // No fallback: the list is only requested once the page size is known
+  // (measured: one request at 30 then one at the real size, the first for nothing).
+  const perPage = settingsData?.data?.messages_per_page
 
   // Direction B — comfortable / compact density
   const density = settingsData?.data?.mail_density ?? 'comfortable'
@@ -218,8 +223,24 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
 
   const isSearchMode = isSearchQuery(search)
 
+  // The active account arrives AFTER the first render, and in TWO stages: /api/accounts
+  // gives the list, /api/settings says which one is displayed. As long as the settings
+  // are missing, the received account is only a fallback on the DEFAULT mailbox: listing
+  // there would ask for a different mailbox than the displayed one, would open IMAP
+  // connections for nothing, and could briefly show messages from the wrong account.
+  //
+  // The presence of the settings is NOT enough: a child's effects run BEFORE the
+  // parent's, so the list would see the settings arrive one render before the parent
+  // has applied the account they name. We therefore require AGREEMENT between the two
+  // sources: the displayed account is indeed the one the settings name. Without any
+  // mailbox, the (empty) account list received is enough: the server answers "no account".
+  const { data: accountsRes } = useSWR<{ data: EmailAccount[] }>('/api/accounts', fetcher)
+  const savedAccountId = settingsData?.data?.active_account_id
+  const accountSettled = !!settingsData?.data &&
+    (activeAccountId ? (!savedAccountId || savedAccountId === activeAccountId) : !!accountsRes)
+
   const { data, error, isValidating, mutate } = useSWR<{ messages: Message[]; total: number }>(
-    isSearchMode
+    isSearchMode || !accountSettled
       ? null
       : `/api/messages?folder=${encodeURIComponent(folder)}&filter=${filter}&page=${page}&perPage=${perPage}${accountParam}`,
     fetcher,
@@ -230,21 +251,10 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
   // the banner states them rather than retyping them (single source: lib/search.ts).
   // The "this folder" scope fits in one response: a single folder, nothing to spread out.
   const isStreamingScope = isSearchMode && searchScope === SCOPE_ALL
-  // The active account arrives AFTER the first render, and in TWO stages: /api/accounts
-  // gives the list, /api/settings says which one is displayed. As long as the settings
-  // are missing, the received account is only a fallback on the DEFAULT mailbox: searching
-  // there would sweep a different mailbox than the displayed one, would open IMAP connections
-  // for nothing, and could briefly show results from the wrong account.
-  // A SINGLE condition holds back both scopes, and the banner stays in its pending
-  // state instead of announcing a definitive "0 results".
-  //
-  // The presence of the settings is NOT enough: a child's effects run BEFORE
-  // the parent's, so the list would see the settings arrive one render before the
-  // parent has applied the account they name. We therefore require AGREEMENT between the two
-  // sources: the displayed account is indeed the one the settings name.
-  const savedAccountId = settingsData?.data?.active_account_id
-  const searchReady = isSearchMode && !!activeAccountId && !!settingsData?.data &&
-    (!savedAccountId || savedAccountId === activeAccountId)
+  // Same wait as the list (`accountSettled`): a SINGLE condition holds back both
+  // scopes, and the banner stays in its pending state instead of announcing a
+  // definitive "0 results".
+  const searchReady = isSearchMode && !!activeAccountId && accountSettled
   const { data: searchData, isValidating: isSearchingOne } = useSWR<{ messages: Message[]; total: number; fields: SearchField[] }>(
     searchReady && !isStreamingScope
       ? `/api/messages/search?${SEARCH_PARAM}=${encodeURIComponent(search)}&folder=${encodeURIComponent(folder)}` +
@@ -362,6 +372,8 @@ export function MessageList({ folder, selectedOrigin, onSelect, onSelectThread, 
 
   const searchMessages = isStreamingScope ? streamed.messages : (searchData?.messages ?? [])
   const messages = isSearchMode ? searchMessages : accumulated
+  // The folder as loaded (not a search): no extra poll.
+  useEmailNotifications(isSearchMode ? EMPTY_MESSAGES : accumulated, folder, activeAccountId ?? undefined)
   const total = data?.total ?? 0
   // The server may have found more than it returns (SEARCH_RESULT_LIMIT cap):
   // the banner then announces "first X of N" instead of implying N = X.
