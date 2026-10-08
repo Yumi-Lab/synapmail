@@ -289,13 +289,16 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
 
   // From the mail page, a PLAIN click changes folder without a server round-trip
   // (`pushFolder`); a modified click (new tab) or one from another page stays a
-  // regular link navigation.
+  // regular link navigation. A modified/middle click opens the folder elsewhere
+  // (new tab) — THIS tab's displayed folder doesn't change, so the sidebar must
+  // not highlight it either.
   const handleFolderClick = (e: React.MouseEvent, path: string) => {
-    if (pathname === MAIL_PATH && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    setCurrentFolder(path)
+    if (pathname === MAIL_PATH) {
       e.preventDefault()
       pushFolder(path)
     }
-    setCurrentFolder(path)
     onClose?.()
   }
 

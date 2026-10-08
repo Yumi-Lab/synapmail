@@ -23,6 +23,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Banc : `scripts/check-mail-folder-nav-browser.mjs` (Chrome, build de production, vraie souris) — avant :
   4 `_rsc` à l'ouverture pour 5 dossiers, 1 `_rsc` par clic, retour arrière sans surbrillance ; après : 0, 0,
   surbrillance juste, et le lien « tableau de bord » navigue encore après un changement de dossier.
+- **Un ctrl/cmd/clic-molette sur un dossier (ouverture dans un nouvel onglet) mettait quand même en
+  surbrillance ce dossier dans l'onglet courant** (`components/layout/Sidebar.tsx`), alors que la liste
+  affichée dans cet onglet n'avait pas changé — régression introduite par le correctif ci-dessus
+  (`setCurrentFolder` s'exécutait hors de la condition de clic simple). La surbrillance ne se met à jour
+  que pour un clic simple, bouton gauche, sans touche de modification.
 
 ## [1.8.1] — 2026-10-07 — Correctif boucle de rendu
 
