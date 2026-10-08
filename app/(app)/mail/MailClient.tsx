@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { COMPOSE_EVENT, COMPOSE_QUERY, MAIL_PATH } from '@/lib/compose'
+import { DEFAULT_FOLDER, FOLDER_PARAM, pushFolder } from './mailboxUrl'
 import { SCOPE_PARAM, SEARCH_PARAM, focusSearch, readScope } from '@/lib/search'
 import { ArrowLeft } from 'lucide-react'
 import useSWR from 'swr'
@@ -62,7 +63,7 @@ export function MailClient() {
 
   const searchParams = useSearchParams()
   const router = useRouter()
-  const folder = searchParams.get('folder') ?? 'INBOX'
+  const folder = searchParams.get(FOLDER_PARAM) ?? DEFAULT_FOLDER
   // The search query lives in the URL: the app bar writes it, the list reads it.
   const search = searchParams.get(SEARCH_PARAM) ?? ''
   const searchScope = readScope(searchParams.get(SCOPE_PARAM))
@@ -151,9 +152,7 @@ export function MailClient() {
       const { uid, accountId, folder: targetFolder } = (e as CustomEvent<{ uid: string; accountId: string; folder?: string }>).detail
       // The full origin travels with the event: the pane reads the message in ITS own
       // folder, without the list having to switch folders first.
-      if (targetFolder) {
-        router.push(`/mail?folder=${encodeURIComponent(targetFolder)}`)
-      }
+      if (targetFolder) pushFolder(targetFolder)
       handleSelect({ uid, accountId, folder: targetFolder ?? folder })
       setShowReadingPane(true)
     }
