@@ -5,6 +5,32 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — fork Yumi-Lab — 2026-10-10
+
+### Résumé
+- Un document GED dont l'en-tête ne porte aucune forme juridique (courrier d'un établissement scolaire,
+  avis des Finances publiques…) recevait un dossier proposé nommé par un numéro (« SIRET 1967… »,
+  « IBAN4 30001…0057 »), illisible. Le dossier porte désormais le NOM DE L'ORGANISME lu dans l'en-tête ;
+  ce qu'il apprend ne change pas.
+
+### Changed
+- **Nom d'un dossier proposé** (`lib/ged/filing.ts` → `autoFile`) : raison sociale, sinon nom d'organisme
+  de l'en-tête, sinon « GENRE valeur » comme avant. Le nom d'organisme (`organisationOf`, `lib/ged/patterns.ts`,
+  fonction pure) est la première des ~25 premières lignes non vides de la première page qui contient un mot
+  d'organisme (lycée, collège, école, université, mairie, finances publiques, urssaf, caisse, banque…,
+  comparaison sans casse ni accents, mot entier), lue à partir de ce mot, débarrassée du bruit OCR de fin,
+  en majuscules, ≤ 60 caractères ; une ligne de plus de 80 caractères est ignorée.
+- **L'apprentissage reste celui d'aujourd'hui** (`namerOf`) : le dossier proposé apprend la raison sociale,
+  sinon le premier identifiant fort — jamais le nom d'organisme, qui n'est qu'un libellé. Les dossiers déjà
+  créés ne sont pas renommés par le code.
+
+### Tests
+- `scripts/check-ged-names.mjs` (dans `verify.sh`, mode `--negative` compris) : textes OCR synthétiques —
+  lettre d'établissement (première ligne trouvée, avant « ACADEMIE DE … »), avis fiscal précédé de bruit OCR,
+  facture à raison sociale (prioritaire), bloc destinataire (ne nomme rien), ligne de 90 caractères ignorée,
+  aucun mot d'organisme (repli « SIRET … »), et l'identifiant appris, identique à avant, assertion explicite.
+- `scripts/check-ged-filing.mjs` : B11b et B17 attendent maintenant le nom d'organisme.
+
 ## [Unreleased] — fork Yumi-Lab (branche `perf/mail-china`) — le courrier ne charge que ce qui est à l'écran, et « Réglages » s'ouvre à chaque fois — 2026-10-07
 
 ### Résumé

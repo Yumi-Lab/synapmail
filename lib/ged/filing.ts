@@ -19,9 +19,11 @@
  *     dossiers est aussi le cas « doute » légitime de la décision 5.
  *  5. **Émetteur inconnu** : un document sans motif connu mais qui porte une raison sociale ou un
  *     identifiant fort reçoit un dossier PROPOSÉ (`auto=true`) sous « Nouveaux émetteurs », nommé
- *     par la raison sociale — à défaut par l'identifiant (« SIRET 196… » : un courrier d'école n'a
- *     pas de forme juridique en en-tête, mesuré sur la vraie boîte) —, rangé en `source=motif` à
- *     confiance basse. Il n'apprend QUE l'identifiant qui le nomme : personne n'a validé ce dossier,
+ *     par la raison sociale — à défaut par le nom d'organisme lu dans l'en-tête (« LYCÉE … »,
+ *     « FINANCES PUBLIQUES » : un courrier d'école n'a pas de forme juridique, mesuré sur la vraie
+ *     boîte), à défaut par l'identifiant (« SIRET 196… ») —, rangé en `source=motif` à confiance
+ *     basse. Il n'apprend QUE l'identifiant qui le nomme (raison sociale, sinon le premier
+ *     identifiant fort — jamais le nom d'organisme, qui n'est qu'un libellé) : personne n'a validé ce dossier,
  *     et apprendre tout le document lui donnait aussi les identifiants du destinataire oubliés de
  *     `propres` (mesuré : l'IBAN du groupe appris par le dossier d'une école y rangeait une facture
  *     FedEx). Nommé par un SIRET, le second envoi le rejoint par motif ; nommé par une raison sociale
@@ -33,7 +35,7 @@ import { EFFECTIVE_ORDER } from '../tagging/store'
 import { HUMAN_SOURCE } from '../tagging/engine'
 import { boundedRegex } from '../rulesEval'
 import type { FilingSource, PatternKind } from './model'
-import { identifiersOf, STRONG_KINDS, type Identifier } from './patterns'
+import { identifiersOf, namerOf, proposedFolderName, STRONG_KINDS, type Identifier } from './patterns'
 
 /** Le dossier racine qui reçoit les dossiers proposés pour un émetteur inconnu (décision 3). */
 export const AUTO_ROOT_NAME = 'Nouveaux émetteurs'
@@ -187,9 +189,9 @@ export async function autoFile(documentId: string): Promise<AutoFileOutcome> {
   if (suggestions.length) return { kind: 'doute', folderId: null, suggestions }
 
   const ids = await emitterIdentifiers(doc.account_id, doc.ocr_text)
-  const namer = ids.find(i => i.genre === 'raison_sociale') ?? ids.find(i => STRONG_KINDS.includes(i.genre))
+  const namer = namerOf(ids)
   if (!namer) return { kind: 'aucun', folderId: null, suggestions }
-  const nom = namer.genre === 'raison_sociale' ? namer.valeur : `${namer.genre.toUpperCase()} ${namer.valeur}`
+  const nom = proposedFolderName(doc.ocr_text, namer)
   const root = await autoRoot(doc.account_id)
   const [folder] = await query<{ id: string }>(
     `INSERT INTO ged_folders (account_id, parent_id, nom, auto) VALUES ($1, $2, $3, true)
