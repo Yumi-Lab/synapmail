@@ -173,8 +173,8 @@ try {
   const SIRET_C = NEGATIVE ? '196 712 345 00013' : '196 712 345 00012'
   const dl = await doc(`Lycée Sans-Forme-Juridique\nSIRET ${SIRET_C}\nDemande de RIB${PAGE2}`)
   const al = await autoFile(dl)
-  const lyceeProp = (await folders()).find(f => f.nom === `SIRET ${SIRET_C.replace(/ /g, '')}`)
-  check('B11b un émetteur sans forme juridique en en-tête mais avec un SIRET → dossier proposé nommé « SIRET … » (renommable), le second envoi le rejoint', al.kind === 'propose' && lyceeProp?.auto && lyceeProp.parent_id === root?.id && (await autoFile(await doc(`Lycée\nSIRET ${SIRET_C}${PAGE2}`))).kind === 'motif', JSON.stringify([al, lyceeProp?.nom]))
+  const lyceeProp = (await folders()).find(f => f.id === al.folderId)
+  check('B11b un émetteur sans forme juridique en en-tête mais avec un SIRET → dossier proposé nommé par l’ORGANISME de l’en-tête (« LYCÉE … », lot N1), le second envoi le rejoint par le SIRET appris', al.kind === 'propose' && lyceeProp?.auto && lyceeProp.parent_id === root?.id && lyceeProp.nom === 'LYCÉE SANS-FORME-JURIDIQUE' && (await autoFile(await doc(`Lycée\nSIRET ${SIRET_C}${PAGE2}`))).kind === 'motif', JSON.stringify([al, lyceeProp?.nom]))
   const d7 = await doc(TEXT_ARTI(3))
   const a7 = await autoFile(d7)
   check('B12 une fois le dossier proposé confirmé par la main (SIRET appris), le troisième envoi le rejoint par MOTIF ; toujours un seul dossier « ARTILLERY3D SARL »', a7.kind === 'motif' && a7.folderId === prop.id && (await folders()).filter(f => f.nom === 'ARTILLERY3D SARL').length === 1, JSON.stringify(a7))
@@ -201,9 +201,9 @@ try {
   const SIRET_D = NEGATIVE ? '196 712 345 00021' : '196 712 345 00020'
   const dRib = await doc(`Collège Sans-Forme-Juridique\nSIRET ${SIRET_D}\nMerci de confirmer votre IBAN ${IBAN_OWN}${PAGE2}`)
   const aRib = await autoFile(dRib)
-  const ribProp = (await folders()).find(f => f.nom === `SIRET ${SIRET_D.replace(/ /g, '')}`)
+  const ribProp = (await folders()).find(f => f.id === aRib.folderId)
   const pRib = ribProp ? await patterns(ribProp.id) : []
-  check('B17 un dossier PROPOSÉ n’apprend QUE l’identifiant qui le nomme (siret), pas l’IBAN du destinataire imprimé sur la demande de RIB', aRib.kind === 'propose' && pRib.map(x => x.genre).join(',') === 'siret', JSON.stringify([aRib.kind, pRib.map(x => x.genre)]))
+  check('B17 un dossier PROPOSÉ n’apprend QUE l’identifiant qui le nomme (siret — le nom d’organisme « COLLÈGE … » n’est qu’un libellé), pas l’IBAN du destinataire imprimé sur la demande de RIB', aRib.kind === 'propose' && ribProp?.nom === 'COLLÈGE SANS-FORME-JURIDIQUE' && pRib.map(x => x.genre).join(',') === 'siret', JSON.stringify([aRib.kind, ribProp?.nom, pRib.map(x => x.genre)]))
   // … donc un document arrivé APRÈS, qui ne partage avec lui que l'IBAN du destinataire, ne le rejoint pas —
   // même avec `propres` encore vide (c'était l'état réel de la boîte).
   const dRel = await doc(`Relevé\nIBAN ${IBAN_OWN}\nMontant 12,00 EUR${PAGE2}`)
