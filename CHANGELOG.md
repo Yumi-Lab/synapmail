@@ -19,7 +19,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   fonction pure) est la première des ~25 premières lignes non vides de la première page qui contient un mot
   d'organisme (lycée, collège, école, université, mairie, finances publiques, urssaf, caisse, banque…,
   comparaison sans casse ni accents, mot entier), lue à partir de ce mot, débarrassée du bruit OCR de fin,
-  en majuscules, ≤ 60 caractères ; une ligne de plus de 80 caractères est ignorée.
+  en majuscules, ≤ 60 caractères ; une ligne de plus de 80 caractères est ignorée. Un mot d'organisme suivi de
+  « : » (« Banque : BNP … » dans un bloc de règlement, « Agence : … ») est l'étiquette d'un champ, pas un nom :
+  la ligne ne compte pas et la lecture continue.
 - **L'apprentissage reste celui d'aujourd'hui** (`namerOf`) : le dossier proposé apprend la raison sociale,
   sinon le premier identifiant fort — jamais le nom d'organisme, qui n'est qu'un libellé. Les dossiers déjà
   créés ne sont pas renommés par le code.
@@ -28,7 +30,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `scripts/check-ged-names.mjs` (dans `verify.sh`, mode `--negative` compris) : textes OCR synthétiques —
   lettre d'établissement (première ligne trouvée, avant « ACADEMIE DE … »), avis fiscal précédé de bruit OCR,
   facture à raison sociale (prioritaire), bloc destinataire (ne nomme rien), ligne de 90 caractères ignorée,
-  aucun mot d'organisme (repli « SIRET … »), et l'identifiant appris, identique à avant, assertion explicite.
+  aucun mot d'organisme (repli « SIRET … »), « Banque : EXEMPLE BANK » avant la ligne d'organisme (l'organisme,
+  jamais la banque), « Agence : … » seule (rien), et l'identifiant appris, identique à avant, assertion explicite.
 - `scripts/check-ged-filing.mjs` : B11b et B17 attendent maintenant le nom d'organisme.
 
 ## [Unreleased] — fork Yumi-Lab (branche `perf/mail-china`) — le courrier ne charge que ce qui est à l'écran, et « Réglages » s'ouvre à chaque fois — 2026-10-07

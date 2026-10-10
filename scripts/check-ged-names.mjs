@@ -7,6 +7,8 @@
  *   A. `organisationOf` (module pur) : première ligne trouvée dans l'ordre de lecture, lue à partir
  *      du mot d'organisme, bruit OCR retiré, majuscules ; une ligne de 90 caractères est ignorée ;
  *      un bloc destinataire « Service Comptabilité » ne nomme rien ; sans mot d'organisme → null ;
+ *      un mot d'organisme suivi de « : » (« Banque : EXEMPLE BANK », « Agence : … ») est l'étiquette
+ *      d'un champ, pas un nom (lot N1b, faux positif mesuré sur un bloc de règlement) ;
  *   B. `proposedFolderName` : la raison sociale reste prioritaire, le repli « SIRET … » reste tel quel ;
  *   C. (base) le dossier proposé apprend EXACTEMENT le même identifiant qu'avant : le SIRET, jamais
  *      le nom d'organisme. Banc DB jetable : le `DELETE FROM users` du `finally` emporte tout par CASCADE.
@@ -14,7 +16,8 @@
  *
  * `--negative` : l'ANCIENNE règle de nommage (`raison sociale ?? GENRE valeur`) remplace la nouvelle dans
  * le banc : B2 (le nom attendu) et C1 (le nom que la base a VRAIMENT reçu ne suit plus cette règle) DOIVENT
- * tomber ; A (module pur, inchangé par le remplacement) et C2 (l'apprentissage) tiennent dans les deux modes.
+ * tomber ; et `organisationOf` lit comme avant N1b, où « : » ne voulait rien dire (A10, A11, B5 tombent) ;
+ * le reste de A (inchangé par le remplacement) et C2 (l'apprentissage) tiennent dans les deux modes.
  */
 import './alias-resolver.mjs'
 import { existsSync, readFileSync } from 'node:fs'
@@ -38,7 +41,9 @@ const check = (label, ok, detail = '') => {
 }
 
 const patterns = await import('../lib/ged/patterns.ts')
-const { organisationOf, identifiersOf, namerOf } = patterns
+const { identifiersOf, namerOf } = patterns
+/** En `--negative`, la lecture d'avant N1b : le « : » après un mot d'organisme ne voulait rien dire. */
+const organisationOf = NEGATIVE ? text => patterns.organisationOf(text.replace(/:/g, ' ')) : patterns.organisationOf
 /** En `--negative`, la règle d'avant le lot N1 : l'organisme de l'en-tête n'existe pas. */
 const oldName = (text, namer) => namer.genre === 'raison_sociale' ? namer.valeur : `${namer.genre.toUpperCase()} ${namer.valeur}`
 const proposedFolderName = NEGATIVE ? oldName : patterns.proposedFolderName
@@ -53,6 +58,8 @@ const TEXT_DEST = `Service Comptabilité\nBP 1\nSIRET ${SIRET}${PAGE2}`
 const LONG = `Lycée ${'x'.repeat(84)}`
 const TEXT_LONG = `${LONG}\nSIRET ${SIRET}${PAGE2}`
 const TEXT_NONE = `Relevé sans en-tête\nSIRET ${SIRET}${PAGE2}`
+const TEXT_BANK = `Règlement par virement\nBanque : EXEMPLE BANK\nCentre de formation du banc\nSIRET ${SIRET}${PAGE2}`
+const TEXT_LABEL = `Agence : Nulle-Part\nSIRET ${SIRET}${PAGE2}`
 
 console.log(`\nbanc du nom d'un dossier proposé (lot N1)${NEGATIVE ? ' — CONTRÔLE NÉGATIF (ancienne règle de nommage)' : ''}\n`)
 
@@ -70,6 +77,10 @@ check('A7 mot ENTIER, sans casse ni accents : « Centrer » et « Agences » ne 
 check('A8 jetons de fin à moins de 50 % de lettres retirés, ponctuation de bord, ≤ 60 caractères',
   organisationOf(`Mairie de Nulle-Part |]'. ,,`) === 'MAIRIE DE NULLE-PART' && organisationOf(`Université ${'a'.repeat(60)}`)?.length === 60)
 check('A9 un mot d’organisme en deux mots (« ville de ») se lit à partir du premier', organisationOf('La Ville de Nulle-Part') === 'VILLE DE NULLE-PART')
+check('A10 « Banque : EXEMPLE BANK » AVANT la ligne d’organisme : l’étiquette de champ ne compte pas → l’organisme, jamais la banque',
+  organisationOf(TEXT_BANK) === 'CENTRE DE FORMATION DU BANC' && organisationOf(TEXT_BANK.replace('Banque : ', 'Banque: ')) === 'CENTRE DE FORMATION DU BANC', JSON.stringify(organisationOf(TEXT_BANK)))
+check('A11 une ligne « Agence : … » seule → null (avec ou sans espace avant le « : », mot en deux mots compris)',
+  organisationOf(TEXT_LABEL) === null && organisationOf('Agence: Nulle-Part') === null && organisationOf('Finances publiques : avis') === null, JSON.stringify(organisationOf(TEXT_LABEL)))
 
 console.log('B. le nom du dossier proposé')
 const nameOf = text => proposedFolderName(text, namerOf(identifiersOf(text)))
@@ -77,6 +88,7 @@ check('B1 facture « EXEMPLE TRANSPORT FR SAS » : la raison sociale reste prior
 check('B2 lettre d’établissement → « LYCÉE DES MÉTIERS — UFA JEAN-MOULIN » et non plus « SIRET 1967… »', nameOf(TEXT_LYCEE) === 'LYCÉE DES MÉTIERS — UFA JEAN-MOULIN', nameOf(TEXT_LYCEE))
 check('B3 aucun mot d’organisme → repli « SIRET … » inchangé', nameOf(TEXT_NONE) === 'SIRET 19671234500012', nameOf(TEXT_NONE))
 check('B4 bloc destinataire seul → repli « SIRET … »', nameOf(TEXT_DEST) === 'SIRET 19671234500012', nameOf(TEXT_DEST))
+check('B5 facture sans forme juridique, « Banque : … » avant l’organisme → « CENTRE DE FORMATION DU BANC », jamais la banque', nameOf(TEXT_BANK) === 'CENTRE DE FORMATION DU BANC', nameOf(TEXT_BANK))
 
 console.log('C. ce que le dossier proposé APPREND (inchangé)')
 if (!process.env.DATABASE_URL) {
@@ -114,7 +126,7 @@ if (!process.env.DATABASE_URL) {
 }
 
 if (NEGATIVE) {
-  const expected = ['B2', 'C1']
+  const expected = ['A10', 'A11', 'B2', 'B5', 'C1']
   const fell = expected.filter(p => failures.some(f => f.startsWith(p)))
   const unexpected = failures.filter(f => !expected.some(p => f.startsWith(p)))
   if (fell.length === expected.length && !unexpected.length) { console.log(`\ncontrôle négatif : ${fell.length} refus tombés (${fell.join(', ')}), comme attendu`); process.exit(0) }

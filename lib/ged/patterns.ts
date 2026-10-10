@@ -34,6 +34,8 @@ const ORGANISM_WORDS = ['lycée', 'collège', 'école', 'université', 'institut
   'agence', 'office']
 const ORGANISM_MAX_LINES = 25
 const ORGANISM_MAX_NAME = 60
+/** Un mot d'organisme suivi de « : » (« Banque : », « Agence : ») est l'ÉTIQUETTE d'un champ, pas un nom. */
+const FIELD_LABEL_RE = /^[^\s:]*\s*:/
 
 const digits = (s: string): string => s.replace(/\D/g, '')
 
@@ -93,8 +95,9 @@ const letterRatio = (word: string): number => (word.match(LETTER_RE)?.length ?? 
 /**
  * Le nom d'organisme de l'en-tête : dans les premières lignes de la première page, la première qui
  * porte un mot d'organisme, lue À PARTIR de ce mot (le bruit OCR qui précède tombe), nettoyée des
- * jetons de fin qui ne sont pas des mots, en majuscules. Sert à NOMMER un dossier proposé, jamais
- * à l'apprendre — l'identifiant appris reste `namerOf`.
+ * jetons de fin qui ne sont pas des mots, en majuscules. Une ligne où le mot est suivi de « : »
+ * (« Banque : BNP … » dans un bloc de règlement) est une étiquette de champ et ne compte pas.
+ * Sert à NOMMER un dossier proposé, jamais à l'apprendre — l'identifiant appris reste `namerOf`.
  */
 export function organisationOf(text: string): string | null {
   const firstPage = text.split('\f')[0] ?? ''
@@ -102,8 +105,11 @@ export function organisationOf(text: string): string | null {
   for (const line of lines) {
     if (line.length > HEADER_MAX_LINE) continue
     const tokens = Array.from(line.matchAll(/\S+/g), m => ({ at: m.index, folded: fold(m[0]) }))
-    const start = tokens.findIndex((_, i) => ORGANISM_FOLDED.some(w => w.every((part, k) => tokens[i + k]?.folded === part)))
-    if (start < 0) continue
+    let start = -1, last = -1
+    for (let i = 0; i < tokens.length && start < 0; i++)
+      for (const w of ORGANISM_FOLDED)
+        if (w.every((part, k) => tokens[i + k]?.folded === part)) { start = i; last = i + w.length - 1; break }
+    if (start < 0 || FIELD_LABEL_RE.test(line.slice(tokens[last].at))) continue
     const tail = line.slice(tokens[start].at).split(/\s+/)
     while (tail.length && letterRatio(tail[tail.length - 1]) < 0.5) tail.pop()
     const name = tail.join(' ').replace(EDGE_PUNCT_RE, '').toUpperCase().slice(0, ORGANISM_MAX_NAME).trim()
