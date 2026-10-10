@@ -34,6 +34,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   jamais la banque), « Agence : … » seule (rien), et l'identifiant appris, identique à avant, assertion explicite.
 - `scripts/check-ged-filing.mjs` : B11b et B17 attendent maintenant le nom d'organisme.
 
+### Fixed
+- **Un dossier ouvert dans un nouvel onglet restait surligné dans l'onglet courant** (`components/layout/Sidebar.tsx`) :
+  depuis le changement de dossier sans aller-retour serveur, `handleFolderClick` appelait `setCurrentFolder` à chaque clic,
+  y compris un cmd/ctrl/clic du milieu qui ouvre le dossier ailleurs — la barre surlignait un dossier que cet onglet
+  n'affichait pas. Un clic modifié ne touche plus à l'état de cet onglet. Repris du correctif amont de Bryan (`cfb7658`).
+
 ## [Unreleased] — fork Yumi-Lab (branche `perf/mail-china`) — le courrier ne charge que ce qui est à l'écran, et « Réglages » s'ouvre à chaque fois — 2026-10-07
 
 ### Résumé

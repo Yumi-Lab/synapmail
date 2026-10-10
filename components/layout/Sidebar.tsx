@@ -322,12 +322,15 @@ export function Sidebar({ onClose, collapsed = false }: SidebarProps) {
   // Depuis la page du courrier, un clic ORDINAIRE change le dossier sans
   // aller-retour serveur (`pushFolder`) ; un clic modifié (nouvel onglet) ou
   // venu d'une autre page reste une navigation du lien.
+  // Un clic modifié ou du milieu ouvre le dossier AILLEURS (nouvel onglet) : le dossier
+  // affiché dans CET onglet ne change pas, la barre ne doit donc pas le surligner.
   const handleFolderClick = (e: React.MouseEvent, path: string) => {
-    if (pathname === MAIL_PATH && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    setCurrentFolder(path)
+    if (pathname === MAIL_PATH) {
       e.preventDefault()
       pushFolder(path)
     }
-    setCurrentFolder(path)
     onClose?.()
   }
 
